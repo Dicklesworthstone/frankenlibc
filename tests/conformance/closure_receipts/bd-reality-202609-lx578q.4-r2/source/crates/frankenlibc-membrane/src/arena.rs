@@ -1,0 +1,2380 @@
+//! Generational arena with quarantine queue for temporal safety.
+//!
+//! Every allocation gets a slot in the arena with a generation counter.
+//! When freed, the slot enters a quarantine queue rather than being
+//! immediately recycled. Lookups can identify quarantined allocations, but
+//! a raw address does not carry the caller's allocation generation: after
+//! same-address reuse it identifies the current allocation, not its history.
+//!
+//! Thread-safe via sharded no-poison mutexes.
+
+#![allow(unsafe_code)]
+
+use crate::util::{NoPoisonMutex as Mutex, NoPoisonMutexGuard as MutexGuard};
+use std::collections::VecDeque;
+
+use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
+use crate::lattice::SafetyState;
+use crate::tls_cache::bump_shard_epoch;
+
+/// Maximum quarantine size in bytes, across all shards.
+const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
+
+/// Trailing redzone allocated after every arena user buffer (first `CANARY_SIZE`
+/// bytes hold the cryptographic canary; the full 32-byte trailing redzone matches
+/// the 32-byte leading header so multi-step out-of-bounds writes past the initial
+/// canary remain recognized by `arena.lookup()` and clamped to 0 bytes rather than
+/// escaping into adjacent host allocator chunk headers, e.g., CVE-2024-33599/33601).
+pub const TRAILING_REDZONE_SIZE: usize = 32;
+const _: () = assert!(TRAILING_REDZONE_SIZE >= CANARY_SIZE);
+
+/// Where arena blocks (header + user bytes + canary) come from.
+///
+/// Defaults to the Rust global allocator. Inside libc.so that allocator IS the
+/// library's own exported `malloc`, so every arena block took a second trip
+/// through the allocator entry -- the reentrant bootstrap path and its
+/// globally locked host-allocation table -- once to allocate and once to free;
+/// that table was a third of hardened time with eight threads. The ABI layer
+/// installs the host allocator directly instead.
+#[derive(Clone, Copy)]
+pub struct RawBlockAllocator {
+    /// Allocate `size` bytes aligned to `align` (a power of two); null on failure.
+    pub alloc: unsafe fn(size: usize, align: usize) -> *mut u8,
+    /// Release a block returned by `alloc` with the same `size` and `align`.
+    pub dealloc: unsafe fn(ptr: *mut u8, size: usize, align: usize),
+}
+
+static RAW_BLOCK_ALLOCATOR: std::sync::OnceLock<RawBlockAllocator> = std::sync::OnceLock::new();
+
+/// Use `allocator` for every arena block. Only possible before the first block
+/// is allocated -- blocks must be freed by the allocator that made them -- so
+/// returns false (and changes nothing) once the default is in use.
+pub fn install_raw_block_allocator(allocator: RawBlockAllocator) -> bool {
+    RAW_BLOCK_ALLOCATOR.set(allocator).is_ok()
+}
+
+fn raw_block_allocator() -> &'static RawBlockAllocator {
+    RAW_BLOCK_ALLOCATOR.get_or_init(|| RawBlockAllocator {
+        alloc: global_alloc_block,
+        dealloc: global_dealloc_block,
+    })
+}
+
+unsafe fn global_alloc_block(size: usize, align: usize) -> *mut u8 {
+    match std::alloc::Layout::from_size_align(size, align) {
+        // SAFETY: the layout is valid and non-zero (it always includes the header).
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+unsafe fn global_dealloc_block(ptr: *mut u8, size: usize, align: usize) {
+    if let Ok(layout) = std::alloc::Layout::from_size_align(size, align) {
+        // SAFETY: the caller passes a block from `global_alloc_block` with this layout.
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+}
+
+/// Release an arena block through the allocator that made it.
+///
+/// # Safety
+///
+/// `raw_base` came from this arena's block allocator with this size and
+/// alignment, and is released exactly once.
+unsafe fn release_block(raw_base: usize, total_size: usize, align: usize) {
+    // SAFETY: forwarded caller contract.
+    unsafe { (raw_block_allocator().dealloc)(raw_base as *mut u8, total_size, align) };
+}
+
+/// Node storage for a shard's address index (`ArenaShard::addr_to_slot`).
+///
+/// The index is a `BTreeMap`, which allocates a node on roughly every sixth
+/// insert and frees one as entries drain from quarantine. Through the global
+/// allocator each of those was a trip through the library's own exported
+/// `malloc` -- the reentrant bootstrap path, its locked host-allocation table
+/// and the stats -- and with the frees it was ~15% of a hardened malloc+free
+/// (bd-rc0923-epic-eeuy4f.9). The pool keeps freed nodes on per-layout free
+/// lists and carves new ones from chunks taken from the raw block allocator
+/// (the host allocator inside libc.so), so the index never re-enters `malloc`.
+///
+/// Exclusivity: a pool is reachable only through the allocator handles of one
+/// shard's map, and that map is only touched with the shard's lock held, so
+/// the pool's cells are never accessed concurrently.
+struct IndexNodePool {
+    state: std::cell::UnsafeCell<IndexNodePoolState>,
+}
+
+struct IndexNodePoolState {
+    /// (size, align, free-list head) for each node layout seen; a BTreeMap of
+    /// one key/value type uses two (leaf and internal nodes).
+    bins: [(usize, usize, *mut u8); INDEX_POOL_BINS],
+    /// Unused tail of the newest chunk.
+    cursor: usize,
+    end: usize,
+    /// Intrusive list of chunks (first word of each), released on drop.
+    chunks: *mut u8,
+}
+
+const INDEX_POOL_BINS: usize = 4;
+const INDEX_POOL_CHUNK: usize = 64 * 1024;
+const INDEX_POOL_FALLBACK_CHUNK: usize = 4 * 1024;
+const INDEX_POOL_CHUNK_ALIGN: usize = 64;
+
+#[repr(C)]
+struct IndexPoolChunkHeader {
+    next: *mut u8,
+    size: usize,
+}
+
+// SAFETY: see the exclusivity note on `IndexNodePool`: every access happens
+// under the owning shard's lock, which also orders accesses across threads.
+unsafe impl Send for IndexNodePool {}
+// SAFETY: as above.
+unsafe impl Sync for IndexNodePool {}
+
+impl IndexNodePool {
+    fn new() -> Self {
+        Self {
+            state: std::cell::UnsafeCell::new(IndexNodePoolState {
+                bins: [(0, 0, std::ptr::null_mut()); INDEX_POOL_BINS],
+                cursor: 0,
+                end: 0,
+                chunks: std::ptr::null_mut(),
+            }),
+        }
+    }
+}
+
+impl Drop for IndexNodePool {
+    fn drop(&mut self) {
+        let state = self.state.get_mut();
+        let mut chunk = state.chunks;
+        while !chunk.is_null() {
+            // SAFETY: each chunk stores `(next, size)` in its 64-byte aligned header.
+            let header = unsafe { chunk.cast::<IndexPoolChunkHeader>().read() };
+            // SAFETY: the chunk came from the block allocator with this layout.
+            unsafe { release_block(chunk as usize, header.size, INDEX_POOL_CHUNK_ALIGN) };
+            chunk = header.next;
+        }
+    }
+}
+
+/// Allocator handle given to a shard's index map.
+#[derive(Clone)]
+struct IndexNodeAlloc(std::sync::Arc<IndexNodePool>);
+
+impl IndexNodeAlloc {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(IndexNodePool::new()))
+    }
+
+    /// Bin for `layout`, claiming an empty one on first sight; `None` once all
+    /// are taken by other layouts (never for a BTreeMap, which has two).
+    fn bin(state: &mut IndexNodePoolState, layout: std::alloc::Layout) -> Option<usize> {
+        let key = (layout.size(), layout.align());
+        if let Some(index) = state.bins.iter().position(|b| (b.0, b.1) == key) {
+            return Some(index);
+        }
+        let index = state.bins.iter().position(|b| b.0 == 0)?;
+        state.bins[index] = (key.0, key.1, std::ptr::null_mut());
+        Some(index)
+    }
+}
+
+// SAFETY: clones share one pool through the `Arc`, so a block from either is
+// freed by the other, and the pool (with every block) lives until the last
+// clone drops.
+unsafe impl std::alloc::AllocatorClone for IndexNodeAlloc {}
+
+// SAFETY: blocks handed out are distinct, sized and aligned for their layout,
+// and stay valid until deallocated through this pool (whose chunks outlive
+// every node: the map drops its nodes before the last handle drops the pool).
+unsafe impl std::alloc::Allocator for IndexNodeAlloc {
+    fn allocate(
+        &self,
+        layout: std::alloc::Layout,
+    ) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
+        let fits_pool = layout.size() >= std::mem::size_of::<*mut u8>()
+            && layout.align() <= INDEX_POOL_CHUNK_ALIGN
+            && layout.size() <= INDEX_POOL_CHUNK / 4;
+        // SAFETY: exclusive access per the pool's invariant.
+        let state = unsafe { &mut *self.0.state.get() };
+        let bin = if fits_pool {
+            Self::bin(state, layout)
+        } else {
+            None
+        };
+        let Some(bin) = bin else {
+            // SAFETY: valid non-zero layout; released through `deallocate`.
+            let ptr = unsafe { (raw_block_allocator().alloc)(layout.size(), layout.align()) };
+            return std::ptr::NonNull::new(ptr)
+                .map(|p| std::ptr::NonNull::slice_from_raw_parts(p, layout.size()))
+                .ok_or(std::alloc::AllocError);
+        };
+        let head = state.bins[bin].2;
+        if !head.is_null() {
+            // SAFETY: free nodes store the next free node in their first word.
+            state.bins[bin].2 = unsafe { head.cast::<*mut u8>().read() };
+            // SAFETY: `head` is a non-null node of this layout.
+            let ptr = unsafe { std::ptr::NonNull::new_unchecked(head) };
+            return Ok(std::ptr::NonNull::slice_from_raw_parts(ptr, layout.size()));
+        }
+        let mut start = state.cursor.next_multiple_of(layout.align());
+        if state.cursor == 0 || start + layout.size() > state.end {
+            let min_chunk =
+                INDEX_POOL_CHUNK_ALIGN + layout.size().next_multiple_of(INDEX_POOL_CHUNK_ALIGN);
+            let primary_chunk = if state.chunks.is_null() {
+                INDEX_POOL_FALLBACK_CHUNK.max(min_chunk)
+            } else {
+                INDEX_POOL_CHUNK
+            };
+            let mut chunk = std::ptr::null_mut();
+            let mut chunk_size = 0;
+            for candidate in [
+                primary_chunk,
+                INDEX_POOL_FALLBACK_CHUNK.max(min_chunk),
+                min_chunk,
+            ] {
+                // SAFETY: valid non-zero layout; the chunk is released on drop.
+                let ptr =
+                    unsafe { (raw_block_allocator().alloc)(candidate, INDEX_POOL_CHUNK_ALIGN) };
+                if !ptr.is_null() {
+                    chunk = ptr;
+                    chunk_size = candidate;
+                    break;
+                }
+            }
+            if chunk.is_null() {
+                return Err(std::alloc::AllocError);
+            }
+            // SAFETY: the chunk has a 64-byte aligned header (`INDEX_POOL_CHUNK_ALIGN`).
+            unsafe {
+                chunk
+                    .cast::<IndexPoolChunkHeader>()
+                    .write(IndexPoolChunkHeader {
+                        next: state.chunks,
+                        size: chunk_size,
+                    });
+            }
+            state.chunks = chunk;
+            state.cursor = chunk as usize + INDEX_POOL_CHUNK_ALIGN;
+            state.end = chunk as usize + chunk_size;
+            start = state.cursor.next_multiple_of(layout.align());
+        }
+        state.cursor = start + layout.size();
+        // SAFETY: `start` lies inside the current chunk and is non-zero.
+        let ptr = unsafe { std::ptr::NonNull::new_unchecked(start as *mut u8) };
+        Ok(std::ptr::NonNull::slice_from_raw_parts(ptr, layout.size()))
+    }
+
+    unsafe fn deallocate(&self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) {
+        // SAFETY: exclusive access per the pool's invariant.
+        let state = unsafe { &mut *self.0.state.get() };
+        let bin = state
+            .bins
+            .iter()
+            .position(|b| (b.0, b.1) == (layout.size(), layout.align()));
+        match bin {
+            Some(bin) => {
+                // SAFETY: the node is at least one word (checked at allocation).
+                unsafe { ptr.as_ptr().cast::<*mut u8>().write(state.bins[bin].2) };
+                state.bins[bin].2 = ptr.as_ptr();
+            }
+            // SAFETY: came from the raw block allocator with this layout.
+            None => unsafe { release_block(ptr.as_ptr() as usize, layout.size(), layout.align()) },
+        }
+    }
+}
+
+/// Number of shards for arena locks (power of 2).
+///
+/// MUST equal `crate::tls_cache::NUM_TLS_CACHE_SHARDS`. The two constants
+/// share the same `(addr >> 12) % N` derivation so that a free of a slot in
+/// arena shard `s` bumps the matching `tls_cache::SHARD_EPOCHS[s]`. Drift
+/// would let cached `Valid` hits survive across frees in the same address
+/// region. The invariant is pinned by a `const _` assertion in `tls_cache.rs`.
+pub(crate) const NUM_SHARDS: usize = 16;
+
+/// Metadata for a single allocation slot.
+#[derive(Debug, Clone, Copy)]
+pub struct ArenaSlot {
+    /// Base address of the full allocation (including fingerprint header).
+    pub raw_base: usize,
+    /// User-visible base address (after fingerprint header).
+    pub user_base: usize,
+    /// User-requested size.
+    pub user_size: usize,
+    /// Generation counter (monotonically increasing).
+    pub generation: u64,
+    /// Owning shard's `slots` vector index (`O(1)` lookup on warm-TLS verification).
+    pub(crate) slot_idx: u32,
+    /// Current safety state.
+    pub state: SafetyState,
+}
+
+/// Entry in the quarantine queue.
+#[derive(Debug, Clone, Copy)]
+pub struct QuarantineEntry {
+    pub(crate) user_base: usize,
+    pub(crate) raw_base: usize,
+    pub(crate) total_size: usize,
+    pub(crate) align: usize,
+}
+
+/// A single shard of the arena.
+struct ArenaShard {
+    slots: Vec<ArenaSlot>,
+    /// Map from user_base address to slot index (nodes from `IndexNodePool`).
+    addr_to_slot: std::collections::BTreeMap<usize, usize, IndexNodeAlloc>,
+    /// Free slot indices for reuse.
+    free_list: Vec<usize>,
+    /// Quarantine queue for freed allocations.
+    quarantine: VecDeque<QuarantineEntry>,
+    /// Total bytes in quarantine.
+    quarantine_bytes: usize,
+    /// Entries drained from quarantine by batched frees and not yet handed
+    /// out for retirement (see `drain_quarantine_batched`).
+    retire_pending: Vec<QuarantineEntry>,
+    /// Total `total_size` of `retire_pending`.
+    retire_pending_bytes: usize,
+}
+
+/// Drained entries a batched free accumulates per shard before handing them
+/// out for retirement in one go...
+const RETIRE_BATCH: usize = 64;
+/// ...or as soon as they hold this many bytes, so parking never keeps more
+/// than ~1 MiB per shard (or one large block) from being reclaimed.
+const RETIRE_BATCH_BYTES: usize = 1024 * 1024;
+
+impl ArenaShard {
+    fn new() -> Self {
+        Self {
+            slots: Vec::with_capacity(8),
+            addr_to_slot: std::collections::BTreeMap::new_in(IndexNodeAlloc::new()),
+            free_list: Vec::with_capacity(8),
+            quarantine: VecDeque::with_capacity(8),
+            quarantine_bytes: 0,
+            retire_pending: Vec::with_capacity(8),
+            retire_pending_bytes: 0,
+        }
+    }
+}
+
+impl Drop for ArenaShard {
+    fn drop(&mut self) {
+        // Reclaim any still-live and quarantined allocations. Without this,
+        // dropping the arena leaks every outstanding raw_base (bd-q9x3h).
+        // AllocationArena is typically a process-lifetime singleton in frankenlibc,
+        // so in production this runs only at exit; in tests and fuzz harnesses
+        // it runs per iteration and was the source of LSan exit-status-77.
+        for slot in self.slots.iter() {
+            // Skip slots already freed or moved to quarantine (the quarantine
+            // drain below owns the dealloc for Quarantined slots); Invalid
+            // slots never had backing memory.
+            match slot.state {
+                SafetyState::Freed | SafetyState::Invalid | SafetyState::Quarantined => continue,
+                _ => {}
+            }
+            // Reconstruct the layout used at allocation time.
+            let offset = slot.user_base.saturating_sub(slot.raw_base);
+            let total_size = offset + slot.user_size + TRAILING_REDZONE_SIZE;
+            let align = offset.max(1);
+            // SAFETY: slot.raw_base came from the block allocator with this layout.
+            unsafe { release_block(slot.raw_base, total_size, align) };
+        }
+        while let Some(entry) = self.quarantine.pop_front() {
+            // SAFETY: entry.raw_base came from the block allocator with this layout.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
+        }
+        // Drained by batched frees but never handed out for retirement.
+        for entry in self.retire_pending.drain(..) {
+            // SAFETY: as above; parked entries are released only here.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
+        }
+    }
+}
+
+/// Thread-safe generational allocation arena.
+pub struct AllocationArena {
+    shards: Box<[Mutex<ArenaShard>]>,
+    /// `user_base` of every registered allocation whose raw extent exceeds
+    /// `SMALL_EXTENT`; see `lookup`.
+    large: Mutex<std::collections::BTreeSet<usize, IndexNodeAlloc>>,
+    /// Global generation counter.
+    next_generation: std::sync::atomic::AtomicU64,
+    /// Bytes and entries quarantined across all shards (the sum of the
+    /// shards' own counts, maintained where frees enter and drains leave).
+    quarantine_total_bytes: std::sync::atomic::AtomicUsize,
+    quarantine_total_entries: std::sync::atomic::AtomicUsize,
+}
+
+/// Result of a successful allocation in the arena.
+#[derive(Debug, Clone, Copy)]
+pub struct AllocationResult {
+    /// User-visible pointer (past fingerprint header).
+    pub ptr: *mut u8,
+    /// User-visible base address (usize representation of ptr).
+    pub user_base: usize,
+    /// Base address of the full allocation (including fingerprint header).
+    pub raw_base: usize,
+    /// Total size of the raw allocation (including all overhead).
+    pub total_size: usize,
+}
+
+/// Guard representing all locked arena shards during a fork.
+///
+/// A fixed array, not a Vec: the pipeline takes this while it already holds
+/// the page oracle's lock exclusively, and allocating (or freeing a Vec
+/// buffer on drop) goes through the membrane, which takes that lock.
+pub struct ArenaAtforkGuard<'a> {
+    _large: MutexGuard<'a, std::collections::BTreeSet<usize, IndexNodeAlloc>>,
+    _guards: [MutexGuard<'a, ArenaShard>; NUM_SHARDS],
+}
+
+/// Raw extent (header through canary) up to which an allocation is found by
+/// probing the shards of the query's page and its two neighbours: its
+/// `user_base`, whose page picks the shard, is then within one page of any
+/// address inside it.
+const SMALL_EXTENT: usize = 4096;
+
+impl AllocationArena {
+    /// Create a new empty arena.
+    #[must_use]
+    pub fn new() -> Self {
+        let shards: Vec<Mutex<ArenaShard>> = (0..NUM_SHARDS)
+            .map(|_| Mutex::new(ArenaShard::new()))
+            .collect();
+        Self {
+            shards: shards.into_boxed_slice(),
+            large: Mutex::new(std::collections::BTreeSet::new_in(IndexNodeAlloc::new())),
+            next_generation: std::sync::atomic::AtomicU64::new(1),
+            quarantine_total_bytes: std::sync::atomic::AtomicUsize::new(0),
+            quarantine_total_entries: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Prepare for a fork by acquiring all shard locks.
+    /// This ensures the arena is in a consistent state and no other thread
+    /// is actively modifying it when the fork occurs.
+    pub fn atfork_prepare(&self) -> ArenaAtforkGuard<'_> {
+        // Shards in index order, then `large` (as in `drain_quarantine`).
+        let guards = std::array::from_fn(|index| self.shards[index].lock());
+        ArenaAtforkGuard {
+            _large: self.large.lock(),
+            _guards: guards,
+        }
+    }
+
+    /// Pre-reserve initial slot capacity and index-node chunks across all shards
+    /// and the large-extent set before the caller clamps `RLIMIT_AS` or
+    /// `RLIMIT_DATA`, so subsequent hardened `malloc`/`realloc` operations on
+    /// any page-hashed shard succeed without needing new VM mappings.
+    pub fn prewarm_for_rlimit(&self) {
+        for shard_lock in self.shards.iter() {
+            let mut shard = shard_lock.lock();
+            let _ = shard.slots.try_reserve(4);
+            if shard.addr_to_slot.is_empty() {
+                shard.addr_to_slot.insert(0, 0);
+                shard.addr_to_slot.remove(&0);
+            }
+        }
+        let mut large = self.large.lock();
+        if large.is_empty() {
+            large.insert(0);
+            large.remove(&0);
+        }
+    }
+
+    /// Allocate memory with fingerprint header and canary.
+    ///
+    /// Returns the allocation metadata on success.
+    pub fn allocate(&self, user_size: usize) -> Option<AllocationResult> {
+        self.allocate_aligned(user_size, 16)
+    }
+
+    /// Allocate memory with fingerprint header, canary, and specific alignment.
+    ///
+    /// Alignment must be a power of 2.
+    /// Returns the allocation metadata on success.
+    pub fn allocate_aligned(&self, user_size: usize, align: usize) -> Option<AllocationResult> {
+        // Validate caller alignment BEFORE clamping up to 32 (>= FINGERPRINT_SIZE=24).
+        if !align.is_power_of_two() {
+            return None;
+        }
+        let align = align.max(32);
+
+        let offset = align;
+        let total_size = offset
+            .checked_add(user_size)?
+            .checked_add(TRAILING_REDZONE_SIZE)?;
+
+        let generation = self
+            .next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Allocate raw memory from the block allocator.
+        std::alloc::Layout::from_size_align(total_size, align).ok()?;
+        // SAFETY: size and alignment form a valid, non-zero layout.
+        let raw_ptr = unsafe { (raw_block_allocator().alloc)(total_size, align) };
+        if raw_ptr.is_null() {
+            return None;
+        }
+
+        let raw_base = raw_ptr as usize;
+        let user_base = raw_base + offset;
+
+        // Write fingerprint header at `user_base - FINGERPRINT_SIZE`
+        let fp = AllocationFingerprint::compute(user_base, user_size as u64, generation);
+        let fp_bytes = fp.to_bytes();
+        // SAFETY: raw_ptr is valid for total_size. Header location is within [raw_base, raw_base + offset).
+        unsafe {
+            let header_ptr = (user_base - FINGERPRINT_SIZE) as *mut u8;
+            std::ptr::copy_nonoverlapping(fp_bytes.as_ptr(), header_ptr, FINGERPRINT_SIZE);
+        }
+
+        // Write trailing canary
+        let canary = fp.canary_for(user_base);
+        let canary_bytes = canary.to_bytes();
+        // SAFETY: canary sits at user_base + user_size. Valid since total_size = offset + user_size + TRAILING_REDZONE_SIZE (>= CANARY_SIZE).
+        unsafe {
+            let canary_ptr = (user_base as *mut u8).add(user_size);
+            std::ptr::copy_nonoverlapping(canary_bytes.as_ptr(), canary_ptr, CANARY_SIZE);
+        }
+
+        // Register in arena
+        let mut slot = ArenaSlot {
+            raw_base,
+            user_base,
+            user_size,
+            generation,
+            slot_idx: 0,
+            state: SafetyState::Valid,
+        };
+
+        let shard_idx = self.shard_for(user_base);
+        let mut shard = self.shards[shard_idx].lock();
+
+        let slot_idx = if let Some(free_idx) = shard.free_list.pop() {
+            slot.slot_idx = free_idx as u32;
+            shard.slots[free_idx] = slot;
+            free_idx
+        } else {
+            if shard.slots.try_reserve(1).is_err() {
+                drop(shard);
+                // SAFETY: `raw_base` came from `raw_block_allocator().alloc` with `(total_size, align)`.
+                unsafe { release_block(raw_base, total_size, align) };
+                return None;
+            }
+            let idx = shard.slots.len();
+            slot.slot_idx = idx as u32;
+            shard.slots.push(slot);
+            idx
+        };
+        shard.addr_to_slot.insert(user_base, slot_idx);
+        drop(shard);
+        // The pointer is not returned yet, so no lookup can race this.
+        if total_size > SMALL_EXTENT {
+            self.large.lock().insert(user_base);
+        }
+
+        Some(AllocationResult {
+            ptr: user_base as *mut u8,
+            user_base,
+            raw_base,
+            total_size,
+        })
+    }
+
+    /// Free a membrane-managed allocation.
+    ///
+    /// Returns the action taken and any drained quarantine entries.
+    ///
+    /// Drained entries have been removed from the arena's live/quarantine
+    /// indexes but their backing allocation has not been reclaimed yet. The
+    /// caller must retire or deallocate each drained entry exactly once after
+    /// any external ownership indexes have been updated.
+    ///
+    /// @separation-pre: `Owns(slot(ptr)) * Owns(ArenaMeta)` where `ptr` is a candidate
+    /// user pointer and non-arena memory is frame `F`.
+    /// @separation-post: slot transitions to `Quarantined`/`Freed` variants with
+    /// generation advanced; frame `F` is preserved.
+    /// @separation-frame: `F` (memory outside arena slot/quarantine metadata).
+    /// @separation-alias: `quarantine_enter`.
+    pub fn free(&self, user_ptr: *mut u8) -> (FreeResult, Vec<QuarantineEntry>) {
+        let (result, _, drained) = self.free_with_size(user_ptr);
+        (result, drained)
+    }
+
+    /// [`Self::free`] that also returns the user size of the block it freed
+    /// (0 unless the result is `Freed`/`FreedWithCanaryCorruption`), read from
+    /// the slot this call already locked -- callers that need the size for
+    /// accounting otherwise paid a second locked index search to learn it.
+    pub fn free_with_size(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        self.free_impl(user_ptr, false)
+    }
+
+    /// [`Self::free_with_size`] whose drained entries are handed out in
+    /// batches of `RETIRE_BATCH` per shard (usually none): what the validation
+    /// pipeline retires through EBR, where each hand-out has a fixed cost.
+    pub fn free_batched(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        self.free_impl(user_ptr, true)
+    }
+
+    fn free_impl(
+        &self,
+        user_ptr: *mut u8,
+        batched: bool,
+    ) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        struct FreeContentionGuard;
+        impl FreeContentionGuard {
+            #[inline]
+            fn enter() -> Self {
+                crate::quarantine_controller::CONTENTION.free_begin();
+                Self
+            }
+        }
+        impl Drop for FreeContentionGuard {
+            #[inline]
+            fn drop(&mut self) {
+                crate::quarantine_controller::CONTENTION.free_end();
+            }
+        }
+        let _contention_guard = FreeContentionGuard::enter();
+
+        let user_base = user_ptr as usize;
+        let shard_idx = self.shard_for(user_base);
+
+        let (canary_ok, user_size, drained) = {
+            let mut shard = self.shards[shard_idx].lock();
+
+            let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
+                return (FreeResult::ForeignPointer, 0, Vec::new());
+            };
+
+            let slot = &mut shard.slots[slot_idx];
+
+            match slot.state {
+                SafetyState::Freed | SafetyState::Quarantined => {
+                    return (FreeResult::DoubleFree, 0, Vec::new());
+                }
+                SafetyState::Invalid => {
+                    return (FreeResult::InvalidPointer, 0, Vec::new());
+                }
+                _ => {}
+            }
+            let user_size = slot.user_size;
+
+            // Verify canary before freeing
+            let canary_ok = self.verify_canary_for_slot(slot);
+
+            // Move to quarantine. Mark state FIRST, then bump only THIS slot's
+            // home shard epoch in the TLS cache so that any thread which
+            // Acquires the new shard epoch is guaranteed to see the
+            // Quarantined state. Bumping a single shard instead of a global
+            // counter spares cached entries in unrelated shards from being
+            // invalidated by every free; the per-shard isolation invariant
+            // is pinned by
+            // `tls_cache::bump_of_unrelated_shard_does_not_invalidate_entry`.
+            slot.state = SafetyState::Quarantined;
+            slot.generation = self
+                .next_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            bump_shard_epoch(shard_idx);
+
+            let raw_base = slot.raw_base;
+            let offset = user_base - raw_base;
+            let total_size = offset + slot.user_size + TRAILING_REDZONE_SIZE;
+            let align = offset;
+
+            self.enqueue_quarantine(
+                &mut shard,
+                QuarantineEntry {
+                    user_base,
+                    raw_base,
+                    total_size,
+                    align,
+                },
+            );
+
+            // Drain quarantine if over limit (returns entries without deallocating)
+            let drained = if batched {
+                self.drain_quarantine_batched(&mut shard)
+            } else {
+                self.drain_quarantine(&mut shard)
+            };
+
+            (canary_ok, user_size, drained)
+        }; // shard lock is released here!
+
+        let metrics = crate::metrics::global_metrics();
+        if canary_ok {
+            crate::metrics::MembraneMetrics::inc(&metrics.canary_passes);
+            (FreeResult::Freed, user_size, drained)
+        } else {
+            crate::metrics::MembraneMetrics::inc(&metrics.canary_failures);
+            (FreeResult::FreedWithCanaryCorruption, user_size, drained)
+        }
+    }
+
+    /// Look up an allocation by user pointer address.
+    ///
+    /// @separation-pre: `Owns(ArenaIndex) * Readable(user_ptr)` with frame `F`.
+    /// @separation-post: returns immutable slot snapshot (including generation/state)
+    /// without mutating caller-visible memory; frame `F` is preserved.
+    /// @separation-frame: `F` (all non-index memory).
+    /// @separation-alias: `generation_check`.
+    #[must_use]
+    pub fn lookup(&self, user_ptr: usize) -> Option<ArenaSlot> {
+        // An allocation lives in the shard of its `user_base` page. A small one
+        // (raw extent <= SMALL_EXTENT) containing `user_ptr` has its
+        // `user_base` on `user_ptr`'s page or an adjacent one; a large one is
+        // in `large`. A miss (a pointer the arena does not own: stack,
+        // static, foreign heap) used to lock and range-search all 16 shards
+        // (bd-rc0923-epic-eeuy4f.9).
+        let page = 1usize << 12; // shard_for's page granule
+        let exact_shard_idx = self.shard_for(user_ptr);
+        if let Some(slot) = self.lookup_in_shard(exact_shard_idx, user_ptr) {
+            return Some(slot);
+        }
+        for neighbour in [user_ptr.wrapping_sub(page), user_ptr.wrapping_add(page)] {
+            let idx = self.shard_for(neighbour);
+            if idx != exact_shard_idx
+                && let Some(slot) = self.lookup_in_shard(idx, user_ptr)
+            {
+                return Some(slot);
+            }
+        }
+        // Large allocations: the nearest `user_base` at or below the query
+        // (body/canary) and the nearest above it (fingerprint header).
+        let candidates = {
+            let large = self.large.lock();
+            [
+                large.range(..=user_ptr).next_back().copied(),
+                large.range(user_ptr..).next().copied(),
+            ]
+        };
+        candidates
+            .into_iter()
+            .flatten()
+            .find_map(|base| self.lookup_in_shard(self.shard_for(base), user_ptr))
+    }
+
+    fn lookup_in_shard(&self, shard_idx: usize, user_ptr: usize) -> Option<ArenaSlot> {
+        let shard = self.shards[shard_idx].lock();
+
+        if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
+            let slot = &shard.slots[slot_idx];
+            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                return Some(*slot);
+            }
+        }
+
+        // Check exact match or inner pointer / trailing redzone (user_base <= user_ptr)
+        if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(..=user_ptr).next_back() {
+            let slot = &shard.slots[slot_idx];
+            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                let end = slot
+                    .user_base
+                    .saturating_add(slot.user_size)
+                    .saturating_add(TRAILING_REDZONE_SIZE);
+                if user_ptr >= slot.raw_base && user_ptr < end {
+                    return Some(*slot);
+                }
+            }
+        }
+
+        // Check fingerprint header (user_base > user_ptr)
+        if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(user_ptr..).next() {
+            let slot = &shard.slots[slot_idx];
+            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                let end = slot
+                    .user_base
+                    .saturating_add(slot.user_size)
+                    .saturating_add(TRAILING_REDZONE_SIZE);
+                if user_ptr >= slot.raw_base && user_ptr < end {
+                    return Some(*slot);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Look up and return remaining bytes from the given address.
+    ///
+    /// @separation-pre: `Owns(ArenaIndex) * Readable(addr)` with frame `F`.
+    /// @separation-post: yields bounds witness `(slot, remaining)` when `addr` is in-range;
+    /// frame `F` is preserved.
+    /// @separation-frame: `F` (memory outside arena metadata and queried slot).
+    /// @separation-alias: `check_bounds`.
+    #[must_use]
+    pub fn remaining_from(&self, addr: usize) -> Option<(ArenaSlot, usize)> {
+        let slot = self.lookup(addr)?;
+        let end = slot.user_base.saturating_add(slot.user_size);
+        if addr >= slot.user_base && addr < end {
+            Some((slot, end - addr))
+        } else {
+            None
+        }
+    }
+
+    /// Check if an address belongs to any known allocation.
+    #[must_use]
+    pub fn contains(&self, addr: usize) -> bool {
+        self.lookup(addr).is_some()
+    }
+
+    fn shard_for(&self, addr: usize) -> usize {
+        // Use upper bits of address for shard selection to reduce contention
+        (addr >> 12) % NUM_SHARDS
+    }
+
+    fn verify_canary_for_slot(&self, slot: &ArenaSlot) -> bool {
+        let fp =
+            AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation);
+        let expected_canary = fp.canary_for(slot.user_base);
+        let canary_addr = slot.user_base + slot.user_size;
+        // Read the 8-byte trailing canary at user_base + user_size.
+        let mut actual = [0u8; CANARY_SIZE];
+        // SAFETY: canary_addr points to valid memory within the allocation's total size.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                canary_addr as *const u8,
+                actual.as_mut_ptr(),
+                CANARY_SIZE,
+            );
+        }
+        expected_canary.verify(&actual)
+    }
+
+    /// Verify both the 24-byte `AllocationFingerprint` header and the 8-byte
+    /// trailing `Canary` of a live base allocation while holding its shard lock.
+    ///
+    /// Used by in-place `realloc(ptr, smaller_size)` so an overflowed buffer
+    /// cannot evade trailing-canary retirement by shrinking in place.
+    #[must_use]
+    pub fn verify_live_canary(&self, user_base: usize) -> bool {
+        let shard_idx = self.shard_for(user_base);
+        let shard = self.shards[shard_idx].lock();
+        let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
+            return false;
+        };
+        let Some(slot) = shard.slots.get(slot_idx) else {
+            return false;
+        };
+        if slot.user_base != user_base || !slot.state.is_live() {
+            return false;
+        }
+        let Some(header_addr) = user_base.checked_sub(FINGERPRINT_SIZE) else {
+            return false;
+        };
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        // SAFETY: `slot` is live in `shard` (under lock) with prepended 24B fingerprint.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header_addr as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let header = AllocationFingerprint::from_bytes(&header_bytes);
+        if header.generation != slot.generation
+            || header.size != slot.user_size as u64
+            || !header.verify(user_base)
+        {
+            return false;
+        }
+        self.verify_canary_for_slot(slot)
+    }
+
+    /// Resolve an interior or base pointer `addr` to its owning arena slot and,
+    /// under the **same** single shard-lock acquisition, verify its 24-byte
+    /// `AllocationFingerprint` header and 8-byte trailing `Canary` if live.
+    ///
+    /// Returns:
+    /// - `None` if `addr` does not belong to any live/quarantined arena allocation;
+    /// - `Some((user_base, 0, CachedIntegrityVerdict::EpochStale))` if `addr` points
+    ///   into a quarantined/freed slot or out-of-bounds redzone;
+    /// - `Some((user_base, remaining, verdict))` for a live slot (`Intact`,
+    ///   `HeaderCorrupted`, or `CanaryCorrupted`), eliminating double-lock TOCTOU
+    ///   between `remaining_from` and canary verification.
+    #[must_use]
+    pub fn verify_live_integrity_from(
+        &self,
+        addr: usize,
+    ) -> Option<(usize, usize, CachedIntegrityVerdict)> {
+        let page = 1usize << 12;
+        let exact_shard_idx = self.shard_for(addr);
+        if let Some(res) = self.verify_slot_integrity_in_shard(exact_shard_idx, addr) {
+            return Some(res);
+        }
+        for neighbour in [addr.wrapping_sub(page), addr.wrapping_add(page)] {
+            let idx = self.shard_for(neighbour);
+            if idx != exact_shard_idx
+                && let Some(res) = self.verify_slot_integrity_in_shard(idx, addr)
+            {
+                return Some(res);
+            }
+        }
+        let candidates = {
+            let large = self.large.lock();
+            [
+                large.range(..=addr).next_back().copied(),
+                large.range(addr..).next().copied(),
+            ]
+        };
+        candidates
+            .into_iter()
+            .flatten()
+            .find_map(|base| self.verify_slot_integrity_in_shard(self.shard_for(base), addr))
+    }
+
+    fn verify_slot_integrity_in_shard(
+        &self,
+        shard_idx: usize,
+        user_ptr: usize,
+    ) -> Option<(usize, usize, CachedIntegrityVerdict)> {
+        let shard = self.shards[shard_idx].lock();
+
+        let matched_slot = if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
+            let slot = &shard.slots[slot_idx];
+            (slot.state.is_live() || slot.state == SafetyState::Quarantined).then_some(slot)
+        } else {
+            None
+        }
+        .or_else(|| {
+            if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(..=user_ptr).next_back() {
+                let slot = &shard.slots[slot_idx];
+                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                    let end = slot
+                        .user_base
+                        .saturating_add(slot.user_size)
+                        .saturating_add(TRAILING_REDZONE_SIZE);
+                    if user_ptr >= slot.raw_base && user_ptr < end {
+                        return Some(slot);
+                    }
+                }
+            }
+            if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(user_ptr..).next() {
+                let slot = &shard.slots[slot_idx];
+                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                    let end = slot
+                        .user_base
+                        .saturating_add(slot.user_size)
+                        .saturating_add(TRAILING_REDZONE_SIZE);
+                    if user_ptr >= slot.raw_base && user_ptr < end {
+                        return Some(slot);
+                    }
+                }
+            }
+            None
+        })?;
+
+        let user_base = matched_slot.user_base;
+        let user_size = matched_slot.user_size;
+        let generation = matched_slot.generation;
+        if !matched_slot.state.is_live() {
+            return Some((user_base, 0, CachedIntegrityVerdict::EpochStale));
+        }
+        let user_end = user_base.saturating_add(user_size);
+        let remaining = if user_ptr >= user_base && user_ptr <= user_end {
+            user_end - user_ptr
+        } else {
+            return Some((user_base, 0, CachedIntegrityVerdict::EpochStale));
+        };
+
+        let Some(header_addr) = user_base.checked_sub(FINGERPRINT_SIZE) else {
+            return Some((user_base, 0, CachedIntegrityVerdict::HeaderCorrupted));
+        };
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        let mut canary_bytes = [0u8; CANARY_SIZE];
+        // SAFETY: `matched_slot` is verified `is_live()` while `shard` lock is held, so
+        // `[user_base - FINGERPRINT_SIZE .. user_base]` and `[user_base + user_size .. + CANARY_SIZE]`
+        // cannot be concurrently retired or deallocated.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header_addr as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+            std::ptr::copy_nonoverlapping(
+                user_end as *const u8,
+                canary_bytes.as_mut_ptr(),
+                CANARY_SIZE,
+            );
+        }
+        drop(shard);
+
+        let header = AllocationFingerprint::from_bytes(&header_bytes);
+        if header.generation != generation
+            || header.size != user_size as u64
+            || !header.verify(user_base)
+        {
+            return Some((
+                user_base,
+                remaining,
+                CachedIntegrityVerdict::HeaderCorrupted,
+            ));
+        }
+        let expected_canary = crate::fingerprint::Canary::derive(
+            user_base,
+            user_size as u64,
+            generation,
+            header.hash,
+        );
+        if !expected_canary.verify(&canary_bytes) {
+            return Some((
+                user_base,
+                remaining,
+                CachedIntegrityVerdict::CanaryCorrupted,
+            ));
+        }
+        Some((user_base, remaining, CachedIntegrityVerdict::Intact))
+    }
+
+    /// Re-verify both the 24-byte `AllocationFingerprint` header and the 8-byte
+    /// trailing `Canary` of a warm `TLS_CACHE` entry while holding the owning
+    /// shard lock so concurrent `free()` + quarantine drain cannot reclaim the
+    /// backing block mid-read.
+    ///
+    /// Indexes `shard.slots[slot_idx]` in `O(1)` rather than traversing the
+    /// shard's `BTreeMap`, keeping warm-TLS integrity checks under ~10 ns even
+    /// when shards hold tens of thousands of live allocations (e.g. GNU `sort`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn verify_cached_slot_integrity(
+        &self,
+        user_base: usize,
+        user_size: usize,
+        generation: u64,
+        slot_idx: u32,
+        shard_idx: u8,
+        shard_epoch: u64,
+        expected_hash: u64,
+        expected_canary: u64,
+    ) -> CachedIntegrityVerdict {
+        let idx = (shard_idx as usize) & (NUM_SHARDS - 1);
+        let shard = self.shards[idx].lock();
+        if shard_epoch != crate::tls_cache::current_shard_epoch(idx) {
+            return CachedIntegrityVerdict::EpochStale;
+        }
+        let Some(slot) = shard.slots.get(slot_idx as usize) else {
+            return CachedIntegrityVerdict::EpochStale;
+        };
+        if slot.user_base != user_base
+            || !slot.state.is_live()
+            || slot.generation != generation
+            || slot.user_size != user_size
+        {
+            return CachedIntegrityVerdict::EpochStale;
+        }
+
+        // SAFETY: Under `shard` lock with matching `shard_epoch`, `user_base`,
+        // `generation`, and `slot.state.is_live()`, `[user_base - FINGERPRINT_SIZE .. user_base]`
+        // holds the live 24-byte LE header `(hash, generation, size)` and
+        // `[user_base + user_size .. + CANARY_SIZE]` holds the live 8-byte LE canary.
+        let (actual_hash, actual_gen, actual_size, actual_canary) = unsafe {
+            let hdr = (user_base - FINGERPRINT_SIZE) as *const u64;
+            let tail = (user_base + user_size) as *const u64;
+            (
+                u64::from_le(hdr.read_unaligned()),
+                u64::from_le(hdr.add(1).read_unaligned()),
+                u64::from_le(hdr.add(2).read_unaligned()),
+                u64::from_le(tail.read_unaligned()),
+            )
+        };
+        drop(shard);
+
+        if actual_hash != expected_hash
+            || actual_gen != generation
+            || actual_size != user_size as u64
+        {
+            return CachedIntegrityVerdict::HeaderCorrupted;
+        }
+        if actual_canary != expected_canary {
+            return CachedIntegrityVerdict::CanaryCorrupted;
+        }
+
+        CachedIntegrityVerdict::Intact
+    }
+
+    fn drain_quarantine(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
+        let mut drained = Vec::new();
+        self.drain_quarantine_into(shard, &mut drained);
+        drained
+    }
+
+    /// Like `drain_quarantine`, but parks drained entries in the shard and
+    /// hands them out only in batches of `RETIRE_BATCH`. Once the quarantine
+    /// is full every free drains an entry, and each hand-out costs the caller a
+    /// boxed EBR retirement and an epoch advance (a lock and a scan of every
+    /// thread slot) -- per free, that was a large part of a hardened
+    /// malloc+free. Parked entries are already out of the index and quarantine
+    /// (exactly as returned ones); only their blocks' release is delayed.
+    fn drain_quarantine_batched(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
+        let mut pending = std::mem::take(&mut shard.retire_pending);
+        let before = pending.len();
+        self.drain_quarantine_into(shard, &mut pending);
+        shard.retire_pending_bytes += pending[before..]
+            .iter()
+            .map(|entry| entry.total_size)
+            .sum::<usize>();
+        if pending.len() >= RETIRE_BATCH || shard.retire_pending_bytes >= RETIRE_BATCH_BYTES {
+            shard.retire_pending = Vec::with_capacity(RETIRE_BATCH);
+            shard.retire_pending_bytes = 0;
+            pending
+        } else {
+            shard.retire_pending = pending;
+            Vec::new()
+        }
+    }
+
+    /// Append a freed block to `shard`'s quarantine, keeping the shard's and
+    /// the arena-wide totals together (the drain bound reads both).
+    fn enqueue_quarantine(&self, shard: &mut ArenaShard, entry: QuarantineEntry) {
+        shard.quarantine_bytes += entry.total_size;
+        self.quarantine_total_bytes
+            .fetch_add(entry.total_size, std::sync::atomic::Ordering::Relaxed);
+        self.quarantine_total_entries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        shard.quarantine.push_back(entry);
+    }
+
+    fn drain_quarantine_into(&self, shard: &mut ArenaShard, drained: &mut Vec<QuarantineEntry>) {
+        // The 64 MB byte budget bounds the whole arena: checked per shard only,
+        // it let a hardened process hold 16x (one budget per shard) the
+        // documented 64 MB of freed memory -- a realloc- or printf-heavy loop
+        // grew to ~1.1 GB resident. Each shard's entry count is bounded by
+        // `current_depth()`, and the arena-wide entry count is bounded by
+        // `current_depth() * NUM_SHARDS` while the 64 MB global byte budget
+        // caps total retained memory.
+        let depth = crate::quarantine_controller::current_depth();
+        let total_depth = depth.saturating_mul(NUM_SHARDS);
+        while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
+            || shard.quarantine.len() > depth
+            || self
+                .quarantine_total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > QUARANTINE_MAX_BYTES
+            || self
+                .quarantine_total_entries
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > total_depth
+        {
+            let Some(entry) = shard.quarantine.pop_front() else {
+                break;
+            };
+
+            // Mark slot as Freed (no longer quarantined)
+
+            if let Some(&slot_idx) = shard.addr_to_slot.get(&entry.user_base) {
+                shard.slots[slot_idx].state = SafetyState::Freed;
+
+                shard.addr_to_slot.remove(&entry.user_base);
+                if entry.total_size > SMALL_EXTENT {
+                    // Lock order: shard, then `large` (as in `atfork_prepare`).
+                    self.large.lock().remove(&entry.user_base);
+                }
+
+                shard.free_list.push(slot_idx);
+            }
+
+            shard.quarantine_bytes = shard.quarantine_bytes.saturating_sub(entry.total_size);
+            self.quarantine_total_bytes
+                .fetch_sub(entry.total_size, std::sync::atomic::Ordering::Relaxed);
+            self.quarantine_total_entries
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+
+            drained.push(entry);
+        }
+    }
+
+    /// Immediate deallocation of drained entries.
+    ///
+    /// SAFETY: Must only be called if `retire_quarantined` is not managing
+    /// this entry's grace period, and each entry must be reclaimed exactly once.
+    pub(crate) unsafe fn deallocate_drained(drained: &[QuarantineEntry]) {
+        for entry in drained {
+            // SAFETY: the caller guarantees each drained entry came from this
+            // arena and has not already been handed to deferred reclamation.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
+        }
+    }
+}
+
+impl Default for AllocationArena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result of re-verifying a warm `TLS_CACHE` or live arena slot's 24B header and 8B trailing canary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CachedIntegrityVerdict {
+    /// Header fingerprint and trailing canary match cached tags.
+    Intact,
+    /// Shard epoch or slot liveness changed concurrently; treat as cache miss.
+    EpochStale,
+    /// 24-byte `AllocationFingerprint` header at `user_base - 24` was corrupted.
+    HeaderCorrupted,
+    /// 8-byte trailing `Canary` at `user_base + user_size` was corrupted.
+    CanaryCorrupted,
+}
+
+/// Result of a free operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreeResult {
+    /// Successfully freed and quarantined.
+    Freed,
+    /// Freed but trailing canary was corrupted (buffer overflow detected).
+    FreedWithCanaryCorruption,
+    /// Pointer was already freed (double free).
+    DoubleFree,
+    /// Pointer is not known to the arena (foreign pointer).
+    ForeignPointer,
+    /// Pointer is in an invalid state.
+    InvalidPointer,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn allocate_and_free_cycle() {
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(256).expect("allocation should succeed");
+        assert!(!ptr.ptr.is_null());
+
+        // Write to the allocation
+        // SAFETY: ptr is valid for 256 bytes from allocate().
+        unsafe {
+            std::ptr::write_bytes(ptr.ptr, 0xAB, 256);
+        }
+
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn double_free_detected() {
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(64).expect("allocation should succeed");
+
+        let (first, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(first, FreeResult::Freed);
+
+        let (second, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(second, FreeResult::DoubleFree);
+    }
+
+    #[test]
+    fn foreign_pointer_detected() {
+        let arena = AllocationArena::new();
+        let local = 42u64;
+        let (result, _) = arena.free(std::ptr::addr_of!(local) as *mut u8);
+        assert_eq!(result, FreeResult::ForeignPointer);
+    }
+
+    #[test]
+    fn lookup_finds_allocation() {
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(128).expect("allocation should succeed");
+        let addr = ptr.ptr as usize;
+
+        let slot = arena.lookup(addr).expect("should find allocation");
+        assert_eq!(slot.user_base, addr);
+        assert_eq!(slot.user_size, 128);
+        assert_eq!(slot.state, SafetyState::Valid);
+    }
+
+    #[test]
+    fn lookup_into_middle_of_allocation() {
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(256).expect("allocation should succeed");
+        let addr = ptr.ptr as usize;
+
+        let (slot, remaining) = arena
+            .remaining_from(addr + 64)
+            .expect("should find containing allocation");
+        assert_eq!(slot.user_base, addr);
+        assert_eq!(remaining, 192);
+    }
+
+    #[test]
+    fn canary_corruption_detected() {
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(32).expect("allocation should succeed");
+
+        // Corrupt the canary by writing past the allocation
+        // SAFETY: We intentionally write past bounds to test canary detection.
+        unsafe {
+            let canary_ptr = ptr.ptr.add(32);
+            std::ptr::write_bytes(canary_ptr, 0xFF, CANARY_SIZE);
+        }
+
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+    }
+
+    #[test]
+    fn generation_increases() {
+        let arena = AllocationArena::new();
+        let p1 = arena.allocate(64).expect("alloc 1");
+        let p2 = arena.allocate(64).expect("alloc 2");
+
+        let s1 = arena.lookup(p1.ptr as usize).unwrap();
+        let s2 = arena.lookup(p2.ptr as usize).unwrap();
+        assert!(s2.generation > s1.generation);
+
+        let (_, drained) = arena.free(p1.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        let (_, drained) = arena.free(p2.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+    }
+
+    /// The documented 64 MB is the whole quarantine, not each shard's: 160 MB
+    /// of 1 MiB frees must leave at most (and close to) 64 MB held.
+    #[test]
+    fn quarantine_budget_is_global_across_shards() {
+        let arena = AllocationArena::new();
+        for _ in 0..160 {
+            let ptr = arena.allocate(1 << 20).expect("allocation should succeed");
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(result, FreeResult::Freed);
+        }
+        let held: usize = arena.shards.iter().map(|s| s.lock().quarantine_bytes).sum();
+        assert_eq!(
+            held,
+            arena
+                .quarantine_total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "the arena total is the sum of the shards"
+        );
+        assert!(
+            held <= QUARANTINE_MAX_BYTES,
+            "quarantine holds {held} bytes, over the {QUARANTINE_MAX_BYTES}-byte budget"
+        );
+        // Still a real window: within one block of the whole budget.
+        assert!(
+            held > QUARANTINE_MAX_BYTES - (2 << 20),
+            "held only {held} bytes"
+        );
+    }
+
+    #[test]
+    fn free_promotes_slot_to_quarantined_with_new_generation() {
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(96).expect("allocation should succeed");
+
+        let before = arena.lookup(ptr.ptr as usize).expect("live slot");
+        assert_eq!(before.state, SafetyState::Valid);
+
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+        assert!(drained.is_empty(), "small free should not force drain");
+
+        let after = arena
+            .lookup(ptr.ptr as usize)
+            .expect("freed slot should remain quarantined and discoverable");
+        assert_eq!(after.state, SafetyState::Quarantined);
+        assert!(
+            after.generation > before.generation,
+            "free should bump generation to invalidate stale pointers"
+        );
+    }
+
+    #[test]
+    fn quarantine_drain_evicts_oldest_when_entry_count_exceeded() {
+        use std::alloc::{Layout, alloc, dealloc};
+
+        let arena = AllocationArena::new();
+        let align = 16_usize;
+        let total_size = align + CANARY_SIZE;
+
+        fn alloc_block(total_size: usize, align: usize) -> usize {
+            let layout = Layout::from_size_align(total_size, align).expect("valid layout");
+            // SAFETY: layout is valid; allocation failure is checked.
+            unsafe {
+                let ptr = alloc(layout);
+                assert!(!ptr.is_null(), "alloc failed for total_size={total_size}");
+                ptr as usize
+            }
+        }
+
+        let mut shard = arena.shards[0].lock();
+
+        let max_entries = crate::quarantine_controller::current_depth();
+        let mut oldest_user = 0usize;
+        for idx in 0..=max_entries {
+            let raw = alloc_block(total_size, align);
+            let user = raw + align;
+            if idx == 0 {
+                oldest_user = user;
+            }
+            arena.enqueue_quarantine(
+                &mut shard,
+                QuarantineEntry {
+                    user_base: user,
+                    raw_base: raw,
+                    total_size,
+                    align,
+                },
+            );
+        }
+
+        assert_eq!(
+            shard.quarantine.len(),
+            max_entries + 1,
+            "test setup must exceed entry-count threshold by exactly one"
+        );
+        assert!(
+            shard.quarantine_bytes < QUARANTINE_MAX_BYTES,
+            "test setup should trigger count-based draining, not byte-based draining"
+        );
+
+        let drained = arena.drain_quarantine(&mut shard);
+
+        assert_eq!(drained.len(), 1, "expected exactly one entry drained");
+        assert_eq!(
+            drained[0].user_base, oldest_user,
+            "expected oldest entry to be drained first when count threshold is exceeded"
+        );
+        assert_eq!(
+            shard.quarantine.len(),
+            max_entries,
+            "drain should stop once count is back at limit"
+        );
+        assert_eq!(
+            shard.quarantine_bytes,
+            max_entries * total_size,
+            "exactly one entry worth of bytes should be removed"
+        );
+
+        // Cleanup: release remaining allocated blocks to avoid test-retained memory.
+        while let Some(entry) = shard.quarantine.pop_front() {
+            shard.quarantine_bytes = shard
+                .quarantine_bytes
+                .checked_sub(entry.total_size)
+                .expect("quarantine bytes underflow");
+            let layout =
+                Layout::from_size_align(entry.total_size, entry.align).expect("valid layout");
+            // SAFETY: entry.raw_base was allocated in alloc_block with the same layout.
+            unsafe {
+                dealloc(entry.raw_base as *mut u8, layout);
+            }
+        }
+        assert_eq!(shard.quarantine_bytes, 0, "cleanup must fully drain bytes");
+    }
+
+    // Regression test for retained quarantine metadata, not a formal proof
+    // or a guarantee about address-only validation after memory reuse.
+    // The historical name is selected by existing completion-contract gates;
+    // retaining that selector does not endorse its probability-one claim.
+
+    #[test]
+    fn proof_uaf_detection_probability_one() {
+        let arena = AllocationArena::new();
+
+        // Allocate and record the generation
+        let ptr = arena.allocate(128).expect("allocation should succeed");
+        let addr = ptr.ptr as usize;
+        let live_slot = arena.lookup(addr).expect("should find live allocation");
+        let live_gen = live_slot.generation;
+        assert_eq!(live_slot.state, SafetyState::Valid);
+
+        // Free: slot transitions to Quarantined with bumped generation
+        let (result, drained) = arena.free(ptr.ptr);
+        // SAFETY: these entries were drained by this free and have not been
+        // handed to deferred reclamation or deallocated elsewhere.
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+
+        let freed_slot = arena.lookup(addr).expect("should find quarantined slot");
+        assert_eq!(
+            freed_slot.state,
+            SafetyState::Quarantined,
+            "Freed slot must be Quarantined"
+        );
+        assert!(
+            freed_slot.generation > live_gen,
+            "Free must bump generation: live={live_gen}, freed={}",
+            freed_slot.generation
+        );
+
+        // Only this test retained live_gen; an ordinary C pointer does not.
+        assert_ne!(
+            live_gen, freed_slot.generation,
+            "The recorded allocation generation must differ after free"
+        );
+    }
+
+    #[test]
+    fn same_address_reissue_model_lookup_returns_current_generation() {
+        let arena = AllocationArena::new();
+        let allocation = arena.allocate(128).expect("allocation");
+        let stale_addr = allocation.ptr as usize;
+        let old_generation = arena.lookup(stale_addr).unwrap().generation;
+        let (result, drained) = arena.free(allocation.ptr);
+        assert_eq!(result, FreeResult::Freed);
+        assert!(drained.is_empty(), "one small allocation stays quarantined");
+        assert_eq!(
+            arena.lookup(stale_addr).unwrap().state,
+            SafetyState::Quarantined
+        );
+
+        // Deterministic arena-state model: reissue the still-owned backing
+        // block without asking the host allocator to choose the same address.
+        // This is not a deployed allocator/validator test or a stale dereference.
+        // Supply the next generation as model input. No allocation or free
+        // follows reissue, so this model need not change the global counter.
+        let generation = arena
+            .lookup(stale_addr)
+            .unwrap()
+            .generation
+            .checked_add(1)
+            .unwrap();
+        {
+            let mut shard = arena.shards[arena.shard_for(stale_addr)].lock();
+            let entry = shard
+                .quarantine
+                .pop_front()
+                .expect("retained backing block");
+            assert_eq!(entry.user_base, stale_addr);
+            shard.quarantine_bytes -= entry.total_size;
+            let slot_idx = shard.addr_to_slot[&stale_addr];
+            shard.slots[slot_idx].generation = generation;
+            shard.slots[slot_idx].state = SafetyState::Valid;
+            // Ownership transfers from the quarantine entry back to the live
+            // slot; ArenaShard::drop will reclaim this backing block once.
+        }
+        let fp = AllocationFingerprint::compute(stale_addr, 128, generation);
+        // SAFETY: the original allocation remains mapped and exclusively owned
+        // by this test. Both metadata regions are within its original layout.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                fp.to_bytes().as_ptr(),
+                (stale_addr - FINGERPRINT_SIZE) as *mut u8,
+                FINGERPRINT_SIZE,
+            );
+            std::ptr::copy_nonoverlapping(
+                fp.canary_for(stale_addr).to_bytes().as_ptr(),
+                (stale_addr + 128) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        let current_addr = allocation.ptr as usize;
+        let current = arena.lookup(current_addr).unwrap();
+        let stale_lookup = arena.lookup(stale_addr).unwrap();
+        assert_eq!(current_addr, stale_addr);
+        assert_eq!(current.state, SafetyState::Valid);
+        assert!(arena.verify_canary_for_slot(&current));
+        assert_ne!(old_generation, current.generation);
+        assert_eq!(stale_lookup.generation, current.generation);
+        assert_eq!(stale_lookup.state, SafetyState::Valid);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FORMAL PROOF: Generation Monotonicity
+    //
+    // Theorem: The global generation counter is strictly
+    // monotonically increasing across allocations and frees.
+    // No two allocations or free operations share a generation.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn proof_generation_strict_monotonicity() {
+        let arena = AllocationArena::new();
+        let mut prev_gen = 0u64;
+
+        for _ in 0..50 {
+            let ptr = arena.allocate(64).expect("alloc");
+            let slot = arena.lookup(ptr.ptr as usize).expect("lookup");
+            assert!(
+                slot.generation > prev_gen,
+                "Generation not strictly increasing: {} <= {}",
+                slot.generation,
+                prev_gen
+            );
+            prev_gen = slot.generation;
+
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(result, FreeResult::Freed);
+
+            let freed = arena.lookup(ptr.ptr as usize).expect("freed lookup");
+            assert!(
+                freed.generation > prev_gen,
+                "Free generation not strictly increasing: {} <= {}",
+                freed.generation,
+                prev_gen
+            );
+            prev_gen = freed.generation;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FORMAL PROOF: Double-Free Always Detected
+    //
+    // Theorem: Calling free() twice on the same pointer always
+    // returns DoubleFree on the second call. This holds regardless
+    // of other allocations or frees in between.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn proof_double_free_always_detected() {
+        let arena = AllocationArena::new();
+
+        for _ in 0..10 {
+            let ptr = arena.allocate(256).expect("alloc");
+
+            let (first, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(first, FreeResult::Freed);
+
+            // Intervening allocation to test isolation
+            let _ = arena.allocate(128);
+
+            let (second, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(
+                second,
+                FreeResult::DoubleFree,
+                "Second free must always be detected as DoubleFree"
+            );
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FORMAL PROOF: Quarantine FIFO Ordering
+    //
+    // Theorem: The quarantine queue drains in FIFO order — the
+    // oldest freed allocation is recycled first. This maximizes
+    // the temporal distance between free and reuse, strengthening
+    // UAF detection.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn proof_quarantine_fifo_ordering() {
+        let arena = AllocationArena::new();
+
+        // Allocate multiple blocks in sequence
+        let mut ptrs = Vec::new();
+        for _ in 0..5 {
+            let ptr = arena.allocate(64).expect("alloc");
+            ptrs.push(ptr);
+        }
+
+        // Free in order
+        let mut free_order = Vec::new();
+        for &ptr in &ptrs {
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(result, FreeResult::Freed);
+            free_order.push(ptr.ptr as usize);
+        }
+
+        // Verify quarantine is populated in the same order
+        // by checking that the first freed is the first found in quarantine
+        let shard_idx = arena.shard_for(free_order[0]);
+        let shard = arena.shards[shard_idx].lock();
+
+        // For entries in this shard's quarantine, verify FIFO
+        let shard_entries: Vec<usize> = shard.quarantine.iter().map(|e| e.user_base).collect();
+        let our_entries: Vec<usize> = free_order
+            .iter()
+            .filter(|a| shard_entries.contains(a))
+            .copied()
+            .collect();
+
+        // The order in the quarantine should match the free order
+        let queue_order: Vec<usize> = shard_entries
+            .iter()
+            .filter(|a| our_entries.contains(a))
+            .copied()
+            .collect();
+        assert_eq!(
+            our_entries, queue_order,
+            "Quarantine should be FIFO: free order vs queue order"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FORMAL PROOF: Foreign Pointer Rejection
+    //
+    // Theorem: Pointers not allocated through the arena are
+    // always rejected with ForeignPointer on free(). The arena
+    // never accidentally claims ownership of external memory.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn proof_foreign_pointers_always_rejected() {
+        let arena = AllocationArena::new();
+
+        // Various foreign pointer patterns
+        let stack_var: u64 = 42;
+        let foreign_ptrs: &[*mut u8] = &[
+            std::ptr::addr_of!(stack_var) as *mut u8,
+            std::ptr::without_provenance_mut::<u8>(0x1),
+            std::ptr::without_provenance_mut::<u8>(0xDEAD_BEEF),
+            std::ptr::null_mut(),
+        ];
+
+        // Also allocate a real pointer and try adjacent addresses
+        let real = arena.allocate(256).expect("alloc");
+        let real_addr = real.ptr as usize;
+
+        for &ptr in foreign_ptrs {
+            if ptr.is_null() {
+                continue; // null might special-case
+            }
+            let (result, drained) = arena.free(ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(
+                result,
+                FreeResult::ForeignPointer,
+                "Foreign pointer {ptr:?} should be rejected"
+            );
+        }
+
+        // Address well outside any allocation
+        let far_away = (real_addr + 1_000_000) as *mut u8;
+        let (result, drained) = arena.free(far_away);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::ForeignPointer);
+
+        // Cleanup
+        let (_, drained) = arena.free(real.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+    }
+
+    #[test]
+    fn quarantine_drain_evicts_oldest_until_within_budget() {
+        use std::alloc::{Layout, alloc, dealloc};
+
+        let arena = AllocationArena::new();
+
+        // Construct quarantine entries directly inside one shard to avoid dependence on
+        // allocator address distribution across shards.
+        let align = 16_usize;
+        let total_size = (QUARANTINE_MAX_BYTES / 2) + 4096;
+        let user_size = total_size
+            .checked_sub(align + CANARY_SIZE)
+            .expect("sizes underflow");
+
+        fn alloc_block(total_size: usize, align: usize) -> usize {
+            let layout = Layout::from_size_align(total_size, align).expect("valid layout");
+            // SAFETY: layout is valid; we check for allocation failure.
+            unsafe {
+                let ptr = alloc(layout);
+                assert!(!ptr.is_null(), "alloc failed for total_size={total_size}");
+                ptr as usize
+            }
+        }
+
+        let mut shard = arena.shards[0].lock();
+
+        let raw1 = alloc_block(total_size, align);
+        let user1 = raw1 + align;
+        let slot1_idx = shard.slots.len();
+        let slot1 = ArenaSlot {
+            raw_base: raw1,
+            user_base: user1,
+            user_size,
+            generation: 1,
+            slot_idx: slot1_idx as u32,
+            state: SafetyState::Quarantined,
+        };
+        shard.slots.push(slot1);
+        shard.addr_to_slot.insert(user1, slot1_idx);
+        arena.enqueue_quarantine(
+            &mut shard,
+            QuarantineEntry {
+                user_base: user1,
+                raw_base: raw1,
+                total_size,
+                align,
+            },
+        );
+
+        let raw2 = alloc_block(total_size, align);
+        let user2 = raw2 + align;
+        let slot2_idx = shard.slots.len();
+        let slot2 = ArenaSlot {
+            raw_base: raw2,
+            user_base: user2,
+            user_size,
+            generation: 2,
+            slot_idx: slot2_idx as u32,
+            state: SafetyState::Quarantined,
+        };
+        shard.slots.push(slot2);
+        shard.addr_to_slot.insert(user2, slot2_idx);
+        arena.enqueue_quarantine(
+            &mut shard,
+            QuarantineEntry {
+                user_base: user2,
+                raw_base: raw2,
+                total_size,
+                align,
+            },
+        );
+
+        assert!(
+            shard.quarantine_bytes > QUARANTINE_MAX_BYTES,
+            "test setup must exceed drain threshold"
+        );
+
+        let drained = arena.drain_quarantine(&mut shard);
+
+        assert_eq!(drained.len(), 1, "expected exactly one entry drained");
+        assert_eq!(
+            drained[0].user_base, user1,
+            "expected oldest quarantine entry to be drained first"
+        );
+        assert!(
+            shard.quarantine_bytes <= QUARANTINE_MAX_BYTES,
+            "expected quarantine bytes within budget after drain"
+        );
+        assert!(
+            !shard.addr_to_slot.contains_key(&user1),
+            "expected drained entry to be removed from addr_to_slot"
+        );
+        assert_eq!(
+            shard.slots[slot1_idx].state,
+            SafetyState::Freed,
+            "expected drained slot state to become Freed"
+        );
+        assert_eq!(
+            shard.slots[slot2_idx].state,
+            SafetyState::Quarantined,
+            "expected most-recent slot to remain quarantined"
+        );
+        assert!(
+            shard.free_list.contains(&slot1_idx),
+            "expected drained slot index to be recycled in free_list"
+        );
+
+        // Cleanup: drain_quarantine intentionally left one entry quarantined; free it here so this
+        // unit test doesn't retain ~32MB+ of memory across the test binary lifetime.
+        let remaining = shard.quarantine.pop_front().expect("remaining entry");
+        shard.quarantine_bytes = shard
+            .quarantine_bytes
+            .checked_sub(remaining.total_size)
+            .expect("quarantine bytes underflow");
+        if let Some(&slot_idx) = shard.addr_to_slot.get(&remaining.user_base) {
+            shard.slots[slot_idx].state = SafetyState::Freed;
+            shard.addr_to_slot.remove(&remaining.user_base);
+            shard.free_list.push(slot_idx);
+        }
+        let layout =
+            Layout::from_size_align(remaining.total_size, remaining.align).expect("valid layout");
+        // SAFETY: remaining.raw_base was allocated by alloc_block with the same layout.
+        unsafe {
+            dealloc(remaining.raw_base as *mut u8, layout);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Arena free -> TLS cache epoch invalidation
+    //
+    // Verifies that freeing an allocation in the arena correctly
+    // bumps the TLS cache epoch, causing stale cache entries to miss.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn arena_free_bumps_tls_cache_epoch() {
+        use crate::tls_cache::{
+            CachedValidation, TlsValidationCache, current_shard_epoch,
+            lock_tls_cache_epoch_for_tests, snapshot_shard_epochs, tls_cache_shard_for,
+        };
+
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(256).expect("alloc");
+        let addr = ptr.ptr as usize;
+        let shard = tls_cache_shard_for(addr);
+
+        // Insert a cached validation for this pointer
+        let mut cache = TlsValidationCache::new();
+        let cached = CachedValidation {
+            user_base: addr,
+            user_size: 256,
+            generation: 1,
+            state: SafetyState::Valid,
+        };
+
+        let shard_epoch_before;
+        {
+            let _guard = lock_tls_cache_epoch_for_tests();
+            shard_epoch_before = current_shard_epoch(shard);
+            cache.insert(addr, cached, &snapshot_shard_epochs());
+            assert!(
+                cache.lookup(addr).is_some(),
+                "cache should hit before arena free"
+            );
+        }
+
+        // Free the allocation; this bumps the freed slot's home shard epoch.
+        let (result, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+
+        let shard_epoch_after = current_shard_epoch(shard);
+        assert!(
+            shard_epoch_after > shard_epoch_before,
+            "arena free must bump the freed slot's home shard epoch: \
+             shard={shard}, before={shard_epoch_before}, after={shard_epoch_after}"
+        );
+
+        // Cached entry should now miss due to shard-epoch mismatch
+        assert!(
+            cache.lookup(addr).is_none(),
+            "cache should miss after arena free bumped shard epoch"
+        );
+    }
+
+    #[test]
+    fn tls_cache_reinsert_after_arena_free_uses_new_epoch() {
+        use crate::tls_cache::{
+            CachedValidation, TlsValidationCache, lock_tls_cache_epoch_for_tests,
+            snapshot_shard_epochs,
+        };
+
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(64).expect("alloc");
+        let addr = ptr.ptr as usize;
+
+        let mut cache = TlsValidationCache::new();
+
+        // Insert at current shard epoch.
+        {
+            let _guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(
+                addr,
+                CachedValidation {
+                    user_base: addr,
+                    user_size: 64,
+                    generation: 1,
+                    state: SafetyState::Valid,
+                },
+                &snapshot_shard_epochs(),
+            );
+        }
+
+        // Free bumps the relevant shard epoch.
+        let (_, drained) = arena.free(ptr.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+
+        // Re-insert with the new shard-epoch snapshot (simulating
+        // re-validation after free).
+        {
+            let _guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(
+                addr,
+                CachedValidation {
+                    user_base: addr,
+                    user_size: 64,
+                    generation: 2,
+                    state: SafetyState::Quarantined,
+                },
+                &snapshot_shard_epochs(),
+            );
+
+            // Should hit with the new quarantined state
+            let result = cache.lookup(addr).expect("should hit after reinsert");
+            assert_eq!(result.state, SafetyState::Quarantined);
+            assert_eq!(result.generation, 2);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Concurrent arena alloc/free with TLS cache
+    //
+    // Multiple threads concurrently allocate and free while the
+    // per-shard TLS-cache epochs are bumped by frees. `current_epoch()`
+    // is the max across all 16 shards (a compat summary; the live
+    // invalidation tag is now per-shard, see `tls_cache.rs`); since
+    // each shard's atomic counter is monotonic, the max across them is
+    // also monotonic from any single thread's perspective.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn concurrent_alloc_free_cache_epoch_monotonic() {
+        use crate::tls_cache::current_epoch;
+        use std::sync::Barrier;
+        use std::thread;
+
+        let arena = Arc::new(AllocationArena::new());
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+
+        for _ in 0..4 {
+            let arena = Arc::clone(&arena);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut prev_epoch = 0u64;
+                for _ in 0..200 {
+                    let ptr = arena.allocate(64).expect("alloc");
+                    let (result, drained) = arena.free(ptr.ptr);
+                    unsafe {
+                        AllocationArena::deallocate_drained(&drained);
+                    }
+                    assert_eq!(result, FreeResult::Freed);
+
+                    // `current_epoch()` = max across shards — non-decreasing
+                    // per thread because each individual shard atomic is
+                    // monotonic and a thread always sees at least its own
+                    // post-free bump (Acquire after Release on same location).
+                    let epoch = current_epoch();
+                    assert!(
+                        epoch >= prev_epoch,
+                        "TLS cache epoch (max across shards) must be \
+                         non-decreasing per-thread: {epoch} < {prev_epoch}"
+                    );
+                    prev_epoch = epoch;
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Arena generation counters under concurrent pressure
+    //
+    // Verifies that generation counters remain strictly monotonic
+    // even under concurrent alloc/free from multiple threads.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn concurrent_generation_monotonicity() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let arena = Arc::new(AllocationArena::new());
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+
+        for _ in 0..4 {
+            let arena = Arc::clone(&arena);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut prev_gen = 0u64;
+                for _ in 0..100 {
+                    let ptr = arena.allocate(32).expect("alloc");
+                    let slot = arena.lookup(ptr.ptr as usize).expect("lookup");
+                    // Generation must be strictly increasing per-allocation
+                    assert!(
+                        slot.generation > prev_gen,
+                        "generation not increasing: {} <= {}",
+                        slot.generation,
+                        prev_gen
+                    );
+                    prev_gen = slot.generation;
+
+                    let (result, drained) = arena.free(ptr.ptr);
+                    unsafe {
+                        AllocationArena::deallocate_drained(&drained);
+                    }
+                    assert_eq!(result, FreeResult::Freed);
+
+                    let freed = arena.lookup(ptr.ptr as usize).expect("freed lookup");
+                    assert!(freed.generation > prev_gen);
+                    prev_gen = freed.generation;
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    #[test]
+    fn trailing_redzone_beyond_canary_is_recognized_by_lookup() {
+        let arena = AllocationArena::new();
+        let alloc = arena.allocate(32).expect("alloc");
+        let base = alloc.user_base;
+
+        for offset_past_end in [0usize, CANARY_SIZE, 16, TRAILING_REDZONE_SIZE - 1] {
+            let oob_addr = base + 32 + offset_past_end;
+            let slot = arena
+                .lookup(oob_addr)
+                .expect("address within trailing redzone must resolve to owning slot");
+            assert_eq!(slot.user_base, base);
+            assert!(
+                arena.remaining_from(oob_addr).is_none(),
+                "address past user_size must have no remaining writable/readable bytes"
+            );
+        }
+
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn arena_layout_and_full_width_canary_derivation() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        assert_eq!(FINGERPRINT_SIZE, 24);
+        assert_eq!(CANARY_SIZE, 8);
+
+        let arena = AllocationArena::new();
+        let metrics = global_metrics();
+        let passes_before = MembraneMetrics::get(&metrics.canary_passes);
+
+        let user_size = 48usize;
+        let alloc = arena
+            .allocate(user_size)
+            .expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        assert_eq!(slot.user_base, alloc.user_base);
+        assert_eq!(slot.user_size, user_size);
+        assert!(slot.user_base >= slot.raw_base + FINGERPRINT_SIZE);
+
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        let mut canary_bytes = [0u8; CANARY_SIZE];
+        // SAFETY: `[user_base - FINGERPRINT_SIZE .. user_base]` and
+        // `[user_base + user_size .. user_base + user_size + CANARY_SIZE]` lie
+        // inside the owned backing block while the allocation is live.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (slot.user_base - FINGERPRINT_SIZE) as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+            std::ptr::copy_nonoverlapping(
+                (slot.user_base + slot.user_size) as *const u8,
+                canary_bytes.as_mut_ptr(),
+                CANARY_SIZE,
+            );
+        }
+
+        let fp = AllocationFingerprint::from_bytes(&header_bytes);
+        assert_eq!(fp.generation, slot.generation);
+        assert_eq!(fp.size, user_size as u64);
+        assert!(fp.verify(slot.user_base));
+
+        let header_xor_forgery = (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+        assert_ne!(
+            canary_bytes, header_xor_forgery,
+            "trailing canary must be domain-separated from header hash"
+        );
+        assert_eq!(canary_bytes, fp.canary_for(slot.user_base).to_bytes());
+        assert!(arena.verify_canary_for_slot(&slot));
+
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+        assert!(MembraneMetrics::get(&metrics.canary_passes) > passes_before);
+    }
+
+    #[test]
+    fn arena_rejects_header_xor_forged_canary_and_records_failure_metric() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        let arena = AllocationArena::new();
+        let metrics = global_metrics();
+        let user_size = 32usize;
+        let alloc = arena
+            .allocate(user_size)
+            .expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        // SAFETY: live allocation header at `user_base - FINGERPRINT_SIZE`.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (alloc.user_base - FINGERPRINT_SIZE) as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let fp = AllocationFingerprint::from_bytes(&header_bytes);
+        let forged_canary = (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+        // SAFETY: trailing canary slot lies inside live allocation backing block.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                forged_canary.as_ptr(),
+                (alloc.user_base + user_size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        assert!(
+            !arena.verify_canary_for_slot(&slot),
+            "plaintext header XOR forgery must be rejected under K_tail domain separation"
+        );
+        let failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > failures_before);
+    }
+
+    #[test]
+    fn arena_rejects_legacy_rank32_folded_canary_and_records_failure_metric() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        let arena = AllocationArena::new();
+        let metrics = global_metrics();
+        let user_size = 32usize;
+
+        // Allocate until the fingerprint hash has non-zero 32-bit halves so the
+        // legacy rank-32 fold `h ^ h.rotate_left(32) ^ C` is strictly distinct
+        // from the domain-separated canary.
+        let mut target_alloc = None;
+        let mut legacy_bytes = [0u8; CANARY_SIZE];
+        let mut cleanup = Vec::new();
+        for _ in 0..8 {
+            let alloc = arena
+                .allocate(user_size)
+                .expect("allocation should succeed");
+            let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+            // SAFETY: live allocation header at `user_base - FINGERPRINT_SIZE`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    (alloc.user_base - FINGERPRINT_SIZE) as *const u8,
+                    header_bytes.as_mut_ptr(),
+                    FINGERPRINT_SIZE,
+                );
+            }
+            let fp = AllocationFingerprint::from_bytes(&header_bytes);
+            if fp.hash.rotate_left(32) != 0 {
+                legacy_bytes =
+                    ((fp.hash ^ fp.hash.rotate_left(32)) ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+                assert_ne!(legacy_bytes, fp.canary_for(alloc.user_base).to_bytes());
+                target_alloc = Some(alloc);
+                break;
+            }
+            cleanup.push(alloc);
+        }
+
+        for extra in cleanup {
+            let (_, drained) = arena.free(extra.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+        }
+
+        let alloc = target_alloc.expect("expected non-zero fingerprint hash");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+
+        // Overwrite the trailing canary with the legacy rank-32 folded value.
+        // SAFETY: `[user_base + user_size .. + CANARY_SIZE]` is the trailing canary slot.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                legacy_bytes.as_ptr(),
+                (alloc.user_base + user_size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        assert!(
+            !arena.verify_canary_for_slot(&slot),
+            "arena must reject the pre-fix rank-32 folded canary"
+        );
+
+        let failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+        assert!(
+            MembraneMetrics::get(&metrics.canary_failures) > failures_before,
+            "FreedWithCanaryCorruption must increment canary_failures metric"
+        );
+    }
+
+    #[test]
+    fn arena_detects_symmetric_half_bit_flip_in_trailing_canary() {
+        let arena = AllocationArena::new();
+        let user_size = 40usize;
+        let alloc = arena
+            .allocate(user_size)
+            .expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        let canary_ptr = (alloc.user_base + user_size) as *mut u8;
+
+        let mut intact = [0u8; CANARY_SIZE];
+        // SAFETY: trailing canary lies inside the live allocation's backing block.
+        unsafe {
+            std::ptr::copy_nonoverlapping(canary_ptr, intact.as_mut_ptr(), CANARY_SIZE);
+        }
+        let intact_word = u64::from_le_bytes(intact);
+
+        // Every symmetric bit pair `(1 << bit) | (1 << (bit + 32))` was in the
+        // kernel of the legacy fold; verify `verify_canary_for_slot` rejects all 32.
+        for bit in 0..32u32 {
+            let mask = (1u64 << bit) | (1u64 << (bit + 32));
+            let corrupted = (intact_word ^ mask).to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(corrupted.as_ptr(), canary_ptr, CANARY_SIZE);
+            }
+            assert!(
+                !arena.verify_canary_for_slot(&slot),
+                "symmetric bit-pair mask {mask:#018x} at bit {bit} must be rejected"
+            );
+        }
+
+        // Leave the last symmetric corruption in place and verify `free` reports it.
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+    }
+}

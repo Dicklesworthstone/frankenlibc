@@ -1,0 +1,1273 @@
+//! ABI layer for POSIX I/O functions (`dup`, `dup2`, `pipe`, `fcntl`).
+//!
+//! Validates via `frankenlibc_core::io` helpers, then calls `libc`.
+
+use std::ffi::{c_int, c_uint, c_void};
+
+use frankenlibc_core::errno;
+use frankenlibc_core::io as io_core;
+use frankenlibc_core::syscall;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+
+use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::{
+    check_ownership, known_remaining,
+    tracked_region_fits_for_decision as malloc_tracked_region_fits_for_decision,
+};
+use crate::runtime_policy;
+
+#[path = "iov_snapshot.rs"]
+pub(crate) mod iov_snapshot;
+
+#[inline]
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+fn tracked_region_fits_for_decision(
+    ptr: *const c_void,
+    len: usize,
+    decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
+) -> bool {
+    malloc_tracked_region_fits_for_decision(ptr, len, ApiFamily::IoFd, decision)
+}
+
+#[inline]
+unsafe fn tracked_iovecs_fit(iov: *const libc::iovec, count: usize) -> bool {
+    let Some(iov_bytes) = count.checked_mul(std::mem::size_of::<libc::iovec>()) else {
+        return false;
+    };
+    let Some(remaining) = known_remaining(iov as usize) else {
+        return true;
+    };
+    if iov_bytes > remaining {
+        return false;
+    }
+
+    // SAFETY: caller already rejected null/zero counts, and tracked iovec
+    // arrays must fit the descriptor bytes before we inspect each entry.
+    let entries = unsafe { std::slice::from_raw_parts(iov, count) };
+    entries.iter().all(|entry| {
+        (entry.iov_len == 0 || !entry.iov_base.is_null())
+            && tracked_region_fits(entry.iov_base.cast_const(), entry.iov_len)
+    })
+}
+
+#[inline]
+fn tracked_optional_i64_fits(ptr: *mut i64) -> bool {
+    ptr.is_null() || tracked_region_fits(ptr.cast_const().cast(), std::mem::size_of::<i64>())
+}
+
+// ---------------------------------------------------------------------------
+// dup
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dup(oldfd: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldfd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !io_core::valid_fd(oldfd) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    match syscall::sys_dup(oldfd) {
+        Ok(new_fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            new_fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// dup2
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldfd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !io_core::valid_fd(oldfd) || !io_core::valid_fd(newfd) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    // POSIX dup2(fd, fd) returns fd unchanged when fd is valid (EBADF if not).
+    // On arches without a native dup2 syscall (e.g. aarch64) sys_dup2 routes
+    // through dup3, which returns EINVAL for equal fds — so special-case it
+    // exactly as glibc does: validate the fd via fcntl and return newfd, or
+    // EBADF. Behavior-equivalent to x86_64's native dup2.
+    if oldfd == newfd {
+        return match unsafe { syscall::sys_fcntl(oldfd, libc::F_GETFL, 0) } {
+            Ok(_) => {
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+                newfd
+            }
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+                -1
+            }
+        };
+    }
+
+    match syscall::sys_dup2(oldfd, newfd) {
+        Ok(fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pipe
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pipe(pipefd: *mut c_int) -> c_int {
+    let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    if pipefd.is_null() {
+        if mode.heals_enabled() {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+            return -1;
+        }
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !tracked_region_fits(
+        pipefd.cast_const().cast(),
+        std::mem::size_of::<[c_int; 2]>(),
+    ) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = match unsafe { syscall::sys_pipe2(pipefd, 0) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// glibc reserved-namespace alias for [`pipe`].
+///
+/// # Safety
+///
+/// Same as [`pipe`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
+    unsafe { pipe(pipefd) }
+}
+
+// ---------------------------------------------------------------------------
+// fcntl
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
+    unsafe { fcntl_cp(fd, cmd, arg) }
+}
+
+/// Body of [`fcntl`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn fcntl_cp(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !io_core::valid_fd(fd) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_fcntl(fd, cmd, arg as usize))
+    } {
+        Ok(val) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            val
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pipe2
+// ---------------------------------------------------------------------------
+
+/// Linux `pipe2` — create a pipe with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pipe2(pipefd: *mut c_int, flags: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if pipefd.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if !tracked_region_fits(
+        pipefd.cast_const().cast(),
+        std::mem::size_of::<[c_int; 2]>(),
+    ) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = match unsafe { syscall::sys_pipe2(pipefd, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// dup3
+// ---------------------------------------------------------------------------
+
+/// Linux `dup3` — duplicate a file descriptor with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldfd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if !io_core::valid_fd(oldfd) || !io_core::valid_fd(newfd) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    match syscall::sys_dup3(oldfd, newfd, flags) {
+        Ok(fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+/// glibc reserved-namespace alias for [`dup3`].
+///
+/// # Safety
+///
+/// Same as [`dup3`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int {
+    unsafe { dup3(oldfd, newfd, flags) }
+}
+
+/// glibc reserved-namespace alias for [`pipe2`].
+///
+/// # Safety
+///
+/// Same as [`pipe2`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pipe2(pipefd: *mut c_int, flags: c_int) -> c_int {
+    unsafe { pipe2(pipefd, flags) }
+}
+
+// ---------------------------------------------------------------------------
+// ioctl
+// ---------------------------------------------------------------------------
+
+/// POSIX `ioctl` — device control.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ioctl(fd: c_int, request: libc::c_ulong, arg: libc::c_ulong) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    match unsafe { syscall::sys_ioctl(fd, request as usize, arg as usize) } {
+        Ok(val) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            val
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pread / pwrite
+// ---------------------------------------------------------------------------
+
+/// POSIX `pread` — read from a file descriptor at a given offset.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pread(
+    fd: c_int,
+    buf: *mut c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pread_cp(fd, buf, count, offset) }
+}
+
+/// Body of [`pread`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pread_cp(
+    fd: c_int,
+    buf: *mut c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
+    let addr_hint = if buf.is_null() {
+        fd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, addr_hint, count, true, bloom_negative, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return -1;
+    }
+    if offset < 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if (buf.is_null() && count > 0)
+        || !tracked_region_fits_for_decision(buf.cast_const(), count, &decision)
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pread64(fd, buf as *mut u8, count, offset)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+/// POSIX `pwrite` — write to a file descriptor at a given offset.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pwrite(
+    fd: c_int,
+    buf: *const c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pwrite_cp(fd, buf, count, offset) }
+}
+
+/// Body of [`pwrite`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pwrite_cp(
+    fd: c_int,
+    buf: *const c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
+    let addr_hint = if buf.is_null() {
+        fd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, addr_hint, count, false, bloom_negative, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return -1;
+    }
+    if offset < 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if (buf.is_null() && count > 0) || !tracked_region_fits_for_decision(buf, count, &decision) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pwrite64(fd, buf as *const u8, count, offset)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// readv / writev
+// ---------------------------------------------------------------------------
+
+/// POSIX `readv` — scatter read from a file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn readv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
+    unsafe { readv_cp(fd, iov, iovcnt) }
+}
+
+/// Body of [`readv`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn readv_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
+    let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_readv(fd, iov as *const u8, iovcnt)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+/// POSIX `writev` — gather write to a file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn writev(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
+    unsafe { writev_cp(fd, iov, iovcnt) }
+}
+
+/// Body of [`writev`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn writev_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
+    let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_writev(fd, iov as *const u8, iovcnt)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+/// glibc reserved-namespace alias for [`pread`].
+///
+/// # Safety
+///
+/// Same as [`pread`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pread(
+    fd: c_int,
+    buf: *mut c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pread_cp(fd, buf, count, offset) }
+}
+
+/// glibc reserved-namespace alias for [`pwrite`].
+///
+/// # Safety
+///
+/// Same as [`pwrite`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pwrite(
+    fd: c_int,
+    buf: *const c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pwrite_cp(fd, buf, count, offset) }
+}
+
+/// glibc reserved-namespace alias for [`readv`].
+///
+/// # Safety
+///
+/// Same as [`readv`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __readv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
+    unsafe { readv_cp(fd, iov, iovcnt) }
+}
+
+/// glibc reserved-namespace alias for [`writev`].
+///
+/// # Safety
+///
+/// Same as [`writev`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __writev(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
+    unsafe { writev_cp(fd, iov, iovcnt) }
+}
+
+// ---------------------------------------------------------------------------
+// sendfile
+// ---------------------------------------------------------------------------
+
+/// Linux `sendfile` — transfer data between file descriptors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sendfile(
+    out_fd: c_int,
+    in_fd: c_int,
+    offset: *mut i64,
+    count: usize,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, out_fd as usize, count, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !tracked_optional_i64_fits(offset) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    match unsafe { syscall::sys_sendfile(out_fd, in_fd, offset, count) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// copy_file_range — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `copy_file_range` — server-side copy between file descriptors. A
+/// cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn copy_file_range(
+    fd_in: c_int,
+    off_in: *mut i64,
+    fd_out: c_int,
+    off_out: *mut i64,
+    len: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    if !tracked_optional_i64_fits(off_in) || !tracked_optional_i64_fits(off_out) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_copy_file_range(fd_in, off_in, fd_out, off_out, len, flags)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// preadv / pwritev — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// POSIX `preadv` — read from fd at offset into multiple buffers. A
+/// cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn preadv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { preadv_cp(fd, iov, iovcnt, offset) }
+}
+
+/// Body of [`preadv`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn preadv_cp(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        fd as usize,
+        iovcnt as usize,
+        false,
+        true,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
+
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_preadv(fd, iov as *const u8, iovcnt, offset)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+/// POSIX `pwritev` — write to fd at offset from multiple buffers. A
+/// cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pwritev(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pwritev_cp(fd, iov, iovcnt, offset) }
+}
+
+/// Body of [`pwritev`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pwritev_cp(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
+
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pwritev(fd, iov as *const u8, iovcnt, offset)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+/// Linux `preadv2` — preadv with flags. A cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn preadv2(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    unsafe { preadv2_cp(fd, iov, iovcnt, offset, flags) }
+}
+
+/// Body of [`preadv2`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn preadv2_cp(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        fd as usize,
+        iovcnt as usize,
+        false,
+        true,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
+
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+/// Linux `pwritev2` — pwritev with flags. A cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pwritev2(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    unsafe { pwritev2_cp(fd, iov, iovcnt, offset, flags) }
+}
+
+/// Body of [`pwritev2`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pwritev2_cp(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    // ORDER MATTERS, and a blanket `iovcnt <= 0 -> EINVAL` got two things wrong.
+    // Probed on host glibc 2.42 / Linux:
+    //
+    //   pwritev2(-1,   NULL,  0, ...) -> -1 EBADF   (the fd is checked FIRST)
+    //   pwritev2(good, NULL,  0, ...) ->  0         (a zero count SUCCEEDS)
+    //   pwritev2(good, NULL, -1, ...) -> -1 EINVAL
+    //   pwritev2(-1,   NULL, -1, ...) -> -1 EBADF
+    //
+    // fl answered EINVAL to all four. The second line is the one that matters
+    // beyond errno cosmetics: a zero-count write on a valid descriptor is a
+    // successful no-op in every other iovec call, and callers loop on it.
+    //
+    // So only the bounds check fl actually owns stays here, and it runs solely
+    // when there is something to bound. Everything else — a bad fd, a zero
+    // count, a negative count, a NULL vector — is the kernel's to answer.
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
+
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// splice / tee / vmsplice — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `splice` — move data between two file descriptors without copying.
+/// A cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn splice(
+    fd_in: c_int,
+    off_in: *mut i64,
+    fd_out: c_int,
+    off_out: *mut i64,
+    len: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !tracked_optional_i64_fits(off_in) || !tracked_optional_i64_fits(off_out) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_splice(fd_in, off_in, fd_out, off_out, len, flags)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+/// Linux `tee` — duplicate pipe content. A cancellation point, as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn tee(
+    fd_in: c_int,
+    fd_out: c_int,
+    len: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_tee(fd_in, fd_out, len, flags))
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+/// Linux `vmsplice` — splice user pages into a pipe. A cancellation point,
+/// as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vmsplice(
+    fd: c_int,
+    iov: *const libc::iovec,
+    nr_segs: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, nr_segs, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    // Linux rejects oversized counts before importing any descriptors. Do not
+    // inspect such arrays here or turn full-width counts into a bounds EFAULT.
+    if !mode.heals_enabled()
+        && nr_segs <= iov_snapshot::MAX_IOVECS
+        && nr_segs > 0
+        && (iov.is_null() || !unsafe { tracked_iovecs_fit(iov, nr_segs) })
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    // vmsplice accepts a full-width segment count. Do not narrow it to the
+    // signed readv count: invalid counts must reach the kernel unchanged.
+    // Import only descriptors; the caller still owns the payload lifetime and
+    // must honor vmsplice's page-retention and SPLICE_F_GIFT contracts.
+    let prepared =
+        match iov_snapshot::PreparedIovecs::prepare_unsigned(iov, nr_segs, mode.heals_enabled()) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+                return -1;
+            }
+        };
+    let iov = prepared.as_ptr();
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_vmsplice(fd, iov as *const u8, nr_segs, flags)
+        })
+    } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// memfd_create — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `memfd_create` — create anonymous file in memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memfd_create(name: *const std::ffi::c_char, flags: c_uint) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    match unsafe { syscall::sys_memfd_create(name as *const u8, flags) } {
+        Ok(fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
+    }
+}

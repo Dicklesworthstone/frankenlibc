@@ -1,0 +1,4059 @@
+//! Full pointer validation pipeline.
+//!
+//! Pipeline stages (with approximate latency budgets):
+//! 1. Null check (~1ns)
+//! 2. TLS cache lookup (~5ns)
+//! 3. Bloom filter pre-check (~10ns)
+//! 4. Arena lookup (~30ns)
+//! 5. Fingerprint verification (~20ns)
+//! 6. Canary verification (~10ns)
+//! 7. Bounds computation (~5ns)
+//!
+//! Fast exits at each stage. Budget: Fast mode <20ns, Full mode <200ns.
+
+#![allow(unsafe_code)]
+
+#[cfg(test)]
+#[path = "ptr_validator_access_tests.rs"]
+mod access_tests;
+
+use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
+use crate::bloom::PointerBloomFilter;
+use crate::check_oracle::CheckStage;
+use crate::config::{SafetyLevel, safety_level};
+use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
+use crate::galois::PointerAbstraction;
+use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
+use crate::metrics::{MembraneMetrics, global_metrics};
+use crate::page_oracle::PageOracle;
+use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
+use crate::tls_cache::{
+    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs,
+    try_with_tls_cache_hit, with_tls_cache,
+};
+use crate::util::NoPoisonMutex as Mutex;
+use crate::util::now_utc_iso_like;
+use serde::Serialize;
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::Cell;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+const VALIDATION_LOG_CAPACITY: usize = 2048;
+const STRICT_VALIDATION_BUDGET_NS: u64 = 20;
+const HARDENED_VALIDATION_BUDGET_NS: u64 = 200;
+#[cfg(test)]
+const MAX_LEVEL_LABEL_CARDINALITY: usize = 5;
+#[cfg(test)]
+const MAX_STAGE_LABEL_CARDINALITY: usize = 16;
+
+#[derive(Debug, Clone, Serialize)]
+struct ValidationLogRow {
+    timestamp: String,
+    trace_id: String,
+    span_id: String,
+    parent_span_id: String,
+    decision_id: u64,
+    schema_version: String,
+    level: &'static str,
+    event: &'static str,
+    controller_id: &'static str,
+    decision_path: &'static str,
+    decision_action: &'static str,
+    outcome: &'static str,
+    mode: &'static str,
+    api_family: &'static str,
+    symbol: &'static str,
+    stage: &'static str,
+    security_context: &'static str,
+    capability_scope: &'static str,
+    security_verdict: &'static str,
+    latency_ns: u64,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    evidence_seqno: u64,
+    stage_inputs: ValidationLogInputs,
+    artifact_refs: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct ValidationLogInputs {
+    aligned: bool,
+    recent_page: bool,
+    bloom_negative: bool,
+    cache_hit: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ValidationTraceContext {
+    decision_id: DecisionId,
+    trace_id: TraceId,
+    span_id: String,
+    parent_span_id: String,
+    security_context: &'static str,
+    capability_scope: &'static str,
+    security_verdict: &'static str,
+}
+
+impl ValidationTraceContext {
+    #[must_use]
+    fn disabled() -> Self {
+        Self {
+            decision_id: DecisionId::from_raw(0),
+            trace_id: TraceId::empty(),
+            span_id: String::new(),
+            parent_span_id: String::new(),
+            security_context: "",
+            capability_scope: "",
+            security_verdict: "",
+        }
+    }
+
+    #[must_use]
+    fn enabled(decision_id: DecisionId, security_context: ValidationSecurityContext) -> Self {
+        let trace_id = decision_id.scoped_trace_id("tsm::pointer_validation");
+        let span_id = format!(
+            "tsm::pointer_validation::decision::{:016x}",
+            decision_id.as_u64()
+        );
+        let parent_span_id = format!(
+            "tsm::pointer_validation::entry::{:016x}",
+            decision_id.as_u64()
+        );
+        Self {
+            decision_id,
+            trace_id,
+            span_id,
+            parent_span_id,
+            security_context: security_context.label(),
+            capability_scope: "pointer_validation",
+            security_verdict: if security_context.allows_pointer_validation() {
+                "allow"
+            } else {
+                "deny"
+            },
+        }
+    }
+
+    #[must_use]
+    const fn is_enabled(&self) -> bool {
+        self.decision_id.is_assigned()
+    }
+}
+
+/// Result of running a pointer through the validation pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationOutcome {
+    /// Pointer is null.
+    Null,
+    /// Pointer validated from TLS cache (fastest path).
+    CachedValid(PointerAbstraction),
+    /// Pointer validated via full pipeline.
+    Validated(PointerAbstraction),
+    /// Pointer is not ours (foreign) — allow with unknown state.
+    Foreign(PointerAbstraction),
+    /// Pointer belongs to a freed/quarantined allocation.
+    TemporalViolation(PointerAbstraction),
+    /// Pointer belongs to our allocation metadata but fails bounds admissibility.
+    Invalid(PointerAbstraction),
+    /// Pointer validation denied by security context before pipeline execution.
+    Denied(PointerAbstraction),
+    /// Validation skipped (SafetyLevel::Off).
+    Bypassed,
+}
+
+impl ValidationOutcome {
+    /// Extract the pointer abstraction if available.
+    #[must_use]
+    pub fn abstraction(&self) -> Option<PointerAbstraction> {
+        match self {
+            Self::CachedValid(a)
+            | Self::Validated(a)
+            | Self::Foreign(a)
+            | Self::TemporalViolation(a)
+            | Self::Invalid(a)
+            | Self::Denied(a) => Some(*a),
+            Self::Null => Some(PointerAbstraction::null()),
+            Self::Bypassed => None,
+        }
+    }
+
+    /// Project the verdict into an abstraction used to authorize memory access.
+    ///
+    /// `abstraction()` retains allocation metadata for diagnostics. A failed
+    /// fingerprint or canary check can therefore carry a slot whose recorded
+    /// state is still `Valid`. Access consumers must not turn that metadata
+    /// back into permission to use the allocation.
+    ///
+    /// Keep quarantined allocations recognizable, but expose no usable bytes.
+    /// A `Freed` temporal record is deliberately left unchanged: unlike a
+    /// quarantined block, its storage may already belong to a new host allocation.
+    /// Bounds consumers must ignore that stale extent and consult current
+    /// ownership (as `known_remaining` does), not clamp the new owner's access.
+    /// Explicit `Denied` and `Invalid` verdicts still take precedence over any
+    /// recorded state, including `Freed` or `Unknown`.
+    ///
+    /// This is a snapshot, not a lifetime guard. Foreign and bypassed pointers
+    /// do not acquire a proof of accessibility through this projection.
+    #[must_use]
+    pub fn access_abstraction(&self) -> Option<PointerAbstraction> {
+        use crate::lattice::SafetyState;
+
+        match self {
+            Self::TemporalViolation(a) if a.state == SafetyState::Freed => Some(*a),
+            Self::TemporalViolation(a) | Self::Invalid(a) | Self::Denied(a) => {
+                let state = if matches!(self, Self::TemporalViolation(_))
+                    && a.state == SafetyState::Quarantined
+                {
+                    SafetyState::Quarantined
+                } else {
+                    SafetyState::Invalid
+                };
+                Some(PointerAbstraction {
+                    state,
+                    remaining: Some(0),
+                    ..*a
+                })
+            }
+            _ => self.abstraction(),
+        }
+    }
+
+    /// Whether this classification permits reads under the validation policy.
+    ///
+    /// This is a snapshot, not a lifetime guard: a later free can invalidate
+    /// the allocation. `Foreign` and `Bypassed` permit reads without proving
+    /// that the address is mapped or that the requested range is accessible.
+    #[must_use]
+    pub fn can_read(&self) -> bool {
+        match self {
+            Self::CachedValid(a) | Self::Validated(a) => a.state.can_read(),
+            Self::Foreign(_) => true, // Allow foreign pointers (Galois property)
+            Self::Bypassed => true,
+            Self::Null | Self::TemporalViolation(_) | Self::Invalid(_) | Self::Denied(_) => false,
+        }
+    }
+
+    /// Whether this classification permits writes under the validation policy.
+    ///
+    /// Like `can_read`, this does not retain allocation ownership or prove
+    /// accessibility of foreign memory. Callers must uphold access preconditions.
+    #[must_use]
+    pub fn can_write(&self) -> bool {
+        match self {
+            Self::CachedValid(a) | Self::Validated(a) => a.state.can_write(),
+            Self::Foreign(_) => true,
+            Self::Bypassed => true,
+            Self::Null | Self::TemporalViolation(_) | Self::Invalid(_) | Self::Denied(_) => false,
+        }
+    }
+}
+
+/// Default-deny security context for membrane validation entrypoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidationSecurityContext {
+    pointer_validation_allowed: bool,
+    label: &'static str,
+}
+
+impl ValidationSecurityContext {
+    /// Allow pointer validation through the membrane.
+    #[must_use]
+    pub const fn allow_pointer_validation() -> Self {
+        Self {
+            pointer_validation_allowed: true,
+            label: "default_allow",
+        }
+    }
+
+    /// Deny all membrane pointer validation operations.
+    #[must_use]
+    pub const fn deny_all() -> Self {
+        Self {
+            pointer_validation_allowed: false,
+            label: "deny_all",
+        }
+    }
+
+    #[must_use]
+    pub const fn allows_pointer_validation(self) -> bool {
+        self.pointer_validation_allowed
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        self.label
+    }
+}
+
+use crate::ebr::QuarantineEbr;
+use std::sync::Arc;
+
+/// Locks held across `fork` by [`ValidationPipeline::atfork_prepare`].
+#[must_use]
+pub struct PipelineAtforkGuard<'a> {
+    _arena: crate::arena::ArenaAtforkGuard<'a>,
+    _page_oracle: crate::page_oracle::PageOracleForkGuard<'a>,
+    /// Declared last so it drops after the locks are released: while this
+    /// thread holds them it is inside validation, and a membrane-validated
+    /// libc call it makes copies through without taking them again.
+    _validation: ValidationExecutionGuard,
+}
+
+/// The validation pipeline with all backing data structures.
+pub struct ValidationPipeline {
+    /// The allocation arena.
+    pub arena: AllocationArena,
+    /// Bloom filter for quick ownership check.
+    pub bloom: PointerBloomFilter,
+    /// Page-level ownership oracle.
+    pub page_oracle: std::sync::Arc<PageOracle>,
+    /// Runtime math kernel for online validation-depth/risk decisions.
+    pub runtime_math: RuntimeMathKernel,
+    /// EBR collector for safe deferred deallocation.
+    pub collector: Arc<QuarantineEbr>,
+    /// Whether structured validation logging is enabled.
+    validation_logging_enabled: AtomicBool,
+    /// Monotone decision id for validation logs.
+    validation_log_decision_seq: AtomicU64,
+    /// Bounded in-memory JSONL buffer for validation traces.
+    validation_logs: Mutex<VecDeque<String>>,
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    /// Per-thread EBR handle for pinning epochs during validation.
+    ///
+    /// The handle is keyed by collector identity so tests and auxiliary
+    /// pipelines do not accidentally reuse a registration from a different
+    /// `ValidationPipeline` on the same thread.
+    ///
+    /// We store the Arc<QuarantineEbr> alongside the handle to ensure the
+    /// collector remains alive as long as the handle is cached, preventing
+    /// Use-After-Free if the original ValidationPipeline is dropped.
+    static EBR_HANDLE: std::cell::RefCell<Option<(std::sync::Arc<crate::ebr::QuarantineEbr>, crate::ebr::EbrHandle<'static>)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+struct PinnedEpochGuard<'a> {
+    _guard: crate::ebr::EbrGuard<'a>,
+    /// A registration owned by this guard, when no thread-cached one exists
+    /// (owned-tls-cache builds, or a thread whose TLS is being torn down).
+    _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
+}
+
+struct ValidationExecutionGuard;
+
+impl Drop for ValidationExecutionGuard {
+    fn drop(&mut self) {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            let decremented_to_zero = VALIDATION_DEPTH
+                .try_with(|depth| {
+                    let prev = depth.get();
+                    let next = prev.saturating_sub(1);
+                    depth.set(next);
+                    prev > 0 && next == 0
+                })
+                .unwrap_or(false);
+            if decremented_to_zero {
+                ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
+            }
+        }
+        #[cfg(feature = "owned-tls-cache")]
+        let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            Some(current.saturating_sub(1))
+        });
+    }
+}
+
+fn enter_validation_execution_context() -> ValidationExecutionGuard {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let incremented_from_zero = VALIDATION_DEPTH
+            .try_with(|depth| {
+                let prev = depth.get();
+                depth.set(prev.saturating_add(1));
+                prev == 0
+            })
+            .unwrap_or(false);
+        if incremented_from_zero {
+            ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
+        }
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        Some(current.saturating_add(1))
+    });
+    ValidationExecutionGuard
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[cold]
+#[inline(never)]
+fn in_validation_context_slow() -> bool {
+    VALIDATION_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(false)
+}
+
+#[inline(always)]
+#[must_use]
+pub fn in_validation_context() -> bool {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) == 0 {
+            return false;
+        }
+        in_validation_context_slow()
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        VALIDATION_DEPTH.load(Ordering::Acquire) > 0
+    }
+}
+
+impl ValidationPipeline {
+    /// Create a new validation pipeline.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_runtime_math(true)
+    }
+
+    /// Create a pipeline using the caller's resolved process-level math switch.
+    /// Allocation metadata, integrity checks and healing remain enabled.
+    #[must_use]
+    pub fn with_runtime_math(enabled: bool) -> Self {
+        let logging_enabled = std::env::var_os("FRANKENLIBC_LOG").is_some();
+        let collector = std::sync::Arc::new(crate::ebr::QuarantineEbr::new(4));
+        Self {
+            arena: AllocationArena::new(),
+            bloom: PointerBloomFilter::new(),
+            page_oracle: std::sync::Arc::new(PageOracle::new()),
+            runtime_math: RuntimeMathKernel::new_with_routing(safety_level(), enabled),
+            collector,
+            validation_logging_enabled: AtomicBool::new(logging_enabled),
+            validation_log_decision_seq: AtomicU64::new(0),
+            validation_logs: Mutex::new(VecDeque::with_capacity(VALIDATION_LOG_CAPACITY)),
+        }
+    }
+
+    /// Pin the EBR epoch for the duration of validation.
+    fn pin_epoch(&self) -> PinnedEpochGuard<'_> {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
+            // `try_with`: validation also runs during thread teardown -- host
+            // thread-key destructors (OpenSSL's per-thread cleanup) call
+            // memmove after this TLS is destroyed, and `with` panicked there,
+            // aborting the process in hardened mode. Then pin through an
+            // owned registration instead.
+            let cached = EBR_HANDLE.try_with(|cell| {
+                let mut cached = cell.borrow_mut();
+                let needs_refresh = !matches!(
+                    cached.as_ref(),
+                    Some((cached_collector, _)) if std::sync::Arc::as_ptr(cached_collector) as usize == collector_id
+                );
+                if needs_refresh {
+                    let handle = {
+                        // SAFETY: The returned handle is stored thread-locally alongside
+                        // a strong reference (Arc) to the collector. This ensures the
+                        // collector stays alive and at the same address as long as the
+                        // handle is cached. Swapping the cached tuple releases the
+                        // previous registration and Arc first.
+                        unsafe {
+                            std::mem::transmute::<crate::ebr::EbrHandle<'_>, crate::ebr::EbrHandle<'static>>(
+                                self.collector.register(),
+                            )
+                        }
+                    };
+                    *cached = Some((std::sync::Arc::clone(&self.collector), handle));
+                }
+                PinnedEpochGuard {
+                    _guard: cached
+                        .as_ref()
+                        .expect("EBR handle cache initialized")
+                        .1
+                        .pin(),
+                    _owned_handle: None,
+                }
+            });
+            if let Ok(guard) = cached {
+                return guard;
+            }
+        }
+        let handle = self.collector.register();
+        let guard = handle.pin();
+        PinnedEpochGuard {
+            _guard: guard,
+            _owned_handle: Some(handle),
+        }
+    }
+
+    /// Enable or disable structured validation logging.
+    pub fn set_validation_logging_enabled(&self, enabled: bool) {
+        self.validation_logging_enabled
+            .store(enabled, Ordering::Relaxed);
+    }
+
+    /// Clear buffered validation log rows.
+    pub fn clear_validation_logs(&self) {
+        self.validation_logs.lock().clear();
+    }
+
+    /// Export buffered validation logs as deterministic JSONL.
+    #[must_use]
+    pub fn export_validation_log_jsonl(&self) -> String {
+        self.validation_logs
+            .lock()
+            .iter()
+            .fold(String::new(), |mut out, line| {
+                out.push_str(line);
+                out.push('\n');
+                out
+            })
+    }
+
+    #[must_use]
+    fn begin_validation_trace(
+        &self,
+        security_context: ValidationSecurityContext,
+    ) -> ValidationTraceContext {
+        if !self.validation_logging_enabled.load(Ordering::Relaxed) {
+            return ValidationTraceContext::disabled();
+        }
+
+        let decision_id = DecisionId::from_raw(
+            self.validation_log_decision_seq
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1),
+        );
+        ValidationTraceContext::enabled(decision_id, security_context)
+    }
+
+    /// Inlined so the disabled case -- every call when the validation log is
+    /// off -- is one test at the call site instead of a 17-argument call that
+    /// returns immediately (~2% of a hardened allocation-heavy workload).
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn emit_validation_log(
+        &self,
+        trace: &ValidationTraceContext,
+        mode: crate::config::SafetyLevel,
+        level: &'static str,
+        event: &'static str,
+        stage: &'static str,
+        decision_path: &'static str,
+        decision_action: &'static str,
+        outcome: &'static str,
+        latency_ns: u64,
+        aligned: bool,
+        recent_page: bool,
+        bloom_negative: bool,
+        cache_hit: bool,
+        policy_id: u32,
+        risk_upper_bound_ppm: u32,
+        evidence_seqno: u64,
+    ) {
+        if !trace.is_enabled() {
+            return;
+        }
+        self.emit_enabled_validation_log(
+            trace,
+            mode,
+            level,
+            event,
+            stage,
+            decision_path,
+            decision_action,
+            outcome,
+            latency_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            cache_hit,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn emit_enabled_validation_log(
+        &self,
+        trace: &ValidationTraceContext,
+        mode: crate::config::SafetyLevel,
+        level: &'static str,
+        event: &'static str,
+        stage: &'static str,
+        decision_path: &'static str,
+        decision_action: &'static str,
+        outcome: &'static str,
+        latency_ns: u64,
+        aligned: bool,
+        recent_page: bool,
+        bloom_negative: bool,
+        cache_hit: bool,
+        policy_id: u32,
+        risk_upper_bound_ppm: u32,
+        evidence_seqno: u64,
+    ) {
+        debug_assert!(matches!(
+            level,
+            "trace" | "debug" | "info" | "warn" | "error"
+        ));
+        debug_assert!(matches!(
+            stage,
+            "safety_level"
+                | "stage_ordering"
+                | "security_context"
+                | "null_check"
+                | "tls_cache"
+                | "bloom"
+                | "arena_lookup"
+                | "fingerprint"
+                | "canary"
+                | "bounds"
+                | "post_pipeline"
+        ));
+
+        let row = ValidationLogRow {
+            timestamp: now_utc_iso_like(),
+            trace_id: trace.trace_id.as_str().to_string(),
+            span_id: trace.span_id.clone(),
+            parent_span_id: trace.parent_span_id.clone(),
+            decision_id: trace.decision_id.as_u64(),
+            schema_version: MEMBRANE_SCHEMA_VERSION.to_string(),
+            level,
+            event,
+            controller_id: "tsm_validation_pipeline.v1",
+            decision_path,
+            decision_action,
+            outcome,
+            mode: Self::mode_name(mode),
+            api_family: "pointer_validation",
+            symbol: "membrane::ptr_validator::validate",
+            stage,
+            security_context: trace.security_context,
+            capability_scope: trace.capability_scope,
+            security_verdict: trace.security_verdict,
+            latency_ns,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+            stage_inputs: ValidationLogInputs {
+                aligned,
+                recent_page,
+                bloom_negative,
+                cache_hit,
+            },
+            artifact_refs: vec!["crates/frankenlibc-membrane/src/ptr_validator.rs"],
+        };
+
+        if let Ok(line) = serde_json::to_string(&row) {
+            self.push_validation_log_line(line);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_terminal_transition(
+        &self,
+        trace: &ValidationTraceContext,
+        mode: crate::config::SafetyLevel,
+        stage: &'static str,
+        decision_path: &'static str,
+        decision_action: &'static str,
+        outcome: &'static str,
+        latency_ns: u64,
+        aligned: bool,
+        recent_page: bool,
+        bloom_negative: bool,
+        cache_hit: bool,
+        policy_id: u32,
+        risk_upper_bound_ppm: u32,
+        evidence_seqno: u64,
+        invariant_violation: bool,
+    ) {
+        let level = if invariant_violation { "error" } else { "info" };
+        self.emit_validation_log(
+            trace,
+            mode,
+            level,
+            "validation_transition",
+            stage,
+            decision_path,
+            decision_action,
+            outcome,
+            latency_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            cache_hit,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+        );
+        self.emit_budget_warning_if_needed(
+            trace,
+            mode,
+            stage,
+            decision_path,
+            decision_action,
+            latency_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            cache_hit,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_budget_warning_if_needed(
+        &self,
+        trace: &ValidationTraceContext,
+        mode: crate::config::SafetyLevel,
+        stage: &'static str,
+        decision_path: &'static str,
+        decision_action: &'static str,
+        latency_ns: u64,
+        aligned: bool,
+        recent_page: bool,
+        bloom_negative: bool,
+        cache_hit: bool,
+        policy_id: u32,
+        risk_upper_bound_ppm: u32,
+        evidence_seqno: u64,
+    ) {
+        let budget = match mode {
+            crate::config::SafetyLevel::Strict => STRICT_VALIDATION_BUDGET_NS,
+            crate::config::SafetyLevel::Hardened => HARDENED_VALIDATION_BUDGET_NS,
+            crate::config::SafetyLevel::Off => return,
+        };
+
+        if latency_ns <= budget {
+            return;
+        }
+
+        self.emit_validation_log(
+            trace,
+            mode,
+            "warn",
+            "validation_budget_overrun",
+            stage,
+            decision_path,
+            decision_action,
+            "BudgetExceeded",
+            latency_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            cache_hit,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+        );
+    }
+
+    fn push_validation_log_line(&self, line: String) {
+        if !self.validation_logging_enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut logs = self.validation_logs.lock();
+        while logs.len() >= VALIDATION_LOG_CAPACITY {
+            let _ = logs.pop_front();
+        }
+        logs.push_back(line);
+    }
+
+    #[must_use]
+    fn mode_name(mode: crate::config::SafetyLevel) -> &'static str {
+        match mode {
+            crate::config::SafetyLevel::Strict => "strict",
+            crate::config::SafetyLevel::Hardened => "hardened",
+            crate::config::SafetyLevel::Off => "off",
+        }
+    }
+
+    #[must_use]
+    fn stage_label(stage: CheckStage) -> &'static str {
+        match stage {
+            CheckStage::Null => "null_check",
+            CheckStage::TlsCache => "tls_cache",
+            CheckStage::Bloom => "bloom",
+            CheckStage::Arena => "arena_lookup",
+            CheckStage::Fingerprint => "fingerprint",
+            CheckStage::Canary => "canary",
+            CheckStage::Bounds => "bounds",
+        }
+    }
+
+    #[must_use]
+    fn stage_path(stage: CheckStage) -> &'static str {
+        match stage {
+            CheckStage::Null => "pipeline::stage1::null_check",
+            CheckStage::TlsCache => "pipeline::stage2::tls_cache",
+            CheckStage::Bloom => "pipeline::stage3::bloom",
+            CheckStage::Arena => "pipeline::stage4::arena",
+            CheckStage::Fingerprint => "pipeline::stage5::fingerprint",
+            CheckStage::Canary => "pipeline::stage6::canary",
+            CheckStage::Bounds => "pipeline::stage7::bounds",
+        }
+    }
+
+    /// Prepare for a fork by acquiring all internal locks.
+    /// Returns a guard that, when dropped, releases the locks.
+    ///
+    /// The page oracle before the arena shards: `free` holds a page-oracle
+    /// read while it locks a shard, so the reverse order deadlocked a fork
+    /// against a concurrent free (hardened fixture_fork_mt: fork waiting for
+    /// page-oracle readers to drain while holding every shard). The arena
+    /// guard does not allocate, so taking it under the page lock is safe.
+    pub fn atfork_prepare(&self) -> PipelineAtforkGuard<'_> {
+        // Before the locks: moving the guards is a `memcpy`, which in the
+        // libc build is the exported, membrane-validated one. Its validation
+        // took the page-oracle lock this thread had just taken for writing,
+        // and the forking thread (git's test shell under hardened) hung.
+        let validation = enter_validation_execution_context();
+        let page_oracle = self.page_oracle.atfork_prepare();
+        PipelineAtforkGuard {
+            _arena: self.arena.atfork_prepare(),
+            _page_oracle: page_oracle,
+            _validation: validation,
+        }
+    }
+
+    /// Run a pointer through the validation pipeline.
+    ///
+    /// @separation-pre: `Owns(TsmMeta) * Readable(addr)`; caller memory outside membrane
+    /// metadata is represented as frame `F`.
+    /// @separation-post: `Owns(TsmMeta') * Outcome(addr)` and frame `F` is preserved.
+    /// @separation-frame: `F` (caller-owned heap and non-membrane regions remain untouched).
+    /// @separation-alias: `validate_pointer`.
+    pub fn validate(&self, addr: usize) -> ValidationOutcome {
+        if !self.validation_logging_enabled() {
+            let mode = safety_level();
+            if addr == 0 {
+                return self.validate_null_without_trace(mode);
+            }
+            if let Some(outcome) = self.try_validate_cached_without_trace(addr, mode) {
+                return outcome;
+            }
+            if let Some(outcome) = self.try_validate_foreign_without_trace(addr, mode) {
+                return outcome;
+            }
+        }
+
+        self.validate_with_security_context(
+            addr,
+            ValidationSecurityContext::allow_pointer_validation(),
+        )
+    }
+
+    /// Validate a pointer after [`Self::try_validate_cached_remaining`] or
+    /// [`Self::try_validate_cached_remaining_pair`] has already missed the
+    /// thread-local validation cache.
+    #[inline]
+    pub fn validate_after_tls_cache_miss(&self, addr: usize) -> ValidationOutcome {
+        if !self.validation_logging_enabled() {
+            let mode = safety_level();
+            if addr == 0 {
+                return self.validate_null_without_trace(mode);
+            }
+            if !mode.validation_enabled() {
+                let metrics = global_metrics();
+                MembraneMetrics::inc(&metrics.validations);
+                return ValidationOutcome::Bypassed;
+            }
+            if let Some(outcome) = self.try_validate_foreign_without_trace(addr, mode) {
+                return outcome;
+            }
+        }
+
+        self.validate_with_security_context(
+            addr,
+            ValidationSecurityContext::allow_pointer_validation(),
+        )
+    }
+
+    #[inline]
+    fn validation_logging_enabled(&self) -> bool {
+        self.validation_logging_enabled.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn validate_null_without_trace(&self, mode: SafetyLevel) -> ValidationOutcome {
+        let metrics = global_metrics();
+        MembraneMetrics::inc(&metrics.validations);
+        if !mode.validation_enabled() {
+            return ValidationOutcome::Bypassed;
+        }
+        ValidationOutcome::Null
+    }
+
+    #[inline]
+    fn try_validate_cached_without_trace(
+        &self,
+        addr: usize,
+        mode: SafetyLevel,
+    ) -> Option<ValidationOutcome> {
+        if !mode.validation_enabled() {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            return Some(ValidationOutcome::Bypassed);
+        }
+
+        let cached = try_with_tls_cache_hit(None, |cache| {
+            let hit = cache.lookup_hit_only_with_arena(addr, Some(&self.arena));
+            if hit.is_some() {
+                cache.record_pipeline_hits(1);
+            }
+            hit
+        });
+        cached.map(|cv| ValidationOutcome::CachedValid(Self::abstraction_from_cached(addr, cv)))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record_warm_cache_corruption_heal(addr: usize) {
+        crate::heal::global_healing_policy().record(
+            "pointer_validation",
+            "tls_cache_canary",
+            &crate::heal::HealingAction::ClampSize {
+                requested: 1,
+                clamped: 0,
+            },
+            crate::heal::RepairLogContext::new(0, Some(addr)),
+        );
+    }
+
+    /// Resolve remaining bytes from the thread-local validation cache without
+    /// constructing a 72-byte `ValidationOutcome` on the stack.
+    #[inline(always)]
+    pub fn try_validate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
+        self.try_validate_cached_remaining_const::<false, false>(addr, 0, safety_level())
+    }
+
+    /// Resolve remaining bytes for a guarded write destination, re-verifying
+    /// the 24B header and 8B trailing canary immediately whenever the write
+    /// lands within 64 bytes of `user_size` or requests `>= remaining`.
+    #[inline(always)]
+    pub fn try_validate_cached_write_remaining(
+        &self,
+        addr: usize,
+        write_len: usize,
+    ) -> Option<Option<usize>> {
+        self.try_validate_cached_remaining_const::<true, true>(addr, write_len, safety_level())
+    }
+
+    /// Variant of [`Self::try_validate_cached_write_remaining`] for ABI callers
+    /// (`memset`, `strcpy`) that record their own symbol-attributed `HealingAction`
+    /// with the exact `requested` byte count, avoiding duplicate `size_clamps`.
+    #[inline(always)]
+    pub fn try_validate_cached_write_remaining_unlogged(
+        &self,
+        addr: usize,
+        write_len: usize,
+    ) -> Option<Option<usize>> {
+        self.try_validate_cached_remaining_const::<true, false>(addr, write_len, safety_level())
+    }
+
+    #[inline(always)]
+    fn try_validate_cached_remaining_const<const IS_WRITE: bool, const EMIT_HEAL: bool>(
+        &self,
+        addr: usize,
+        write_len: usize,
+        mode: SafetyLevel,
+    ) -> Option<Option<usize>> {
+        if addr == 0 || self.validation_logging_enabled() || !mode.validation_enabled() {
+            return None;
+        }
+        let cached = crate::tls_cache::lookup_tls_cache_hit_remaining::<IS_WRITE>(
+            addr,
+            &self.page_oracle,
+            Some(&self.arena),
+            write_len,
+        );
+        if cached.is_corrupted() {
+            // `TLS_CACHE` already evicted the corrupted entry and bumped
+            // `canary_failures`/`fingerprint_failures`. Only clamp to `0` (and
+            // optionally emit a heal record) when healing is enabled; in Strict
+            // mode, miss cleanly so `validate()` surfaces `TemporalViolation`
+            // without recording any `HealingAction`.
+            if !mode.heals_enabled() {
+                return None;
+            }
+            if EMIT_HEAL {
+                Self::record_warm_cache_corruption_heal(addr);
+            }
+            return Some(Some(0));
+        }
+        cached.decode()
+    }
+
+    /// Resolve remaining bytes for two pointers in a single TLS cache borrow,
+    /// returning two single-register `CachedRemaining` values in `(rax, rdx)`
+    /// without stack `sret` spills.
+    #[inline(always)]
+    pub fn try_validate_cached_remaining_pair(
+        &self,
+        lhs: usize,
+        rhs: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        self.try_validate_cached_remaining_pair_const::<false>(lhs, rhs, 0, safety_level())
+    }
+
+    /// Resolve remaining bytes for `(dst, src)` where `dst` is a guarded write
+    /// destination of `write_len` bytes, immediately re-verifying `dst`'s
+    /// header and trailing canary on near-tail/full-buffer writes.
+    #[inline(always)]
+    pub fn try_validate_cached_write_remaining_pair(
+        &self,
+        dst: usize,
+        src: usize,
+        write_len: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        self.try_validate_cached_remaining_pair_const::<true>(dst, src, write_len, safety_level())
+    }
+
+    #[inline(always)]
+    fn try_validate_cached_remaining_pair_const<const LHS_IS_WRITE: bool>(
+        &self,
+        lhs: usize,
+        rhs: usize,
+        write_len: usize,
+        mode: SafetyLevel,
+    ) -> (CachedRemaining, CachedRemaining) {
+        if self.validation_logging_enabled() || !mode.validation_enabled() {
+            return (CachedRemaining::MISS, CachedRemaining::MISS);
+        }
+        let (mut l, mut r) = crate::tls_cache::lookup_tls_cache_hit_remaining_pair::<LHS_IS_WRITE>(
+            lhs,
+            rhs,
+            &self.page_oracle,
+            Some(&self.arena),
+            write_len,
+        );
+        if l.is_corrupted() {
+            l = if mode.heals_enabled() {
+                CachedRemaining::clamped_zero()
+            } else {
+                CachedRemaining::MISS
+            };
+        }
+        if r.is_corrupted() {
+            r = if mode.heals_enabled() {
+                CachedRemaining::clamped_zero()
+            } else {
+                CachedRemaining::MISS
+            };
+        }
+        (l, r)
+    }
+
+    #[inline]
+    fn try_validate_foreign_without_trace(
+        &self,
+        addr: usize,
+        mode: SafetyLevel,
+    ) -> Option<ValidationOutcome> {
+        if !mode.validation_enabled() {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            return Some(ValidationOutcome::Bypassed);
+        }
+
+        // Check the 8 KB L1-resident page-oracle presence bitmap before
+        // hashing and probing the 8 MB Bloom filter: every arena allocation is
+        // registered in `page_oracle` alongside `bloom`, so any address outside
+        // the page oracle's 16 MB chunks is guaranteed foreign (bd-rc0923-epic-eeuy4f.9).
+        if !self.page_oracle.may_contain_addr_lockfree(addr) {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            MembraneMetrics::inc(&metrics.bloom_misses);
+            return Some(ValidationOutcome::Foreign(PointerAbstraction::unknown(
+                addr,
+            )));
+        }
+
+        if self.bloom.might_contain(addr) {
+            return None;
+        }
+
+        // The page-oracle read lock is the one lock on this fast path: hold the
+        // validation context across it, so a signal handler that allocates on
+        // this thread meanwhile sees it and does not wait for a writer lock
+        // behind its own read (bd-na6ede).
+        let owned_page = {
+            let _validation_context = enter_validation_execution_context();
+            self.page_oracle.query(addr)
+        };
+        if owned_page {
+            return None;
+        }
+
+        let metrics = global_metrics();
+        MembraneMetrics::inc(&metrics.validations);
+        MembraneMetrics::inc(&metrics.bloom_misses);
+        Some(ValidationOutcome::Foreign(PointerAbstraction::unknown(
+            addr,
+        )))
+    }
+
+    /// Run a pointer through the validation pipeline under an explicit security context.
+    pub fn validate_with_security_context(
+        &self,
+        addr: usize,
+        security_context: ValidationSecurityContext,
+    ) -> ValidationOutcome {
+        let _validation_context = enter_validation_execution_context();
+        let metrics = global_metrics();
+        MembraneMetrics::inc(&metrics.validations);
+        let mode = safety_level();
+        let trace = self.begin_validation_trace(security_context);
+
+        self.emit_validation_log(
+            &trace,
+            mode,
+            "trace",
+            "validation_stage",
+            "security_context",
+            "pipeline::stage0::security_context",
+            "Observe",
+            "Continue",
+            0,
+            false,
+            false,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+
+        if !security_context.allows_pointer_validation() {
+            self.emit_terminal_transition(
+                &trace,
+                mode,
+                "security_context",
+                "pipeline::stage0::security_context",
+                "Deny",
+                "CapabilityDenied",
+                0,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0,
+                0,
+                false, // invariant_violation = false (policy decision, not corruption)
+            );
+            return ValidationOutcome::Denied(PointerAbstraction::invalid(addr));
+        }
+
+        // Stage 0: Safety level check
+        if !mode.validation_enabled() {
+            self.emit_terminal_transition(
+                &trace,
+                mode,
+                "safety_level",
+                "pipeline::stage0::safety_level",
+                "Allow",
+                "Bypassed",
+                0,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0,
+                0,
+                false,
+            );
+            return ValidationOutcome::Bypassed;
+        }
+
+        // Stage 1: Null check (~1ns)
+        self.emit_validation_log(
+            &trace,
+            mode,
+            "trace",
+            "validation_stage",
+            "null_check",
+            "pipeline::stage1::null_check",
+            "Observe",
+            "Continue",
+            1,
+            false,
+            false,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        if addr == 0 {
+            self.pipeline_observe(mode, ValidationProfile::Fast, 1, false);
+            // Null is dependency-forced before any adaptive ordering decision,
+            // so there is no sampled check order to feed back to the bandit.
+            self.emit_terminal_transition(
+                &trace,
+                mode,
+                "null_check",
+                "pipeline::stage1::null_check",
+                "Deny",
+                "Null",
+                1,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0,
+                0,
+                false,
+            );
+            return ValidationOutcome::Null;
+        }
+
+        let aligned = addr & 0x7 == 0;
+        let recent_page = self.page_oracle.query(addr);
+        let raw_order = self.pipeline_check_ordering(aligned, recent_page);
+        let ordering = Self::dependency_safe_order(raw_order);
+
+        if raw_order != ordering {
+            self.emit_validation_log(
+                &trace,
+                mode,
+                "warn",
+                "validation_order_rewrite",
+                "stage_ordering",
+                "pipeline::order::dependency_safe_rewrite",
+                "Observe",
+                "OrderRewritten",
+                1,
+                aligned,
+                recent_page,
+                false,
+                false,
+                0,
+                0,
+                0,
+            );
+        }
+
+        let mut elapsed_ns = 1_u64;
+        let mut slot: Option<ArenaSlot> = None;
+        let mut bloom_negative = false;
+        let mut saw_fingerprint = false;
+        let mut verified_fp_hash: Option<u64> = None;
+        let mut verified_canary_tag: Option<u64> = None;
+        let mut saw_canary = false;
+        let mut epoch_guard: Option<PinnedEpochGuard<'_>> = None;
+        // Snapshot of all per-shard TLS-cache epochs, captured lazily on the
+        // first stage that needs to record a cache insertion. Sampling once
+        // up front (rather than once per insert) preserves the TOCTOU-safety
+        // of the old global-epoch design: a free that races with this
+        // validation will leave the snapshot lagging the live value, and the
+        // cached entry will mismatch on the next lookup.
+        let mut validation_shard_epochs: Option<[u64; NUM_TLS_CACHE_SHARDS]> = None;
+
+        for (idx, stage) in ordering.iter().enumerate() {
+            self.emit_validation_log(
+                &trace,
+                mode,
+                "trace",
+                "validation_stage",
+                Self::stage_label(*stage),
+                Self::stage_path(*stage),
+                "Observe",
+                "Continue",
+                elapsed_ns,
+                aligned,
+                recent_page,
+                bloom_negative,
+                false,
+                0,
+                0,
+                0,
+            );
+            match *stage {
+                CheckStage::Null => {}
+                CheckStage::TlsCache => {
+                    elapsed_ns =
+                        elapsed_ns.saturating_add(u64::from(CheckStage::TlsCache.cost_ns()));
+                    let cached =
+                        with_tls_cache(|cache| cache.lookup_with_arena(addr, Some(&self.arena)));
+                    if let Some(cv) = cached {
+                        MembraneMetrics::inc(&metrics.tls_cache_hits);
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "debug",
+                            "validation_cache_hit",
+                            "tls_cache",
+                            "pipeline::stage2::tls_cache",
+                            "Allow",
+                            "CacheHit",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            true,
+                            0,
+                            0,
+                            0,
+                        );
+                        let abs = Self::abstraction_from_cached(addr, cv);
+                        // Cache hits replay a previously validated abstraction.
+                        // Misses and deeper exits still train the sampled check oracle.
+                        self.pipeline_observe(mode, ValidationProfile::Fast, elapsed_ns, false);
+                        self.emit_terminal_transition(
+                            &trace,
+                            mode,
+                            "tls_cache",
+                            "pipeline::stage2::tls_cache",
+                            "Allow",
+                            "CachedValid",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            true,
+                            0,
+                            0,
+                            0,
+                            false,
+                        );
+                        return ValidationOutcome::CachedValid(abs);
+                    }
+                    MembraneMetrics::inc(&metrics.tls_cache_misses);
+                    self.emit_validation_log(
+                        &trace,
+                        mode,
+                        "debug",
+                        "validation_cache_miss",
+                        "tls_cache",
+                        "pipeline::stage2::tls_cache",
+                        "Observe",
+                        "CacheMiss",
+                        elapsed_ns,
+                        aligned,
+                        recent_page,
+                        bloom_negative,
+                        false,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+                CheckStage::Bloom => {
+                    if slot.is_some() {
+                        continue;
+                    }
+                    elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Bloom.cost_ns()));
+                    if !self.bloom.might_contain(addr) {
+                        bloom_negative = true;
+                        MembraneMetrics::inc(&metrics.bloom_misses);
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "debug",
+                            "validation_bloom_miss",
+                            "bloom",
+                            "pipeline::stage3::bloom",
+                            "Observe",
+                            "BloomMiss",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                        );
+                        // Bloom membership is keyed on allocation bases. Interior pointers can
+                        // legitimately miss here, so page-oracle ownership must arbitrate before
+                        // we classify this address as foreign.
+                        let page_hit = self.page_oracle.query(addr);
+                        elapsed_ns = elapsed_ns.saturating_add(6);
+                        if page_hit {
+                            self.emit_validation_log(
+                                &trace,
+                                mode,
+                                "debug",
+                                "validation_bloom_page_override",
+                                "bloom",
+                                "pipeline::stage3::bloom",
+                                "Observe",
+                                "PageOwned",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                0,
+                                0,
+                                0,
+                            );
+                            continue;
+                        }
+
+                        let pre_decision = self
+                            .pipeline_decide(mode, RuntimeContext::pointer_validation(addr, true));
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "trace",
+                            "validation_runtime_decision",
+                            "bloom",
+                            "pipeline::stage3::bloom::runtime_decide",
+                            match pre_decision.action {
+                                crate::runtime_math::MembraneAction::Allow => "Allow",
+                                crate::runtime_math::MembraneAction::FullValidate => "FullValidate",
+                                crate::runtime_math::MembraneAction::Repair(_) => "Repair",
+                                crate::runtime_math::MembraneAction::Deny => "Deny",
+                            },
+                            "RuntimeDecision",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            pre_decision.policy_id,
+                            pre_decision.risk_upper_bound_ppm,
+                            pre_decision.evidence_seqno,
+                        );
+
+                        // Runtime-math selected fast path for foreign pointers.
+                        if !pre_decision.requires_full_validation() && !mode.heals_enabled() {
+                            self.pipeline_note_order(
+                                mode,
+                                aligned,
+                                recent_page,
+                                &ordering,
+                                Some(idx),
+                            );
+                            self.pipeline_observe(mode, pre_decision.profile, elapsed_ns, false);
+                            self.emit_terminal_transition(
+                                &trace,
+                                mode,
+                                "bloom",
+                                "pipeline::stage3::bloom",
+                                "Allow",
+                                "Foreign",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                pre_decision.policy_id,
+                                pre_decision.risk_upper_bound_ppm,
+                                pre_decision.evidence_seqno,
+                                false,
+                            );
+                            return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
+                        }
+
+                        // No page ownership evidence: classify as foreign regardless of profile.
+                        self.pipeline_note_order(mode, aligned, recent_page, &ordering, Some(idx));
+                        self.pipeline_observe(mode, pre_decision.profile, elapsed_ns, false);
+                        self.emit_terminal_transition(
+                            &trace,
+                            mode,
+                            "bloom",
+                            "pipeline::stage3::bloom",
+                            "Allow",
+                            "Foreign",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            pre_decision.policy_id,
+                            pre_decision.risk_upper_bound_ppm,
+                            pre_decision.evidence_seqno,
+                            false,
+                        );
+                        return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
+                    } else {
+                        MembraneMetrics::inc(&metrics.bloom_hits);
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "debug",
+                            "validation_bloom_hit",
+                            "bloom",
+                            "pipeline::stage3::bloom",
+                            "Observe",
+                            "BloomHit",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                        );
+                    }
+                }
+                CheckStage::Arena => {
+                    if slot.is_some() {
+                        continue;
+                    }
+                    if epoch_guard.is_none() {
+                        epoch_guard = Some(self.pin_epoch());
+                    }
+                    let slot_validation_shard_epochs =
+                        *validation_shard_epochs.get_or_insert_with(snapshot_shard_epochs);
+                    elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Arena.cost_ns()));
+                    MembraneMetrics::inc(&metrics.arena_lookups);
+                    let Some(found) = self.arena.lookup(addr) else {
+                        self.pipeline_note_order(mode, aligned, recent_page, &ordering, Some(idx));
+                        self.pipeline_observe(mode, ValidationProfile::Fast, elapsed_ns, false);
+                        self.emit_terminal_transition(
+                            &trace,
+                            mode,
+                            "arena_lookup",
+                            "pipeline::stage4::arena",
+                            "Allow",
+                            "Foreign",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                            false,
+                        );
+                        return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
+                    };
+                    if !found.state.is_live() {
+                        let abs = self.abstraction_from_slot(addr, &found);
+                        self.pipeline_note_order(mode, aligned, recent_page, &ordering, Some(idx));
+                        self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
+                        self.emit_terminal_transition(
+                            &trace,
+                            mode,
+                            "arena_lookup",
+                            "pipeline::stage4::arena",
+                            "Deny",
+                            "TemporalViolation",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                            true,
+                        );
+                        return ValidationOutcome::TemporalViolation(abs);
+                    }
+                    slot = Some(found);
+                    debug_assert_eq!(validation_shard_epochs, Some(slot_validation_shard_epochs));
+                }
+                CheckStage::Fingerprint => {
+                    if let Some(s) = slot {
+                        elapsed_ns =
+                            elapsed_ns.saturating_add(u64::from(CheckStage::Fingerprint.cost_ns()));
+                        let mut fp_bytes = [0u8; FINGERPRINT_SIZE];
+                        // SAFETY: Valid memory within our allocation header.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                (s.user_base - FINGERPRINT_SIZE) as *const u8,
+                                fp_bytes.as_mut_ptr(),
+                                FINGERPRINT_SIZE,
+                            );
+                        }
+                        let fp = AllocationFingerprint::from_bytes(&fp_bytes);
+                        if fp.generation != s.generation
+                            || fp.size != s.user_size as u64
+                            || !fp.verify(s.user_base)
+                        {
+                            MembraneMetrics::inc(&metrics.fingerprint_failures);
+                            let abs = self.abstraction_from_slot(addr, &s);
+                            self.pipeline_note_order(
+                                mode,
+                                aligned,
+                                recent_page,
+                                &ordering,
+                                Some(idx),
+                            );
+                            self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
+                            self.emit_terminal_transition(
+                                &trace,
+                                mode,
+                                "fingerprint",
+                                "pipeline::stage5::fingerprint",
+                                "Deny",
+                                "TemporalViolation",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                0,
+                                0,
+                                0,
+                                true,
+                            );
+                            return ValidationOutcome::TemporalViolation(abs);
+                        }
+                        MembraneMetrics::inc(&metrics.fingerprint_passes);
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "trace",
+                            "validation_fingerprint_pass",
+                            "fingerprint",
+                            "pipeline::stage5::fingerprint",
+                            "Observe",
+                            "FingerprintPass",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                        );
+                        saw_fingerprint = true;
+                        verified_fp_hash = Some(fp.hash);
+                    }
+                }
+                CheckStage::Canary => {
+                    if let Some(s) = slot {
+                        elapsed_ns =
+                            elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
+                        let expected_canary = match verified_fp_hash {
+                            Some(hash) => crate::fingerprint::Canary::derive(
+                                s.user_base,
+                                s.user_size as u64,
+                                s.generation,
+                                hash,
+                            ),
+                            None => AllocationFingerprint::compute(
+                                s.user_base,
+                                s.user_size as u64,
+                                s.generation,
+                            )
+                            .canary_for(s.user_base),
+                        };
+                        let canary_addr = s.user_base + s.user_size;
+                        let mut actual = [0u8; CANARY_SIZE];
+                        // SAFETY: Valid memory within the allocation's total size.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                canary_addr as *const u8,
+                                actual.as_mut_ptr(),
+                                CANARY_SIZE,
+                            );
+                        }
+                        if !expected_canary.verify(&actual) {
+                            MembraneMetrics::inc(&metrics.canary_failures);
+                            let abs = self.abstraction_from_slot(addr, &s);
+                            self.pipeline_note_order(
+                                mode,
+                                aligned,
+                                recent_page,
+                                &ordering,
+                                Some(idx),
+                            );
+                            self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
+                            self.emit_terminal_transition(
+                                &trace,
+                                mode,
+                                "canary",
+                                "pipeline::stage6::canary",
+                                "Deny",
+                                "TemporalViolation",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                0,
+                                0,
+                                0,
+                                true,
+                            );
+                            return ValidationOutcome::TemporalViolation(abs);
+                        }
+                        MembraneMetrics::inc(&metrics.canary_passes);
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "trace",
+                            "validation_canary_pass",
+                            "canary",
+                            "pipeline::stage6::canary",
+                            "Observe",
+                            "CanaryPass",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                        );
+                        saw_canary = true;
+                        verified_canary_tag = Some(expected_canary.as_u64());
+                    }
+                }
+                CheckStage::Bounds => {
+                    if let Some(s) = slot {
+                        elapsed_ns =
+                            elapsed_ns.saturating_add(u64::from(CheckStage::Bounds.cost_ns()));
+                        let end = s.user_base.saturating_add(s.user_size);
+                        if addr < s.user_base || addr >= end {
+                            let abs = self.abstraction_from_slot(addr, &s);
+                            self.pipeline_note_order(
+                                mode,
+                                aligned,
+                                recent_page,
+                                &ordering,
+                                Some(idx),
+                            );
+                            self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
+                            self.emit_terminal_transition(
+                                &trace,
+                                mode,
+                                "bounds",
+                                "pipeline::stage7::bounds",
+                                "Deny",
+                                "Invalid",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                0,
+                                0,
+                                0,
+                                false,
+                            );
+                            return ValidationOutcome::Invalid(abs);
+                        }
+                        self.emit_validation_log(
+                            &trace,
+                            mode,
+                            "trace",
+                            "validation_bounds_accounted",
+                            "bounds",
+                            "pipeline::stage7::bounds",
+                            "Observe",
+                            "BoundsAccounted",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                        );
+                    }
+                }
+            }
+        }
+
+        let Some(slot) = slot else {
+            self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+            self.pipeline_observe(mode, ValidationProfile::Fast, elapsed_ns, false);
+            self.emit_terminal_transition(
+                &trace,
+                mode,
+                "post_pipeline",
+                "pipeline::post::no_slot",
+                "Allow",
+                "Foreign",
+                elapsed_ns,
+                aligned,
+                recent_page,
+                bloom_negative,
+                false,
+                0,
+                0,
+                0,
+                false,
+            );
+            return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
+        };
+
+        let deep_decision = self.pipeline_decide(
+            mode,
+            RuntimeContext::pointer_validation(addr, bloom_negative),
+        );
+        let deep_action = match deep_decision.action {
+            crate::runtime_math::MembraneAction::Allow => "Allow",
+            crate::runtime_math::MembraneAction::FullValidate => "FullValidate",
+            crate::runtime_math::MembraneAction::Repair(_) => "Repair",
+            crate::runtime_math::MembraneAction::Deny => "Deny",
+        };
+        self.emit_validation_log(
+            &trace,
+            mode,
+            "trace",
+            "validation_runtime_decision",
+            "post_pipeline",
+            "pipeline::post::runtime_decide",
+            deep_action,
+            "RuntimeDecision",
+            elapsed_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            false,
+            deep_decision.policy_id,
+            deep_decision.risk_upper_bound_ppm,
+            deep_decision.evidence_seqno,
+        );
+
+        // Runtime-math fast profile in strict mode skips deep integrity checks.
+        if !deep_decision.requires_full_validation() && !mode.heals_enabled() {
+            let abs = self.abstraction_from_slot(addr, &slot);
+            // Borrow the snapshot rather than copying — `[u64; NUM_TLS_CACHE_SHARDS]`
+            // is 128 bytes and we hit this path on every cached fast-profile hit.
+            if let Some(snapshot) = validation_shard_epochs.as_ref() {
+                self.cache_validation(addr, &slot, verified_fp_hash, verified_canary_tag, snapshot);
+            }
+            self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+            self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, false);
+            self.emit_terminal_transition(
+                &trace,
+                mode,
+                "post_pipeline",
+                "pipeline::post::fast_accept",
+                "Allow",
+                "Validated",
+                elapsed_ns,
+                aligned,
+                recent_page,
+                bloom_negative,
+                false,
+                deep_decision.policy_id,
+                deep_decision.risk_upper_bound_ppm,
+                deep_decision.evidence_seqno,
+                false,
+            );
+            return ValidationOutcome::Validated(abs);
+        }
+
+        // If full path is required and these stages were delayed by ordering,
+        // force their accounting now so integrity checks remain complete.
+        if !saw_fingerprint {
+            elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Fingerprint.cost_ns()));
+            let mut fp_bytes = [0u8; FINGERPRINT_SIZE];
+            // SAFETY: Valid memory within our allocation header.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    (slot.user_base - FINGERPRINT_SIZE) as *const u8,
+                    fp_bytes.as_mut_ptr(),
+                    FINGERPRINT_SIZE,
+                );
+            }
+            let fp = AllocationFingerprint::from_bytes(&fp_bytes);
+            if fp.generation != slot.generation
+                || fp.size != slot.user_size as u64
+                || !fp.verify(slot.user_base)
+            {
+                MembraneMetrics::inc(&metrics.fingerprint_failures);
+                let abs = self.abstraction_from_slot(addr, &slot);
+                self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+                self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, true);
+                self.emit_terminal_transition(
+                    &trace,
+                    mode,
+                    "fingerprint",
+                    "pipeline::post::fingerprint_forced",
+                    "Deny",
+                    "TemporalViolation",
+                    elapsed_ns,
+                    aligned,
+                    recent_page,
+                    bloom_negative,
+                    false,
+                    deep_decision.policy_id,
+                    deep_decision.risk_upper_bound_ppm,
+                    deep_decision.evidence_seqno,
+                    true,
+                );
+                return ValidationOutcome::TemporalViolation(abs);
+            }
+            MembraneMetrics::inc(&metrics.fingerprint_passes);
+            self.emit_validation_log(
+                &trace,
+                mode,
+                "trace",
+                "validation_fingerprint_pass",
+                "fingerprint",
+                "pipeline::post::fingerprint_forced",
+                "Observe",
+                "FingerprintPass",
+                elapsed_ns,
+                aligned,
+                recent_page,
+                bloom_negative,
+                false,
+                deep_decision.policy_id,
+                deep_decision.risk_upper_bound_ppm,
+                deep_decision.evidence_seqno,
+            );
+            verified_fp_hash = Some(fp.hash);
+        }
+        if !saw_canary {
+            elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
+            let expected_canary = match verified_fp_hash {
+                Some(hash) => crate::fingerprint::Canary::derive(
+                    slot.user_base,
+                    slot.user_size as u64,
+                    slot.generation,
+                    hash,
+                ),
+                None => AllocationFingerprint::compute(
+                    slot.user_base,
+                    slot.user_size as u64,
+                    slot.generation,
+                )
+                .canary_for(slot.user_base),
+            };
+            verified_canary_tag = Some(expected_canary.as_u64());
+            let canary_addr = slot.user_base + slot.user_size;
+            let mut actual = [0u8; CANARY_SIZE];
+            // SAFETY: Valid memory within the allocation's total size.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    canary_addr as *const u8,
+                    actual.as_mut_ptr(),
+                    CANARY_SIZE,
+                );
+            }
+            if !expected_canary.verify(&actual) {
+                MembraneMetrics::inc(&metrics.canary_failures);
+                let abs = self.abstraction_from_slot(addr, &slot);
+                self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+                self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, true);
+                self.emit_terminal_transition(
+                    &trace,
+                    mode,
+                    "canary",
+                    "pipeline::post::canary_forced",
+                    "Deny",
+                    "TemporalViolation",
+                    elapsed_ns,
+                    aligned,
+                    recent_page,
+                    bloom_negative,
+                    false,
+                    deep_decision.policy_id,
+                    deep_decision.risk_upper_bound_ppm,
+                    deep_decision.evidence_seqno,
+                    true,
+                );
+                return ValidationOutcome::TemporalViolation(abs);
+            }
+            MembraneMetrics::inc(&metrics.canary_passes);
+            self.emit_validation_log(
+                &trace,
+                mode,
+                "trace",
+                "validation_canary_pass",
+                "canary",
+                "pipeline::post::canary_forced",
+                "Observe",
+                "CanaryPass",
+                elapsed_ns,
+                aligned,
+                recent_page,
+                bloom_negative,
+                false,
+                deep_decision.policy_id,
+                deep_decision.risk_upper_bound_ppm,
+                deep_decision.evidence_seqno,
+            );
+        }
+
+        let abs = self.abstraction_from_slot(addr, &slot);
+        // Borrow the snapshot rather than copying — `[u64; NUM_TLS_CACHE_SHARDS]`
+        // is 128 bytes; the full-validation path here is rarer than the fast
+        // profile above but the borrow still costs nothing extra.
+        if let Some(snapshot) = validation_shard_epochs.as_ref() {
+            self.cache_validation(addr, &slot, verified_fp_hash, verified_canary_tag, snapshot);
+        }
+        self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+        self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, false);
+        self.emit_terminal_transition(
+            &trace,
+            mode,
+            "post_pipeline",
+            "pipeline::post::validated",
+            deep_action,
+            "Validated",
+            elapsed_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            false,
+            deep_decision.policy_id,
+            deep_decision.risk_upper_bound_ppm,
+            deep_decision.evidence_seqno,
+            false,
+        );
+        ValidationOutcome::Validated(abs)
+    }
+
+    #[inline]
+    fn pipeline_check_ordering(&self, aligned: bool, recent_page: bool) -> [CheckStage; 7] {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            return crate::check_oracle::DEFAULT_ORDER;
+        }
+        self.runtime_math
+            .check_ordering(ApiFamily::PointerValidation, aligned, recent_page)
+    }
+
+    #[inline]
+    fn pipeline_decide(
+        &self,
+        mode: SafetyLevel,
+        ctx: RuntimeContext,
+    ) -> crate::runtime_math::RuntimeDecision {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            crate::tls_cache::set_warm_integrity_source_escalated(
+                crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+                false,
+            );
+            return crate::runtime_math::RuntimeDecision {
+                action: crate::runtime_math::MembraneAction::Allow,
+                profile: if mode.heals_enabled() {
+                    ValidationProfile::Full
+                } else {
+                    ValidationProfile::Fast
+                },
+                policy_id: 0,
+                risk_upper_bound_ppm: 0,
+                evidence_seqno: 0,
+            };
+        }
+        let decision = self.runtime_math.decide(mode, ctx);
+        let escalated = mode.heals_enabled()
+            && (self
+                .runtime_math
+                .family_conformal_risk_ppm(ApiFamily::PointerValidation)
+                >= 750_000
+                || matches!(decision.action, crate::runtime_math::MembraneAction::Deny));
+        crate::tls_cache::set_warm_integrity_source_escalated(
+            crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+            escalated,
+        );
+        decision
+    }
+
+    #[inline]
+    fn pipeline_note_order(
+        &self,
+        mode: SafetyLevel,
+        aligned: bool,
+        recent_page: bool,
+        ordering: &[CheckStage; 7],
+        early_exit_idx: Option<usize>,
+    ) {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            return;
+        }
+        self.runtime_math.note_check_order_outcome(
+            mode,
+            ApiFamily::PointerValidation,
+            aligned,
+            recent_page,
+            ordering,
+            early_exit_idx,
+        );
+    }
+
+    #[inline]
+    fn pipeline_observe(
+        &self,
+        mode: SafetyLevel,
+        profile: ValidationProfile,
+        elapsed_ns: u64,
+        adverse: bool,
+    ) {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            crate::tls_cache::set_warm_integrity_source_escalated(
+                crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+                false,
+            );
+            return;
+        }
+        self.runtime_math.observe_validation_result(
+            mode,
+            ApiFamily::PointerValidation,
+            profile,
+            elapsed_ns,
+            adverse,
+        );
+        if mode.heals_enabled() {
+            let escalated = self
+                .runtime_math
+                .family_conformal_risk_ppm(ApiFamily::PointerValidation)
+                >= 750_000;
+            crate::tls_cache::set_warm_integrity_source_escalated(
+                crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+                escalated,
+            );
+        }
+    }
+
+    /// Register a new allocation in all backing structures.
+    pub fn register_allocation(&self, user_base: usize, raw_base: usize, total_size: usize) {
+        self.bloom.insert(user_base);
+        self.page_oracle.insert(raw_base, total_size);
+    }
+
+    /// Allocate memory and register it with the safety model.
+    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
+        let res = self.arena.allocate(size)?;
+        self.register_allocation(res.user_base, res.raw_base, res.total_size);
+        Some(res.ptr)
+    }
+
+    /// Allocate aligned memory and register it with the safety model.
+    pub fn allocate_aligned(&self, size: usize, align: usize) -> Option<*mut u8> {
+        let res = self.arena.allocate_aligned(size, align)?;
+        self.register_allocation(res.user_base, res.raw_base, res.total_size);
+        Some(res.ptr)
+    }
+
+    /// Deregister an allocation from backing structures (PageOracle only).
+    pub fn deregister_allocation(&self, raw_base: usize, total_size: usize) {
+        self.page_oracle.remove(raw_base, total_size);
+    }
+
+    /// Free an allocation and update the safety model.
+    ///
+    /// This handles the actual freeing in the arena and updates the page oracle
+    /// for any blocks that were fully deallocated (drained from quarantine).
+    pub fn free(&self, ptr: *mut u8) -> FreeResult {
+        self.free_with_size(ptr).0
+    }
+
+    /// [`Self::free`] that also returns the freed block's user size (0 when
+    /// nothing was freed), so the allocator's accounting need not look the
+    /// pointer up in the arena a second time.
+    pub fn free_with_size(&self, ptr: *mut u8) -> (FreeResult, usize) {
+        let (result, user_size, drained) = self.arena.free_batched(ptr);
+        let retired_any = !drained.is_empty();
+
+        // One retirement for the whole batch (the arena hands drained entries
+        // out RETIRE_BATCH at a time): a boxed closure per entry was an
+        // allocation through the reentrant malloc path on every free.
+        if retired_any {
+            let oracle = std::sync::Arc::clone(&self.page_oracle);
+            self.collector.retire_quarantined(move || {
+                for entry in &drained {
+                    oracle.remove(entry.raw_base, entry.total_size);
+                }
+                // SAFETY: these drained entries were removed from the arena
+                // exactly once, and reclamation runs after the EBR grace period.
+                unsafe { AllocationArena::deallocate_drained(&drained) };
+            });
+        }
+        // Nothing else advances the epoch outside tests, so retired blocks
+        // were never reclaimed: every hardened allocation leaked once it left
+        // the arena quarantine (2M malloc/free pairs peaked at 654 MB RSS vs
+        // glibc's 2 MB, and forks of that address space stalled for ~70 s in
+        // clone). Advance whenever this free retired something; the collector
+        // reclaims what every pinned reader has moved past.
+        if retired_any {
+            let _ = self.collector.try_advance();
+        }
+
+        (result, user_size)
+    }
+
+    /// Deterministically corrupt the trailing canary for a user allocation.
+    ///
+    /// This is a testing/tooling hook used by reusable fault-injection workflows
+    /// so the harness can exercise corruption paths without using `unsafe` code.
+    /// The address is treated as an opaque allocation identifier; the pipeline
+    /// validates ownership and exact size before touching the trailing canary.
+    #[must_use]
+    pub fn inject_trailing_canary_corruption(
+        &self,
+        addr: usize,
+        user_size: usize,
+        fill_byte: u8,
+    ) -> bool {
+        if addr == 0 {
+            return false;
+        }
+
+        let Some(slot) = self.arena.lookup(addr) else {
+            return false;
+        };
+        if slot.user_base != addr || slot.user_size != user_size || !slot.state.is_live() {
+            return false;
+        }
+
+        // SAFETY: `lookup` returned a live slot for the exact user allocation, and the canary
+        // immediately follows the user region for this allocation by construction.
+        unsafe { Self::overwrite_trailing_canary(slot.user_base + slot.user_size, fill_byte) };
+        true
+    }
+
+    unsafe fn overwrite_trailing_canary(canary_addr: usize, fill_byte: u8) {
+        // SAFETY: caller guarantees `canary_addr..canary_addr+CANARY_SIZE` points to the live
+        // trailing canary bytes for a membrane-owned allocation.
+        unsafe {
+            std::ptr::write_bytes(canary_addr as *mut u8, fill_byte, CANARY_SIZE);
+        }
+    }
+
+    /// Cheaply check if an address is likely owned by the membrane.
+    ///
+    /// This only queries the page oracle and does not perform full validation.
+    /// Useful for heuristic stage ordering in the ABI layer.
+    #[must_use]
+    pub fn check_ownership(&self, addr: usize) -> bool {
+        self.page_oracle.query(addr)
+    }
+
+    fn abstraction_from_slot(&self, addr: usize, slot: &ArenaSlot) -> PointerAbstraction {
+        let (remaining, state) =
+            if addr >= slot.user_base && addr < slot.user_base.saturating_add(slot.user_size) {
+                (
+                    slot.user_base
+                        .saturating_add(slot.user_size)
+                        .saturating_sub(addr),
+                    slot.state,
+                )
+            } else {
+                // Geometry must not erase lifetime. A retired raw block can
+                // be reused by the host, including its former header/canary.
+                // Keep Freed so ABI consumers can consult the new owner; keep
+                // Quarantined so still-owned metadata remains inaccessible.
+                let state = match slot.state {
+                    crate::lattice::SafetyState::Freed
+                    | crate::lattice::SafetyState::Quarantined => slot.state,
+                    _ => crate::lattice::SafetyState::Invalid,
+                };
+                (0, state)
+            };
+        PointerAbstraction::validated(addr, state, slot.user_base, remaining, slot.generation)
+    }
+
+    fn abstraction_from_cached(addr: usize, cv: CachedValidation) -> PointerAbstraction {
+        let (remaining, state) =
+            if addr >= cv.user_base && addr < cv.user_base.saturating_add(cv.user_size) {
+                (
+                    cv.user_base
+                        .saturating_add(cv.user_size)
+                        .saturating_sub(addr),
+                    cv.state,
+                )
+            } else {
+                (0, crate::lattice::SafetyState::Invalid)
+            };
+        PointerAbstraction::validated(addr, state, cv.user_base, remaining, cv.generation)
+    }
+
+    fn cache_validation(
+        &self,
+        addr: usize,
+        slot: &ArenaSlot,
+        verified_fp_hash: Option<u64>,
+        verified_canary_tag: Option<u64>,
+        shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
+    ) {
+        let expected_hash = verified_fp_hash.unwrap_or_else(|| {
+            AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation)
+                .hash
+        });
+        let expected_canary = verified_canary_tag.unwrap_or_else(|| {
+            crate::fingerprint::Canary::derive(
+                slot.user_base,
+                slot.user_size as u64,
+                slot.generation,
+                expected_hash,
+            )
+            .as_u64()
+        });
+        with_tls_cache(|cache| {
+            cache.insert_with_integrity(
+                addr,
+                CachedValidation {
+                    user_base: slot.user_base,
+                    user_size: slot.user_size,
+                    generation: slot.generation,
+                    state: slot.state,
+                },
+                slot.slot_idx,
+                expected_hash,
+                expected_canary,
+                shard_epochs,
+            );
+        });
+    }
+
+    fn dependency_safe_order(ordering: [CheckStage; 7]) -> [CheckStage; 7] {
+        let mut out = [CheckStage::Null; 7];
+        let mut n = 0_usize;
+        let mut seen_mask = 0u8;
+
+        // Stage 0: Always Null check first (cheapest, mandatory)
+        out[n] = CheckStage::Null;
+        n += 1;
+        seen_mask |= 1 << (CheckStage::Null as u8);
+
+        // Group 1: Lookup stages (must happen before integrity checks if we need the slot)
+        for stage in ordering.iter().copied() {
+            if matches!(
+                stage,
+                CheckStage::TlsCache | CheckStage::Bloom | CheckStage::Arena
+            ) {
+                let mask = 1 << (stage as u8);
+                if seen_mask & mask == 0 {
+                    out[n] = stage;
+                    n += 1;
+                    seen_mask |= mask;
+                }
+            }
+        }
+
+        // Group 2: Integrity and bounds stages
+        for stage in ordering.iter().copied() {
+            if matches!(
+                stage,
+                CheckStage::Fingerprint | CheckStage::Canary | CheckStage::Bounds
+            ) {
+                let mask = 1 << (stage as u8);
+                if seen_mask & mask == 0 {
+                    out[n] = stage;
+                    n += 1;
+                    seen_mask |= mask;
+                }
+            }
+        }
+
+        // Self-healing: if any stages were missing from the input ordering,
+        // add them now in default order to ensure we return a complete permutation.
+        if n < 7 {
+            for stage in [
+                CheckStage::TlsCache,
+                CheckStage::Bloom,
+                CheckStage::Arena,
+                CheckStage::Fingerprint,
+                CheckStage::Canary,
+                CheckStage::Bounds,
+            ] {
+                let mask = 1 << (stage as u8);
+                if seen_mask & mask == 0 {
+                    out[n] = stage;
+                    n += 1;
+                    seen_mask |= mask;
+                }
+            }
+        }
+
+        debug_assert_eq!(n, 7);
+        out
+    }
+}
+
+impl Default for ValidationPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check_oracle::CheckStage;
+    use crate::lattice::SafetyState;
+    use crate::tls_cache::lock_tls_cache_epoch_for_tests;
+    use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+    use serde_json::Value;
+    use std::collections::HashSet;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
+
+    fn collected_stage_labels(jsonl: &str) -> HashSet<String> {
+        let mut stages = HashSet::new();
+        for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+            let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
+            if let Some(stage) = row.get("stage").and_then(Value::as_str) {
+                stages.insert(stage.to_string());
+            }
+        }
+        stages
+    }
+
+    /// The ABI's validated memcpy copies through without validating while
+    /// `in_validation_context()`; fork's guard must keep that true for as
+    /// long as it holds the page-oracle lock, or a guard move (a memcpy)
+    /// re-enters `PageOracle::query` and blocks on its own write lock.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    #[test]
+    fn atfork_guard_marks_thread_in_validation_while_locks_held() {
+        let pipeline = ValidationPipeline::new();
+        // An empty oracle answers without its lock.
+        pipeline.page_oracle.insert(0x7000_0000, 4096);
+        assert!(!in_validation_context());
+        let guard = pipeline.atfork_prepare();
+        assert!(in_validation_context());
+        // A second thread cannot read the oracle until the guard drops.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                assert!(pipeline.page_oracle.query(0x7000_0010));
+                tx.send(()).unwrap();
+            });
+            assert!(
+                rx.recv_timeout(std::time::Duration::from_millis(50))
+                    .is_err()
+            );
+            drop(guard);
+            assert!(!in_validation_context());
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .expect("oracle readable after the fork guard drops");
+        });
+    }
+
+    #[test]
+    fn null_pointer_detected() {
+        let pipeline = ValidationPipeline::new();
+        let outcome = pipeline.validate(0);
+        assert!(matches!(outcome, ValidationOutcome::Null));
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    #[test]
+    fn thread_local_ebr_handle_switches_collectors_between_pipelines() {
+        let pipeline_a = ValidationPipeline::new();
+        let pipeline_b = ValidationPipeline::new();
+        let ptr_a = pipeline_a.allocate(16).expect("alloc a");
+        let ptr_b = pipeline_b.allocate(16).expect("alloc b");
+
+        let _ = pipeline_a.validate(ptr_a as usize);
+        assert_eq!(pipeline_a.collector.diagnostics().active_threads, 1);
+        assert_eq!(pipeline_b.collector.diagnostics().active_threads, 0);
+
+        let _ = pipeline_b.validate(ptr_b as usize);
+        assert_eq!(
+            pipeline_b.collector.diagnostics().active_threads,
+            1,
+            "second pipeline should register its own collector handle",
+        );
+        assert_eq!(
+            pipeline_a.collector.diagnostics().active_threads,
+            0,
+            "switching pipelines on one thread must release the stale collector handle",
+        );
+
+        assert_eq!(pipeline_b.free(ptr_b), FreeResult::Freed);
+        assert_eq!(pipeline_a.free(ptr_a), FreeResult::Freed);
+    }
+
+    #[test]
+    fn null_pointer_validation_does_not_register_ebr_handle() {
+        let pipeline = ValidationPipeline::new();
+
+        let outcome = pipeline.validate(0);
+
+        assert!(matches!(outcome, ValidationOutcome::Null));
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            0,
+            "null validation must not enter the epoch collector"
+        );
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    #[test]
+    fn owned_pointer_validation_registers_ebr_handle() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(16).expect("alloc");
+
+        let outcome = pipeline.validate(ptr as usize);
+
+        assert!(outcome.can_read());
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            1,
+            "owned metadata validation must pin through arena/fingerprint/canary reads"
+        );
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn owned_tls_cache_lane_uses_ephemeral_ebr_handle_without_rust_tls() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(16).expect("alloc");
+
+        let outcome = pipeline.validate(ptr as usize);
+
+        assert!(outcome.can_read());
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            0,
+            "owned-tls-cache validation must drop its short-lived EBR handle after validation"
+        );
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn owned_tls_cache_lane_tracks_validation_depth_without_rust_tls() {
+        assert!(!in_validation_context());
+        {
+            let _outer = enter_validation_execution_context();
+            assert!(in_validation_context());
+            {
+                let _inner = enter_validation_execution_context();
+                assert!(in_validation_context());
+            }
+            assert!(in_validation_context());
+        }
+        assert!(!in_validation_context());
+    }
+
+    #[test]
+    fn civil_date_from_unix_days_handles_epoch_and_leap_day() {
+        use crate::util::civil_date_from_unix_days;
+        assert_eq!(civil_date_from_unix_days(0), (1970, 1, 1));
+        assert_eq!(civil_date_from_unix_days(11_016), (2000, 2, 29));
+        assert_eq!(civil_date_from_unix_days(20_147), (2025, 2, 28));
+    }
+
+    #[test]
+    fn foreign_pointer_allowed() {
+        let pipeline = ValidationPipeline::new();
+        let outcome = pipeline.validate(0xDEAD_BEEF);
+        // Foreign pointers are allowed (Galois property), but must remain Unknown/unbounded.
+        assert!(matches!(outcome, ValidationOutcome::Foreign(_)));
+        assert!(outcome.can_read());
+        assert!(outcome.can_write());
+        let abs = outcome.abstraction().expect("foreign abstraction");
+        assert_eq!(abs.state, SafetyState::Unknown);
+        assert!(abs.alloc_base.is_none());
+        assert!(abs.remaining.is_none());
+        assert!(abs.generation.is_none());
+    }
+
+    #[test]
+    fn allocated_pointer_validates() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(256).expect("alloc");
+        let addr = ptr as usize;
+
+        let outcome = pipeline.validate(addr);
+        assert!(outcome.can_read());
+        assert!(outcome.can_write());
+
+        if let Some(abs) = outcome.abstraction() {
+            assert_eq!(abs.state, SafetyState::Valid);
+            assert_eq!(abs.remaining, Some(256));
+        } else {
+            panic!("expected abstraction"); // ubs:ignore — unit-test failure assertion, never a production path.
+        }
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn interior_pointer_on_owned_page_is_not_misclassified_as_foreign() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(256).expect("alloc");
+        let base = ptr as usize;
+        let interior = base + 17;
+        let metrics = global_metrics();
+        let before_miss = MembraneMetrics::get(&metrics.bloom_misses);
+
+        let outcome = pipeline.validate(interior);
+        assert!(
+            !matches!(outcome, ValidationOutcome::Foreign(_)),
+            "interior pointer on an owned page must not be classified as foreign"
+        );
+        assert!(outcome.can_read());
+        assert!(outcome.can_write());
+        let abs = outcome.abstraction().expect("validated abstraction");
+        assert_eq!(abs.alloc_base, Some(base));
+        assert_eq!(abs.remaining, Some(256 - 17));
+
+        let after_miss = MembraneMetrics::get(&metrics.bloom_misses);
+        assert!(
+            after_miss > before_miss,
+            "expected bloom miss accounting for interior pointer validation"
+        );
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn freed_pointer_detected() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(128).expect("alloc");
+        let addr = ptr as usize;
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+
+        let outcome = pipeline.validate(addr);
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+    }
+
+    #[test]
+    fn concurrent_free_invalidates_reader_cache_but_not_prior_snapshot() {
+        use std::sync::{Barrier, mpsc};
+
+        // Real pipeline calls and threads, with deterministic before/after
+        // ordering. The middle phase races validation with free, without
+        // dereferencing caller memory or claiming every interleaving is covered.
+        for runtime_math_enabled in [false, true] {
+            for logging_enabled in [false, true] {
+                let pipeline = ValidationPipeline::with_runtime_math(runtime_math_enabled);
+                pipeline.set_validation_logging_enabled(logging_enabled);
+                let ptr = pipeline.allocate(128).expect("allocation");
+                let addr = ptr as usize;
+                let start = Barrier::new(2);
+
+                std::thread::scope(|scope| {
+                    let (ready_tx, ready_rx) = mpsc::channel();
+                    let (freed_tx, freed_rx) = mpsc::channel();
+                    let pipeline = &pipeline;
+                    let start = &start;
+                    let reader = scope.spawn(move || {
+                        let snapshot = {
+                            // Release this test-only lock before the writer
+                            // starts: free itself takes it to bump the epoch.
+                            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+                            assert!(pipeline.validate(addr).can_read());
+                            let cached = pipeline.validate(addr);
+                            assert!(matches!(cached, ValidationOutcome::CachedValid(_)));
+                            cached
+                        };
+                        ready_tx.send(()).expect("writer awaiting cache warmup");
+                        start.wait();
+                        for _ in 0..128 {
+                            let outcome = pipeline.validate(addr);
+                            assert!(
+                                matches!(
+                                    outcome,
+                                    ValidationOutcome::CachedValid(_)
+                                        | ValidationOutcome::Validated(_)
+                                        | ValidationOutcome::TemporalViolation(_)
+                                ),
+                                "retained allocation must be live or quarantined: {outcome:?}"
+                            );
+                        }
+                        freed_rx.recv().expect("free completed");
+                        let after_free = pipeline.validate(addr);
+                        assert!(matches!(
+                            after_free,
+                            ValidationOutcome::TemporalViolation(_)
+                        ));
+                        assert!(!after_free.can_read());
+                        assert!(!after_free.can_write());
+
+                        // The old Copy value remains permissive; it is not a
+                        // revocable capability or permission to dereference.
+                        assert!(snapshot.can_read());
+                        assert!(snapshot.can_write());
+                    });
+                    ready_rx.recv().expect("reader warmed its own TLS cache");
+                    start.wait();
+                    assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+                    freed_tx.send(()).expect("reader awaiting free completion");
+                    reader.join().expect("reader assertions");
+                });
+                assert_eq!(
+                    pipeline.runtime_math.decision_count() > 0,
+                    runtime_math_enabled,
+                    "routing enablement must be observed, not just requested"
+                );
+                eprintln!(
+                    "concurrent-free mode={:?} runtime_math={runtime_math_enabled} logging={logging_enabled}: cached-before, denied-after, prior-snapshot-unchanged",
+                    safety_level()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn allocation_size_overflow_rejection_preserves_live_bounds() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let live = pipeline.allocate(128).expect("positive allocation control");
+        let addr = live as usize;
+        assert_eq!(
+            pipeline.validate(addr).abstraction().unwrap().remaining,
+            Some(128)
+        );
+
+        // All requests fail in size/layout validation, before asking the host
+        // allocator for enormous memory. No allocation-failure injection used.
+        assert!(pipeline.allocate(usize::MAX).is_none());
+        assert!(pipeline.allocate(usize::MAX - CANARY_SIZE).is_none());
+        assert!(pipeline.allocate_aligned(usize::MAX - 63, 64).is_none());
+        assert!(pipeline.allocate_aligned(128, 48).is_none());
+
+        let outcome = pipeline.validate(addr + 127);
+        assert!(outcome.can_read());
+        assert!(outcome.can_write());
+        let bounds = outcome.abstraction().expect("owned bounds");
+        assert_eq!(bounds.alloc_base, Some(addr));
+        assert_eq!(bounds.remaining, Some(1));
+        assert_eq!(pipeline.free(live), FreeResult::Freed);
+    }
+
+    #[test]
+    fn drained_free_defers_page_oracle_removal_until_ebr_reclaim() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64 * 1024 * 1024).expect("large alloc");
+        let addr = ptr as usize;
+
+        assert!(
+            pipeline.page_oracle.query(addr),
+            "allocated pointer should be page-owned before free"
+        );
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+
+        assert!(
+            pipeline.page_oracle.query(addr),
+            "drained allocation should stay page-owned until deferred reclaim runs"
+        );
+
+        for _ in 0..8 {
+            let _ = pipeline.collector.try_advance();
+        }
+
+        assert!(
+            !pipeline.page_oracle.query(addr),
+            "page ownership should be removed when deferred reclamation executes"
+        );
+    }
+
+    #[test]
+    fn cached_validation_faster_on_second_call() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(512).expect("alloc");
+        let addr = ptr as usize;
+
+        {
+            // Guard against unrelated concurrent frees in other tests bumping the epoch
+            // and causing flaky cache-hit expectations.
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            // First call — full pipeline
+            let _ = pipeline.validate(addr);
+            // Second call — should hit TLS cache
+            let outcome = pipeline.validate(addr);
+            assert!(matches!(outcome, ValidationOutcome::CachedValid(_)));
+        }
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn default_cache_hit_fast_path_matches_logged_pipeline_hit() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(512).expect("alloc");
+        let addr = ptr as usize;
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            let _ = pipeline.validate(addr);
+
+            pipeline.clear_validation_logs();
+            pipeline.set_validation_logging_enabled(false);
+            let fast = pipeline.validate(addr);
+            assert!(matches!(fast, ValidationOutcome::CachedValid(_)));
+            assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+            pipeline.clear_validation_logs();
+            pipeline.set_validation_logging_enabled(true);
+            let logged = pipeline.validate(addr);
+            assert_eq!(fast, logged);
+            assert!(!pipeline.export_validation_log_jsonl().is_empty());
+            pipeline.set_validation_logging_enabled(false);
+        }
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn default_null_fast_path_matches_logged_pipeline_null() {
+        let pipeline = ValidationPipeline::new();
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(false);
+        let fast = pipeline.validate(0);
+        assert!(matches!(fast, ValidationOutcome::Null));
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(true);
+        let logged = pipeline.validate(0);
+        assert_eq!(fast, logged);
+        assert!(!pipeline.export_validation_log_jsonl().is_empty());
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            0,
+            "null validation must not pin the epoch collector"
+        );
+        pipeline.set_validation_logging_enabled(false);
+    }
+
+    #[test]
+    fn default_empty_oracle_foreign_fast_path_matches_logged_pipeline_foreign() {
+        let pipeline = ValidationPipeline::new();
+        let addr = 0xDEAD_BEEF_0000usize;
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(false);
+        let fast = pipeline.validate(addr);
+        assert!(matches!(fast, ValidationOutcome::Foreign(_)));
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(true);
+        let logged = pipeline.validate(addr);
+        assert_eq!(fast, logged);
+        assert!(!pipeline.export_validation_log_jsonl().is_empty());
+        pipeline.set_validation_logging_enabled(false);
+    }
+
+    #[test]
+    fn default_nonempty_oracle_foreign_fast_path_matches_logged_pipeline_foreign() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(256).expect("alloc");
+        let addr = 0xDEAD_BEEF_0000usize;
+
+        assert!(
+            !pipeline.page_oracle.query(addr),
+            "test address must remain outside the owned page oracle"
+        );
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(false);
+        let fast = pipeline.validate(addr);
+        assert!(matches!(fast, ValidationOutcome::Foreign(_)));
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(true);
+        let logged = pipeline.validate(addr);
+        assert_eq!(fast, logged);
+        assert!(!pipeline.export_validation_log_jsonl().is_empty());
+        pipeline.set_validation_logging_enabled(false);
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn tls_cache_does_not_allow_uaf_after_free() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let addr = ptr as usize;
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            // Populate TLS cache.
+            let _ = pipeline.validate(addr);
+            let cached = pipeline.validate(addr);
+            assert!(
+                matches!(cached, ValidationOutcome::CachedValid(_)),
+                "expected TLS cache hit on second validate()"
+            );
+        }
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+
+        // After free, the TLS cache must not report a stale valid pointer.
+        let outcome = pipeline.validate(addr);
+        assert!(
+            !matches!(outcome, ValidationOutcome::CachedValid(_)),
+            "TLS cache returned CachedValid for freed pointer"
+        );
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+    }
+
+    #[test]
+    fn foreign_free_reported() {
+        let pipeline = ValidationPipeline::new();
+        let local = 42_u64;
+        let ptr = std::ptr::addr_of!(local) as *mut u64 as *mut u8;
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::ForeignPointer);
+    }
+
+    #[test]
+    fn double_free_reported() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(32).expect("alloc");
+
+        let first = pipeline.free(ptr);
+        assert_eq!(first, FreeResult::Freed);
+
+        let second = pipeline.free(ptr);
+        assert_eq!(second, FreeResult::DoubleFree);
+    }
+
+    #[test]
+    fn disabled_routing_keeps_pointer_integrity_checks() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let healthy = pipeline.allocate(16).expect("healthy allocation");
+        let corrupt = pipeline.allocate(32).expect("corrupt allocation");
+        assert!(pipeline.validate(healthy as usize).can_read());
+        assert!(pipeline.inject_trailing_canary_corruption(corrupt as usize, 32, 0xFF));
+        assert!(matches!(
+            pipeline.validate(corrupt as usize),
+            ValidationOutcome::TemporalViolation(_)
+        ));
+        assert_eq!(pipeline.runtime_math.decision_count(), 0);
+        assert_eq!(pipeline.free(healthy), FreeResult::Freed);
+        assert_eq!(
+            pipeline.free(corrupt),
+            FreeResult::FreedWithCanaryCorruption
+        );
+    }
+
+    #[test]
+    fn canary_corruption_detected_via_pipeline_free() {
+        let pipeline = ValidationPipeline::new();
+        let size = 32_usize;
+        let ptr = pipeline.allocate(size).expect("alloc");
+        let addr = ptr as usize;
+
+        assert!(pipeline.inject_trailing_canary_corruption(addr, size, 0xFF));
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+
+        // Canary corruption is still a free; pointer is quarantined and must not be readable/writable.
+        let outcome = pipeline.validate(addr);
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+        assert!(
+            !matches!(outcome, ValidationOutcome::CachedValid(_)),
+            "must not yield CachedValid for freed/corrupted pointer"
+        );
+    }
+
+    #[test]
+    fn one_past_end_pointer_is_denied_as_invalid() {
+        let pipeline = ValidationPipeline::new();
+        let size = 64_usize;
+        let ptr = pipeline.allocate(size).expect("alloc");
+        let base = ptr as usize;
+        let one_past_end = base + size;
+
+        let outcome = pipeline.validate(one_past_end);
+        assert!(matches!(outcome, ValidationOutcome::Invalid(_)));
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+        let abs = outcome.abstraction().expect("invalid abstraction");
+        assert_eq!(abs.alloc_base, Some(base));
+        assert_eq!(abs.state, SafetyState::Invalid);
+        assert_eq!(abs.remaining, Some(0));
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn header_pointer_is_denied_as_invalid() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let base = ptr as usize;
+        let header_addr = base.saturating_sub(1);
+
+        let outcome = pipeline.validate(header_addr);
+        assert!(matches!(outcome, ValidationOutcome::Invalid(_)));
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+        let abs = outcome.abstraction().expect("invalid abstraction");
+        assert_eq!(abs.alloc_base, Some(base));
+        assert_eq!(abs.state, SafetyState::Invalid);
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn foreign_pointer_sharing_owned_page_is_classified_as_foreign_not_invalid() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let base = ptr as usize;
+        let page_base = base & !0xFFFusize;
+        // Pick an address on the same 4 KiB page that is outside [raw_base, user_base + 64 + CANARY_SIZE).
+        let candidate = if (base & 0xFFF) >= 512 {
+            page_base + 64
+        } else {
+            page_base + 2048
+        };
+        assert!(pipeline.page_oracle.query(candidate));
+        assert!(pipeline.arena.lookup(candidate).is_none());
+
+        let outcome = pipeline.validate(candidate);
+        assert!(
+            matches!(outcome, ValidationOutcome::Foreign(_)),
+            "unowned address on shared page must be Foreign, got {outcome:?}"
+        );
+        let access = outcome.access_abstraction().expect("foreign abstraction");
+        assert_eq!(access.state, SafetyState::Unknown);
+        assert_eq!(access.remaining, None);
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn null_pointer_early_exit_does_not_reach_later_stages() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let outcome = pipeline.validate(0);
+        assert!(matches!(outcome, ValidationOutcome::Null));
+
+        let stages = collected_stage_labels(&pipeline.export_validation_log_jsonl());
+        assert!(!stages.contains("safety_level"));
+        assert!(stages.contains("null_check"));
+        assert!(!stages.contains("tls_cache"));
+        assert!(!stages.contains("bloom"));
+        assert!(!stages.contains("arena_lookup"));
+        assert!(!stages.contains("fingerprint"));
+        assert!(!stages.contains("canary"));
+        assert!(!stages.contains("bounds"));
+    }
+
+    #[test]
+    fn foreign_pointer_early_exit_skips_deep_integrity_stages() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let outcome = pipeline.validate(0x6FFF_0000_0000usize);
+        assert!(matches!(outcome, ValidationOutcome::Foreign(_)));
+
+        let stages = collected_stage_labels(&pipeline.export_validation_log_jsonl());
+        assert!(!stages.contains("fingerprint"));
+        assert!(!stages.contains("canary"));
+        assert!(!stages.contains("bounds"));
+    }
+
+    #[test]
+    fn bloom_false_positives_do_not_classify_foreign_as_validated() {
+        let pipeline = ValidationPipeline::new();
+        let mut allocated = Vec::new();
+        for _ in 0..256 {
+            let ptr = pipeline.allocate(64).expect("alloc");
+            allocated.push(ptr);
+        }
+
+        for i in 0..4096usize {
+            let addr = 0x6FFF_0000_0000usize + i * 0x1000;
+            let outcome = pipeline.validate(addr);
+            assert!(
+                !matches!(
+                    outcome,
+                    ValidationOutcome::CachedValid(_) | ValidationOutcome::Validated(_)
+                ),
+                "foreign address {addr:#x} must not validate as owned"
+            );
+        }
+
+        for ptr in allocated {
+            assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+        }
+    }
+
+    #[test]
+    fn validation_log_export_includes_trace_and_decision_ids() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let addr = ptr as usize;
+        let _ = pipeline.validate(addr);
+        let _ = pipeline.validate(addr);
+        let _ = pipeline.validate(0xDEAD_BEEF);
+        let _ = pipeline.free(ptr);
+
+        let jsonl = pipeline.export_validation_log_jsonl();
+        assert!(
+            !jsonl.trim().is_empty(),
+            "expected structured validation logs"
+        );
+
+        for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+            let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
+            let trace_id = row
+                .get("trace_id")
+                .and_then(Value::as_str)
+                .expect("trace_id must be present");
+            assert!(
+                trace_id.starts_with("tsm::pointer_validation::"),
+                "trace_id must use canonical pointer-validation scope"
+            );
+            assert!(row.get("decision_id").and_then(Value::as_u64).is_some());
+            assert_eq!(
+                row.get("schema_version").and_then(Value::as_str),
+                Some("1.0")
+            );
+            assert!(row.get("decision_path").and_then(Value::as_str).is_some());
+            assert!(row.get("level").and_then(Value::as_str).is_some());
+            assert!(row.get("stage").and_then(Value::as_str).is_some());
+            assert!(
+                row.get("security_context")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+            assert!(
+                row.get("capability_scope")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+            assert!(
+                row.get("security_verdict")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn security_context_default_deny_is_fail_closed() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let outcome = pipeline
+            .validate_with_security_context(ptr as usize, ValidationSecurityContext::deny_all());
+        assert!(matches!(outcome, ValidationOutcome::Denied(_)));
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+
+        let stages = collected_stage_labels(&pipeline.export_validation_log_jsonl());
+        assert!(stages.contains("security_context"));
+        assert!(!stages.contains("null_check"));
+        assert!(!stages.contains("tls_cache"));
+
+        let _ = pipeline.free(ptr);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn validation_logging_level_mapping_covers_spec_levels() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let addr = ptr as usize;
+
+        // Cold full validation emits trace + debug (cache miss) + info (terminal).
+        // In Strict mode (budget = 20ns), modeled cold stage latency (~52ns) also
+        // naturally emits warn ("validation_budget_overrun"); in Hardened mode
+        // (budget = 200ns), 52ns is within budget and must NOT emit a false overrun warn.
+        let _ = pipeline.validate(addr);
+        // Warm TLS cache hit emits debug ("validation_cache_hit").
+        let _ = pipeline.validate(addr);
+
+        let active_mode = safety_level();
+        if active_mode == SafetyLevel::Hardened {
+            let pre_warn_jsonl = pipeline.export_validation_log_jsonl();
+            for line in pre_warn_jsonl.lines().filter(|l| !l.trim().is_empty()) {
+                let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
+                assert_ne!(
+                    row.get("event").and_then(Value::as_str),
+                    Some("validation_budget_overrun"),
+                    "in-budget hardened validation must not emit validation_budget_overrun"
+                );
+            }
+            let trace = pipeline
+                .begin_validation_trace(ValidationSecurityContext::allow_pointer_validation());
+            pipeline.emit_budget_warning_if_needed(
+                &trace,
+                SafetyLevel::Hardened,
+                "post_pipeline",
+                "pipeline::post::validated",
+                "FullValidate",
+                HARDENED_VALIDATION_BUDGET_NS,
+                true,
+                true,
+                false,
+                false,
+                0,
+                0,
+                0,
+            );
+            let at_budget_jsonl = pipeline.export_validation_log_jsonl();
+            assert!(
+                !at_budget_jsonl.contains("\"event\":\"validation_budget_overrun\""),
+                "latency equal to HARDENED_VALIDATION_BUDGET_NS (200ns) must not warn"
+            );
+            pipeline.emit_budget_warning_if_needed(
+                &trace,
+                SafetyLevel::Hardened,
+                "post_pipeline",
+                "pipeline::post::validated",
+                "FullValidate",
+                HARDENED_VALIDATION_BUDGET_NS + 1,
+                true,
+                true,
+                false,
+                false,
+                0,
+                0,
+                0,
+            );
+        }
+
+        // Corrupt canary before free so validator emits an invariant-violation error.
+        // SAFETY: Intentional corruption to exercise validation error logging.
+        unsafe {
+            std::ptr::write_bytes(ptr.add(64), 0xAB, CANARY_SIZE);
+        }
+        crate::tls_cache::bump_tls_cache_epoch();
+        let _ = pipeline.validate(addr);
+
+        let jsonl = pipeline.export_validation_log_jsonl();
+        let mut levels = HashSet::new();
+        for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+            let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
+            if let Some(level) = row.get("level").and_then(Value::as_str) {
+                levels.insert(level.to_string());
+            }
+        }
+
+        assert!(levels.contains("trace"));
+        assert!(levels.contains("debug"));
+        assert!(levels.contains("info"));
+        assert!(levels.contains("warn"));
+        assert!(levels.contains("error"));
+
+        let _ = pipeline.free(ptr);
+    }
+
+    #[test]
+    fn validation_logging_cardinality_budget_is_bounded() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let ptr = pipeline.allocate(32).expect("alloc");
+        let addr = ptr as usize;
+        let _ = pipeline.validate(addr);
+        let _ = pipeline.validate(0);
+        let _ = pipeline.validate(0xA11CE);
+        let _ = pipeline.free(ptr);
+
+        let jsonl = pipeline.export_validation_log_jsonl();
+        let mut levels = HashSet::new();
+        let mut stages = HashSet::new();
+
+        for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+            let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
+            if let Some(level) = row.get("level").and_then(Value::as_str) {
+                levels.insert(level.to_string());
+            }
+            if let Some(stage) = row.get("stage").and_then(Value::as_str) {
+                stages.insert(stage.to_string());
+            }
+        }
+
+        assert!(
+            levels.len() <= MAX_LEVEL_LABEL_CARDINALITY,
+            "level label cardinality exceeded: {} > {}",
+            levels.len(),
+            MAX_LEVEL_LABEL_CARDINALITY
+        );
+        assert!(
+            stages.len() <= MAX_STAGE_LABEL_CARDINALITY,
+            "stage label cardinality exceeded: {} > {}",
+            stages.len(),
+            MAX_STAGE_LABEL_CARDINALITY
+        );
+    }
+
+    #[test]
+    fn dependency_safe_order_delays_deep_checks_until_after_arena() {
+        let scrambled = [
+            CheckStage::Null,
+            CheckStage::Fingerprint,
+            CheckStage::Canary,
+            CheckStage::Bounds,
+            CheckStage::TlsCache,
+            CheckStage::Bloom,
+            CheckStage::Arena,
+        ];
+        let ordered = ValidationPipeline::dependency_safe_order(scrambled);
+        let arena_idx = ordered
+            .iter()
+            .position(|s| matches!(s, CheckStage::Arena))
+            .expect("arena in ordering");
+        let fingerprint_idx = ordered
+            .iter()
+            .position(|s| matches!(s, CheckStage::Fingerprint))
+            .expect("fingerprint in ordering");
+        let canary_idx = ordered
+            .iter()
+            .position(|s| matches!(s, CheckStage::Canary))
+            .expect("canary in ordering");
+        let bounds_idx = ordered
+            .iter()
+            .position(|s| matches!(s, CheckStage::Bounds))
+            .expect("bounds in ordering");
+        assert!(arena_idx < fingerprint_idx);
+        assert!(arena_idx < canary_idx);
+        assert!(arena_idx < bounds_idx);
+    }
+
+    proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
+        #[test]
+        fn allocated_pointer_property_validates_as_live(size in 1usize..2049) {
+            let pipeline = ValidationPipeline::new();
+            let ptr = pipeline.allocate(size).expect("allocation must succeed");
+            let addr = ptr as usize;
+
+            let outcome = pipeline.validate(addr);
+            prop_assert!(matches!(
+                outcome,
+                ValidationOutcome::Validated(_) | ValidationOutcome::CachedValid(_)
+            ));
+            prop_assert!(outcome.can_read());
+            prop_assert!(outcome.can_write());
+
+            let abs = outcome.abstraction().expect("validated allocation abstraction");
+            prop_assert_eq!(abs.state, SafetyState::Valid);
+            prop_assert_eq!(abs.alloc_base, Some(addr));
+            prop_assert_eq!(abs.remaining, Some(size));
+
+            prop_assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+        }
+
+        #[test]
+        fn freed_pointer_property_becomes_temporal_violation(size in 1usize..2049) {
+            let pipeline = ValidationPipeline::new();
+            let ptr = pipeline.allocate(size).expect("allocation must succeed");
+            let addr = ptr as usize;
+
+            prop_assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+
+            let outcome = pipeline.validate(addr);
+            prop_assert!(matches!(outcome, ValidationOutcome::TemporalViolation(_)));
+            prop_assert!(!outcome.can_read());
+            prop_assert!(!outcome.can_write());
+
+            let abs = outcome.abstraction().expect("temporal violation abstraction");
+            prop_assert_eq!(abs.alloc_base, Some(addr));
+            prop_assert!(matches!(
+                abs.state,
+                SafetyState::Quarantined | SafetyState::Freed
+            ));
+        }
+
+        #[test]
+        fn dependency_safe_order_property_holds(random_keys in proptest::array::uniform7(any::<u16>())) {
+            let all_stages = [
+                CheckStage::Null,
+                CheckStage::TlsCache,
+                CheckStage::Bloom,
+                CheckStage::Arena,
+                CheckStage::Fingerprint,
+                CheckStage::Canary,
+                CheckStage::Bounds,
+            ];
+
+            let mut keyed = all_stages
+                .into_iter()
+                .enumerate()
+                .map(|(idx, stage)| (random_keys[idx], idx, stage))
+                .collect::<Vec<_>>();
+            keyed.sort_by_key(|(key, idx, _)| (*key, *idx));
+
+            let mut scrambled = [CheckStage::Null; 7];
+            for (idx, (_, _, stage)) in keyed.into_iter().enumerate() {
+                scrambled[idx] = stage;
+            }
+
+            let ordered = ValidationPipeline::dependency_safe_order(scrambled);
+            let input_set = scrambled.into_iter().collect::<HashSet<_>>();
+            let output_set = ordered.into_iter().collect::<HashSet<_>>();
+            prop_assert_eq!(input_set, output_set);
+
+            let arena_idx = ordered
+                .iter()
+                .position(|s| matches!(s, CheckStage::Arena))
+                .expect("arena in ordering");
+            let fingerprint_idx = ordered
+                .iter()
+                .position(|s| matches!(s, CheckStage::Fingerprint))
+                .expect("fingerprint in ordering");
+            let canary_idx = ordered
+                .iter()
+                .position(|s| matches!(s, CheckStage::Canary))
+                .expect("canary in ordering");
+            let bounds_idx = ordered
+                .iter()
+                .position(|s| matches!(s, CheckStage::Bounds))
+                .expect("bounds in ordering");
+            prop_assert!(arena_idx < fingerprint_idx);
+            prop_assert!(arena_idx < canary_idx);
+            prop_assert!(arena_idx < bounds_idx);
+
+            let reordered = ValidationPipeline::dependency_safe_order(ordered);
+            prop_assert_eq!(reordered, ordered);
+        }
+    }
+
+    #[test]
+    fn canary_and_fingerprint_failures_increment_metrics_and_reject_legacy_fold() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let metrics = global_metrics();
+        let size = 32_usize;
+
+        // 1. Corrupt trailing canary with the legacy rank-32 folded canary.
+        let ptr_canary = pipeline.allocate(size).expect("alloc canary test");
+        let addr_canary = ptr_canary as usize;
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (addr_canary - FINGERPRINT_SIZE) as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let fp = AllocationFingerprint::from_bytes(&header_bytes);
+        let legacy_canary = if fp.hash.rotate_left(32) != 0 {
+            ((fp.hash ^ fp.hash.rotate_left(32)) ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes()
+        } else {
+            (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64 ^ 1).to_le_bytes()
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                legacy_canary.as_ptr(),
+                (addr_canary + size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+
+        let canary_failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let outcome = pipeline.validate(addr_canary);
+        assert!(
+            matches!(outcome, ValidationOutcome::TemporalViolation(_)),
+            "legacy folded canary must fail validation as TemporalViolation"
+        );
+        assert!(
+            MembraneMetrics::get(&metrics.canary_failures) > canary_failures_before,
+            "validation canary failure must increment canary_failures metric"
+        );
+        assert_eq!(
+            pipeline.free(ptr_canary),
+            FreeResult::FreedWithCanaryCorruption
+        );
+
+        // 2. Corrupt 24-byte fingerprint header.
+        let ptr_fp = pipeline.allocate(size).expect("alloc fingerprint test");
+        let addr_fp = ptr_fp as usize;
+        let saved_byte = unsafe {
+            let fp_hash_byte_ptr = (addr_fp - 1) as *mut u8;
+            let orig = *fp_hash_byte_ptr;
+            *fp_hash_byte_ptr ^= 0x80;
+            orig
+        };
+        let fp_failures_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let outcome_fp = pipeline.validate(addr_fp);
+        assert!(
+            matches!(outcome_fp, ValidationOutcome::TemporalViolation(_)),
+            "corrupted fingerprint header must fail validation as TemporalViolation"
+        );
+        assert!(
+            MembraneMetrics::get(&metrics.fingerprint_failures) > fp_failures_before,
+            "validation fingerprint failure must increment fingerprint_failures metric"
+        );
+        unsafe {
+            *((addr_fp - 1) as *mut u8) = saved_byte;
+        }
+        assert_eq!(pipeline.free(ptr_fp), FreeResult::Freed);
+    }
+
+    #[test]
+    fn pipeline_warm_tls_cache_detects_tail_and_header_corruption_and_records_clamp_heal() {
+        let pipeline = ValidationPipeline::new();
+        let metrics = global_metrics();
+        let policy = crate::heal::global_healing_policy();
+
+        // 1. Warm TLS cache on a 32-byte allocation, then corrupt trailing canary.
+        let ptr_tail = pipeline.allocate(32).expect("alloc 32");
+        let addr_tail = ptr_tail as usize;
+        assert!(matches!(
+            pipeline.validate(addr_tail),
+            ValidationOutcome::Validated(_)
+        ));
+        assert_eq!(
+            pipeline.try_validate_cached_remaining(addr_tail),
+            Some(Some(32))
+        );
+
+        assert!(pipeline.inject_trailing_canary_corruption(addr_tail, 32, 0xCC));
+        let canary_failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let clamps_before = MembraneMetrics::get(&policy.size_clamps);
+
+        // Strict mode must evict + increment `canary_failures` with ZERO healing records.
+        assert_eq!(
+            pipeline.try_validate_cached_remaining_const::<true, true>(
+                addr_tail,
+                8,
+                SafetyLevel::Strict,
+            ),
+            None
+        );
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_failures_before);
+        assert_eq!(
+            MembraneMetrics::get(&policy.size_clamps),
+            clamps_before,
+            "Strict mode must never record ClampSize heals on warm-cache corruption"
+        );
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_tail), None);
+
+        // Hardened mode on a re-warmed intact->corrupted block must clamp to 0 and record a single heal.
+        assert_eq!(
+            pipeline.free(ptr_tail),
+            FreeResult::FreedWithCanaryCorruption
+        );
+        let ptr_tail_h = pipeline.allocate(32).expect("alloc 32 hardened");
+        let addr_tail_h = ptr_tail_h as usize;
+        assert!(matches!(
+            pipeline.validate(addr_tail_h),
+            ValidationOutcome::Validated(_)
+        ));
+        assert!(pipeline.inject_trailing_canary_corruption(addr_tail_h, 32, 0xCC));
+        let canary_h_before = MembraneMetrics::get(&metrics.canary_failures);
+        let clamps_h_before = MembraneMetrics::get(&policy.size_clamps);
+        assert_eq!(
+            pipeline.try_validate_cached_remaining_const::<true, true>(
+                addr_tail_h,
+                8,
+                SafetyLevel::Hardened,
+            ),
+            Some(Some(0))
+        );
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_h_before);
+        assert_eq!(
+            MembraneMetrics::get(&policy.size_clamps),
+            clamps_h_before + 1
+        );
+        assert!(
+            policy
+                .export_healing_log_jsonl()
+                .contains("\"symbol\":\"tls_cache_canary\"")
+        );
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_tail_h), None);
+        assert_eq!(
+            pipeline.free(ptr_tail_h),
+            FreeResult::FreedWithCanaryCorruption
+        );
+
+        // 2. Warm TLS cache on a 32-byte allocation, then corrupt 24B header.
+        let ptr_hdr = pipeline.allocate(32).expect("alloc 32");
+        let addr_hdr = ptr_hdr as usize;
+        assert!(matches!(
+            pipeline.validate(addr_hdr),
+            ValidationOutcome::Validated(_)
+        ));
+        assert_eq!(
+            pipeline.try_validate_cached_remaining(addr_hdr),
+            Some(Some(32))
+        );
+
+        let saved = unsafe {
+            let b = (addr_hdr - FINGERPRINT_SIZE) as *mut u8;
+            let orig = *b;
+            *b ^= 0x20;
+            orig
+        };
+        let fp_failures_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let heals_before = MembraneMetrics::get(&policy.size_clamps);
+        assert_eq!(
+            pipeline.try_validate_cached_remaining_const::<true, true>(
+                addr_hdr,
+                8,
+                SafetyLevel::Hardened,
+            ),
+            Some(Some(0))
+        );
+        assert!(MembraneMetrics::get(&metrics.fingerprint_failures) > fp_failures_before);
+        assert_eq!(MembraneMetrics::get(&policy.size_clamps), heals_before + 1);
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_hdr), None);
+
+        unsafe {
+            *((addr_hdr - FINGERPRINT_SIZE) as *mut u8) = saved;
+        }
+        assert_eq!(pipeline.free(ptr_hdr), FreeResult::Freed);
+    }
+
+    #[test]
+    fn validation_budget_warning_respects_mode_thresholds() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+        let trace =
+            pipeline.begin_validation_trace(ValidationSecurityContext::allow_pointer_validation());
+
+        // Strict budget = 20ns: 20ns silent, 21ns warns.
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Strict,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "Allow",
+            STRICT_VALIDATION_BUDGET_NS,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Strict,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "Allow",
+            STRICT_VALIDATION_BUDGET_NS + 1,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(
+            pipeline.export_validation_log_jsonl().lines().count(),
+            1,
+            "21ns in Strict mode must emit one budget warning"
+        );
+
+        // Hardened budget = 200ns: 200ns silent, 201ns warns; Off never warns.
+        pipeline.clear_validation_logs();
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Hardened,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "FullValidate",
+            HARDENED_VALIDATION_BUDGET_NS,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Off,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "Allow",
+            u64::MAX,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Hardened,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "FullValidate",
+            HARDENED_VALIDATION_BUDGET_NS + 1,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        let jsonl = pipeline.export_validation_log_jsonl();
+        assert_eq!(jsonl.lines().count(), 1);
+        assert!(jsonl.contains("\"mode\":\"hardened\""));
+        assert!(jsonl.contains("\"event\":\"validation_budget_overrun\""));
+    }
+
+    #[test]
+    fn spatial_size_arithmetic_overflow_fails_closed() {
+        let pipeline = ValidationPipeline::new();
+        for bad_size in [
+            usize::MAX,
+            usize::MAX - 1,
+            usize::MAX - 15,
+            usize::MAX - 31,
+            usize::MAX - 63,
+            usize::MAX - 64,
+            isize::MAX as usize + 1,
+        ] {
+            assert!(
+                pipeline.allocate(bad_size).is_none(),
+                "allocate({bad_size:#x}) must fail closed without wrapping"
+            );
+            assert!(
+                pipeline.allocate_aligned(bad_size, 64).is_none(),
+                "allocate_aligned({bad_size:#x}, 64) must fail closed"
+            );
+        }
+        for bad_align in [0usize, 3, 24, 48, usize::MAX] {
+            assert!(
+                pipeline.allocate_aligned(64, bad_align).is_none(),
+                "non-power-of-two align {bad_align} must fail closed"
+            );
+        }
+        let max_outcome = pipeline.validate(usize::MAX);
+        assert!(
+            matches!(
+                max_outcome,
+                ValidationOutcome::Foreign(_) | ValidationOutcome::Bypassed
+            ),
+            "validate(usize::MAX) must not overflow or panic: {max_outcome:?}"
+        );
+    }
+
+    #[test]
+    fn temporal_boundary_quarantine_drain_and_forced_same_address_reuse() {
+        use crate::arena::{CachedIntegrityVerdict, TRAILING_REDZONE_SIZE};
+
+        let pipeline = ValidationPipeline::new();
+        let metrics = global_metrics();
+
+        // Phase 1: Live owned base, interior, and trailing-redzone spatial bounds.
+        let mut candidates = Vec::with_capacity(64);
+        for _ in 0..64 {
+            let p = pipeline.allocate(64).expect("alloc 64");
+            candidates.push((p, p as usize));
+        }
+        let (p0, addr0) = candidates[0];
+        let v_base = pipeline.validate(addr0);
+        let abs0 = v_base.access_abstraction().expect("live abstraction");
+        assert_eq!(abs0.state, SafetyState::Valid);
+        assert_eq!(abs0.remaining, Some(64));
+
+        let v_interior = pipeline.validate(addr0 + 20);
+        assert_eq!(
+            v_interior.access_abstraction().and_then(|a| a.remaining),
+            Some(44),
+            "interior pointer must report exact remaining suffix"
+        );
+        for redzone_off in [64usize, 64 + TRAILING_REDZONE_SIZE - 1] {
+            let v_past = pipeline.validate(addr0 + redzone_off);
+            assert!(
+                matches!(v_past, ValidationOutcome::Invalid(_)),
+                "offset {redzone_off} in trailing redzone must report Invalid: {v_past:?}"
+            );
+            assert_eq!(
+                v_past.access_abstraction().and_then(|a| a.remaining),
+                Some(0)
+            );
+        }
+
+        let slot0 = pipeline.arena.lookup(addr0).expect("arena slot for p0");
+        let gen0 = slot0.generation;
+        let slot_idx0 = slot0.slot_idx;
+        let shard0 = ((addr0 >> 12) & (crate::arena::NUM_SHARDS - 1)) as u8;
+        let epoch_before_free = crate::tls_cache::current_shard_epoch(shard0 as usize);
+
+        // Phase 2: Pre-reuse quarantine guarantees (TemporalViolation + remaining=Some(0) + DoubleFree).
+        for &(p, _) in &candidates {
+            assert_eq!(pipeline.free(p), FreeResult::Freed);
+        }
+        let v_quar = pipeline.validate(addr0);
+        assert!(
+            matches!(v_quar, ValidationOutcome::TemporalViolation(_)),
+            "quarantined block must report TemporalViolation: {v_quar:?}"
+        );
+        let abs_quar = v_quar.access_abstraction().expect("quarantined access abs");
+        assert_eq!(abs_quar.state, SafetyState::Quarantined);
+        assert_eq!(
+            abs_quar.remaining,
+            Some(0),
+            "quarantined access_abstraction must expose 0 usable bytes"
+        );
+        assert_eq!(pipeline.free(p0), FreeResult::DoubleFree);
+
+        // Internal stale cache metadata check: old epoch/generation is rejected immediately.
+        assert_eq!(
+            pipeline.arena.verify_cached_slot_integrity(
+                addr0,
+                64,
+                gen0,
+                slot_idx0,
+                shard0,
+                epoch_before_free,
+                0,
+                0,
+            ),
+            CachedIntegrityVerdict::EpochStale
+        );
+
+        // Phase 3: Drain quarantine past 64 MiB + RETIRE_BATCH and advance EBR so the
+        // candidates transition out of quarantine -> Foreign / ForeignPointer.
+        let filler = pipeline
+            .allocate(63 * 1024 * 1024)
+            .expect("alloc 63 MiB quarantine filler");
+        assert_eq!(pipeline.free(filler), FreeResult::Freed);
+
+        // Free >= 2 MiB across pages so every shard holding candidates drains and retires.
+        let mut flushers = Vec::new();
+        for _ in 0..32 {
+            if let Some(q) = pipeline.allocate(256 * 1024) {
+                flushers.push(q);
+            }
+        }
+        for q in flushers {
+            assert_eq!(pipeline.free(q), FreeResult::Freed);
+        }
+        // Flush any parked retire_pending entries in candidate shards by cycling 64 frees per shard.
+        let mut shard_flush = Vec::with_capacity(1024);
+        for _ in 0..1024 {
+            if let Some(q) = pipeline.allocate(1536) {
+                shard_flush.push(q);
+            }
+        }
+        for q in shard_flush {
+            let _ = pipeline.free(q);
+        }
+        for _ in 0..8 {
+            let _ = pipeline.collector.try_advance();
+        }
+
+        // At least p0 (and candidates whose shards drained) are now completely out of arena index.
+        if pipeline.arena.lookup(addr0).is_none() {
+            let v_drained = pipeline.validate(addr0);
+            assert!(
+                matches!(v_drained, ValidationOutcome::Foreign(_)),
+                "drained pre-reuse block must classify as Foreign: {v_drained:?}"
+            );
+            assert_eq!(
+                v_drained.access_abstraction().and_then(|a| a.remaining),
+                None
+            );
+            assert_eq!(pipeline.free(p0), FreeResult::ForeignPointer);
+        }
+
+        // Phase 4: Forced/observed same-address reuse boundary (generation G2 > G1).
+        // Allocate new 48-byte blocks (smaller user_size than original 64 bytes) and check
+        // any recycled user_base, PLUS verify header generation mismatch detection directly.
+        let old_addrs: HashSet<usize> = candidates.iter().map(|&(_, a)| a).collect();
+        let mut new_blocks = Vec::with_capacity(256);
+        let mut reused_pair: Option<(*mut u8, usize)> = None;
+        for _ in 0..256 {
+            let np = pipeline.allocate(48).expect("alloc 48");
+            let na = np as usize;
+            if reused_pair.is_none() && old_addrs.contains(&na) {
+                reused_pair = Some((np, na));
+            }
+            new_blocks.push(np);
+        }
+
+        // Whether the host allocator recycled one of the 64 addresses in 256 draws or chose
+        // fresh addresses, test the generation-boundary invariant on a live 48B allocation:
+        let target_ptr = reused_pair.map(|(p, _)| p).unwrap_or(new_blocks[0]);
+        let target_addr = target_ptr as usize;
+        let live_lookup = pipeline.arena.lookup(target_addr).expect("live new slot");
+        assert!(
+            live_lookup.generation > gen0,
+            "new generation {} must strictly exceed prior generation {}",
+            live_lookup.generation,
+            gen0
+        );
+
+        // (4a) Unadorned C-ABI raw address resolves to the current live 48B allocation:
+        //      spatial overflow at +56 (valid under old 64B size, out-of-bounds under new 48B size)
+        //      IS caught as Invalid, while [0, 48) validates as the current object.
+        let v_reused_base = pipeline.validate(target_addr);
+        assert_eq!(
+            v_reused_base.access_abstraction().and_then(|a| a.remaining),
+            Some(48)
+        );
+        let v_stale_old_tail = pipeline.validate(target_addr + 56);
+        assert!(
+            matches!(v_stale_old_tail, ValidationOutcome::Invalid(_)),
+            "stale offset 56 past new 48B allocation must be caught as Invalid: {v_stale_old_tail:?}"
+        );
+
+        // (4b) Internal header/slot generation mismatch (stale header gen0 vs live slot G2)
+        //      IS deterministically rejected as TemporalViolation.
+        let stale_hdr = AllocationFingerprint::compute(target_addr, 48, gen0).to_bytes();
+        let mut saved_hdr = [0u8; FINGERPRINT_SIZE];
+        #[allow(unsafe_code)]
+        unsafe {
+            let hdr_ptr = (target_addr - FINGERPRINT_SIZE) as *mut u8;
+            std::ptr::copy_nonoverlapping(hdr_ptr, saved_hdr.as_mut_ptr(), FINGERPRINT_SIZE);
+            std::ptr::copy_nonoverlapping(stale_hdr.as_ptr(), hdr_ptr, FINGERPRINT_SIZE);
+        }
+        crate::tls_cache::bump_tls_cache_epoch();
+        let fp_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let v_gen_mismatch = pipeline.validate(target_addr);
+        assert!(
+            matches!(v_gen_mismatch, ValidationOutcome::TemporalViolation(_)),
+            "header carrying stale generation must fail with TemporalViolation: {v_gen_mismatch:?}"
+        );
+        assert!(MembraneMetrics::get(&metrics.fingerprint_failures) > fp_before);
+        #[allow(unsafe_code)]
+        unsafe {
+            let hdr_ptr = (target_addr - FINGERPRINT_SIZE) as *mut u8;
+            std::ptr::copy_nonoverlapping(saved_hdr.as_ptr(), hdr_ptr, FINGERPRINT_SIZE);
+        }
+        crate::tls_cache::bump_tls_cache_epoch();
+
+        for np in new_blocks {
+            assert_eq!(pipeline.free(np), FreeResult::Freed);
+        }
+    }
+
+    #[test]
+    fn concurrent_free_and_validate_linearizes_lookup_and_invalidates_tls_cache() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let pipeline = Arc::new(ValidationPipeline::new());
+
+        for round in 0..32 {
+            let ptr = pipeline.allocate(96).expect("alloc 96");
+            let addr = ptr as usize;
+
+            // Snapshot obtained BEFORE free demonstrates the documented post-return TOCTOU limit:
+            // ValidationOutcome is a value snapshot, not a lock held across caller dereference.
+            let pre_free_snapshot = pipeline.validate(addr);
+            assert!(pre_free_snapshot.can_write());
+
+            let start_barrier = Arc::new(Barrier::new(5));
+            let post_free_barrier = Arc::new(Barrier::new(5));
+            let mut handles = Vec::with_capacity(4);
+
+            for _ in 0..4 {
+                let p_ref = Arc::clone(&pipeline);
+                let sb = Arc::clone(&start_barrier);
+                let pfb = Arc::clone(&post_free_barrier);
+                handles.push(thread::spawn(move || {
+                    // Warm this thread's TLS cache before racing.
+                    assert_eq!(
+                        p_ref
+                            .validate(addr)
+                            .access_abstraction()
+                            .and_then(|a| a.remaining),
+                        Some(96)
+                    );
+                    sb.wait();
+                    for _ in 0..64 {
+                        let out = p_ref.validate(addr);
+                        assert!(
+                            matches!(
+                                out,
+                                ValidationOutcome::Validated(_)
+                                    | ValidationOutcome::CachedValid(_)
+                                    | ValidationOutcome::TemporalViolation(_)
+                                    | ValidationOutcome::Foreign(_)
+                            ),
+                            "round {round}: unexpected concurrent verdict {out:?}"
+                        );
+                        let _ = p_ref.try_validate_cached_remaining(addr);
+                    }
+                    pfb.wait();
+                    // Once `free` has completed (Barrier happens-before), no thread may
+                    // serve a stale live `Some(96)` bound from TLS cache or full lookup.
+                    let post_cached = p_ref.try_validate_cached_remaining(addr);
+                    assert_ne!(
+                        post_cached,
+                        Some(Some(96)),
+                        "round {round}: stale TLS cache survived post-free epoch bump"
+                    );
+                    let post_full = p_ref.validate(addr);
+                    assert!(
+                        matches!(
+                            post_full,
+                            ValidationOutcome::TemporalViolation(_) | ValidationOutcome::Foreign(_)
+                        ),
+                        "round {round}: post-free lookup must be Quarantined or Foreign, got {post_full:?}"
+                    );
+                }));
+            }
+
+            start_barrier.wait();
+            assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+            post_free_barrier.wait();
+            // Pre-free value snapshot still reports `can_write() == true` after `free` returned,
+            // confirming empirically that `ValidationOutcome` is a point-in-time verdict.
+            assert!(pre_free_snapshot.can_write());
+
+            for h in handles {
+                h.join().expect("validator thread panicked");
+            }
+        }
+    }
+}
