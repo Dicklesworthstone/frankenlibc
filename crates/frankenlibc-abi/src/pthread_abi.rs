@@ -5870,7 +5870,7 @@ pub(crate) fn ensure_host_thread_key_teardown() {
             return;
         }
     }
-    #[cfg(feature = "owned-tls-cache")]
+    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
     {
         let (key, set) = host_key_teardown_bridge();
         // SAFETY: the host key and function belong to the same loaded libc.
@@ -5900,27 +5900,27 @@ pub(crate) fn ensure_host_thread_key_teardown() {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 type HostKeySetFn = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
 
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 static HOST_TEARDOWN_KEY: AtomicU64 = AtomicU64::new(0); // host key + 1
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 static HOST_TEARDOWN_KEY_OWNER: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 static HOST_TEARDOWN_SET: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 struct HostKeyInitializationGuard;
 
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 impl Drop for HostKeyInitializationGuard {
     fn drop(&mut self) {
         HOST_TEARDOWN_KEY_OWNER.store(0, Ordering::Release);
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
+#[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
 fn host_key_teardown_bridge() -> (libc::pthread_key_t, HostKeySetFn) {
     let mut encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
     if encoded == 0 {
@@ -5983,8 +5983,9 @@ fn host_key_teardown_bridge() -> (libc::pthread_key_t, HostKeySetFn) {
     ((encoded - 1) as libc::pthread_key_t, set)
 }
 
+#[cfg(not(all(feature = "owned-tls-cache", feature = "standalone")))]
 unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
-    #[cfg(feature = "owned-tls-cache")]
+    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
     let (key, set) = {
         let (key, set) = host_key_teardown_bridge();
         // The host cleared this key before calling us. Re-arm it until core
@@ -6000,7 +6001,7 @@ unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
         frankenlibc_core::syscall::sys_gettid(),
     );
     crate::util::finish_thread_key_destructors_and_reclaim_tls_heap();
-    #[cfg(feature = "owned-tls-cache")]
+    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
     // SAFETY: successful teardown no longer needs another host destructor pass.
     if unsafe { set(key, std::ptr::null()) } != 0 {
         std::process::abort();

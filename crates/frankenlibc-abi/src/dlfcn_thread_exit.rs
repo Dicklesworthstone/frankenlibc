@@ -874,36 +874,37 @@ fn attach_native_reclaimer(state: *mut ThreadState) -> bool {
         .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
 }
 
-#[cfg(not(feature = "standalone"))]
 fn attach_reclaimer(state: *mut ThreadState) -> bool {
-    if current_thread_handle().is_some() {
-        return attach_native_reclaimer(state);
+    #[cfg(feature = "standalone")]
+    {
+        attach_native_reclaimer(state)
     }
-    let reclaimer = HOST_RECLAIMER.get_or_init(|| {
-        type Create = unsafe extern "C" fn(
-            *mut libc::pthread_key_t,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-        ) -> c_int;
-        let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
-        let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
-        // SAFETY: the private key belongs to host threads. This schedules only
-        // reclamation of our heap state; native module IDs never enter its DTV.
-        let create: Create = unsafe { core::mem::transmute(create) };
-        let set: SetSpecific = unsafe { std::mem::transmute(set) };
-        let mut key = 0;
-        if unsafe { create(&mut key, Some(reclaim)) } != 0 {
-            return None;
+    #[cfg(not(feature = "standalone"))]
+    {
+        if current_thread_handle().is_some() {
+            return attach_native_reclaimer(state);
         }
-        Some(Reclaimer { key, set })
-    });
-    reclaimer
-        .as_ref()
-        .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
-}
-
-#[cfg(feature = "standalone")]
-fn attach_reclaimer(state: *mut ThreadState) -> bool {
-    attach_native_reclaimer(state)
+        let reclaimer = HOST_RECLAIMER.get_or_init(|| {
+            type Create = unsafe extern "C" fn(
+                *mut libc::pthread_key_t,
+                Option<unsafe extern "C" fn(*mut c_void)>,
+            ) -> c_int;
+            let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
+            let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
+            // SAFETY: the private key belongs to host threads. This schedules only
+            // reclamation of our heap state; native module IDs never enter its DTV.
+            let create: Create = unsafe { core::mem::transmute(create) };
+            let set: SetSpecific = unsafe { std::mem::transmute(set) };
+            let mut key = 0;
+            if unsafe { create(&mut key, Some(reclaim)) } != 0 {
+                return None;
+            }
+            Some(Reclaimer { key, set })
+        });
+        reclaimer
+            .as_ref()
+            .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
+    }
 }
 
 unsafe extern "C" fn reclaim(pointer: *mut c_void) {
