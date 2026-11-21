@@ -397,8 +397,6 @@ mod kernel_validation_context {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
     #[cfg(test)]
-    const CONTEXT_SLOTS: usize = 4096;
-    #[cfg(test)]
     const CONTEXT_PROBES: usize = 16;
     #[cfg(test)]
     const DEPTH_MASK: u64 = u32::MAX as u64;

@@ -2477,6 +2477,7 @@ mod tests {
         assert!(MembraneMetrics::get(&metrics.canary_failures) > failures_before);
     }
 
+    #[test]
     fn cached_integrity_uses_live_slot_geometry_and_generation() {
         let arena = AllocationArena::new();
         let alloc = arena.allocate(40).expect("allocation should succeed");
