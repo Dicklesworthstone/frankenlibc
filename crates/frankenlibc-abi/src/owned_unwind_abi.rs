@@ -2426,22 +2426,29 @@ fn step_x86_64_cursor_with_mode(
         }
     }
 
-    // Fallback for hand-written stubs without `.eh_frame`: step `%rbp` chain if valid.
+    // Fallback for hand-written stubs without `.eh_frame`: step `%rbp` chain via
+    // a fault-safe 16-byte copy so an unmapped/PROT_NONE `%rbp` in `-O2` code
+    // never SIGSEGVs `backtrace()`.
     let Some(stack_limit) = cursor.rsp.checked_add(MAX_STACK_SCAN_BYTES) else {
         return Ok(None);
     };
     if !valid_frame_pointer(cursor.rbp, cursor.rsp, stack_limit) {
         return Ok(None);
     }
-    let Some(next_rbp) = read_word(cursor.rbp) else {
+    let mut frame_pair = [0usize; 2];
+    if unsafe {
+        crate::io_abi::iov_snapshot::copy_user_bytes_raw(
+            cursor.rbp as *const u8,
+            frame_pair.as_mut_ptr().cast::<u8>(),
+            core::mem::size_of::<[usize; 2]>(),
+        )
+    }
+    .is_err()
+    {
         return Ok(None);
-    };
-    let Some(ra_slot) = cursor.rbp.checked_add(core::mem::size_of::<usize>()) else {
-        return Ok(None);
-    };
-    let Some(next_ip) = read_word(ra_slot) else {
-        return Ok(None);
-    };
+    }
+    let next_rbp = frame_pair[0];
+    let next_ip = frame_pair[1];
     let Some(next_rsp) = cursor.rbp.checked_add(2 * core::mem::size_of::<usize>()) else {
         return Ok(None);
     };

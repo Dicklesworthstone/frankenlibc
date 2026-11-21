@@ -1233,6 +1233,61 @@ pub(crate) fn with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> R
     f(envp)
 }
 
+/// Non-blocking variant of [`with_environ_locked`] for diagnostic readers
+/// (such as `runtime_policy::parse_mode_from_environ`) that must not deadlock
+/// if another thread holds `ENVIRON_LOCK` while mutating `environ`.
+pub(crate) fn try_with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> Option<R> {
+    let _lock = if crate::glibc_internal_abi::is_process_single_threaded() {
+        None
+    } else {
+        Some(ENVIRON_LOCK.try_lock()?)
+    };
+    let envp = unsafe { HOST_ENVIRON };
+    Some(f(envp))
+}
+
+/// Read a named environment variable from FrankenLibC's `environ` under
+/// `ENVIRON_LOCK` and return a newly owned byte copy without touching `std::env`.
+#[cfg(not(test))]
+pub(crate) fn getenv_bytes_copy(name: &[u8]) -> Option<Vec<u8>> {
+    if name.is_empty() || name.contains(&b'=') || name.contains(&0) {
+        return None;
+    }
+    with_environ_locked(|envp| {
+        if envp.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < 16384 {
+            // SAFETY: `ENVIRON_LOCK` keeps `envp` stable for this scan.
+            let entry = unsafe { *envp.add(idx) };
+            if entry.is_null() {
+                return None;
+            }
+            let mut matched = true;
+            for (i, &b) in name.iter().enumerate() {
+                // SAFETY: `entry` is a valid NUL-terminated `KEY=VALUE` string.
+                let ch = unsafe { *entry.add(i) as u8 };
+                if ch != b {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched && unsafe { *entry.add(name.len()) as u8 } == b'=' {
+                let val_ptr = unsafe { entry.add(name.len() + 1) };
+                let mut len = 0usize;
+                while len < 65536 && unsafe { *val_ptr.add(len) } != 0 {
+                    len += 1;
+                }
+                let bytes = unsafe { core::slice::from_raw_parts(val_ptr.cast::<u8>(), len) };
+                return Some(bytes.to_vec());
+            }
+            idx += 1;
+        }
+        None
+    })
+}
+
 /// Count entries in the current environ array (excluding NULL terminator).
 unsafe fn environ_len() -> usize {
     if unsafe { HOST_ENVIRON.is_null() } {

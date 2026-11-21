@@ -1267,7 +1267,7 @@ impl FastFixedMemRead {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
-        let next = self.memory.lock_inner().cursor.seek(offset, whence)?;
+        let next = self.memory.try_lock_inner()?.cursor.seek(offset, whence)?;
         self.set_eof(false);
         Some(next)
     }
@@ -1276,7 +1276,9 @@ impl FastFixedMemRead {
     fn sync_to_stream(&self, stream: &mut StdioStream) {
         // Fast and generic reads share storage and position. Only the generic
         // stream's observable offset/EOF need catching up after a fast read.
-        stream.set_offset(self.memory.lock_inner().cursor.position() as i64);
+        if let Some(inner) = self.memory.try_lock_inner() {
+            stream.set_offset(inner.cursor.position() as i64);
+        }
         if self.eof.load(Ordering::Acquire) {
             stream.set_eof();
         }
@@ -1321,30 +1323,14 @@ fn lock_static_slot_aux(slot: usize) -> std::sync::MutexGuard<'static, StaticSlo
     crate::runtime_policy::lock_std_mutex_preserving_errno(&STATIC_SLOT_AUX[slot])
 }
 
-/// Zero-`RefCell` POD TLS pointer cache for the single-threaded `fread` fast path:
-/// `(stream_ptr, registry_gen, *const FastFixedMemRead)`.
-///
-/// Sound exclusively when `__libc_single_threaded != 0`: no sibling thread exists
-/// to close `stream` concurrently, `read_bytes_st` invokes no user callbacks, and
-/// every removal/replacement of `FastFixedMemRead` clears `TLS_FAST_MEM_READ` and
-/// bumps `REGISTRY_GEN` before dropping its owning `Arc<FastFixedMemRead>`.
-#[derive(Clone, Copy)]
-struct ParkedStFmemopenSlot {
-    slot: usize,
-    handle: usize,
-    cursor: *const FastFixedMemRead,
-}
-
-impl ParkedStFmemopenSlot {
-    const EMPTY: Self = Self {
-        slot: 0,
-        handle: 0,
-        cursor: std::ptr::null(),
-    };
-}
-
 /// Consolidated single-threaded POD TLS block for `fmemopen`/`fread`/`fclose`
 /// so each entrypoint resolves TLS base once (`1` `tlsdesc` call instead of `2–3`).
+///
+/// Only the parked static slot index (`parked_slot`) is cached in TLS — the
+/// owning handle and `Arc<FastFixedMemRead>` raw pointer live solely in
+/// `PARKED_GLOBAL_HANDLE`/`PARKED_GLOBAL_CURSOR` and are transferred atomically
+/// only after `try_claim_parked_static_slot` succeeds, eliminating any cross-thread
+/// eviction dangling-pointer hazard.
 #[repr(C)]
 struct StFastMemTls {
     stream: std::cell::Cell<usize>,
@@ -1352,7 +1338,7 @@ struct StFastMemTls {
     cursor: std::cell::Cell<*const FastFixedMemRead>,
     /// `0` = idle, `1` = actively borrowed, `2` = cleared by signal handler while borrowed.
     borrowed: std::cell::Cell<u8>,
-    parked: std::cell::Cell<ParkedStFmemopenSlot>,
+    parked_slot: std::cell::Cell<usize>,
 }
 
 impl StFastMemTls {
@@ -1362,7 +1348,7 @@ impl StFastMemTls {
             reg_gen: std::cell::Cell::new(0),
             cursor: std::cell::Cell::new(std::ptr::null()),
             borrowed: std::cell::Cell::new(0),
-            parked: std::cell::Cell::new(ParkedStFmemopenSlot::EMPTY),
+            parked_slot: std::cell::Cell::new(0),
         }
     }
 }
@@ -1387,18 +1373,33 @@ unsafe fn drop_evicted_st_fast_mem_cursor(ptr: *const FastFixedMemRead) {
 static PARKED_GLOBAL_HANDLE: AtomicUsize = AtomicUsize::new(0);
 static PARKED_GLOBAL_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
+/// Drain the creator thread's single-threaded `TLS_FAST_MEM_READ` slot when
+/// transitioning to multi-threaded execution so a host-thread handoff never
+/// leaks a cached `Arc<FastFixedMemRead>`.
+pub(crate) fn drain_st_fast_mem_tls_on_mt_transition() {
+    evict_parked_st_fmemopen_slot();
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
+    let tls = &TLS_FAST_MEM_READ;
+    tls.stream.set(0);
+    tls.reg_gen.set(0);
+    let old_ptr = tls.cursor.replace(std::ptr::null());
+    release_replaced_tls_fast_mem_ptr(tls, old_ptr);
+}
+
 /// Evict any parked single-threaded `fmemopen` slot (across any thread or
 /// threading backend) before entering multi-threaded execution, `fork`, or `freopen`.
 pub(crate) fn evict_parked_st_fmemopen_slot() {
     if !crate::malloc_abi::native_thread_backend_active() {
-        TLS_FAST_MEM_READ.parked.set(ParkedStFmemopenSlot::EMPTY);
+        TLS_FAST_MEM_READ.parked_slot.set(0);
     }
     let slot = io_internal_abi::take_parked_static_slot();
     if !(3..io_internal_abi::STREAM_REGISTRY_CAPACITY).contains(&slot) {
         return;
     }
-    let handle = PARKED_GLOBAL_HANDLE.swap(0, Ordering::Acquire);
-    let cursor = PARKED_GLOBAL_CURSOR.swap(0, Ordering::Acquire) as *const FastFixedMemRead;
+    let handle = PARKED_GLOBAL_HANDLE.swap(0, Ordering::AcqRel);
+    let cursor = PARKED_GLOBAL_CURSOR.swap(0, Ordering::AcqRel) as *const FastFixedMemRead;
     if handle != 0 {
         let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
         let _ = reg.remove_stream(handle);
@@ -1668,6 +1669,7 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if cursor.closed.load(Ordering::Acquire) {
         return None;
     }
+    crate::glibc_internal_abi::note_current_thread_activity();
     if cursor.memory.owner_tls.load(Ordering::Acquire) != current_fast_mem_tls_anchor() {
         cursor.memory.owner_tls.store(0, Ordering::Release);
     }
@@ -5188,7 +5190,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
 #[inline]
 fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
     crate::glibc_internal_abi::note_current_thread_activity();
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+    if !crate::glibc_internal_abi::is_process_single_threaded()
         || crate::malloc_abi::is_multi_threaded()
     {
         if io_internal_abi::parked_static_slot() != 0 {
@@ -5204,7 +5206,7 @@ fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
     let id = stream as usize;
     if !crate::malloc_abi::native_thread_backend_active() {
         let tls = &TLS_FAST_MEM_READ;
-        if tls.parked.get().slot == 0
+        if tls.parked_slot.get() == 0
             && io_internal_abi::parked_static_slot() == 0
             && tls.borrowed.get() == 0
         {
@@ -5236,17 +5238,13 @@ fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
                     cursor.eof.store(false, Ordering::Relaxed);
                     core::sync::atomic::compiler_fence(Ordering::SeqCst);
                     cursor.memory.st_busy.store(0, Ordering::Relaxed);
-                    PARKED_GLOBAL_HANDLE.store(id, Ordering::Relaxed);
-                    PARKED_GLOBAL_CURSOR.store(ptr as usize, Ordering::Relaxed);
+                    PARKED_GLOBAL_HANDLE.store(id, Ordering::Release);
+                    PARKED_GLOBAL_CURSOR.store(ptr as usize, Ordering::Release);
                     unsafe {
                         io_internal_abi::park_static_slot_st(slot, id as *mut c_void);
                     }
                     REGISTRY_GEN.fetch_add(1, Ordering::Release);
-                    tls.parked.set(ParkedStFmemopenSlot {
-                        slot,
-                        handle: id,
-                        cursor: ptr,
-                    });
+                    tls.parked_slot.set(slot);
                     return Some(0);
                 }
             }
@@ -5284,8 +5282,10 @@ fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
         recycle_fmemopen_objects(cell, cursor);
     } else if let Some(info) = cookie_info
         && let Some(memory) = info.fixed_memory
+        && let Some(mut inner) = memory.try_lock_inner()
     {
-        let buf = memory.lock_inner().cursor.take_input_buffer();
+        let buf = inner.cursor.take_input_buffer();
+        drop(inner);
         return_pooled_fixed_mem_input(buf);
     }
     io_internal_abi::unregister_dynamic_static_slot(slot);
@@ -6804,7 +6804,7 @@ pub unsafe extern "C-unwind" fn fread(
 ) -> usize {
     if runtime_policy::explicit_strict_passthrough_resolved()
         && !crate::malloc_abi::is_multi_threaded()
-        && crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && crate::glibc_internal_abi::is_process_single_threaded()
         && !ptr.is_null()
         && let Some(total) = size.checked_mul(nmemb)
         && (1..128).contains(&total)
@@ -6906,7 +6906,7 @@ pub(crate) unsafe fn fread_for_caller(
     // reads (`TLS_FAST_MEM_READ` read-only fmemopen hit or `WRITE_CACHE` fd hit)
     // invoke no user callbacks, syscalls, or `pthread_create` and therefore
     // cannot contend on or alter the recursive `FILE` lock state.
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+    if crate::glibc_internal_abi::is_process_single_threaded()
         && let Some(total) = size.checked_mul(nmemb)
         && valid_strict_raw_span(ptr, total)
     {
@@ -18750,23 +18750,50 @@ fn return_pooled_fixed_mem_input(mut buf: Vec<u8>) {
 }
 
 impl FixedMemCookie {
+    /// Fallibly acquire exclusive access to `FixedMemCookieInner` without
+    /// panicking across `extern "C-unwind"`.
+    ///
+    /// Returns `None` only on same-thread signal-handler reentry while an
+    /// outer single-threaded `fread` holds `st_busy == 1`. Across an ST->MT
+    /// transition where another thread is finishing its in-flight unlocked
+    /// read, waits for `st_busy` to clear before granting access.
     #[inline]
-    fn lock_inner(&self) -> FixedMemCookieGuard<'_> {
-        let mt_guard = crate::runtime_policy::lock_parking_lot_preserving_errno(&self.mt_lock);
-        assert_eq!(
-            self.st_busy.swap(1, Ordering::Acquire),
-            0,
-            "reentrant FixedMemCookie access on the same thread"
-        );
-        FixedMemCookieGuard {
+    fn try_lock_inner(&self) -> Option<FixedMemCookieGuard<'_>> {
+        let in_signal = crate::malloc_abi::signal_handler_context_now() == Some(true);
+        let on_owner_tls = !crate::malloc_abi::native_thread_backend_active()
+            && self.owner_tls.load(Ordering::Acquire) == current_fast_mem_tls_anchor();
+        let nonblocking = in_signal || (on_owner_tls && self.st_busy.load(Ordering::Acquire) != 0);
+        let mt_guard = if nonblocking {
+            self.mt_lock.try_lock()?
+        } else {
+            crate::runtime_policy::lock_parking_lot_preserving_errno(&self.mt_lock)
+        };
+        let mut spins = 0u32;
+        while self
+            .st_busy
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            if in_signal || on_owner_tls || crate::glibc_internal_abi::is_process_single_threaded()
+            {
+                return None;
+            }
+            spins = spins.wrapping_add(1);
+            if spins & 0x3f == 0 {
+                frankenlibc_core::syscall::sys_sched_yield();
+            } else {
+                core::hint::spin_loop();
+            }
+        }
+        Some(FixedMemCookieGuard {
             cookie: self,
             _mt_guard: mt_guard,
-        }
+        })
     }
 
     #[inline(always)]
     fn read_into_st_with_anchor(&self, dst: &mut [u8], tls_anchor: usize) -> usize {
-        if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        if crate::glibc_internal_abi::is_process_single_threaded()
             && !crate::malloc_abi::is_multi_threaded()
             && self.owner_tls.load(Ordering::Relaxed) == tls_anchor
             && self.st_busy.load(Ordering::Relaxed) == 0
@@ -18783,9 +18810,9 @@ impl FixedMemCookie {
             core::sync::atomic::compiler_fence(Ordering::SeqCst);
             let _busy = StBusyGuard(self);
             let prefetch = self.read_capacity.load(Ordering::Relaxed);
-            // SAFETY: `!is_multi_threaded()` is latched synchronously before any
-            // thread creation, `read_with_refill` invokes no external callbacks
-            // or thread creation, and `st_busy == 1` blocks same-thread signal reentrancy.
+            // SAFETY: `is_process_single_threaded() && !is_multi_threaded()` ensures no
+            // sibling thread exists, `read_with_refill` invokes no external callbacks or
+            // thread creation, and `st_busy == 1` blocks same-thread signal reentrancy.
             let FixedMemCookieInner {
                 cursor,
                 borrowed,
@@ -18802,15 +18829,14 @@ impl FixedMemCookie {
                 }
             });
         }
-        if self.st_busy.load(Ordering::Acquire) != 0 && !crate::malloc_abi::is_multi_threaded() {
-            return 0;
-        }
         self.read_into(dst, None)
     }
 
     fn read_into(&self, dst: &mut [u8], delimiter: Option<u8>) -> usize {
         let prefetch = self.read_capacity.load(Ordering::Acquire);
-        let mut inner = self.lock_inner();
+        let Some(mut inner) = self.try_lock_inner() else {
+            return 0;
+        };
         let FixedMemCookieInner {
             cursor,
             borrowed,
@@ -18865,7 +18891,10 @@ unsafe extern "C-unwind" fn fixed_mem_cookie_write(
             std::slice::from_raw_parts(src.cast(), count),
         )
     };
-    let mut inner = memory.lock_inner();
+    let Some(mut inner) = memory.try_lock_inner() else {
+        unsafe { set_abi_errno(errno::EAGAIN) };
+        return -1;
+    };
     let FixedMemCookieInner {
         cursor,
         borrowed,
@@ -18901,7 +18930,11 @@ unsafe extern "C-unwind" fn fixed_mem_cookie_seek(
     // SAFETY: the cookie registry owns the state and stdio supplies a live
     // offset slot for the duration of the callback.
     let (memory, offset) = unsafe { (&*cookie.cast::<FixedMemCookie>(), &mut *offset) };
-    if let Some(position) = memory.lock_inner().cursor.seek(*offset, whence) {
+    let Some(mut inner) = memory.try_lock_inner() else {
+        unsafe { set_abi_errno(errno::EAGAIN) };
+        return -1;
+    };
+    if let Some(position) = inner.cursor.seek(*offset, whence) {
         *offset = position as i64;
         0
     } else {
@@ -19063,8 +19096,10 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     let fixed_memory = fixed_mem_cookie(id);
     if stream.is_appending()
         && let Some(memory) = &fixed_memory
+        && let Some(inner) = memory.try_lock_inner()
     {
-        let end = memory.lock_inner().cursor.content_end();
+        let end = inner.cursor.content_end();
+        drop(inner);
         stream.set_offset(end.saturating_add(stream.pending_flush().len()) as i64);
     }
     let Some(result) = stream.buffer_write(bytes) else {
@@ -19105,7 +19140,9 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     let current = flushed.saturating_sub(flushed_from_buffer).min(bytes.len());
     if let Some(memory) = fixed_memory {
         stream.mark_flushed();
-        stream.set_offset(memory.lock_inner().cursor.position() as i64);
+        if let Some(inner) = memory.try_lock_inner() {
+            stream.set_offset(inner.cursor.position() as i64);
+        }
         return current;
     }
     stream.set_offset(
@@ -19130,10 +19167,12 @@ unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
     // identifies the live cookie owned by this locked stream.
     let written = unsafe { cookie_stream_write(id, pending.as_ptr(), expected) };
     stream.mark_flushed();
-    if let Some(memory) = fixed_mem_cookie(id) {
+    if let Some(memory) = fixed_mem_cookie(id)
+        && let Some(inner) = memory.try_lock_inner()
+    {
         // A short fixed-buffer flush consumes its available prefix. Discard
         // staged overflow and expose the resulting position, never replay it.
-        stream.set_offset(memory.lock_inner().cursor.position() as i64);
+        stream.set_offset(inner.cursor.position() as i64);
     }
     if written == expected as isize {
         true
@@ -19166,7 +19205,9 @@ fn fixed_mem_cookie(id: usize) -> Option<Arc<FixedMemCookie>> {
 fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
     if let Some(memory) = fixed_mem_cookie(id) {
         let _ = sync_fast_fixed_mem_read_to_stream(id, stream);
-        let mut inner = memory.lock_inner();
+        let Some(mut inner) = memory.try_lock_inner() else {
+            return;
+        };
         if !stream.last_was_write() {
             let _ = inner.cursor.seek(stream.offset(), libc::SEEK_SET);
             let eof = stream.is_eof();
@@ -19267,8 +19308,11 @@ pub(crate) unsafe fn cookie_stream_close(id: usize) -> c_int {
         guard.as_mut().and_then(|map| map.remove(&id))
     };
     if let Some(info) = removed {
-        if let Some(memory) = info.fixed_memory {
-            let buf = memory.lock_inner().cursor.take_input_buffer();
+        if let Some(memory) = info.fixed_memory
+            && let Some(mut inner) = memory.try_lock_inner()
+        {
+            let buf = inner.cursor.take_input_buffer();
+            drop(inner);
             return_pooled_fixed_mem_input(buf);
         }
         if let Some(close_fn) = info.funcs.close {
@@ -19696,44 +19740,48 @@ pub unsafe extern "C" fn fmemopen(
         && !buf.is_null()
         && !open_flags.append
         && !open_flags.truncate
-        && crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && crate::glibc_internal_abi::is_process_single_threaded()
         && !crate::malloc_abi::is_multi_threaded()
         && !crate::malloc_abi::native_thread_backend_active()
     {
         let tls = &TLS_FAST_MEM_READ;
-        let parked = tls.parked.get();
-        if parked.slot != 0 && !parked.cursor.is_null() && tls.borrowed.get() == 0 {
-            tls.parked.set(ParkedStFmemopenSlot::EMPTY);
-            if io_internal_abi::try_claim_parked_static_slot(parked.slot) {
-                PARKED_GLOBAL_HANDLE.store(0, Ordering::Relaxed);
-                PARKED_GLOBAL_CURSOR.store(0, Ordering::Relaxed);
-                let cursor = unsafe { &*parked.cursor };
-                cursor.memory.st_busy.store(1, Ordering::Relaxed);
-                core::sync::atomic::compiler_fence(Ordering::SeqCst);
-                let inner = unsafe { &mut *cursor.memory.inner.get() };
-                inner.cursor.reset(size, content_len, false);
-                inner.borrowed = buf as usize;
-                cursor.eof.store(false, Ordering::Relaxed);
-                cursor.closed.store(false, Ordering::Relaxed);
-                core::sync::atomic::compiler_fence(Ordering::SeqCst);
-                cursor.memory.st_busy.store(0, Ordering::Relaxed);
-                STATIC_SLOT_COOKIE_KIND[parked.slot].store(1, Ordering::Release);
-                unsafe {
-                    io_internal_abi::reoccupy_parked_static_slot_st(
-                        parked.slot,
-                        parked.handle as *mut c_void,
-                        initial_glibc_flags(&open_flags, false, BufMode::Full),
-                    );
+        let parked_slot = tls.parked_slot.get();
+        if parked_slot != 0 && tls.borrowed.get() == 0 {
+            tls.parked_slot.set(0);
+            if io_internal_abi::try_claim_parked_static_slot(parked_slot) {
+                let handle = PARKED_GLOBAL_HANDLE.swap(0, Ordering::AcqRel);
+                let cursor_ptr =
+                    PARKED_GLOBAL_CURSOR.swap(0, Ordering::AcqRel) as *const FastFixedMemRead;
+                if handle != 0 && !cursor_ptr.is_null() {
+                    let cursor = unsafe { &*cursor_ptr };
+                    cursor.memory.st_busy.store(1, Ordering::Relaxed);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    let inner = unsafe { &mut *cursor.memory.inner.get() };
+                    inner.cursor.reset(size, content_len, false);
+                    inner.borrowed = buf as usize;
+                    cursor.eof.store(false, Ordering::Relaxed);
+                    cursor.closed.store(false, Ordering::Relaxed);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    cursor.memory.st_busy.store(0, Ordering::Relaxed);
+                    STATIC_SLOT_COOKIE_KIND[parked_slot].store(1, Ordering::Release);
+                    unsafe {
+                        io_internal_abi::reoccupy_parked_static_slot_st(
+                            parked_slot,
+                            handle as *mut c_void,
+                            initial_glibc_flags(&open_flags, false, BufMode::Full),
+                        );
+                    }
+                    let cur_gen = REGISTRY_GEN.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+                    tls.stream.set(handle);
+                    tls.reg_gen.set(cur_gen);
+                    let old_ptr = tls.cursor.replace(cursor_ptr);
+                    release_replaced_tls_fast_mem_ptr(tls, old_ptr);
+                    return handle as *mut c_void;
                 }
-                let cur_gen = REGISTRY_GEN.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-                tls.stream.set(parked.handle);
-                tls.reg_gen.set(cur_gen);
-                let old_ptr = tls.cursor.replace(parked.cursor);
-                release_replaced_tls_fast_mem_ptr(tls, old_ptr);
-                return parked.handle as *mut c_void;
+                io_internal_abi::unregister_dynamic_static_slot(parked_slot);
             }
         }
-    } else if (crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+    } else if (!crate::glibc_internal_abi::is_process_single_threaded()
         || crate::malloc_abi::is_multi_threaded()
         || crate::malloc_abi::native_thread_backend_active())
         && io_internal_abi::parked_static_slot() != 0
@@ -20373,13 +20421,16 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
 
     let len = unsafe { crate::string_abi::strlen(template) };
     if len < 6 {
-        unsafe { *template = 0 };
+        unsafe {
+            *template = 0;
+            set_abi_errno(errno::EINVAL);
+        }
         return template;
     }
 
-    // Count trailing X characters
+    // Count trailing 'X' characters (BSD/glibc requires at least 6).
     let tmpl = unsafe { std::slice::from_raw_parts_mut(template as *mut u8, len) };
-    let mut x_count = 0;
+    let mut x_count = 0usize;
     for b in tmpl.iter().rev() {
         if *b == b'X' {
             x_count += 1;
@@ -20388,29 +20439,72 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
         }
     }
     if x_count < 6 {
-        unsafe { *template = 0 };
+        unsafe {
+            *template = 0;
+            set_abi_errno(errno::EINVAL);
+        }
         return template;
     }
 
-    // Generate random suffix using /dev/urandom
-    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rand_buf = vec![0u8; x_count];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| {
-            use std::io::Read;
-            f.read_exact(&mut rand_buf)
-        })
-        .is_err()
-    {
-        unsafe { *template = 0 };
-        return template;
-    }
-
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let start = len - x_count;
-    for (i, &rb) in rand_buf.iter().enumerate() {
-        tmpl[start + i] = chars[(rb as usize) % chars.len()];
+    let mut rand_buf = vec![0u8; x_count];
+    let mut st = core::mem::MaybeUninit::<libc::stat>::zeroed();
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+
+    for _attempt in 0..100 {
+        let mut filled = 0usize;
+        while filled < x_count {
+            match frankenlibc_core::syscall::sys_getrandom_slice(&mut rand_buf[filled..], 0) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(e) if e == errno::EINTR => continue,
+                Err(e) => {
+                    unsafe {
+                        *template = 0;
+                        set_abi_errno(e);
+                    }
+                    return template;
+                }
+            }
+        }
+        if filled < x_count {
+            unsafe {
+                *template = 0;
+                set_abi_errno(errno::EIO);
+            }
+            return template;
+        }
+        for (i, &rb) in rand_buf.iter().enumerate() {
+            tmpl[start + i] = CHARS[(rb as usize) % CHARS.len()];
+        }
+        match unsafe {
+            frankenlibc_core::syscall::sys_newfstatat(
+                libc::AT_FDCWD,
+                template as *const u8,
+                st.as_mut_ptr().cast(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } {
+            Err(e) if e == errno::ENOENT => {
+                unsafe { set_abi_errno(saved_errno) };
+                return template;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                unsafe {
+                    *template = 0;
+                    set_abi_errno(e);
+                }
+                return template;
+            }
+        }
     }
 
+    unsafe {
+        *template = 0;
+        set_abi_errno(errno::EEXIST);
+    }
     template
 }
 

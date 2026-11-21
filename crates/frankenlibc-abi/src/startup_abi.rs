@@ -535,13 +535,20 @@ fn finish_libc_start_main_success(rc: c_int, return_to_caller: bool) -> c_int {
 }
 
 fn use_owned_startup() -> bool {
-    // Owned startup is the default (bd-73h55.1).
-    // Opt-out via FRANKENLIBC_STARTUP_DELEGATE=1 to delegate to host libc.
-    // Legacy FRANKENLIBC_STARTUP_PHASE0=1 still forces owned startup for backward compat.
-    if startup_phase0_env_enabled() {
-        return true;
+    #[cfg(feature = "standalone")]
+    {
+        true
     }
-    !startup_delegate_env_requested()
+    #[cfg(not(feature = "standalone"))]
+    {
+        // Owned startup is the default (bd-73h55.1).
+        // Opt-out via FRANKENLIBC_STARTUP_DELEGATE=1 to delegate to host libc.
+        // Legacy FRANKENLIBC_STARTUP_PHASE0=1 still forces owned startup for backward compat.
+        if startup_phase0_env_enabled() {
+            return true;
+        }
+        !startup_delegate_env_requested()
+    }
 }
 
 #[cfg(not(feature = "standalone"))]
@@ -1409,17 +1416,26 @@ pub(crate) unsafe fn preseed_auxv_from_init_array(
     argv: *mut *mut c_char,
     envp: *mut *mut c_char,
 ) {
-    if !argv.is_null() && program_invocation_name.load(Ordering::Acquire).is_null() {
+    if argc > 0 && !argv.is_null() && program_invocation_name.load(Ordering::Acquire).is_null() {
         init_program_name(argv);
     }
+    let envp_on_initial_stack = argc >= 0
+        && !argv.is_null()
+        && !envp.is_null()
+        && unsafe { argv.add(normalize_argc(argc).saturating_add(1)) } == envp;
     if !envp.is_null() && crate::stdlib_abi::environ_uninitialized_for_init_array() {
         init_environment_globals(envp);
+        // Under `dlopen(..., RTLD_LOCAL | RTLD_DEEPBIND)` (or whenever host
+        // `setenv` already relocated `envp` off the initial kernel stack),
+        // FrankenLibC's `setenv` is not interposing the host's mutations; clone
+        // `envp` into owned storage immediately so a later host `setenv()`
+        // realloc/free cannot UAF our `HOST_ENVIRON` pointer.
+        #[cfg(not(feature = "standalone"))]
+        if !envp_on_initial_stack || !crate::stdio_abi::stdio_symbols_are_interposed() {
+            crate::stdlib_abi::take_environ_ownership();
+        }
     }
-    if argc < 0 || argv.is_null() || envp.is_null() {
-        return;
-    }
-    let normalized_argc = normalize_argc(argc);
-    if unsafe { argv.add(normalized_argc.saturating_add(1)) } != envp {
+    if !envp_on_initial_stack {
         return;
     }
     if let Some(env_count) = unsafe { count_c_string_vector(envp, MAX_STARTUP_SCAN) } {

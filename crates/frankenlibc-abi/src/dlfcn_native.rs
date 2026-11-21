@@ -44,6 +44,10 @@ mod tls;
 
 #[path = "dlfcn_thread_exit.rs"]
 mod thread_exit;
+#[cfg(not(test))]
+pub(crate) use thread_exit::{
+    ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,
+};
 
 #[path = "dlfcn_ifunc.rs"]
 mod ifunc;

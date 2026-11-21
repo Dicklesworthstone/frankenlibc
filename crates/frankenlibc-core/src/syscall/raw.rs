@@ -226,17 +226,39 @@ pub fn native_cancel_syscall_any_active() -> bool {
 static CANCEL_SYSCALL_EVER_USED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Token returned by [`arm_native_cancel_syscall`] and passed back to
+/// [`disarm_native_cancel_syscall`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeCancelWindowToken {
+    /// No trap slot could be claimed (e.g. invalid TID or table saturation).
+    None,
+    /// Fresh trap slot claimed for this thread; disarming frees the slot.
+    Fresh,
+    /// Nested trap inside a signal handler that interrupted an outer window on
+    /// the same thread; disarming restores the outer window's saved fields.
+    Nested {
+        idx: usize,
+        prev_state: u8,
+        prev_signal_depth: usize,
+        prev_rsp: usize,
+        prev_word: usize,
+    },
+}
+
 /// Arm the interruptible native cancellation syscall trap for `tid`.
 ///
-/// Returns `true` if a fresh trap slot was claimed for `tid` (which the caller
-/// must subsequently disarm), or `false` if an outer cancellation window on the
-/// same `tid` already owns an armed slot (e.g. a signal handler calling a
-/// nested cancellation-point syscall), leaving the outer slot and its
-/// `ACTIVE_SIGNAL_DEPTH` intact.
+/// If an outer cancellation window on the same `tid` already owns an armed slot
+/// (e.g., an application signal handler invoking a nested blocking cancellation
+/// point), saves the outer slot's state and re-arms the slot for the inner
+/// window; [`disarm_native_cancel_syscall`] restores the outer slot verbatim.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: usize) -> bool {
+pub fn arm_native_cancel_syscall(
+    tid: i32,
+    cancel_word: *const u32,
+    window_rsp: usize,
+) -> NativeCancelWindowToken {
     if tid <= 0 || cancel_word.is_null() {
-        return false;
+        return NativeCancelWindowToken::None;
     }
     let self_claiming = cancel_slot_claiming_for_tid(tid);
     CANCEL_SYSCALL_EVER_USED.store(true, Ordering::Release);
@@ -248,13 +270,24 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
             let mut stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
             while is_cancel_slot_claiming(stored) {
                 if stored == self_claiming {
-                    return false;
+                    return NativeCancelWindowToken::None;
                 }
                 core::hint::spin_loop();
                 stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
             }
             if stored == tid {
-                return false;
+                let prev_state = ACTIVE_CANCEL_STATE[idx].swap(0, Ordering::AcqRel);
+                let prev_signal_depth = ACTIVE_SIGNAL_DEPTH[idx].swap(0, Ordering::AcqRel);
+                let prev_rsp = ACTIVE_CANCEL_RSPS[idx].swap(window_rsp, Ordering::AcqRel);
+                let prev_word =
+                    ACTIVE_CANCEL_WORDS[idx].swap(cancel_word as usize, Ordering::AcqRel);
+                return NativeCancelWindowToken::Nested {
+                    idx,
+                    prev_state,
+                    prev_signal_depth,
+                    prev_rsp,
+                    prev_word,
+                };
             }
             if stored == CANCEL_SLOT_TOMBSTONE {
                 if first_tombstone.is_none() {
@@ -277,7 +310,7 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
                     ACTIVE_CANCEL_WORDS[target].store(cancel_word as usize, Ordering::Relaxed);
                     NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
                     ACTIVE_CANCEL_TIDS[target].store(tid, Ordering::Release);
-                    return true;
+                    return NativeCancelWindowToken::Fresh;
                 }
                 continue 'retry;
             }
@@ -298,43 +331,65 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
                 ACTIVE_CANCEL_WORDS[tomb].store(cancel_word as usize, Ordering::Relaxed);
                 NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
                 ACTIVE_CANCEL_TIDS[tomb].store(tid, Ordering::Release);
-                return true;
+                return NativeCancelWindowToken::Fresh;
             }
             continue 'retry;
         }
-        return false;
+        return NativeCancelWindowToken::None;
     }
-    false
+    NativeCancelWindowToken::None
 }
 
 /// Disarm the interruptible native cancellation syscall trap for `tid`.
 /// Returns `true` if the trap was aborted before kernel entry or returned `-EINTR`.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub fn disarm_native_cancel_syscall(tid: i32) -> bool {
-    if tid <= 0 || !native_cancel_syscall_any_active() {
-        return false;
-    }
-    let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
-    for i in 0..CANCEL_SYSCALL_SLOTS {
-        let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
-        let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
-        if stored == tid {
-            ACTIVE_CANCEL_WORDS[idx].store(0, Ordering::Release);
-            ACTIVE_CANCEL_RSPS[idx].store(0, Ordering::Release);
-            ACTIVE_SIGNAL_DEPTH[idx].store(0, Ordering::Release);
-            let state = ACTIVE_CANCEL_STATE[idx].swap(0, Ordering::AcqRel);
-            ACTIVE_CANCEL_TIDS[idx].store(CANCEL_SLOT_TOMBSTONE, Ordering::Release);
-            let _ =
-                NATIVE_CANCEL_WINDOW_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |d| {
-                    Some(d.saturating_sub(1))
-                });
-            return state & CANCEL_STATE_INTERRUPTED != 0;
+pub fn disarm_native_cancel_syscall(tid: i32, token: NativeCancelWindowToken) -> bool {
+    match token {
+        NativeCancelWindowToken::None => false,
+        NativeCancelWindowToken::Nested {
+            idx,
+            prev_state,
+            prev_signal_depth,
+            prev_rsp,
+            prev_word,
+        } => {
+            if tid <= 0 || ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire) != tid {
+                return false;
+            }
+            let inner_state = ACTIVE_CANCEL_STATE[idx].swap(prev_state, Ordering::AcqRel);
+            ACTIVE_CANCEL_WORDS[idx].store(prev_word, Ordering::Release);
+            ACTIVE_CANCEL_RSPS[idx].store(prev_rsp, Ordering::Release);
+            ACTIVE_SIGNAL_DEPTH[idx].store(prev_signal_depth, Ordering::Release);
+            inner_state & CANCEL_STATE_INTERRUPTED != 0
         }
-        if stored == CANCEL_SLOT_EMPTY {
-            break;
+        NativeCancelWindowToken::Fresh => {
+            if tid <= 0 || !native_cancel_syscall_any_active() {
+                return false;
+            }
+            let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
+            for i in 0..CANCEL_SYSCALL_SLOTS {
+                let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
+                let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
+                if stored == tid {
+                    ACTIVE_CANCEL_WORDS[idx].store(0, Ordering::Release);
+                    ACTIVE_CANCEL_RSPS[idx].store(0, Ordering::Release);
+                    ACTIVE_SIGNAL_DEPTH[idx].store(0, Ordering::Release);
+                    let state = ACTIVE_CANCEL_STATE[idx].swap(0, Ordering::AcqRel);
+                    ACTIVE_CANCEL_TIDS[idx].store(CANCEL_SLOT_TOMBSTONE, Ordering::Release);
+                    let _ = NATIVE_CANCEL_WINDOW_DEPTH.try_update(
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                        |d| Some(d.saturating_sub(1)),
+                    );
+                    return state & CANCEL_STATE_INTERRUPTED != 0;
+                }
+                if stored == CANCEL_SLOT_EMPTY {
+                    break;
+                }
+            }
+            false
         }
     }
-    false
 }
 
 /// Mark entry/exit of an application signal handler on the current thread so a

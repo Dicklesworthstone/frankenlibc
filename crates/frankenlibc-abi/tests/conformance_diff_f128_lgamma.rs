@@ -150,3 +150,73 @@ fn lgammaf128_r_finite_alias_preserves_binary128_argument_and_sign() {
     );
     assert_eq!(fl_sign, host_sign, "gamma sign through finite alias");
 }
+
+#[test]
+fn lgammaf128_r_matches_glibc_across_all_regions_and_signs() {
+    let host = host_lgammaf128_r();
+    let cases: [f128; 27] = [
+        0.0f128,
+        -0.0f128,
+        1.0f128,
+        2.0f128,
+        f128::from_bits((16_383u128 << 112) | (1u128 << 32)), // 1 + 2^-80
+        f128::from_bits((16_382u128 << 112) | ((1u128 << 112) - (1u128 << 31))), // 1 - 2^-81
+        f128::from_bits((16_384u128 << 112) | (1u128 << 32)), // 2 + 2^-79
+        f128::from_bits((16_383u128 << 112) | ((1u128 << 112) - (1u128 << 32))), // 2 - 2^-80
+        f128::from_bits((16_383u128 - 100) << 112),           // 2^-100
+        -f128::from_bits((16_383u128 - 100) << 112),          // -2^-100
+        f128::from_bits(1),                                   // min positive subnormal
+        f128::from_bits((1u128 << 127) | 1),                  // min negative subnormal
+        0.25f128,
+        0.5f128,
+        3.75f128,
+        39.5f128,
+        40.5f128,
+        -0.5f128,
+        -1.5f128,
+        -2.5f128,
+        -10.25f128,
+        -1.0f128,
+        f128::from_bits((16_383u128 + 16_370) << 112), // overflow boundary
+        f128::MAX,
+        f128::INFINITY,
+        f128::NEG_INFINITY,
+        f128::NAN,
+    ];
+    for x in cases {
+        let mut host_sign = 0;
+        let expected = unsafe { host(x, &mut host_sign) };
+        let mut fl_sign = 0;
+        let actual = unsafe { ma::lgammaf128_r(x, &mut fl_sign) };
+        assert_eq!(
+            fl_sign,
+            host_sign,
+            "sign mismatch at x={:#034x}: fl={fl_sign} glibc={host_sign}",
+            x.to_bits()
+        );
+        if expected.is_nan() {
+            assert!(
+                actual.is_nan(),
+                "NaN mismatch at x={:#034x}: fl={:#034x}",
+                x.to_bits(),
+                actual.to_bits()
+            );
+        } else if expected.is_infinite() {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "inf mismatch at x={:#034x}",
+                x.to_bits()
+            );
+        } else {
+            let diff = actual.to_bits().abs_diff(expected.to_bits());
+            assert!(
+                diff <= 1,
+                "lgammaf128_r({:#034x}) diverged by {diff} ulp: fl={:#034x} glibc={:#034x}",
+                x.to_bits(),
+                actual.to_bits(),
+                expected.to_bits()
+            );
+        }
+    }
+}

@@ -237,3 +237,98 @@ fn sprofil_period_is_derived_from_the_frequency() {
         "sprofil's reported period must follow __profile_frequency"
     );
 }
+
+#[inline(never)]
+fn profil_sample_hot_loop() -> u64 {
+    let mut acc = 1u64;
+    for i in 0..80_000_000u64 {
+        acc = core::hint::black_box(acc.wrapping_mul(6364136223846793005).wrapping_add(i | 1));
+    }
+    acc
+}
+
+/// Live `ITIMER_PROF` + `SIGPROF` sampling regression test for pure-native
+/// `sprofil(..., PROF_UINT)` and `profil(...)` (verifying 1:1 byte scaling,
+/// `>> 18` for `PROF_UINT` vs `>> 17` for `PROF_USHORT`, and clean disable).
+#[test]
+fn native_sprofil_and_profil_collect_live_sigprof_samples_and_disable_cleanly() {
+    #[repr(C)]
+    struct Prof {
+        pr_base: *mut c_void,
+        pr_size: usize,
+        pr_off: usize,
+        pr_scale: libc::c_ulong,
+    }
+
+    let fn_addr = profil_sample_hot_loop as *const () as usize;
+    let base_off = fn_addr.saturating_sub(256);
+
+    // 1. `sprofil` with `PROF_UINT` (`1 << 0`) and `scale = 0x10000` (4 bytes/bin).
+    let mut bins_u32 = vec![0u32; 4096];
+    let mut overflow_u32 = [0u32; 4];
+    let mut regions = [
+        Prof {
+            pr_base: bins_u32.as_mut_ptr().cast::<c_void>(),
+            pr_size: bins_u32.len() * std::mem::size_of::<u32>(),
+            pr_off: base_off,
+            pr_scale: 0x10000,
+        },
+        Prof {
+            pr_base: overflow_u32.as_mut_ptr().cast::<c_void>(),
+            pr_size: std::mem::size_of_val(&overflow_u32),
+            pr_off: 0,
+            pr_scale: 2,
+        },
+    ];
+    let rc = unsafe {
+        frankenlibc_abi::glibc_internal_abi::sprofil(
+            regions.as_mut_ptr().cast::<c_void>(),
+            regions.len() as c_int,
+            std::ptr::null_mut(),
+            1, // PROF_UINT
+        )
+    };
+    assert_eq!(rc, 0, "sprofil PROF_UINT arm must succeed");
+    let _ = core::hint::black_box(profil_sample_hot_loop());
+    let rc_off = unsafe {
+        frankenlibc_abi::glibc_internal_abi::sprofil(
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert_eq!(rc_off, 0, "sprofil disable must succeed");
+    let u32_hits: u32 = bins_u32.iter().copied().sum();
+    let u32_first = bins_u32.iter().position(|&c| c > 0);
+    assert!(
+        u32_hits > 0 || overflow_u32[0] > 0,
+        "sprofil PROF_UINT must record live SIGPROF samples (hits={u32_hits}, overflow={})",
+        overflow_u32[0]
+    );
+    if let Some(idx) = u32_first {
+        // `base_off = fn_addr - 256` with `PROF_UINT` (`>> 18`) maps `fn_addr` to bin `>= 64`.
+        assert!(
+            idx >= 64,
+            "PROF_UINT bin index {idx} < 64 indicates wrong >>18 vs >>17 scaling"
+        );
+    }
+
+    // 2. `profil` (`PROF_USHORT`, `scale = 0x10000`, 2 bytes/bin) + disable.
+    let mut bins_u16 = vec![0u16; 8192];
+    let rc = unsafe {
+        frankenlibc_abi::glibc_internal_abi::profil(
+            bins_u16.as_mut_ptr().cast::<c_void>(),
+            bins_u16.len() * std::mem::size_of::<u16>(),
+            base_off,
+            0x10000,
+        )
+    };
+    assert_eq!(rc, 0, "profil arm must succeed");
+    let _ = core::hint::black_box(profil_sample_hot_loop());
+    let rc_off =
+        unsafe { frankenlibc_abi::glibc_internal_abi::profil(std::ptr::null_mut(), 0, 0, 0) };
+    assert_eq!(rc_off, 0, "profil disable must succeed");
+    let u16_hits: u32 = bins_u16.iter().map(|&v| u32::from(v)).sum();
+    assert!(u16_hits > 0, "profil must record live SIGPROF samples");
+}

@@ -513,7 +513,7 @@ unsafe fn detached_thread_self_cleanup_and_exit(tid: i32, handle_ptr: *mut Threa
 #[allow(unsafe_code)]
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
-    let _ = syscall::disarm_native_cancel_syscall(tid);
+    let _ = syscall::disarm_native_cancel_syscall(tid, syscall::NativeCancelWindowToken::Fresh);
     super::tls::teardown_native_thread_tls(tid);
 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return

@@ -5499,7 +5499,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // ENVIRON_LOCK before the pipeline, as in fork(): setenv holds it while
     // its hardened memcpy takes pipeline locks.
     let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
-    let _pipeline_guard =
+    let mut _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
@@ -5550,6 +5550,9 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     };
 
     if pid == 0 {
+        if let Some(ref mut g) = _pipeline_guard {
+            g.adopt_in_fork_child();
+        }
         if let Some(ref mut g) = _native_tls_heap_guard {
             // SAFETY: freshly forked single-threaded child.
             unsafe { g.adopt_in_fork_child() };
@@ -9390,7 +9393,7 @@ pub unsafe extern "C" fn forkpty(
     // thread becomes a stuck lock in the child address space, and setenv holds
     // ENVIRON_LOCK while its hardened memcpy takes pipeline locks.
     let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
-    let _pipeline_guard =
+    let mut _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
@@ -9444,6 +9447,9 @@ pub unsafe extern "C" fn forkpty(
     };
 
     if pid == 0 {
+        if let Some(ref mut g) = _pipeline_guard {
+            g.adopt_in_fork_child();
+        }
         if let Some(ref mut g) = _native_tls_heap_guard {
             // SAFETY: freshly forked single-threaded child.
             unsafe { g.adopt_in_fork_child() };
@@ -9580,6 +9586,7 @@ fn with_crypt_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
 /// Resolve a libxcrypt symbol without ever resolving our own interposed export.
 /// The handle intentionally remains open for the process lifetime: every
 /// function pointer retrieved from it must stay valid after this helper returns.
+#[cfg(not(feature = "standalone"))]
 fn host_libcrypt_symbol(symbol: *const c_char) -> Option<*mut c_void> {
     type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
     type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
@@ -9611,6 +9618,7 @@ fn host_libcrypt_symbol(symbol: *const c_char) -> Option<*mut c_void> {
 /// Resolve libxcrypt's `crypt` implementation. Modern distributions ship
 /// yescrypt/bcrypt/scrypt in libcrypt rather than libc, while the native
 /// implementation below owns the historical SHA-based methods.
+#[cfg(not(feature = "standalone"))]
 fn host_extended_crypt() -> Option<unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char>
 {
     type CryptFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
@@ -9623,6 +9631,7 @@ fn host_extended_crypt() -> Option<unsafe extern "C" fn(*const c_char, *const c_
     *HOST_CRYPT
 }
 
+#[cfg(not(feature = "standalone"))]
 fn host_crypt_preferred_method() -> Option<*const c_char> {
     type PreferredMethodFn = unsafe extern "C" fn() -> *const c_char;
     static HOST_PREFERRED_METHOD: std::sync::LazyLock<Option<PreferredMethodFn>> =
@@ -9637,6 +9646,13 @@ fn host_crypt_preferred_method() -> Option<*const c_char> {
     (!method.is_null()).then_some(method)
 }
 
+#[cfg(feature = "standalone")]
+#[inline]
+fn host_crypt_preferred_method() -> Option<*const c_char> {
+    None
+}
+
+#[cfg(not(feature = "standalone"))]
 fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<Vec<u8>> {
     let host_crypt = host_extended_crypt()?;
     // SAFETY: caller already supplied non-null, NUL-terminated C strings;
@@ -9644,6 +9660,12 @@ fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<V
     let result = unsafe { host_crypt(key, salt) };
     // SAFETY: a non-null libxcrypt result is a NUL-terminated static buffer.
     unsafe { read_c_string_bytes(result) }
+}
+
+#[cfg(feature = "standalone")]
+#[inline]
+fn crypt_extended_with_host(_key: *const c_char, _salt: *const c_char) -> Option<Vec<u8>> {
+    None
 }
 
 /// POSIX `crypt` — one-way password hashing.
@@ -12659,13 +12681,29 @@ pub unsafe extern "C" fn _nss_files_getaliasbyname_r(
         unsafe { set_abi_errno(libc::ERANGE) };
         return NSS_STATUS_TRYAGAIN;
     }
+    let effective_buflen = if runtime_policy::mode().heals_enabled() {
+        crate::malloc_abi::known_remaining(buffer as usize)
+            .map_or(buflen, |remaining| buflen.min(remaining))
+    } else {
+        buflen
+    };
     let saved_errno = current_abi_errno();
     let mut resolved: *mut c_void = std::ptr::null_mut();
     let mut open_errno: c_int = 0;
     let rc = unsafe {
-        files_getaliasbyname_r(name, result, buffer, buflen, &mut resolved, &mut open_errno)
+        files_getaliasbyname_r(
+            name,
+            result,
+            buffer,
+            effective_buflen,
+            &mut resolved,
+            &mut open_errno,
+        )
     };
     if open_errno != 0 {
+        if !errnop.is_null() {
+            unsafe { *errnop = open_errno };
+        }
         unsafe { set_abi_errno(open_errno) };
         return if open_errno == libc::EAGAIN {
             NSS_STATUS_TRYAGAIN
@@ -22959,12 +22997,26 @@ pub unsafe extern "C" fn backtrace_symbols_fd(buffer: *const *mut c_void, size: 
     if buffer.is_null() || size <= 0 || fd < 0 {
         return;
     }
-    let count = clamp_backtrace_input_count("backtrace_symbols_fd", buffer, size);
+    let in_signal_or_reentry = crate::malloc_abi::signal_handler_context_now() == Some(true)
+        || runtime_policy::in_policy_reentry_context();
+    let count = if in_signal_or_reentry {
+        size as usize
+    } else {
+        clamp_backtrace_input_count("backtrace_symbols_fd", buffer, size)
+    };
     let mut scratch = [0u8; 512];
     for idx in 0..count {
         // SAFETY: caller supplies `count` frame addresses in `buffer`.
         let addr = unsafe { *buffer.add(idx) };
-        let mut len = unsafe { format_backtrace_frame(addr, &mut scratch[..511]) };
+        let mut len = if in_signal_or_reentry {
+            let mut pos = 0usize;
+            append_backtrace_bytes(&mut scratch[..511], &mut pos, b"[");
+            append_backtrace_hex(&mut scratch[..511], &mut pos, addr as usize);
+            append_backtrace_bytes(&mut scratch[..511], &mut pos, b"]");
+            pos
+        } else {
+            unsafe { format_backtrace_frame(addr, &mut scratch[..511]) }
+        };
         scratch[len] = b'\n';
         len += 1;
         let mut written = 0usize;
@@ -25700,12 +25752,12 @@ unsafe fn fill_aliasent_buf(
     }
     state.member_ptrs[members.len()] = std::ptr::null_mut();
 
-    // Fill struct aliasent
+    // Fill struct aliasent (glibc sets alias_local = 1 for local /etc/aliases entries).
     unsafe {
         *(buf as *mut *mut c_char) = name_ptr; // alias_name
         *(buf.add(8) as *mut usize) = members.len(); // alias_members_len
         *(buf.add(16) as *mut *mut *mut c_char) = state.member_ptrs.as_mut_ptr(); // alias_members
-        *(buf.add(24) as *mut c_int) = 0; // alias_local
+        *(buf.add(24) as *mut c_int) = 1; // alias_local
     }
     buf as *mut c_void
 }
@@ -25810,14 +25862,36 @@ unsafe fn files_getaliasbyname_r(
             let pname = &entry.name;
             let members = &entry.members;
 
-            // Pack into caller buffer: name + NUL + members + NULs + ptr array
+            // Pack into caller buffer: name + NUL + members + NULs + aligned ptr array.
+            // Align the ABSOLUTE address `(buffer as usize) + needed` so `char **` is
+            // pointer-aligned even when `buffer` starts at an odd stack address.
             let ptr_size = core::mem::size_of::<*mut c_char>();
-            let mut needed = pname.len() + 1;
+            let Some(mut needed) = pname.len().checked_add(1) else {
+                return libc::ERANGE;
+            };
             for m in members {
-                needed += m.len() + 1;
+                let Some(next) = m.len().checked_add(1).and_then(|n| needed.checked_add(n)) else {
+                    return libc::ERANGE;
+                };
+                needed = next;
             }
-            let ptrs_offset = (needed + (ptr_size - 1)) & !(ptr_size - 1);
-            let total = ptrs_offset + (members.len() + 1) * ptr_size;
+            let Some(raw_end) = (buffer as usize).checked_add(needed) else {
+                return libc::ERANGE;
+            };
+            let pad = raw_end.wrapping_neg() & (ptr_size - 1);
+            let Some(ptrs_offset) = needed.checked_add(pad) else {
+                return libc::ERANGE;
+            };
+            let Some(ptrs_bytes) = members
+                .len()
+                .checked_add(1)
+                .and_then(|n| n.checked_mul(ptr_size))
+            else {
+                return libc::ERANGE;
+            };
+            let Some(total) = ptrs_offset.checked_add(ptrs_bytes) else {
+                return libc::ERANGE;
+            };
             if total > buflen {
                 return libc::ERANGE;
             }
@@ -25844,10 +25918,10 @@ unsafe fn files_getaliasbyname_r(
 
             let ent = result_buf as *mut u8;
             unsafe {
-                *(ent as *mut *mut c_char) = name_ptr;
-                *(ent.add(8) as *mut usize) = members.len();
-                *(ent.add(16) as *mut *mut *mut c_char) = member_ptrs_base;
-                *(ent.add(24) as *mut c_int) = 0;
+                std::ptr::write_unaligned(ent as *mut *mut c_char, name_ptr);
+                std::ptr::write_unaligned(ent.add(8) as *mut usize, members.len());
+                std::ptr::write_unaligned(ent.add(16) as *mut *mut *mut c_char, member_ptrs_base);
+                std::ptr::write_unaligned(ent.add(24) as *mut c_int, 1);
             }
             if !result.is_null() {
                 unsafe { *result = result_buf };

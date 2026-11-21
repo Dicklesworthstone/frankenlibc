@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
-#![allow(unsafe_code)] // live host-glibc fma/fmaf oracle
+#![feature(f128)]
+#![allow(unsafe_code)] // live host-glibc fma/fmaf/fmaf128 oracle
 
 //! Differential gate for fma/fmaf (bd-h95z6y) — only a scratch bench existed.
 //! fma(x,y,z) computes x*y+z with a SINGLE rounding (the product is not rounded
@@ -180,4 +181,143 @@ fn fmaf_matches_glibc() {
         let f = unsafe { frankenlibc_abi::math_abi::fmaf(x, y, z) };
         assert!(eq32(f, g), "fmaf({x:e},{y:e},{z:e}): fl={f:e} glibc={g:e}");
     }
+}
+
+type Fma128 = unsafe extern "C" fn(f128, f128, f128) -> f128;
+
+union Sym128 {
+    raw: *mut c_void,
+    function: Fma128,
+}
+
+fn host_fmaf128() -> Fma128 {
+    let raw = unsafe { libc::dlsym(libm_handle(), c"fmaf128".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym fmaf128");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::math_abi::fmaf128 as *const () as usize,
+        "resolved oracle IS fl's fmaf128"
+    );
+    unsafe { Sym128 { raw }.function }
+}
+
+fn eq128(a: f128, b: f128) -> bool {
+    a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+}
+
+unsafe extern "C" {
+    fn fesetround(round: libc::c_int) -> libc::c_int;
+    fn fegetround() -> libc::c_int;
+}
+
+#[test]
+fn fmaf128_matches_glibc_bit_exact_across_rounding_modes() {
+    let host = host_fmaf128();
+    let saved_rm = unsafe { fegetround() };
+
+    let sv: [f128; 11] = [
+        0.0f128,
+        -0.0f128,
+        1.0f128,
+        -1.0f128,
+        f128::INFINITY,
+        f128::NEG_INFINITY,
+        f128::NAN,
+        f128::from_bits(1),                  // min positive subnormal
+        f128::from_bits((1u128 << 127) | 1), // min negative subnormal
+        f128::MAX,
+        -f128::MAX,
+    ];
+
+    // Exact double-rounding traps in binary128:
+    let one_plus_eps = f128::from_bits((16_383u128 << 112) | 1);
+    let one_plus_2eps = f128::from_bits((16_383u128 << 112) | 2);
+    let p_half = f128::from_bits((16_383u128 << 112) | (1u128 << 56));
+    let pp_hi = f128::from_bits((16_383u128 << 112) | (1u128 << 57));
+    let huge = f128::from_bits((16_383u128 + 10_000) << 112);
+    let huge_sq = f128::from_bits((16_383u128 + 16_383) << 112); // inf (for huge*huge - huge^2 test use 8190)
+    let _ = huge_sq;
+    let h8190 = f128::from_bits((16_383u128 + 8_190) << 112);
+    let h16380 = f128::from_bits((16_383u128 + 16_380) << 112);
+    let tiny = f128::from_bits((16_383u128 - 10_000) << 112);
+    let traps = [
+        (one_plus_eps, one_plus_eps, -one_plus_2eps),
+        (p_half, p_half, -pp_hi),
+        (p_half, p_half, -1.0f128),
+        (h8190, h8190, -h16380),
+        (huge, huge, -f128::MAX),
+        (tiny, tiny, f128::from_bits(1)),
+        (tiny, tiny, -f128::from_bits(1)),
+        (1.0f128, f128::from_bits(1), -f128::from_bits(1)),
+        (
+            f128::from_bits(1u128 << 112), // MIN_POSITIVE
+            0.5f128,
+            0.0f128,
+        ),
+        (f128::from_bits(1), 0.5f128, 0.0f128),
+    ];
+
+    // x86 FE_* rounding modes: TONEAREST=0, DOWNWARD=0x400, UPWARD=0x800, TOWARDZERO=0xc00
+    for rm in [0, 0x400, 0x800, 0xc00] {
+        assert_eq!(unsafe { fesetround(rm) }, 0);
+        for &x in &sv {
+            for &y in &sv {
+                for &z in &sv {
+                    let g = unsafe { host(x, y, z) };
+                    let f = unsafe { frankenlibc_abi::math_abi::fmaf128(x, y, z) };
+                    assert!(
+                        eq128(f, g),
+                        "rm={rm:#x} fmaf128({:#034x}, {:#034x}, {:#034x}): fl={:#034x} glibc={:#034x}",
+                        x.to_bits(),
+                        y.to_bits(),
+                        z.to_bits(),
+                        f.to_bits(),
+                        g.to_bits()
+                    );
+                }
+            }
+        }
+        for &(x, y, z) in &traps {
+            let g = unsafe { host(x, y, z) };
+            let f = unsafe { frankenlibc_abi::math_abi::fmaf128(x, y, z) };
+            assert!(
+                eq128(f, g),
+                "trap rm={rm:#x} fmaf128({:#034x}, {:#034x}, {:#034x}): fl={:#034x} glibc={:#034x}",
+                x.to_bits(),
+                y.to_bits(),
+                z.to_bits(),
+                f.to_bits(),
+                g.to_bits()
+            );
+        }
+        let mut rng = Rng(0xF128_0000_0000_0001u64 ^ (rm as u64));
+        for _ in 0..2000 {
+            let mk = |r: &mut Rng| -> f128 {
+                let lo = r.next() as u128;
+                let hi = r.next() as u128;
+                let mut bits = (hi << 64) | lo;
+                // Bias exponents into interesting overlapping/near-cancellation ranges half the time.
+                if (hi & 1) == 0 {
+                    let exp = 16_383i32 + (((hi >> 1) & 0x3ff) as i32) - 512;
+                    bits = (bits & !(0x7fff_u128 << 112)) | ((exp as u128) << 112);
+                }
+                f128::from_bits(bits)
+            };
+            let x = mk(&mut rng);
+            let y = mk(&mut rng);
+            let z = mk(&mut rng);
+            let g = unsafe { host(x, y, z) };
+            let f = unsafe { frankenlibc_abi::math_abi::fmaf128(x, y, z) };
+            assert!(
+                eq128(f, g),
+                "rand rm={rm:#x} fmaf128({:#034x}, {:#034x}, {:#034x}): fl={:#034x} glibc={:#034x}",
+                x.to_bits(),
+                y.to_bits(),
+                z.to_bits(),
+                f.to_bits(),
+                g.to_bits()
+            );
+        }
+    }
+    unsafe { fesetround(saved_rm) };
 }

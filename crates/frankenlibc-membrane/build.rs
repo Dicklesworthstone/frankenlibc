@@ -888,7 +888,15 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // atomically without two-word signal-TOCTOU races when compiler TLS is
         // disabled, pairing Acquire loads with AcqRel/Acquire CAS/RMWs and
         // Release fork-reset stores.
-        expected_sites: 26,
+        // 26 -> 46 (Wave 16.1 + Pass-2 audit): `dec_active_validation_contexts`
+        // saturating CAS prevents u32 underflow; `ACTIVE_VALIDATION_CONTEXTS` is
+        // incremented before publishing `0 -> 1` (with saturating undo on CAS
+        // loss) so `in_validation_context()` has no zero-window race; retired
+        // slots remain `NATIVE_VALIDATION_TOMBSTONE` (never breaking concurrent
+        // probe chains while `enter_native_validation_tid` reuses tombstones);
+        // and `adopt_in_fork_child` / `reset_validation_context_in_fork_child`
+        // preserve surviving child depth.
+        expected_sites: 46,
         stop_at_cfg_test: false,
         optional: false,
     },

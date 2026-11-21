@@ -518,6 +518,10 @@ mod native;
 use native::host_may_load_declined_object;
 #[cfg(feature = "standalone")]
 use native::load_native_dso;
+#[cfg(not(test))]
+pub(crate) use native::{
+    ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,
+};
 use native::{close_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol};
 pub(crate) use native::{native_address_info_extra, query_object_info};
 
@@ -1632,21 +1636,19 @@ fn program_type_to_raw(program_type: ProgramType) -> u32 {
 /// `dladdr` — resolve address to shared object info.
 ///
 /// Delegates to the host dynamic linker for correct DSO metadata.
+/// Per glibc `dladdr(3)`, `dladdr` never modifies `dlerror()`.
 #[allow(clippy::needless_return)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int {
     if addr.is_null() || info.is_null() {
-        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         return 0;
     }
     // Standalone objects use the same retained native metadata as interpose.
     #[cfg(feature = "standalone")]
     {
         if unsafe { native::native_address_info(addr, info.cast::<libc::Dl_info>()) } {
-            clear_dlerror();
             return 1;
         }
-        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
         return 0;
     }
     #[cfg(not(feature = "standalone"))]
@@ -1656,17 +1658,14 @@ pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int
             let host_fn: DladdrFn = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
             let rc = unsafe { host_fn(addr, info) };
             if rc != 0 {
-                clear_dlerror();
                 return rc;
             }
         }
         // Host ld.so does not know the ABI loader's anonymous mappings.
         // Query native metadata only after the host call has released its lock.
         if unsafe { native::native_address_info(addr, info.cast::<libc::Dl_info>()) } {
-            clear_dlerror();
             return 1;
         }
-        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
         0
     }
 }

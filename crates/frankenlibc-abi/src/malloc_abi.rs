@@ -733,7 +733,7 @@ pub(crate) fn is_multi_threaded() -> bool {
 /// spawning a hosted OS thread so single-threaded unlocked fast paths in the
 /// parent cannot race with the newly created child thread.
 pub(crate) fn latch_multi_threaded_before_thread_create() {
-    crate::stdio_abi::evict_parked_st_fmemopen_slot();
+    crate::stdio_abi::drain_st_fast_mem_tls_on_mt_transition();
     crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
     if !MULTI_THREADED.swap(true, Ordering::SeqCst) {
         refresh_strict_hot_mode();
@@ -829,9 +829,12 @@ pub(crate) fn note_native_thread_backend() {
     // TLS access) and BEFORE any clone child shares `%fs`.
     crate::stdio_abi::drain_creator_compiler_tls_for_native_threads();
     frankenlibc_membrane::tls_cache::disable_compiler_tls_cache_for_native_threads();
+    frankenlibc_core::pthread::tls::disable_tid_cache();
     let first_native = !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst);
     if first_native {
         crate::runtime_policy::migrate_creator_runtime_policy_tls_for_native_threads();
+        crate::glibc_internal_abi::migrate_creator_resolv_context_for_native_threads();
+        crate::dlfcn_abi::migrate_creator_thread_exit_for_native_threads();
         refresh_strict_hot_mode();
     }
 }
@@ -1034,7 +1037,16 @@ fn allocator_reentry_slot_for_tid(
 
         for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
             let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
-            let Some(slot) = ensure_reentry_slot(idx) else {
+            let Some(slot) = (if first_reusable.is_some() {
+                reentry_slot_if_ready(idx)
+            } else {
+                ensure_reentry_slot(idx)
+            }) else {
+                if first_reusable.is_some() {
+                    // Unmapped slab slots have never been claimed (tid == 0), so
+                    // `tid`'s probe chain cannot extend past this point.
+                    break;
+                }
                 continue;
             };
             let observed = slot.tid.load(Ordering::Acquire);
@@ -3796,13 +3808,17 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
         return out;
     }
-    // In standalone mode, bump blocks are handled above; copy arena blocks or fail cleanly.
+    // In standalone mode, bump blocks are handled above; copy live blocks or fail cleanly.
     #[cfg(feature = "standalone")]
     {
         if size == 0 {
             return std::ptr::null_mut();
         }
-        let Some(old_size) = arena_block_size_lockfree(ptr) else {
+        let Some(old_size) = segment_exact_live_view(ptr)
+            .map(|(_, sz)| sz)
+            .or_else(|| arena_block_size_lockfree(ptr))
+            .or_else(|| fallback_size_lockfree(ptr))
+        else {
             unsafe { set_abi_errno(ENOMEM as c_int) };
             return std::ptr::null_mut();
         };
@@ -3824,8 +3840,10 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             if size == 0 {
                 return std::ptr::null_mut();
             }
-            let Some(old_size) =
-                fallback_size_lockfree(ptr).or_else(|| arena_block_size_lockfree(ptr))
+            let Some(old_size) = segment_exact_live_view(ptr)
+                .map(|(_, sz)| sz)
+                .or_else(|| fallback_size_lockfree(ptr))
+                .or_else(|| arena_block_size_lockfree(ptr))
             else {
                 unsafe { set_abi_errno(ENOMEM as c_int) };
                 return std::ptr::null_mut();
@@ -3866,8 +3884,10 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             if size == 0 {
                 return std::ptr::null_mut();
             }
-            let Some(old_size) =
-                fallback_size_lockfree(ptr).or_else(|| arena_block_size_lockfree(ptr))
+            let Some(old_size) = segment_exact_live_view(ptr)
+                .map(|(_, sz)| sz)
+                .or_else(|| fallback_size_lockfree(ptr))
+                .or_else(|| arena_block_size_lockfree(ptr))
             else {
                 unsafe { set_abi_errno(ENOMEM as c_int) };
                 return std::ptr::null_mut();
@@ -4716,12 +4736,19 @@ impl MallocForkGuard {
         for entry in &KEY_SLOT_DIR {
             entry.store(0, Ordering::Relaxed);
         }
+        let mut surviving_slab_tid_slot: Option<&'static AllocatorReentrySlot> = None;
         for_each_claimed_slot(|slot| {
             let addr = slot as *const AllocatorReentrySlot as usize;
             if addr == surviving {
                 let slot_tid = slot.tid.load(Ordering::Relaxed);
                 if slot_tid > 0 {
-                    slot.tid.store(child_tid, Ordering::Release);
+                    if !std::ptr::eq(slot, &BOOTSTRAP_REENTRY_SLOT)
+                        && reentry_slot_index(slot) >= REENTRY_COMPACT_GRANULE_SLOTS
+                    {
+                        surviving_slab_tid_slot = Some(slot);
+                    } else {
+                        slot.tid.store(child_tid, Ordering::Release);
+                    }
                 } else if slot_tid == KEY_CLAIMED_TID {
                     record_key_slot_dir(slot.thread_key.load(Ordering::Relaxed), slot);
                 }
@@ -4736,6 +4763,7 @@ impl MallocForkGuard {
                 slot.string_membrane_active.store(false, Ordering::Relaxed);
                 slot.last_fast_pcc_packed.store(0, Ordering::Relaxed);
                 slot.signal_handler_sp.store(0, Ordering::Relaxed);
+                slot.fast_pcc_decisions.store(0, Ordering::Relaxed);
                 slot.mt_counts.reset_relaxed();
                 // SAFETY: single-threaded fork child holds `combiner_lock` via `MallocForkGuard`,
                 // and dead sibling threads no longer exist; zero torn MT deltas and magazines.
@@ -4747,6 +4775,73 @@ impl MallocForkGuard {
                 slot.tid.store(0, Ordering::Release);
             }
         });
+        if let Some(old_slot) = surviving_slab_tid_slot {
+            // Re-home a surviving slab TID slot into `PRIMARY_REENTRY_SLOTS[0]`
+            // (which was just cleared above) so `allocator_reentry_slot_for_tid(child_tid)`
+            // finds it on its primary scan instead of hashing `child_tid` to a different
+            // slab chain and allocating a duplicate slot.
+            let dst = &PRIMARY_REENTRY_SLOTS[0];
+            dst.thread_key.store(
+                old_slot.thread_key.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.allocator_depth.store(
+                old_slot.allocator_depth.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.signal_handler_sp.store(
+                old_slot.signal_handler_sp.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.st_stats_dirty.store(
+                old_slot.st_stats_dirty.swap(false, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.native_guard_bits.store(
+                old_slot.native_guard_bits.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.in_fallback_table.store(
+                old_slot.in_fallback_table.swap(false, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            #[cfg(not(feature = "owned-tls-cache"))]
+            dst.string_membrane_active.store(
+                old_slot
+                    .string_membrane_active
+                    .swap(false, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.last_fast_pcc_packed.store(
+                old_slot.last_fast_pcc_packed.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.wide_io_depth.store(
+                old_slot.wide_io_depth.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.fallback_cache_index.store(
+                old_slot.fallback_cache_index.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.fast_pcc_decisions.store(
+                old_slot.fast_pcc_decisions.swap(0, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            dst.mt_counts.move_relaxed_from(&old_slot.mt_counts);
+            // SAFETY: single-threaded fork child holds `combiner_lock` via `MallocForkGuard`.
+            unsafe {
+                *dst.mt_folded.get() =
+                    core::mem::replace(&mut *old_slot.mt_folded.get(), SlotMtFolded::new());
+                *dst.segment_local.get() = core::mem::replace(
+                    &mut *old_slot.segment_local.get(),
+                    SegmentLocalState::new(),
+                );
+            }
+            note_slot_claimed_index(0);
+            old_slot.tid.store(0, Ordering::Release);
+            dst.tid.store(child_tid, Ordering::Release);
+        }
         #[cfg(not(test))]
         {
             let active_gates = crate::runtime_policy::reset_policy_reentry_in_fork_child()
@@ -4820,6 +4915,31 @@ impl SlotMtCounters {
         self.total_freed.store(0, Ordering::Relaxed);
         for entry in &self.free_per_class {
             entry.store(0, Ordering::Relaxed);
+        }
+    }
+
+    fn move_relaxed_from(&self, src: &Self) {
+        self.allocation_events.store(
+            src.allocation_events.swap(0, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.total_allocated.store(
+            src.total_allocated.swap(0, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        for (dst, s) in self.alloc_per_class.iter().zip(&src.alloc_per_class) {
+            dst.store(s.swap(0, Ordering::Relaxed), Ordering::Relaxed);
+        }
+        self.free_events.store(
+            src.free_events.swap(0, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.total_freed.store(
+            src.total_freed.swap(0, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        for (dst, s) in self.free_per_class.iter().zip(&src.free_per_class) {
+            dst.store(s.swap(0, Ordering::Relaxed), Ordering::Relaxed);
         }
     }
 }
@@ -5782,6 +5902,7 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
                 reusable
                     .ptr
                     .store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
+                core::sync::atomic::fence(Ordering::Release);
                 reusable.size.store(size, Ordering::Relaxed);
                 reusable.ptr.store(key, Ordering::Release);
                 return Some(reusable_idx);
@@ -5819,6 +5940,7 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
                 reusable
                     .ptr
                     .store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
+                core::sync::atomic::fence(Ordering::Release);
                 reusable.size.store(size, Ordering::Relaxed);
                 reusable.ptr.store(key, Ordering::Release);
                 return Some(reusable_idx);
@@ -5837,6 +5959,7 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
         reusable
             .ptr
             .store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
+        core::sync::atomic::fence(Ordering::Release);
         reusable.size.store(size, Ordering::Relaxed);
         reusable.ptr.store(key, Ordering::Release);
         return Some(reusable_idx);
@@ -5873,23 +5996,24 @@ fn fallback_insert_sized_for_slot(
     // 2026-07-02 and left unfixed since. This closes it.
     //
     // Callers of THIS function hold a reentry guard by construction (malloc
-    // passes `reentry_guard.slot`), and `!MULTI_THREADED` means no second thread
-    // exists, so the two preconditions of
-    // `fallback_insert_sized_index_unlocked` are met. The unguarded
-    // `fallback_insert_sized` entry point is deliberately NOT changed: its
-    // callers cannot be shown to hold a guard, and eliding a lock on an
-    // unproven precondition is how an allocator gets a rare, unreproducible
-    // corruption. bd-65p87u.
-    let indexed = if !MULTI_THREADED.load(Ordering::Acquire) {
+    // passes `reentry_guard.slot`), and `is_process_single_threaded()` checks
+    // both our `MULTI_THREADED` latch and host glibc's `__libc_single_threaded`,
+    // so the two preconditions of `fallback_insert_sized_index_unlocked` are met.
+    // The unguarded `fallback_insert_sized` entry point is deliberately NOT
+    // changed: its callers cannot be shown to hold a guard. bd-65p87u.
+    let indexed = if crate::glibc_internal_abi::is_process_single_threaded() {
         match fallback_key(ptr) {
-            // SAFETY: guard held by the caller + single-threaded => exclusive.
-            // Mark `in_fallback_table` across the unlocked probe/update so a
-            // same-thread signal handler calling `fallback_size_lockfree` never
-            // observes an in-progress slot transition.
+            // SAFETY: guard held by the caller + process single-threaded => exclusive.
+            // Mark `in_fallback_table` and bump `FALLBACK_ALLOC_TABLE_SEQ` across
+            // the unlocked probe/update so lock-free readers (`fallback_size_lockfree`)
+            // never observe an in-progress slot transition.
             Some(key) if !ptr.is_null() => {
                 slot.in_fallback_table.store(true, Ordering::Release);
                 core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                FALLBACK_ALLOC_TABLE_SEQ.fetch_add(1, Ordering::Relaxed);
+                core::sync::atomic::fence(Ordering::Release);
                 let res = unsafe { fallback_insert_sized_index_unlocked(key, size) };
+                FALLBACK_ALLOC_TABLE_SEQ.fetch_add(1, Ordering::Release);
                 core::sync::atomic::compiler_fence(Ordering::SeqCst);
                 slot.in_fallback_table.store(false, Ordering::Release);
                 res
@@ -5915,7 +6039,7 @@ fn fallback_remove_sized_for_slot(
     ptr: *mut c_void,
 ) -> Option<usize> {
     let key = fallback_key(ptr)?;
-    if !MULTI_THREADED.load(Ordering::Acquire) {
+    if crate::glibc_internal_abi::is_process_single_threaded() {
         let cached = slot.fallback_cache_index.load(Ordering::Acquire);
         if let Some(cached_idx) = cached.checked_sub(1) {
             if let Some(entry) = fallback_slot_if_ready(cached_idx) {
@@ -5928,7 +6052,10 @@ fn fallback_remove_sized_for_slot(
                     if size != 0 {
                         // Keep the key as an inactive marker. The next host tcache
                         // reuse can reactivate it without probing past a tombstone.
+                        FALLBACK_ALLOC_TABLE_SEQ.fetch_add(1, Ordering::Relaxed);
+                        core::sync::atomic::fence(Ordering::Release);
                         entry.size.store(0, Ordering::Release);
+                        FALLBACK_ALLOC_TABLE_SEQ.fetch_add(1, Ordering::Release);
                         core::sync::atomic::compiler_fence(Ordering::SeqCst);
                         slot.in_fallback_table.store(false, Ordering::Release);
                         return Some(size);

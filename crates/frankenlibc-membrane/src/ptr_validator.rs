@@ -300,6 +300,15 @@ pub struct PipelineAtforkGuard<'a> {
     _validation: ValidationExecutionGuard,
 }
 
+impl PipelineAtforkGuard<'_> {
+    /// Re-key the surviving thread's validation-context slot from `parent_tid`
+    /// to `child_tid` in a freshly forked single-threaded child before dropping
+    /// the arena and page-oracle locks.
+    pub fn adopt_in_fork_child(&mut self) {
+        self._validation.adopt_in_fork_child();
+    }
+}
+
 /// The validation pipeline with all backing data structures.
 pub struct ValidationPipeline {
     /// The allocation arena.
@@ -364,7 +373,23 @@ const fn pack_native_validation(tid: u32, depth: u32) -> u64 {
     ((tid as u64) << 32) | (depth as u64)
 }
 
-fn enter_native_validation_tid() -> (NativeValidationSlot, bool) {
+#[inline]
+fn dec_active_validation_contexts() {
+    let mut prev = ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire);
+    while prev > 0 {
+        match ACTIVE_VALIDATION_CONTEXTS.compare_exchange_weak(
+            prev,
+            prev - 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return,
+            Err(observed) => prev = observed,
+        }
+    }
+}
+
+fn enter_native_validation_tid() -> NativeValidationSlot {
     let tid = crate::heal::raw_native_tid().max(1) as u32;
     let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
     'retry: for _ in 0..16 {
@@ -380,7 +405,7 @@ fn enter_native_validation_tid() -> (NativeValidationSlot, bool) {
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 ) {
-                    Ok(_) => return (NativeValidationSlot::Slot { idx, tid }, false),
+                    Ok(_) => return NativeValidationSlot::Slot { idx, tid },
                     Err(observed) => cur = observed,
                 }
             }
@@ -393,6 +418,9 @@ fn enter_native_validation_tid() -> (NativeValidationSlot, bool) {
                     Some(tomb) => (tomb, NATIVE_VALIDATION_TOMBSTONE),
                     None => (idx, NATIVE_VALIDATION_EMPTY),
                 };
+                // Publish ACTIVE_VALIDATION_CONTEXTS >= 1 BEFORE depth 0 -> 1
+                // so a signal handler arriving mid-entry always observes it.
+                ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
                 if NATIVE_VALIDATION_ENTRIES[target]
                     .compare_exchange(
                         expected,
@@ -402,13 +430,15 @@ fn enter_native_validation_tid() -> (NativeValidationSlot, bool) {
                     )
                     .is_ok()
                 {
-                    return (NativeValidationSlot::Slot { idx: target, tid }, true);
+                    return NativeValidationSlot::Slot { idx: target, tid };
                 }
+                dec_active_validation_contexts();
                 continue 'retry;
             }
         }
-        if let Some(tomb) = first_tombstone
-            && NATIVE_VALIDATION_ENTRIES[tomb]
+        if let Some(tomb) = first_tombstone {
+            ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
+            if NATIVE_VALIDATION_ENTRIES[tomb]
                 .compare_exchange(
                     NATIVE_VALIDATION_TOMBSTONE,
                     pack_native_validation(tid, 1),
@@ -416,12 +446,15 @@ fn enter_native_validation_tid() -> (NativeValidationSlot, bool) {
                     Ordering::Acquire,
                 )
                 .is_ok()
-        {
-            return (NativeValidationSlot::Slot { idx: tomb, tid }, true);
+            {
+                return NativeValidationSlot::Slot { idx: tomb, tid };
+            }
+            dec_active_validation_contexts();
         }
     }
+    ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
     NATIVE_VALIDATION_OVERFLOW_ACTIVE.fetch_add(1, Ordering::AcqRel);
-    (NativeValidationSlot::Overflow, true)
+    NativeValidationSlot::Overflow
 }
 
 #[inline]
@@ -433,6 +466,10 @@ fn leave_native_validation_tid(idx: usize, tid: u32) -> bool {
         }
         let depth = cur as u32;
         let (next, zeroed) = if depth <= 1 {
+            // Always retire to `NATIVE_VALIDATION_TOMBSTONE` rather than `EMPTY`
+            // so concurrent linear-probing chains past `idx` are never truncated.
+            // `enter_native_validation_tid` unconditionally reuses tombstones and
+            // `fork()` resets the table to `EMPTY`.
             (NATIVE_VALIDATION_TOMBSTONE, true)
         } else {
             (pack_native_validation(tid, depth - 1), false)
@@ -469,21 +506,36 @@ fn in_native_validation_tid() -> bool {
     false
 }
 
-/// Clear dead sibling threads' validation-context slots in a forked child.
+/// Clear dead sibling threads' validation-context slots in a forked child while
+/// preserving any active validation entry owned by the surviving child TID.
 pub(crate) fn reset_validation_context_in_fork_child() {
+    let child_tid = crate::heal::raw_native_tid().max(1) as u32;
+    let mut survivor_depth = 0u32;
     for entry in &NATIVE_VALIDATION_ENTRIES {
-        entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+        let cur = entry.swap(NATIVE_VALIDATION_EMPTY, Ordering::AcqRel);
+        if cur != NATIVE_VALIDATION_EMPTY
+            && cur != NATIVE_VALIDATION_TOMBSTONE
+            && (cur >> 32) as u32 == child_tid
+        {
+            survivor_depth = survivor_depth.saturating_add(cur as u32);
+        }
     }
     NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+    if survivor_depth > 0 {
+        let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+        NATIVE_VALIDATION_ENTRIES[dst].store(
+            pack_native_validation(child_tid, survivor_depth),
+            Ordering::Release,
+        );
+    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    let active = u32::from(
-        !crate::tls_cache::compiler_tls_disabled()
-            && VALIDATION_DEPTH
-                .try_with(|depth| depth.get() > 0)
-                .unwrap_or(false),
-    );
+    let tls_active = !crate::tls_cache::compiler_tls_disabled()
+        && VALIDATION_DEPTH
+            .try_with(|depth| depth.get() > 0)
+            .unwrap_or(false);
     #[cfg(feature = "owned-tls-cache")]
-    let active = 0u32;
+    let tls_active = false;
+    let active = u32::from(survivor_depth > 0) + u32::from(tls_active);
     ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
 }
 
@@ -498,13 +550,79 @@ struct ValidationExecutionGuard {
     native_slot: NativeValidationSlot,
 }
 
+impl ValidationExecutionGuard {
+    fn adopt_in_fork_child(&mut self) {
+        let child_tid = crate::heal::raw_native_tid().max(1) as u32;
+        match self.native_slot {
+            NativeValidationSlot::Slot {
+                idx,
+                tid: parent_tid,
+            } => {
+                let mut depth = 1u32;
+                let cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+                if cur != NATIVE_VALIDATION_EMPTY
+                    && cur != NATIVE_VALIDATION_TOMBSTONE
+                    && (cur >> 32) as u32 == parent_tid
+                {
+                    depth = (cur as u32).max(1);
+                }
+                for entry in &NATIVE_VALIDATION_ENTRIES {
+                    entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+                }
+                NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+                let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+                NATIVE_VALIDATION_ENTRIES[dst]
+                    .store(pack_native_validation(child_tid, depth), Ordering::Release);
+                ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
+                self.native_slot = NativeValidationSlot::Slot {
+                    idx: dst,
+                    tid: child_tid,
+                };
+            }
+            NativeValidationSlot::Overflow => {
+                for entry in &NATIVE_VALIDATION_ENTRIES {
+                    entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+                }
+                NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+                let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+                NATIVE_VALIDATION_ENTRIES[dst]
+                    .store(pack_native_validation(child_tid, 1), Ordering::Release);
+                ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
+                self.native_slot = NativeValidationSlot::Slot {
+                    idx: dst,
+                    tid: child_tid,
+                };
+            }
+            #[cfg(not(feature = "owned-tls-cache"))]
+            NativeValidationSlot::None => {
+                for entry in &NATIVE_VALIDATION_ENTRIES {
+                    entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+                }
+                NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+                ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
+            }
+        }
+    }
+}
+
 impl Drop for ValidationExecutionGuard {
     fn drop(&mut self) {
         let decremented_to_zero = match self.native_slot {
             NativeValidationSlot::Slot { idx, tid } => leave_native_validation_tid(idx, tid),
             NativeValidationSlot::Overflow => {
-                NATIVE_VALIDATION_OVERFLOW_ACTIVE.fetch_sub(1, Ordering::AcqRel);
-                true
+                let mut prev = NATIVE_VALIDATION_OVERFLOW_ACTIVE.load(Ordering::Acquire);
+                while prev > 0 {
+                    match NATIVE_VALIDATION_OVERFLOW_ACTIVE.compare_exchange_weak(
+                        prev,
+                        prev - 1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break,
+                        Err(observed) => prev = observed,
+                    }
+                }
+                prev > 0
             }
             #[cfg(not(feature = "owned-tls-cache"))]
             NativeValidationSlot::None => VALIDATION_DEPTH
@@ -517,7 +635,7 @@ impl Drop for ValidationExecutionGuard {
                 .unwrap_or(false),
         };
         if decremented_to_zero {
-            ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
+            dec_active_validation_contexts();
         }
     }
 }
@@ -525,24 +643,20 @@ impl Drop for ValidationExecutionGuard {
 fn enter_validation_execution_context() -> ValidationExecutionGuard {
     #[cfg(not(feature = "owned-tls-cache"))]
     if !crate::tls_cache::compiler_tls_disabled() {
-        let incremented_from_zero = VALIDATION_DEPTH
-            .try_with(|depth| {
-                let prev = depth.get();
-                depth.set(prev.saturating_add(1));
-                prev == 0
-            })
-            .unwrap_or(false);
-        if incremented_from_zero {
-            ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
-        }
+        let _ = VALIDATION_DEPTH.try_with(|depth| {
+            let prev = depth.get();
+            if prev == 0 {
+                // Publish ACTIVE_VALIDATION_CONTEXTS >= 1 BEFORE setting depth = 1
+                // so a signal interrupting immediately sees ACTIVE_VALIDATION_CONTEXTS >= 1.
+                ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
+            }
+            depth.set(prev.saturating_add(1));
+        });
         return ValidationExecutionGuard {
             native_slot: NativeValidationSlot::None,
         };
     }
-    let (native_slot, incremented_from_zero) = enter_native_validation_tid();
-    if incremented_from_zero {
-        ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
-    }
+    let native_slot = enter_native_validation_tid();
     ValidationExecutionGuard { native_slot }
 }
 

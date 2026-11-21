@@ -1212,7 +1212,7 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
 }
 
 /// Call before cloning a thread that shares its creator's TLS.
-pub(crate) fn disable_tid_cache() {
+pub fn disable_tid_cache() {
     TID_CACHE_DISABLED.store(true, Ordering::SeqCst);
 }
 

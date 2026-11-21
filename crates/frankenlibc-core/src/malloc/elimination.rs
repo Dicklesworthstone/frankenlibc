@@ -126,6 +126,7 @@ enum SlotState<T> {
     Empty,
     Offered {
         offer_id: u64,
+        offer_tag: Option<usize>,
         producer_thread: u64,
         wait_for_match: bool,
         value: T,
@@ -300,6 +301,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                 slot.publishes.fetch_add(1, Ordering::Relaxed);
                 *state = SlotState::Offered {
                     offer_id,
+                    offer_tag: None,
                     producer_thread,
                     wait_for_match: false,
                     value: value.take().expect("publish must have a value"),
@@ -333,7 +335,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     }
 
     pub fn offer(&self, value: T) -> Result<(), T> {
-        match self.offer_with_base(slot_hint::<SLOTS>(), value) {
+        match self.offer_with_base(slot_hint::<SLOTS>(), None, value) {
             Ok(_) => Ok(()),
             Err((value, _meta)) => Err(value),
         }
@@ -342,6 +344,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     fn offer_with_base(
         &self,
         base: usize,
+        offer_tag: Option<usize>,
         value: T,
     ) -> Result<EliminationExchangeMeta, (T, EliminationExchangeMeta)> {
         let gate = self.begin_attempt();
@@ -371,6 +374,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                     slot.publishes.fetch_add(1, Ordering::Relaxed);
                     *state = SlotState::Offered {
                         offer_id,
+                        offer_tag,
                         producer_thread,
                         wait_for_match: true,
                         value: value.take().expect("offer must have a value"),
@@ -539,7 +543,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     }
 
     pub fn try_offer(&self, slot_bias: usize, value: T) -> OfferOutcome<T> {
-        match self.offer_with_base(slot_base::<SLOTS>(slot_bias), value) {
+        match self.offer_with_base(slot_base::<SLOTS>(slot_bias), Some(slot_bias), value) {
             Ok(meta) => OfferOutcome::Matched(meta),
             Err((value, meta)) => OfferOutcome::Fallback { value, meta },
         }
@@ -645,14 +649,20 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                 let slot = &self.slots[slot_index];
                 let mut state = lock_no_poison(&slot.state);
 
-                let replaced = std::mem::replace(&mut *state, SlotState::Empty);
-                match replaced {
-                    SlotState::Offered {
+                let matches_tag = matches!(
+                    &*state,
+                    SlotState::Offered { offer_tag, .. }
+                        if offer_tag.is_none() || *offer_tag == Some(slot_bias)
+                );
+                if matches_tag {
+                    let replaced = std::mem::replace(&mut *state, SlotState::Empty);
+                    if let SlotState::Offered {
                         producer_thread,
                         wait_for_match,
                         value,
                         ..
-                    } => {
+                    } = replaced
+                    {
                         slot.matches.fetch_add(1, Ordering::Relaxed);
                         if wait_for_match {
                             *state = SlotState::Taken { consumer_thread };
@@ -674,13 +684,8 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                         );
                         return TakeOutcome::Matched { value, meta };
                     }
-                    SlotState::Empty => {
-                        *state = SlotState::Empty;
-                    }
-                    SlotState::Taken { consumer_thread } => {
-                        *state = SlotState::Taken { consumer_thread };
-                    }
                 }
+                drop(state);
 
                 slot.collisions.fetch_add(1, Ordering::Relaxed);
                 remember_next_slot::<SLOTS>(slot_index + 1);
@@ -886,7 +891,7 @@ fn try_lock_no_poison<T>(mutex: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
 
 fn current_thread_tag() -> u64 {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    if crate::pthread::tls::native_threads_may_exist() {
+    if cfg!(feature = "owned-tls-cache") || crate::pthread::tls::native_threads_may_exist() {
         let tid = crate::syscall::raw_gettid_nocancel().max(1) as u64;
         return tid.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     }
@@ -899,7 +904,7 @@ fn allocate_thread_tag() -> u64 {
 
 fn slot_hint<const SLOTS: usize>() -> usize {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    if crate::pthread::tls::native_threads_may_exist() {
+    if cfg!(feature = "owned-tls-cache") || crate::pthread::tls::native_threads_may_exist() {
         return (crate::syscall::raw_gettid_nocancel().max(1) as usize) % SLOTS;
     }
     SLOT_HINT.with(|hint| hint.get() % SLOTS)
@@ -907,7 +912,7 @@ fn slot_hint<const SLOTS: usize>() -> usize {
 
 fn remember_next_slot<const SLOTS: usize>(next: usize) {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    if crate::pthread::tls::native_threads_may_exist() {
+    if cfg!(feature = "owned-tls-cache") || crate::pthread::tls::native_threads_may_exist() {
         return;
     }
     SLOT_HINT.with(|hint| hint.set(next % SLOTS));

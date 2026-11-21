@@ -103,6 +103,9 @@ unsafe extern "C" {
     fn frankenlibc_errno_location_async() -> *mut c_int;
 }
 
+static EXITING_NATIVE_ERRNO_SCRATCH: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
 #[inline]
 fn errno_location() -> *mut c_int {
     if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
@@ -110,6 +113,11 @@ fn errno_location() -> *mut c_int {
         // its errno cell. The handle stays registered throughout destructors;
         // exit blocks signals before removing or reclaiming it.
         return unsafe { (*handle).errno.get() };
+    }
+    if frankenlibc_core::pthread::tls::current_thread_is_exiting_native() {
+        // Detached native thread tearing down its own `ThreadHandle` box after
+        // detaching from `TLS_TIDS`: never touch the creator's `%fs` errno slot.
+        return EXITING_NATIVE_ERRNO_SCRATCH.as_ptr();
     }
     // SAFETY: the hidden leaf addresses the caller's canonical static TLS slot
     // without a resolver, allocation, Rust TLS initialization or locking.

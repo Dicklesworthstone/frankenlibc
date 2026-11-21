@@ -328,7 +328,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // has locks to hold across the fork, and building one here gave every
     // strict process that forks the whole hardened pipeline (8 MB bloom
     // filter, 16 arena shards) to lock and COW-fault on every later fork.
-    let _pipeline_guard =
+    let mut _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
@@ -391,6 +391,9 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // a new TID, so ownership must be handed to it first or the drop is a
     // silent no-op and the lock stays held forever (bd-rc0923-epic-eeuy4f.5).
     if pid == 0 {
+        if let Some(ref mut g) = _pipeline_guard {
+            g.adopt_in_fork_child();
+        }
         if let Some(ref mut g) = _native_tls_heap_guard {
             // SAFETY: freshly forked single-threaded child.
             unsafe { g.adopt_in_fork_child() };

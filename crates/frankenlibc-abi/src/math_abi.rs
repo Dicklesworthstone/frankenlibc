@@ -28,9 +28,8 @@
 // gate-integrity fix.
 #![allow(clippy::approx_constant, clippy::eq_op)]
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::c_int;
 use std::os::raw::c_long;
-use std::sync::OnceLock;
 
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -340,14 +339,27 @@ fn active_rounding_mode() -> c_int {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+const ARCH_FE_DOWNWARD: c_int = 0x80_0000;
+#[cfg(target_arch = "aarch64")]
+const ARCH_FE_UPWARD: c_int = 0x40_0000;
+#[cfg(target_arch = "aarch64")]
+const ARCH_FE_TOWARDZERO: c_int = 0xc0_0000;
+
+#[cfg(not(target_arch = "aarch64"))]
+const ARCH_FE_DOWNWARD: c_int = 0x400;
+#[cfg(not(target_arch = "aarch64"))]
+const ARCH_FE_UPWARD: c_int = 0x800;
+#[cfg(not(target_arch = "aarch64"))]
+const ARCH_FE_TOWARDZERO: c_int = 0xc00;
+
 /// Round to integral in the current FP rounding direction — for
 /// nearbyint/lrint/llrint, which (unlike rintf128) honor the FE_* mode.
 fn round_f128_current_mode(x: f128) -> f128 {
-    // x86 FE_*: TONEAREST=0, DOWNWARD=0x400, UPWARD=0x800, TOWARDZERO=0xc00.
     match active_rounding_mode() {
-        0x400 => finite_floorf128(x),
-        0x800 => finite_ceilf128(x),
-        0xc00 => finite_truncf128(x),
+        ARCH_FE_DOWNWARD => finite_floorf128(x),
+        ARCH_FE_UPWARD => finite_ceilf128(x),
+        ARCH_FE_TOWARDZERO => finite_truncf128(x),
         _ => finite_roundevenf128(x),
     }
 }
@@ -7836,10 +7848,29 @@ fn fromfp_round(x: f64, rnd: c_int) -> f64 {
 const FE_INVALID_BIT: c_int = 0x01;
 const FE_INEXACT_BIT: c_int = 0x20;
 
+#[cfg(test)]
 unsafe extern "C" {
     fn feraiseexcept(excepts: c_int) -> c_int;
     fn feclearexcept(excepts: c_int) -> c_int;
     fn fetestexcept(excepts: c_int) -> c_int;
+}
+
+#[cfg(not(test))]
+#[inline]
+unsafe fn feraiseexcept(excepts: c_int) -> c_int {
+    unsafe { crate::fenv_abi::feraiseexcept(excepts) }
+}
+
+#[cfg(not(test))]
+#[inline]
+unsafe fn feclearexcept(excepts: c_int) -> c_int {
+    unsafe { crate::fenv_abi::feclearexcept(excepts) }
+}
+
+#[cfg(not(test))]
+#[inline]
+unsafe fn fetestexcept(excepts: c_int) -> c_int {
+    unsafe { crate::fenv_abi::fetestexcept(excepts) }
 }
 
 /// fmod/remainder/remquo/drem are EXACT operations: they raise FE_INVALID on a
@@ -8397,83 +8428,821 @@ pub unsafe extern "C" fn lgammaf64x_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
 
-/// Positive binary128 values above the finite f64 range must not be narrowed
-/// through the double implementation.  In this range the Stirling remainder
-/// is far below one binary128 ulp, so the first two Bernoulli corrections keep
-/// the result finite while the full ldbl-128 kernel remains tracked separately.
-#[inline]
-fn lgammaf128_large_positive(x: f128) -> f128 {
-    const HALF_LOG_TWO_PI: f128 = 0.9189385332046727417803297364056176398614f128;
-    let reciprocal = 1.0f128 / x;
-    let reciprocal_squared = reciprocal * reciprocal;
-    let correction = reciprocal
-        * ((1.0f128 / 12.0)
-            + reciprocal_squared * ((-1.0f128 / 360.0) + reciprocal_squared / 1260.0));
-    (x - 0.5) * logl_f128(x) - x + HALF_LOG_TWO_PI + correction
+/// Pure-native IEEE 754-2008 binary128 `lgammaf128_r(x, signgamp)` computed via
+/// 226-bit double-binary128 (`F256`) error-free arithmetic backed by our pure-integer
+/// `soft_fma_f128_core`. Eliminates the host `libm.so.6::lgammaf128_r` dependency
+/// while matching glibc's binary128 result bit-for-bit across all ranges.
+#[derive(Clone, Copy)]
+struct F256 {
+    hi: f128,
+    lo: f128,
 }
 
-type HostLgammaf128R = unsafe extern "C" fn(f128, *mut c_int) -> f128;
+impl F256 {
+    const ZERO: Self = Self {
+        hi: 0.0f128,
+        lo: 0.0f128,
+    };
+    const ONE: Self = Self {
+        hi: 1.0f128,
+        lo: 0.0f128,
+    };
+    const TWO: Self = Self {
+        hi: 2.0f128,
+        lo: 0.0f128,
+    };
 
-/// Resolve libm's binary128 reentrant gamma entrypoint without passing through
-/// FrankenLibC's own dynamic-linker exports. This surface is explicitly
-/// classified as `WrapsHostLibc`; the fallback below keeps its previous,
-/// finite-result behavior on a host where libm has no binary128 entrypoint.
-fn host_lgammaf128_r() -> Option<HostLgammaf128R> {
-    static LGAMMAF128_R: OnceLock<Option<HostLgammaf128R>> = OnceLock::new();
-
-    *LGAMMAF128_R.get_or_init(|| unsafe {
-        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
-
-        let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
-        let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
-        // SAFETY: host_resolve returns host-libc symbols with their C ABIs.
-        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
-        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
-        // SAFETY: these are static NUL-terminated symbol and library names.
-        let libm = dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-        if libm.is_null() {
-            return None;
+    #[inline]
+    const fn from_pair_bits(pair: (u128, u128)) -> Self {
+        Self {
+            hi: f128::from_bits(pair.0),
+            lo: f128::from_bits(pair.1),
         }
-        let symbol = dlsym(libm, c"lgammaf128_r".as_ptr());
-        if symbol.is_null() {
-            return None;
+    }
+
+    #[inline]
+    const fn from_f128(x: f128) -> Self {
+        Self { hi: x, lo: 0.0f128 }
+    }
+
+    #[inline]
+    fn neg(self) -> Self {
+        Self {
+            hi: -self.hi,
+            lo: -self.lo,
         }
-        // SAFETY: libm's `lgammaf128_r` has this exact binary128 C ABI.
-        Some(core::mem::transmute::<
-            *mut c_void,
-            unsafe extern "C" fn(f128, *mut c_int) -> f128,
-        >(symbol))
-    })
+    }
+
+    #[inline]
+    fn quick_two_sum(a: f128, b: f128) -> Self {
+        let s = a + b;
+        let e = b - (s - a);
+        Self { hi: s, lo: e }
+    }
+
+    #[inline]
+    fn two_sum(a: f128, b: f128) -> Self {
+        let s = a + b;
+        let v = s - a;
+        let e = (a - (s - v)) + (b - v);
+        Self { hi: s, lo: e }
+    }
+
+    #[inline]
+    fn two_prod(a: f128, b: f128) -> Self {
+        let p = a * b;
+        let e = soft_fma_f128_core(a, b, -p, 0, false);
+        Self { hi: p, lo: e }
+    }
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        let s = Self::two_sum(self.hi, rhs.hi);
+        let t = Self::two_sum(self.lo, rhs.lo);
+        let c = Self::quick_two_sum(s.hi, s.lo + t.hi);
+        Self::quick_two_sum(c.hi, c.lo + t.lo)
+    }
+
+    #[inline]
+    fn add_f128(self, rhs: f128) -> Self {
+        let s = Self::two_sum(self.hi, rhs);
+        Self::two_sum(s.hi, s.lo + self.lo)
+    }
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        self.add(rhs.neg())
+    }
+
+    #[inline]
+    fn mul(self, rhs: Self) -> Self {
+        let p = Self::two_prod(self.hi, rhs.hi);
+        let lo = soft_fma_f128_core(
+            self.hi,
+            rhs.lo,
+            soft_fma_f128_core(self.lo, rhs.hi, p.lo, 0, false),
+            0,
+            false,
+        );
+        Self::quick_two_sum(p.hi, lo)
+    }
+
+    #[inline]
+    fn mul_f128(self, rhs: f128) -> Self {
+        let p = Self::two_prod(self.hi, rhs);
+        let lo = soft_fma_f128_core(self.lo, rhs, p.lo, 0, false);
+        Self::quick_two_sum(p.hi, lo)
+    }
+
+    #[inline]
+    fn div(self, rhs: Self) -> Self {
+        let q1 = self.hi / rhs.hi;
+        let r = self.sub(rhs.mul_f128(q1));
+        let q2 = r.hi / rhs.hi;
+        let r2 = r.sub(rhs.mul_f128(q2));
+        let q3 = r2.hi / rhs.hi;
+        Self::quick_two_sum(q1, q2).add_f128(q3)
+    }
+
+    #[inline]
+    fn sqrt(self) -> Self {
+        if self.hi <= 0.0f128 {
+            return Self::ZERO;
+        }
+        let s = finite_sqrtf128(self.hi);
+        let s2 = Self::two_prod(s, s);
+        let rem = self.sub(s2);
+        let corr = rem.hi / (2.0f128 * s);
+        Self::quick_two_sum(s, corr)
+    }
+
+    #[inline]
+    fn ldexp(mut self, mut exp: i32) -> Self {
+        while exp != 0 {
+            let step = exp.clamp(-16_380, 16_380);
+            let scale = f128::from_bits(((step + 16_383) as u128) << 112);
+            self.hi *= scale;
+            self.lo *= scale;
+            exp -= step;
+        }
+        self
+    }
+
+    #[inline]
+    fn to_f128(self) -> f128 {
+        self.hi + self.lo
+    }
+}
+
+const PI_F256: (u128, u128) = (
+    0x4000_921f_b544_42d1_8469_898c_c517_01b8,
+    0x3f8d_cd12_9024_e088_a67c_c740_20bb_ea64,
+);
+const LN2_F256: (u128, u128) = (
+    0x3ffe_62e4_2fef_a39e_f357_93c7_6730_07e6,
+    0xbf8a_2a17_e197_9b31_ace9_3a4e_be5d_148f,
+);
+const LN_PI_F256: (u128, u128) = (
+    0x3fff_250d_048e_7a1b_d0bd_5f95_6c6a_843f,
+    0x3f8d_2661_79b7_6fce_cfc9_81b8_ce00_bb2c,
+);
+const HALF_LN_2PI_F256: (u128, u128) = (
+    0x3ffe_d67f_1c86_4beb_4a69_2979_2002_8832,
+    0x3f8c_011e_7d84_7c68_9a2c_5a6e_f635_189a,
+);
+const EULER_GAMMA_F256: (u128, u128) = (
+    0x3ffe_2788_cfc6_fb61_8f49_a37c_7f02_02a6,
+    0xbf8c_a54a_f189_9e28_4d19_ff37_9fe1_065c,
+);
+const ONE_MINUS_GAMMA_F256: (u128, u128) = (
+    0x3ffd_b0ee_6072_093c_e16c_b907_01fb_fab5,
+    0xbf8a_6ad4_39d9_875e_cb98_0321_807b_e68e,
+);
+
+const LGAMMA_F256_STIRLING: [(u128, u128); 24] = [
+    (
+        0x3ffb5555555555555555555555555555,
+        0x3f895555555555555555555555555555,
+    ),
+    (
+        0xbff66c16c16c16c16c16c16c16c16c17,
+        0x3f83f49f49f49f49f49f49f49f49f49f,
+    ),
+    (
+        0x3ff4a01a01a01a01a01a01a01a01a01a,
+        0x3f7ca01a01a01a01a01a01a01a01a01a,
+    ),
+    (
+        0xbff43813813813813813813813813814,
+        0x3f82fb1fb1fb1fb1fb1fb1fb1fb1fb20,
+    ),
+    (
+        0x3ff4b951e2b18ff23570ea73806e5479,
+        0xbf824e700dca8f158c7f91ab87539c03,
+    ),
+    (
+        0xbff5f6ab0d9993c7c81f6ab0d9993c7d,
+        0x3f83f82553c999b0e0df82553c999b0e,
+    ),
+    (
+        0x3ff7a41a41a41a41a41a41a41a41a41a,
+        0x3f850690690690690690690690690690,
+    ),
+    (
+        0xbff9e4286cb0f5397dc2064a8ed3175c,
+        0x3f87806f5e4d3c2b1a08f7e6d5c4b3a3,
+    ),
+    (
+        0x3ffc6fe96381e067ffa1876fe96381e0,
+        0x3f8a9ffe861dbfa58e07819ffe861dc0,
+    ),
+    (
+        0xbfff6476701181f39edbdb9ce625987d,
+        0xbf8d303a458a60fa5538111d9c04607d,
+    ),
+    (
+        0x4002ace44322ce005a74f53910c8b380,
+        0x3f8e69d3d4e44322ce005a74f53910c9,
+    ),
+    (
+        0xc00639b2525cccc1aab67ee25d73c0f9,
+        0xbf941ceda254949733306aad9fb8975d,
+    ),
+    (
+        0x400a12234e81b4e81b4e81b4e81b4e82,
+        0xbf982c5f92c5f92c5f92c5f92c5f92c6,
+    ),
+    (
+        0xc00e1a198ae1c4ab7eb3feddd8496920,
+        0x3f9ac98d64da3a05b5ef7a6e557c6487,
+    ),
+    (
+        0x401251a2089a6e11a38433dc9fb888d4,
+        0xbfa09a891a7fcb3ee5953ea34fb61509,
+    ),
+    (
+        0xc016d1089b142d3577880c2d3577880c,
+        0xbfa369abbc406169abbc406169abbc40,
+    ),
+    (
+        0x401b6d29a0f6433b79890cede62433b8,
+        0xbfa99dbcc48676f31219dbcc48676f31,
+    ),
+    (
+        0xc020445119d9e466ed5d4c049ab892ec,
+        0xbfad634da88c0793f07a1f8f3066b7ea,
+    ),
+    (
+        0x402543779bc9d4024e6a171024e6a171,
+        0x3fae27350b88127350b88127350b8812,
+    ),
+    (
+        0xc02a6800b7bc07a8c854486b02e295ed,
+        0x3fb8eaede53f475a84deaede53f475a8,
+    ),
+    (
+        0x402fbc8cd6f8f1f755c78753cdb5d5c9,
+        0xbfbc267111353617a8c12e1553f6ad2c,
+    ),
+    (
+        0xc0352efaec50eee5379680a13e9fb109,
+        0x3fc2bb48dfc83a1eae99e4b342a96c98,
+    ),
+    (
+        0x403ac5c266feb5e17db216d6146a5a9e,
+        0x3fc89ae41ed32cbe9913537a35d291d0,
+    ),
+    (
+        0xc04073c1280b15b1202d69f25ff30d9c,
+        0x3fcd15df627277e52ba8ea9e0af582cf,
+    ),
+];
+
+const LGAMMA_F256_ZETA1: [(u128, u128); 37] = [
+    (
+        0x3ffea51a6625307d3230e7b122440176,
+        0xbf8c8d0a51bb92abf74e93a6653e9fe7,
+    ),
+    (
+        0xbffd9a4d55beab2d6f59ec9725cd336b,
+        0xbf8b5090803d4907c3115749b1897e3b,
+    ),
+    (
+        0x3ffd151322ac7d84836bf2242232dca4,
+        0x3f8bafde2c358985c0142c96f47f56db,
+    ),
+    (
+        0xbffca8b9c17aa614925d04d49fb5c332,
+        0xbf873702661b4dc8ecb7e20a993e9d76,
+    ),
+    (
+        0x3ffc5b40cb100c30614a79940f15695b,
+        0x3f88df6855ddc2e2b9afd63d4fbcd724,
+    ),
+    (
+        0xbffc2703a1dcea3ae58c1ff41e52b0e0,
+        0xbf89a43fc6dd53d60f99bca7c9e0c475,
+    ),
+    (
+        0x3ffc010b36af86396e8be59ca4ddb5a6,
+        0x3f8a336e1bce5c27526bf6095225ee93,
+    ),
+    (
+        0xbffbc806706d57db455aaa01bf74fb64,
+        0xbf89118f486d67589808dac3915eb996,
+    ),
+    (
+        0x3ffb9a01e385d5f8f3026831e6ed19ad,
+        0xbf884f11c21cb4920629053843d41954,
+    ),
+    (
+        0xbffb748c33114c6d60f52bb1204038fe,
+        0xbf88587b33f9590cbd968940f4f8ba46,
+    ),
+    (
+        0x3ffb556ad63243bc40577a1603eba074,
+        0x3f88cccd6abe647ed46fa68c510c5e74,
+    ),
+    (
+        0xbffb3b1d971fc5984c34f3f036d8406d,
+        0xbf897f8e44b702ea25d96c37e908e586,
+    ),
+    (
+        0x3ffb2496df8320c5f73d2d2b8102fa15,
+        0xbf88bbe99dc4e8bd171215ad749e29be,
+    ),
+    (
+        0xbffb11133476e7fe03b9349fe72ddc6a,
+        0x3f883dcef9615d28e7ae2acbd479ef7b,
+    ),
+    (
+        0x3ffb00010064cdeb22f0f3a02ad5ffb8,
+        0xbf89f7a53e5ffd213b218ee5f1914506,
+    ),
+    (
+        0xbffae1e2d311e8abc9cb57bbcc5aa52a,
+        0x3f87f74542c656fc38c17d58a06ee76b,
+    ),
+    (
+        0x3ffac71ce3a20b418905a7a0bf293e86,
+        0x3f8737575079d8b711825a49099d5ce8,
+    ),
+    (
+        0xbffaaf28a1b5688a05d1d07a217fbed2,
+        0x3f882e20f2814f44ebe1980115650edd,
+    ),
+    (
+        0x3ffa9999b3352d5ba0a4a8da635f2b67,
+        0x3f8751c1c260a5421986c8bd56b1b53c,
+    ),
+    (
+        0xbffa86186db77bfbf5b7b7bc7d61ddf0,
+        0xbf88f31b566b5df4fdd404b47f6dfb49,
+    ),
+    (
+        0x3ffa745d1d1778df9102b8fe0a898e77,
+        0x3f866cbda5ba25e18192959451747a52,
+    ),
+    (
+        0xbffa642c88591b66cbbe2eab8d40e804,
+        0x3f88463adad1a255226d3e6fee7b278f,
+    ),
+    (
+        0x3ffa555556aaafdcd552817f3813bd8c,
+        0xbf884ee5bd23206e3918a893db0fd7e6,
+    ),
+    (
+        0xbffa47ae151eb9fb7740e3535194f098,
+        0x3f8641bd7cd0ca2b5c29fe8c123d9b22,
+    ),
+    (
+        0x3ffa3b13b189d925e7d2b56a27e1831c,
+        0x3f87dd35d2303963b792d6c4f4fd3272,
+    ),
+    (
+        0xbffa2f684c00002bc41568ee979a8477,
+        0xbf884121d161ac08d26cad1e708164f2,
+    ),
+    (
+        0x3ffa24924936db7bc7c98c70d3cb2f03,
+        0xbf872cc99c062f9918e49cb0d4669d73,
+    ),
+    (
+        0xbffa1a7b961a7b9a987ba4b43b919118,
+        0x3f8845ec02a07060a4208d6b6179e2b2,
+    ),
+    (
+        0x3ffa111111155556cab60c76f4a0dc3c,
+        0x3f88ca4529b60845d4d2ec9b64b14bf8,
+    ),
+    (
+        0xbffa08421086318cdb892c9c0d45ce8c,
+        0xbf885feaf29d5711b5a5fe3a8cedbcfb,
+    ),
+    (
+        0x3ffa00000001000026e3f644f4d51a98,
+        0x3f865322257c297d2bcfccfffc031deb,
+    ),
+    (
+        0xbff9f07c1f08ba2ea4c6ecba40d98cb7,
+        0xbf875c1cb105f6e22336115fa942792b,
+    ),
+    (
+        0x3ff9e1e1e1e25a5a627c8dd5407f3989,
+        0x3f87f2a5ff9155361b1cb7727dbed54b,
+    ),
+    (
+        0xbff9d41d41d457c57ef9ff99e0f0f1ca,
+        0x3f8403f306ce01bb541bcd102a48b4fa,
+    ),
+    (
+        0x3ff9c71c71c738e38f1362d55331854b,
+        0xbf879db6cd5bcb8951de94d4b266a68e,
+    ),
+    (
+        0xbff9bacf914c298375e5ff9f1cfca67a,
+        0x3f87a39cef321979cad1a518c8ca0d67,
+    ),
+    (
+        0x3ff9af286bca21af2882c9f283f5d0db,
+        0xbf87fedcb4086611762e068021af282f,
+    ),
+];
+
+const LGAMMA_F256_ZETA2: [(u128, u128); 37] = [
+    (
+        0x3ffd4a34cc4a60fa6461cf62448802eb,
+        0x3f8acbd6b911b55022c5b1666b058063,
+    ),
+    (
+        0xbffb13e001a5576068125d0741df7858,
+        0x3f8531354603136490ff82e8f2f5c692,
+    ),
+    (
+        0x3ff951322ac7d84836bf2242232dca47,
+        0xbf87021d3ca767a3febd3690b80a924c,
+    ),
+    (
+        0xbff7e404fc218f5f186d6760c385330e,
+        0xbf80e799740d4adcc2576bb305b5219a,
+    ),
+    (
+        0x3ff67add6eadb6c2fd490fae70050172,
+        0x3f834260110db1ac8b501cff4cf039d1,
+    ),
+    (
+        0xbff538ac5c2bf8e07ceb67c604c626f6,
+        0x3f833932daf42f0e62b56856ac612be4,
+    ),
+    (
+        0x3ff40b36af86396e8be59ca4ddb5a64d,
+        0xbf8123c86347b15b2813ed5bb422da74,
+    ),
+    (
+        0xbff2d3fd4c76d2fc7c70754606688fa5,
+        0xbf7fcb5a992b9b43b1a3f1d3b3c9e803,
+    ),
+    (
+        0x3ff1a127b0f17d65a33a61354e004cf2,
+        0x3f7d0b88b3f50968516fd77af8cef854,
+    ),
+    (
+        0xbff078de5bd7c81eef2efd5f190dc2cd,
+        0x3f7d3da606abf72a91876cb55173a34b,
+    ),
+    (
+        0x3fef580dcee66eb0224c0ae964b1ee44,
+        0x3f7d16009dcea14e27df0d330d9e47b7,
+    ),
+    (
+        0xbfee3cbc963ce2242856a464e0ab35d5,
+        0xbf79f5f2169b60ed1d72fcba2099b4e6,
+    ),
+    (
+        0x3fed2597a39f34aab901bbae75609fd8,
+        0xbf7bc601c1a9ec06d4fed3260e5c476e,
+    ),
+    (
+        0xbfec11b2eb76795411c76b0e65ac639b,
+        0x3f7ae07a796c5c0dacd517409e00df8c,
+    ),
+    (
+        0x3feb0064cdeb22f0f3a02ad5ffb78217,
+        0xbf793e5ffd213b218ee5f1914505d1c1,
+    ),
+    (
+        0xbfe9e2600d93cfd2ebb3d4f1868fbe6b,
+        0x3f754755982d1f42319ebdf7d9e7816a,
+    ),
+    (
+        0x3fe8c76bbb3f07a4d7668adddda6d48f,
+        0x3f75b3ae7f4e0d25daeb42e73abca6c1,
+    ),
+    (
+        0xbfe7af5a6cbbf8a97657c89fa5b60f88,
+        0xbf74af7f41964f5fc34cfa86a664fc9b,
+    ),
+    (
+        0x3fe699b93c2070b0f40c9c591cd909ea,
+        0xbf724d84f15668c081eec362f2103465,
+    ),
+    (
+        0xbfe5862c734df3eac6cca00afb036818,
+        0x3f7363574d91088b9a331e7159fb30f2,
+    ),
+    (
+        0x3fe47469daccfadccb258b1dcc5155df,
+        0x3f72445c8ca3bc121373a2ea8dd70e94,
+    ),
+    (
+        0xbfe36434a8447aead035ee5dbf0edf9a,
+        0x3f71ee61dca7796791025ef7f3c6c231,
+    ),
+    (
+        0x3fe2555a877ffd2c29e2be683656f13b,
+        0x3f70878a3c71920216cf9ad2c4eb20cb,
+    ),
+    (
+        0xbfe147b1679258d0e413cdb83a1538f4,
+        0xbf6ee787c028f4b9c5d9478396448d12,
+    ),
+    (
+        0x3fe03b15d2b2fc10bc50c1202229ae9a,
+        0x3f6e4cc18c5b74727638bf51325a302c,
+    ),
+    (
+        0xbfdf2f69a9fabe3df97a755322ce1db6,
+        0x3f6d188cc2e7dcf5dd13a8fe5fc944f4,
+    ),
+    (
+        0x3fde24932a337434c41820a7091423a3,
+        0x3f6c855ea4efb688303838cb4067c633,
+    ),
+    (
+        0xbfdd1a7c26ec2523c53d3af6d2812d29,
+        0x3f6ac3d18a229ef0ea06320d8351f073,
+    ),
+    (
+        0x3fdc11116e693ed978e3f2cad8600e57,
+        0x3f68c401908ea857206d07b42b9c6c5c,
+    ),
+    (
+        0xbfdb08424cbc543d8281df041b793d4b,
+        0xbf69a346ca4ede1504665a5c7c8500a1,
+    ),
+    (
+        0x3fda000026e3f644f4d51a9815322258,
+        0xbf67eb416a18198001fe710a8cfc00c3,
+    ),
+    (
+        0xbfd8f07c514fc9f0a0badb5f2a2d6045,
+        0x3f64412cf5d355faf3fbba8bc99d50d5,
+    ),
+    (
+        0x3fd7e1e2026aafcd7a755e9e6b1e780a,
+        0xbf64928b635680a84e4591e08245cf56,
+    ),
+    (
+        0xbfd6d41d56e5ee2e1d78ed65b062543e,
+        0x3f630ac71d3eea955be1defaa4a39dd2,
+    ),
+    (
+        0x3fd5c71c7f6f10e36bfbe2e26cb30374,
+        0x3f63804e704f9643127925518becbd72,
+    ),
+    (
+        0xbfd4bacf9a27bc89ad6b4bbd43f5ee38,
+        0x3f612e040084f32b47451471a04edc6f,
+    ),
+    (
+        0x3fd3af28718a10d6e281afe37085970e,
+        0xbf605992ab39251e50d775c1332251c4,
+    ),
+];
+
+fn f256_ln(mut x: F256) -> F256 {
+    let mut e_total = 0i32;
+    let hi_bits = x.hi.to_bits();
+    let raw_exp = ((hi_bits >> 112) & 0x7fff) as i32;
+    if raw_exp == 0 {
+        // Normalize subnormals before extracting exponent.
+        x = x.ldexp(128);
+        e_total -= 128;
+    }
+    if (x.hi - 1.0f128).abs() >= 0.025f128 {
+        let bits = x.hi.to_bits();
+        let e = (((bits >> 112) & 0x7fff) as i32) - 16_383;
+        let mut m = x.ldexp(-e);
+        let mut e_adj = e;
+        if m.hi >= 1.414_213_562_373_095_1f128 {
+            m = m.ldexp(-1);
+            e_adj += 1;
+        }
+        e_total += e_adj;
+        // 4 square roots reduce m into [2^(-1/32), 2^(1/32)], so |(r-1)/(r+1)| < 0.01083.
+        let r = m.sqrt().sqrt().sqrt().sqrt();
+        let t = r.sub(F256::ONE).div(r.add(F256::ONE));
+        let t2 = t.mul(t);
+        let mut poly = F256::ONE.div(F256::from_f128(35.0f128));
+        let mut k = 16i32;
+        while k >= 0 {
+            let denom = F256::from_f128((2 * k + 1) as f128);
+            poly = poly.mul(t2).add(F256::ONE.div(denom));
+            k -= 1;
+        }
+        let ln_m = t.mul(poly).ldexp(5); // 2 * 16 = 32 = 2^5
+        let ln2 = F256::from_pair_bits(LN2_F256);
+        return ln_m.add(ln2.mul_f128(e_total as f128));
+    }
+    let t = x.sub(F256::ONE).div(x.add(F256::ONE));
+    let t2 = t.mul(t);
+    let mut poly = F256::ONE.div(F256::from_f128(37.0f128));
+    let mut k = 17i32;
+    while k >= 0 {
+        let denom = F256::from_f128((2 * k + 1) as f128);
+        poly = poly.mul(t2).add(F256::ONE.div(denom));
+        k -= 1;
+    }
+    let ln_near = t.mul(poly).ldexp(1);
+    if e_total == 0 {
+        ln_near
+    } else {
+        let ln2 = F256::from_pair_bits(LN2_F256);
+        ln_near.add(ln2.mul_f128(e_total as f128))
+    }
+}
+
+fn f256_abs_sin_pi(x: f128) -> F256 {
+    let ax = x.abs();
+    let n = finite_roundf128(ax);
+    let f = (ax - n).abs();
+    let pi = F256::from_pair_bits(PI_F256);
+    if f <= 0.25f128 {
+        let u = pi.mul_f128(f);
+        let neg_u2 = u.mul(u).neg();
+        let mut acc = F256::ONE;
+        let mut k = 24i32;
+        while k >= 1 {
+            let denom = F256::from_f128(((2 * k) * (2 * k + 1)) as f128);
+            acc = F256::ONE.add(acc.mul(neg_u2).div(denom));
+            k -= 1;
+        }
+        u.mul(acc)
+    } else {
+        let g = 0.5f128 - f;
+        let u = pi.mul_f128(g);
+        let neg_u2 = u.mul(u).neg();
+        let mut acc = F256::ONE;
+        let mut k = 24i32;
+        while k >= 1 {
+            let denom = F256::from_f128(((2 * k - 1) * (2 * k)) as f128);
+            acc = F256::ONE.add(acc.mul(neg_u2).div(denom));
+            k -= 1;
+        }
+        acc
+    }
+}
+
+fn lgamma_stirling_f256(w: F256) -> F256 {
+    let ln_w = f256_ln(w);
+    let ln_m1 = ln_w.sub(F256::ONE);
+    // Compute w * (ln(w) - 1) - 0.5 * ln(w) + 0.5 * ln(2*pi) + Stirling(w).
+    let half_ln_2pi = F256::from_pair_bits(HALF_LN_2PI_F256);
+    let mut sum = w.mul(ln_m1).sub(ln_w.ldexp(-1)).add(half_ln_2pi);
+    // For w >= 2^130, 1/(12*w) is > 130 bits below HALF_LN_2PI (and > 260 bits below sum).
+    if w.hi < f128::from_bits((16_383u128 + 130) << 112) {
+        let inv_w = F256::ONE.div(w);
+        let inv_w2 = inv_w.mul(inv_w);
+        let mut s = F256::from_pair_bits(LGAMMA_F256_STIRLING[LGAMMA_F256_STIRLING.len() - 1]);
+        let mut i = LGAMMA_F256_STIRLING.len() - 1;
+        while i > 0 {
+            i -= 1;
+            s = s
+                .mul(inv_w2)
+                .add(F256::from_pair_bits(LGAMMA_F256_STIRLING[i]));
+        }
+        sum = sum.add(inv_w.mul(s));
+    }
+    sum
+}
+
+fn lgamma_pos_f256(u: F256) -> F256 {
+    if u.hi >= 40.0f128 {
+        return lgamma_stirling_f256(u);
+    }
+    let mut cur = u;
+    let mut prod = F256::ONE;
+    while cur.hi < 40.0f128 {
+        prod = prod.mul(cur);
+        cur = cur.add_f128(1.0f128);
+    }
+    lgamma_stirling_f256(cur).sub(f256_ln(prod))
+}
+
+fn lgamma_near_one_f256(t: F256) -> F256 {
+    let mut poly = F256::from_pair_bits(LGAMMA_F256_ZETA1[LGAMMA_F256_ZETA1.len() - 1]);
+    let mut i = LGAMMA_F256_ZETA1.len() - 1;
+    while i > 0 {
+        i -= 1;
+        poly = poly.mul(t).add(F256::from_pair_bits(LGAMMA_F256_ZETA1[i]));
+    }
+    let gamma = F256::from_pair_bits(EULER_GAMMA_F256);
+    poly.mul(t).sub(gamma).mul(t)
+}
+
+fn lgamma_near_two_f256(t: F256) -> F256 {
+    let mut poly = F256::from_pair_bits(LGAMMA_F256_ZETA2[LGAMMA_F256_ZETA2.len() - 1]);
+    let mut i = LGAMMA_F256_ZETA2.len() - 1;
+    while i > 0 {
+        i -= 1;
+        poly = poly.mul(t).add(F256::from_pair_bits(LGAMMA_F256_ZETA2[i]));
+    }
+    let c1 = F256::from_pair_bits(ONE_MINUS_GAMMA_F256);
+    poly.mul(t).add(c1).mul(t)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
-    if let Some(host_lgamma) = host_lgammaf128_r() {
-        let mut local_sign = 1;
-        let sign_destination = if signgamp.is_null() {
-            &mut local_sign
-        } else {
-            signgamp
-        };
-        // SAFETY: `host_lgamma` was resolved from libm with its exact ABI, and
-        // `sign_destination` is either the caller's writable pointer or local storage.
-        return unsafe { host_lgamma(x, sign_destination) };
-    }
-    if x.is_finite() && x > f64::MAX as f128 {
+    let write_sign = |s: c_int| {
         if !signgamp.is_null() {
-            // Gamma is positive for every positive argument.
-            unsafe { *signgamp = 1 };
+            // SAFETY: caller provided a writable sign output pointer.
+            unsafe { *signgamp = s };
         }
-        let result = lgammaf128_large_positive(x);
+    };
+
+    if x.is_nan() {
+        write_sign(1);
+        return x + x;
+    }
+    if x == 0.0f128 {
+        write_sign(if x.is_sign_negative() { -1 } else { 1 });
+        set_range_errno();
+        let _ =
+            core::hint::black_box(core::hint::black_box(1.0_f64) / core::hint::black_box(0.0_f64));
+        return f128::INFINITY;
+    }
+    if x.is_infinite() {
+        write_sign(1);
+        return f128::INFINITY;
+    }
+
+    // Small |x| < 1/64 (including subnormals): Gamma(x) = Gamma(1 + x) / x.
+    if x.abs() < (1.0f128 / 64.0f128) {
+        write_sign(if x.is_sign_negative() { -1 } else { 1 });
+        let ax = F256::from_f128(x.abs());
+        let neg_ln_ax = f256_ln(ax).neg();
+        if x.abs() < f128::from_bits((16_383u128 - 120) << 112) {
+            return neg_ln_ax.to_f128();
+        }
+        return neg_ln_ax
+            .add(lgamma_near_one_f256(F256::from_f128(x)))
+            .to_f128();
+    }
+
+    if x < 0.0f128 {
+        if finite_truncf128(x) == x {
+            // Negative integer pole.
+            write_sign(1);
+            set_range_errno();
+            let _ = core::hint::black_box(
+                core::hint::black_box(1.0_f64) / core::hint::black_box(0.0_f64),
+            );
+            return f128::INFINITY;
+        }
+        // Non-integer negative x has |x| < 2^112, so floor(-x) fits in u128 exactly.
+        let n = finite_floorf128(-x) as u128;
+        write_sign(if (n & 1) == 1 { 1 } else { -1 });
+        let one_minus_x = F256::ONE.sub(F256::from_f128(x));
+        let ln_pi = F256::from_pair_bits(LN_PI_F256);
+        let ln_sin = f256_ln(f256_abs_sin_pi(x));
+        let res = ln_pi
+            .sub(ln_sin)
+            .sub(lgamma_pos_f256(one_minus_x))
+            .to_f128();
+        if res.is_infinite() {
+            set_range_errno();
+        }
+        return res;
+    }
+
+    // Positive x >= 1/64: Gamma(x) > 0 everywhere.
+    write_sign(1);
+    if x == 1.0f128 || x == 2.0f128 {
+        return 0.0f128;
+    }
+    if (x - 1.0f128).abs() <= (1.0f128 / 64.0f128) {
+        return lgamma_near_one_f256(F256::from_f128(x).sub(F256::ONE)).to_f128();
+    }
+    if (x - 2.0f128).abs() <= (1.0f128 / 64.0f128) {
+        return lgamma_near_two_f256(F256::from_f128(x).sub(F256::TWO)).to_f128();
+    }
+    // Above 2^16370, x * (ln(x) - 1) > 2^16383.46 > f128::MAX unconditionally.
+    if x >= f128::from_bits((16_383u128 + 16_370) << 112) {
+        let _ = core::hint::black_box(
+            core::hint::black_box(f64::MAX) * core::hint::black_box(f64::MAX),
+        );
+        set_range_errno();
+        return f128::INFINITY;
+    }
+    // Near the binary128 overflow threshold (x * (ln(x) - 1) > f128::MAX around x ~ 1.0477e4928),
+    // scale x down by 2^-16 before forming the leading product so intermediate F256 overflow
+    // cannot occur prematurely.
+    let overflow_scale_thresh = f128::from_bits((16_383u128 + 16_350) << 112);
+    if x >= overflow_scale_thresh {
+        let wx = F256::from_f128(x);
+        let ln_x = f256_ln(wx);
+        let scaled = wx.ldexp(-16).mul(ln_x.sub(F256::ONE));
+        let result = scaled.to_f128() * f128::from_bits((16_383u128 + 16) << 112);
         if result.is_infinite() {
             set_range_errno();
         }
         return result;
     }
-    // ABI-correct binary128 surface; the full ldbl-128 kernel is still a
-    // tracked parity gap, but the finite range above f64 must remain finite.
-    unsafe { lgamma_r(x as f64, signgamp) as f128 }
+    let result = lgamma_pos_f256(F256::from_f128(x)).to_f128();
+    if result.is_infinite() {
+        set_range_errno();
+    }
+    result
 }
 
 // =========================================================================
@@ -9192,7 +9961,7 @@ fn nsqrt_ro_f128(x: f128) -> f128 {
     if !s.is_finite() || s == 0.0 {
         return fixup_invalid_nan_f128(s, x.is_nan());
     }
-    let r = (-s).mul_add(s, x); // x - s^2; sign(E - s) = sign(r) since s>0
+    let r = soft_fma_f128_core(-s, s, x, active_rounding_mode(), false); // x - s^2; sign(E - s) = sign(r) since s>0
     narrow_round_odd_f128(s, r)
 }
 #[inline]
@@ -9202,7 +9971,8 @@ fn nfma_ro_f128(x: f128, y: f128, z: f128) -> f128 {
     if (x == 0.0 && y.is_infinite()) || (x.is_infinite() && y == 0.0) {
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     }
-    let r = x.mul_add(y, z); // correctly-rounded f128 fma
+    let rm = active_rounding_mode();
+    let r = soft_fma_f128_core(x, y, z, rm, true); // correctly-rounded f128 fma
     if !r.is_finite() {
         return fixup_invalid_nan_f128(r, x.is_nan() || y.is_nan() || z.is_nan());
     }
@@ -9211,7 +9981,7 @@ fn nfma_ro_f128(x: f128, y: f128, z: f128) -> f128 {
         return r;
     }
     // ErrFma (Boldo–Muller): exact x*y+z = r + e1 + e2.
-    let u2 = x.mul_add(y, -u1); // exact x*y - u1
+    let u2 = soft_fma_f128_core(x, y, -u1, rm, false); // exact x*y - u1
     let a1 = z + u2;
     let bz = a1 - z;
     let a2 = (z - (a1 - bz)) + (u2 - bz);
@@ -11097,40 +11867,353 @@ pub unsafe extern "C" fn fmaf64(x: f64, y: f64, z: f64) -> f64 {
 pub unsafe extern "C" fn fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
-type HostFmaf128 = unsafe extern "C" fn(f128, f128, f128) -> f128;
+#[inline]
+fn mul_u128_wide(a: u128, b: u128) -> (u128, u128) {
+    let a_lo = a as u64 as u128;
+    let a_hi = a >> 64;
+    let b_lo = b as u64 as u128;
+    let b_hi = b >> 64;
 
-fn host_fmaf128() -> Option<HostFmaf128> {
-    static FMAF128: OnceLock<Option<HostFmaf128>> = OnceLock::new();
-    *FMAF128.get_or_init(|| unsafe {
-        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    let ll = a_lo * b_lo;
+    let lh = a_lo * b_hi;
+    let hl = a_hi * b_lo;
+    let hh = a_hi * b_hi;
 
-        let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
-        let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
-        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
-        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
-        let libm = dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-        if libm.is_null() {
-            return None;
+    let mid = (ll >> 64) + (lh as u64 as u128) + (hl as u64 as u128);
+    let lo = (ll as u64 as u128) | ((mid as u64 as u128) << 64);
+    let hi = hh + (lh >> 64) + (hl >> 64) + (mid >> 64);
+    (hi, lo)
+}
+
+#[inline]
+fn add_384(a: [u128; 3], b: [u128; 3]) -> [u128; 3] {
+    let (w0, c0) = a[0].overflowing_add(b[0]);
+    let (t1, c1a) = a[1].overflowing_add(b[1]);
+    let (w1, c1b) = t1.overflowing_add(u128::from(c0));
+    let w2 = a[2].wrapping_add(b[2]).wrapping_add(u128::from(c1a || c1b));
+    [w0, w1, w2]
+}
+
+#[inline]
+fn sub_384(a: [u128; 3], b: [u128; 3]) -> [u128; 3] {
+    let (w0, b0) = a[0].overflowing_sub(b[0]);
+    let (t1, b1a) = a[1].overflowing_sub(b[1]);
+    let (w1, b1b) = t1.overflowing_sub(u128::from(b0));
+    let w2 = a[2].wrapping_sub(b[2]).wrapping_sub(u128::from(b1a || b1b));
+    [w0, w1, w2]
+}
+
+#[inline]
+fn cmp_384(a: [u128; 3], b: [u128; 3]) -> core::cmp::Ordering {
+    a[2].cmp(&b[2])
+        .then_with(|| a[1].cmp(&b[1]))
+        .then_with(|| a[0].cmp(&b[0]))
+}
+
+#[inline]
+fn leading_zeros_384(a: [u128; 3]) -> u32 {
+    if a[2] != 0 {
+        a[2].leading_zeros()
+    } else if a[1] != 0 {
+        128 + a[1].leading_zeros()
+    } else {
+        256 + a[0].leading_zeros()
+    }
+}
+
+#[inline]
+fn shl_384(a: [u128; 3], shift: u32) -> [u128; 3] {
+    if shift == 0 {
+        return a;
+    }
+    if shift >= 384 {
+        return [0, 0, 0];
+    }
+    if shift >= 256 {
+        let s = shift - 256;
+        return [0, 0, a[0] << s];
+    }
+    if shift >= 128 {
+        let s = shift - 128;
+        if s == 0 {
+            return [0, a[0], a[1]];
         }
-        let symbol = dlsym(libm, c"fmaf128".as_ptr());
-        if symbol.is_null() {
-            return None;
+        return [0, a[0] << s, (a[1] << s) | (a[0] >> (128 - s))];
+    }
+    let inv = 128 - shift;
+    [
+        a[0] << shift,
+        (a[1] << shift) | (a[0] >> inv),
+        (a[2] << shift) | (a[1] >> inv),
+    ]
+}
+
+#[inline]
+fn shr_384_sticky(a: [u128; 3], shift: u32) -> [u128; 3] {
+    if shift == 0 {
+        return a;
+    }
+    if shift >= 384 {
+        let sticky = u128::from((a[0] | a[1] | a[2]) != 0);
+        return [sticky, 0, 0];
+    }
+    if shift >= 256 {
+        let s = shift - 256;
+        let shifted_out = a[0] != 0 || a[1] != 0 || (s > 0 && (a[2] << (128 - s)) != 0);
+        let w0 = (a[2] >> s) | u128::from(shifted_out);
+        return [w0, 0, 0];
+    }
+    if shift >= 128 {
+        let s = shift - 128;
+        if s == 0 {
+            let shifted_out = a[0] != 0;
+            return [a[1] | u128::from(shifted_out), a[2], 0];
         }
-        Some(core::mem::transmute::<
-            *mut c_void,
-            unsafe extern "C" fn(f128, f128, f128) -> f128,
-        >(symbol))
-    })
+        let inv = 128 - s;
+        let shifted_out = a[0] != 0 || (a[1] << inv) != 0;
+        let w0 = ((a[1] >> s) | (a[2] << inv)) | u128::from(shifted_out);
+        let w1 = a[2] >> s;
+        return [w0, w1, 0];
+    }
+    let inv = 128 - shift;
+    let shifted_out = (a[0] << inv) != 0;
+    let w0 = ((a[0] >> shift) | (a[1] << inv)) | u128::from(shifted_out);
+    let w1 = (a[1] >> shift) | (a[2] << inv);
+    let w2 = a[2] >> shift;
+    [w0, w1, w2]
+}
+
+#[inline]
+fn unpack_f128_nonzero(bits: u128) -> (bool, i32, u128) {
+    const FRAC_MASK: u128 = (1u128 << 112) - 1;
+    let neg = (bits >> 127) != 0;
+    let raw_exp = ((bits >> 112) & 0x7fff) as i32;
+    let frac = bits & FRAC_MASK;
+    if raw_exp != 0 {
+        (neg, raw_exp - 16_383, frac | (1u128 << 112))
+    } else {
+        let lz = frac.leading_zeros() as i32;
+        let shift = lz - 15;
+        (neg, 1 - 16_383 - shift, frac << (shift as u32))
+    }
+}
+
+/// Pure-integer IEEE 754-2008 binary128 fused multiply-add (`x * y + z`).
+///
+/// Never calls `f128::mul_add` (which `-Wl,-Bsymbolic-functions` would bind
+/// back to our own exported `fmaf128` symbol). Handles all 4 IEEE rounding
+/// modes (`FE_TONEAREST`, `FE_DOWNWARD`, `FE_UPWARD`, `FE_TOWARDZERO`),
+/// subnormals, massive cancellation, overflow, underflow, signed zero, and NaN
+/// quieting without any host libm dependency.
+fn soft_fma_f128_core(x: f128, y: f128, z: f128, rm: c_int, raise_flags: bool) -> f128 {
+    const SIGN_MASK: u128 = 1u128 << 127;
+    const EXP_INF: u128 = 0x7fff_u128 << 112;
+    const FRAC_MASK: u128 = (1u128 << 112) - 1;
+    const QNAN_BIT: u128 = 1u128 << 111;
+    const CANONICAL_NEG_QNAN: u128 = (0xffff_u128 << 112) | QNAN_BIT;
+
+    let xb = x.to_bits();
+    let yb = y.to_bits();
+    let zb = z.to_bits();
+    let x_abs = xb & !SIGN_MASK;
+    let y_abs = yb & !SIGN_MASK;
+    let z_abs = zb & !SIGN_MASK;
+
+    let x_nan = x_abs > EXP_INF;
+    let y_nan = y_abs > EXP_INF;
+    let z_nan = z_abs > EXP_INF;
+    let x_inf = x_abs == EXP_INF;
+    let y_inf = y_abs == EXP_INF;
+    let z_inf = z_abs == EXP_INF;
+    let x_zero = x_abs == 0;
+    let y_zero = y_abs == 0;
+    let z_zero = z_abs == 0;
+    let zero_times_inf = (x_zero && y_inf) || (x_inf && y_zero);
+
+    if x_nan || y_nan || z_nan {
+        let any_snan = (x_nan && (xb & QNAN_BIT) == 0)
+            || (y_nan && (yb & QNAN_BIT) == 0)
+            || (z_nan && (zb & QNAN_BIT) == 0);
+        if raise_flags && (any_snan || zero_times_inf) {
+            let _ = core::hint::black_box(
+                core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
+            );
+        }
+        let chosen = if x_nan {
+            xb
+        } else if y_nan {
+            yb
+        } else {
+            zb
+        };
+        return f128::from_bits(chosen | QNAN_BIT);
+    }
+
+    if zero_times_inf {
+        if raise_flags {
+            let _ = core::hint::black_box(
+                core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
+            );
+        }
+        return f128::from_bits(CANONICAL_NEG_QNAN);
+    }
+
+    let p_neg = ((xb ^ yb) >> 127) != 0;
+    if x_inf || y_inf {
+        if z_inf && (((zb >> 127) != 0) != p_neg) {
+            if raise_flags {
+                let _ = core::hint::black_box(
+                    core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
+                );
+            }
+            return f128::from_bits(CANONICAL_NEG_QNAN);
+        }
+        return f128::from_bits((u128::from(p_neg) << 127) | EXP_INF);
+    }
+
+    if z_inf {
+        return z;
+    }
+
+    if x_zero || y_zero {
+        if z_zero {
+            let z_neg = (zb >> 127) != 0;
+            let neg = if p_neg == z_neg {
+                p_neg
+            } else {
+                rm == ARCH_FE_DOWNWARD
+            };
+            return f128::from_bits(u128::from(neg) << 127);
+        }
+        return z;
+    }
+
+    let (xn, ex, sx) = unpack_f128_nonzero(xb);
+    let (yn, ey, sy) = unpack_f128_nonzero(yb);
+    let prod_neg = xn ^ yn;
+    let (mut p_hi, mut p_lo) = mul_u128_wide(sx, sy);
+    let mut ep = ex + ey;
+    if (p_hi & (1u128 << 97)) != 0 {
+        ep += 1;
+    } else {
+        p_hi = (p_hi << 1) | (p_lo >> 127);
+        p_lo <<= 1;
+    }
+    // Place 226-bit product with MSB at bit 382 (shift left by 157 = 128 + 29).
+    let p_aligned = [0u128, p_lo << 29, (p_hi << 29) | (p_lo >> 99)];
+
+    let (sum, res_neg, base_exp) = if z_zero {
+        (p_aligned, prod_neg, ep)
+    } else {
+        let (zn, ez, sz) = unpack_f128_nonzero(zb);
+        // Place 113-bit addend with MSB at bit 382 (shift left by 270 = 256 + 14).
+        let z_aligned = [0u128, 0u128, sz << 14];
+        let (big, big_neg, small, small_neg, exp_hi, diff) = if ep >= ez {
+            (p_aligned, prod_neg, z_aligned, zn, ep, (ep - ez) as u32)
+        } else {
+            (z_aligned, zn, p_aligned, prod_neg, ez, (ez - ep) as u32)
+        };
+        let small_shifted = shr_384_sticky(small, diff);
+        if big_neg == small_neg {
+            (add_384(big, small_shifted), big_neg, exp_hi)
+        } else {
+            match cmp_384(big, small_shifted) {
+                core::cmp::Ordering::Equal => {
+                    let neg = rm == ARCH_FE_DOWNWARD;
+                    return f128::from_bits(u128::from(neg) << 127);
+                }
+                core::cmp::Ordering::Greater => (sub_384(big, small_shifted), big_neg, exp_hi),
+                core::cmp::Ordering::Less => (sub_384(small_shifted, big), small_neg, exp_hi),
+            }
+        }
+    };
+
+    let lz = leading_zeros_384(sum);
+    let norm = shl_384(sum, lz);
+    let res_exp = base_exp + 1 - (lz as i32);
+
+    let mut sig = norm[2] >> 15; // 113 bits, MSB at bit 112
+    let mut round_bit = ((norm[2] >> 14) & 1) != 0;
+    let mut sticky = (norm[2] & ((1u128 << 14) - 1)) != 0 || norm[1] != 0 || norm[0] != 0;
+
+    let mut biased_exp = if res_exp < -16_382 {
+        let sub_shift = (-16_382 - res_exp) as u32;
+        if sub_shift >= 114 {
+            sig = 0;
+            round_bit = false;
+            sticky = true;
+        } else {
+            let old_inexact = round_bit || sticky;
+            let new_round = ((sig >> (sub_shift - 1)) & 1) != 0;
+            let low_mask = if sub_shift == 1 {
+                0u128
+            } else {
+                (1u128 << (sub_shift - 1)) - 1
+            };
+            let new_sticky = old_inexact || ((sig & low_mask) != 0);
+            sig >>= sub_shift;
+            round_bit = new_round;
+            sticky = new_sticky;
+        }
+        0i32
+    } else {
+        res_exp + 16_383
+    };
+
+    let inexact = round_bit || sticky;
+    let inc = match rm {
+        ARCH_FE_DOWNWARD => res_neg && inexact,
+        ARCH_FE_UPWARD => !res_neg && inexact,
+        ARCH_FE_TOWARDZERO => false,
+        _ => round_bit && (sticky || (sig & 1) != 0),
+    };
+    if inc {
+        sig += 1;
+        if biased_exp == 0 && sig == (1u128 << 112) {
+            biased_exp = 1;
+        } else if sig == (1u128 << 113) {
+            sig >>= 1;
+            biased_exp += 1;
+        }
+    }
+
+    if biased_exp >= 0x7fff {
+        if raise_flags {
+            let _ = core::hint::black_box(
+                core::hint::black_box(f64::MAX) * core::hint::black_box(f64::MAX),
+            );
+        }
+        let max_finite = rm == ARCH_FE_TOWARDZERO
+            || (rm == ARCH_FE_DOWNWARD && !res_neg)
+            || (rm == ARCH_FE_UPWARD && res_neg);
+        if max_finite {
+            return f128::from_bits(
+                (u128::from(res_neg) << 127) | (0x7ffe_u128 << 112) | FRAC_MASK,
+            );
+        }
+        return f128::from_bits((u128::from(res_neg) << 127) | EXP_INF);
+    }
+
+    if raise_flags {
+        if biased_exp == 0 && inexact {
+            let _ = core::hint::black_box(
+                core::hint::black_box(f64::MIN_POSITIVE) * core::hint::black_box(f64::MIN_POSITIVE),
+            );
+        } else if inexact {
+            let _ = core::hint::black_box(
+                core::hint::black_box(1.0_f64) + core::hint::black_box(1.0e-30_f64),
+            );
+        }
+    }
+
+    f128::from_bits(
+        (u128::from(res_neg) << 127) | ((biased_exp as u128) << 112) | (sig & FRAC_MASK),
+    )
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaf128(x: f128, y: f128, z: f128) -> f128 {
-    if let Some(host_fma) = host_fmaf128() {
-        unsafe { host_fma(x, y, z) }
-    } else {
-        x * y + z
-    }
+    soft_fma_f128_core(x, y, z, active_rounding_mode(), true)
 }
 
 // --- unary → c_int ---

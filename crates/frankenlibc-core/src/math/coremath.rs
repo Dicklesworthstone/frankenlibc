@@ -7006,7 +7006,7 @@ fn acos_body(x: f64) -> f64 {
         }
         return domain_nan_invalid();
     }
-    if abits < 0x3c90_0000_0000_0000 {
+    if abits < 0x3c80_0000_0000_0000 {
         return core::hint::black_box(PI_2_DD[0]) + (core::hint::black_box(PI_2_DD[1]) - x);
     }
     let ax = x.abs();

@@ -185,12 +185,10 @@ unsafe fn cstr_has_byte_prefix(ptr: *const c_char, expected: &[u8]) -> bool {
     true
 }
 
-fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
+fn parse_mode_from_envp(mut envp: *mut *mut c_char) -> Result<Option<SafetyLevel>, ()> {
     const KEY_EQ: &[u8] = b"FRANKENLIBC_MODE=";
     const MAX_SCAN: usize = 4096;
 
-    // SAFETY: process-owned env pointer table, expected to be NUL-terminated.
-    let mut envp = unsafe { environ };
     if envp.is_null() {
         if RUNTIME_READY.load(AtomicOrdering::Acquire) == RUNTIME_STATE_ACTIVE {
             return Ok(None);
@@ -228,6 +226,31 @@ fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
     }
 
     Ok(None)
+}
+
+fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
+    #[cfg(not(test))]
+    {
+        if let Some(res) = crate::stdlib_abi::try_with_environ_locked(|envp| {
+            let effective = if !envp.is_null() {
+                envp
+            } else {
+                // SAFETY: early bootstrap fallback before `HOST_ENVIRON` is seeded.
+                unsafe { environ }
+            };
+            parse_mode_from_envp(effective)
+        }) {
+            return res;
+        }
+        // `ENVIRON_LOCK` is contended by a concurrent `setenv`/`unsetenv`;
+        // skip the scan cleanly rather than racing a `realloc`'d `environ`.
+        return Err(());
+    }
+    #[cfg(test)]
+    {
+        // SAFETY: test harness process env pointer table.
+        parse_mode_from_envp(unsafe { environ })
+    }
 }
 
 fn mode_name(level: SafetyLevel) -> &'static str {
@@ -946,7 +969,7 @@ fn peek_active_pcc_index() -> Option<u8> {
             .ok()
             .flatten();
     }
-    with_runtime_policy_tls(|state| state.trace_context.map(|ctx| ctx.pcc_index))
+    try_with_runtime_policy_tls(|state| state.trace_context.map(|ctx| ctx.pcc_index)).flatten()
 }
 
 #[inline]
@@ -1255,7 +1278,7 @@ fn load_thread_local_mode_and_tick_switch() -> Option<SafetyLevel> {
         #[cfg(feature = "owned-tls-cache")]
         let owned = true;
         if owned {
-            with_runtime_policy_tls(|state| {
+            try_with_runtime_policy_tls(|state| {
                 let cached = state.mode_cache;
                 if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
                     let next = state.mode_switch_counter.wrapping_add(1);
@@ -1267,7 +1290,8 @@ fn load_thread_local_mode_and_tick_switch() -> Option<SafetyLevel> {
                 } else {
                     None
                 }
-            })?
+            })
+            .flatten()?
         } else {
             #[cfg(not(feature = "owned-tls-cache"))]
             {
@@ -1774,10 +1798,13 @@ impl Drop for RuntimePolicyTlsAccessGuard {
     }
 }
 
-fn with_runtime_policy_tls<R>(callback: impl FnOnce(&mut RuntimePolicyTls) -> R) -> R {
+fn try_with_runtime_policy_tls<R>(callback: impl FnOnce(&mut RuntimePolicyTls) -> R) -> Option<R> {
+    if runtime_policy_tls_reentry_active() {
+        return None;
+    }
     RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_add(1, AtomicOrdering::Acquire);
     let _guard = RuntimePolicyTlsAccessGuard;
-    RUNTIME_POLICY_OWNED_TLS.with(callback)
+    Some(RUNTIME_POLICY_OWNED_TLS.with(callback))
 }
 
 #[inline(always)]
@@ -1804,6 +1831,7 @@ pub(crate) fn reclaim_native_thread_policy_tls(tid: i32) {
     if use_owned_runtime_policy_tls() {
         RUNTIME_POLICY_OWNED_TLS.release_tid(tid);
     }
+    crate::glibc_internal_abi::reclaim_native_thread_resolv_context(tid);
 }
 
 #[cfg(not(test))]
@@ -1843,7 +1871,7 @@ pub(crate) fn migrate_creator_runtime_policy_tls_for_native_threads() {
             })
             .ok();
         if let Some(snapshot) = migrated {
-            with_runtime_policy_tls(|state| *state = snapshot);
+            let _ = try_with_runtime_policy_tls(|state| *state = snapshot);
         }
     }
 }
@@ -1851,12 +1879,20 @@ pub(crate) fn migrate_creator_runtime_policy_tls_for_native_threads() {
 pub(crate) struct PolicyTlsForkGuard {
     #[cfg(not(test))]
     res_nsaddr: Option<crate::owned_tls_cache::OwnedTlsForkGuard<libc::sockaddr_in>>,
+    #[cfg(not(test))]
+    resolv_context: Option<crate::owned_tls_cache::OwnedTlsForkGuard<usize>>,
+    #[cfg(not(test))]
+    dlfcn_thread_exit: Option<crate::dlfcn_abi::ThreadExitForkGuard>,
     policy: Option<crate::owned_tls_cache::OwnedTlsForkGuard<RuntimePolicyTls>>,
 }
 
 pub(crate) fn lock_policy_tls_for_fork() -> PolicyTlsForkGuard {
     #[cfg(not(test))]
     let res_nsaddr = crate::unistd_abi::lock_res_nsaddr_tls_for_fork();
+    #[cfg(not(test))]
+    let resolv_context = crate::glibc_internal_abi::lock_resolv_context_tls_for_fork();
+    #[cfg(not(test))]
+    let dlfcn_thread_exit = Some(crate::dlfcn_abi::lock_thread_exit_for_fork());
     let policy = if use_owned_runtime_policy_tls() {
         Some(RUNTIME_POLICY_OWNED_TLS.lock_for_fork())
     } else {
@@ -1865,6 +1901,10 @@ pub(crate) fn lock_policy_tls_for_fork() -> PolicyTlsForkGuard {
     PolicyTlsForkGuard {
         #[cfg(not(test))]
         res_nsaddr,
+        #[cfg(not(test))]
+        resolv_context,
+        #[cfg(not(test))]
+        dlfcn_thread_exit,
         policy,
     }
 }
@@ -1878,6 +1918,22 @@ impl PolicyTlsForkGuard {
         #[cfg(not(test))]
         {
             self.res_nsaddr = None;
+        }
+        #[cfg(not(test))]
+        if let Some(ref mut guard) = self.resolv_context {
+            guard.adopt_and_unlock_in_fork_child();
+        }
+        #[cfg(not(test))]
+        {
+            self.resolv_context = None;
+        }
+        #[cfg(not(test))]
+        if let Some(ref mut guard) = self.dlfcn_thread_exit {
+            guard.adopt_and_unlock_in_fork_child();
+        }
+        #[cfg(not(test))]
+        {
+            self.dlfcn_thread_exit = None;
         }
         if let Some(ref mut guard) = self.policy {
             guard.adopt_and_unlock_in_fork_child();
@@ -1946,9 +2002,7 @@ fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.mode_cache)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.mode_cache))
 }
 
 fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
@@ -1963,9 +2017,7 @@ fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.mode_switch_counter)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.mode_switch_counter))
 }
 
 fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
@@ -1980,9 +2032,7 @@ fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.trace_counter)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.trace_counter))
 }
 
 fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
@@ -1997,9 +2047,7 @@ fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.decision_counter)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.decision_counter))
 }
 
 fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) -> Option<R> {
@@ -2026,9 +2074,7 @@ fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) 
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.trace_context)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.trace_context))
 }
 
 fn with_last_explainability<R>(
@@ -2052,7 +2098,7 @@ fn with_last_explainability<R>(
             .ok()
             .flatten();
     }
-    Some(with_runtime_policy_tls(|state| {
+    try_with_runtime_policy_tls(|state| {
         let out = callback(&mut state.last_explainability);
         state.last_explainability_kind = if state.last_explainability.is_some() {
             EXPLAINABILITY_KIND_FULL
@@ -2060,7 +2106,7 @@ fn with_last_explainability<R>(
             EXPLAINABILITY_KIND_NONE
         };
         out
-    }))
+    })
 }
 
 fn with_policy_reentry_depth<R>(callback: impl FnOnce(&mut u32) -> R) -> Option<R> {
@@ -2075,9 +2121,7 @@ fn with_policy_reentry_depth<R>(callback: impl FnOnce(&mut u32) -> R) -> Option<
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.policy_reentry_depth)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.policy_reentry_depth))
 }
 
 fn with_decision_contract_machine<R>(
@@ -2094,9 +2138,7 @@ fn with_decision_contract_machine<R>(
             })
             .ok();
     }
-    Some(with_runtime_policy_tls(|state| {
-        callback(&mut state.decision_contract_machine)
-    }))
+    try_with_runtime_policy_tls(|state| callback(&mut state.decision_contract_machine))
 }
 
 pub(crate) struct EntrypointTraceGuard {
@@ -2122,7 +2164,7 @@ impl Drop for EntrypointTraceGuard {
             });
             return;
         }
-        with_runtime_policy_tls(|state| {
+        let _ = try_with_runtime_policy_tls(|state| {
             state.trace_context = self.previous;
         });
     }
@@ -2175,7 +2217,7 @@ fn in_policy_reentry_context_slow() -> bool {
             .try_with(|tls| tls.policy_reentry_depth.get() > 0)
             .unwrap_or(false);
     }
-    with_runtime_policy_tls(|state| state.policy_reentry_depth > 0)
+    try_with_runtime_policy_tls(|state| state.policy_reentry_depth > 0).unwrap_or(true)
 }
 
 #[inline(always)]
@@ -2260,7 +2302,7 @@ fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTra
             skipped: false,
         };
     }
-    let previous = with_runtime_policy_tls(|state| {
+    let Some(previous) = try_with_runtime_policy_tls(|state| {
         let trace_seq = state.trace_counter.wrapping_add(1);
         state.trace_counter = trace_seq;
         let prev = state.trace_context;
@@ -2271,7 +2313,12 @@ fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTra
             pcc_index,
         });
         prev
-    });
+    }) else {
+        return EntrypointTraceGuard {
+            previous: None,
+            skipped: true,
+        };
+    };
     EntrypointTraceGuard {
         previous,
         skipped: false,
@@ -2323,7 +2370,7 @@ pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
         #[cfg(feature = "owned-tls-cache")]
         let owned = true;
         if owned {
-            with_runtime_policy_tls(|state| {
+            try_with_runtime_policy_tls(|state| {
                 let kind = state.last_explainability_kind;
                 state.last_explainability_kind = EXPLAINABILITY_KIND_NONE;
                 match kind {
@@ -2335,6 +2382,7 @@ pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
                     _ => None,
                 }
             })
+            .flatten()
         } else {
             #[cfg(not(feature = "owned-tls-cache"))]
             {
@@ -2388,13 +2436,14 @@ pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
             .ok()
             .flatten();
     }
-    with_runtime_policy_tls(|state| match state.last_explainability_kind {
+    try_with_runtime_policy_tls(|state| match state.last_explainability_kind {
         EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
         EXPLAINABILITY_KIND_FULL => state
             .last_explainability
             .map(RecordedDecisionExplainability::expand),
         _ => None,
     })
+    .flatten()
 }
 
 /// Read-only projection of the calling thread's existing hardened decision.
@@ -3013,7 +3062,7 @@ fn record_pcc_explainability(
         });
         return;
     }
-    with_runtime_policy_tls(|state| {
+    let _ = try_with_runtime_policy_tls(|state| {
         let trace = state.trace_context.unwrap_or_else(|| {
             let trace_seq = state.trace_counter.wrapping_add(1);
             state.trace_counter = trace_seq;
@@ -3914,7 +3963,7 @@ pub(crate) fn try_decide_certified_string_pcc(
             .ok()
             .flatten();
     }
-    with_runtime_policy_tls(|state| {
+    try_with_runtime_policy_tls(|state| {
         let next_switch = state.mode_switch_counter.wrapping_add(1);
         if next_switch.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
             return None;
@@ -3952,6 +4001,7 @@ pub(crate) fn try_decide_certified_string_pcc(
         state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
         Some(mode)
     })
+    .flatten()
 }
 
 /// Membrane denials since process start.

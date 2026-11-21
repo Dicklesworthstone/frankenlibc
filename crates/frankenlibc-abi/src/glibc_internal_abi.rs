@@ -14,6 +14,7 @@
 )]
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
@@ -186,7 +187,6 @@ fn native_ldexp(x: f64, exp: c_int) -> f64 {
 // Host threads use the host chain. Native legacy and modern C cleanup buffers
 // share one tagged chain in the native thread's owned cancellation state.
 
-#[cfg(feature = "owned-tls-cache")]
 fn zero_usize() -> usize {
     0
 }
@@ -537,6 +537,51 @@ pub unsafe extern "C" fn __libc_sa_len(af: u16) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static __libc_single_threaded: std::sync::atomic::AtomicU8 =
     std::sync::atomic::AtomicU8::new(1);
+
+#[cfg(not(feature = "standalone"))]
+static HOST_SINGLE_THREADED_PTR: std::sync::atomic::AtomicPtr<std::sync::atomic::AtomicU8> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Cache host glibc's `__libc_single_threaded` byte during `.init_array` so
+/// unlocked single-threaded fast paths immediately observe threads spawned
+/// through un-interposed host `pthread_create` / `std::thread::spawn` (e.g.
+/// under `dlopen(..., RTLD_LOCAL | RTLD_DEEPBIND)`).
+#[cfg(not(feature = "standalone"))]
+pub(crate) fn init_host_single_threaded_ptr() {
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("__libc_single_threaded") {
+        let ptr = addr as *mut std::sync::atomic::AtomicU8;
+        if !ptr.is_null() {
+            HOST_SINGLE_THREADED_PTR.store(ptr, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+/// Returns `true` only when BOTH FrankenLibC and host glibc confirm the process
+/// is still single-threaded (never true under `cfg!(test)`).
+#[inline(always)]
+pub(crate) fn host_single_threaded_allows_st_fast() -> bool {
+    #[cfg(not(feature = "standalone"))]
+    {
+        let host_ptr = HOST_SINGLE_THREADED_PTR.load(std::sync::atomic::Ordering::Relaxed);
+        if !host_ptr.is_null() {
+            // SAFETY: `host_ptr` points to host glibc's permanent `.data`
+            // `__libc_single_threaded` byte (`c_char` / `u8`).
+            return unsafe { (*host_ptr).load(std::sync::atomic::Ordering::Relaxed) } != 0;
+        }
+    }
+    true
+}
+
+#[inline]
+pub(crate) fn is_process_single_threaded() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    if __libc_single_threaded.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return false;
+    }
+    host_single_threaded_allows_st_fast()
+}
 
 static OBSERVED_PRIMARY_THREAD: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
@@ -5316,26 +5361,421 @@ pub unsafe extern "C" fn moncontrol(mode: c_int) {
 pub unsafe extern "C" fn monstartup(lowpc: c_ulong, highpc: c_ulong) {
     let _ = (lowpc, highpc);
 }
-type HostProfilFn = unsafe extern "C" fn(*mut c_void, SizeT, SizeT, c_uint) -> c_int;
-type HostSprofilFn = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void, c_uint) -> c_int;
+const PROFIL_MAX_REGIONS: usize = 64;
+const PROFIL_SA_RESTORER: usize = 0x0400_0000;
+const PROF_UINT_FLAG: c_uint = 1 << 0;
+const PROF_FAST_FLAG: c_uint = 1 << 1;
 
-#[inline]
-unsafe fn host_profil_fn() -> Option<HostProfilFn> {
-    let addr = crate::host_resolve::resolve_host_symbol_raw("profil")?;
-    // SAFETY: the raw ELF resolver returns the host libc's `profil` symbol,
-    // whose ABI is exactly `HostProfilFn` on the supported Linux targets.
-    Some(unsafe { core::mem::transmute::<usize, HostProfilFn>(addr) })
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SprofilRegion {
+    pr_base: *mut c_void,
+    pr_size: SizeT,
+    pr_off: SizeT,
+    pr_scale: c_ulong,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProfilKernelSigaction {
+    sa_handler: usize,
+    sa_flags: usize,
+    sa_restorer: usize,
+    sa_mask: c_ulong,
+}
+
+impl ProfilKernelSigaction {
+    const fn zeroed() -> Self {
+        Self {
+            sa_handler: 0,
+            sa_flags: 0,
+            sa_restorer: 0,
+            sa_mask: 0,
+        }
+    }
+}
+
+struct ProfilSlot {
+    base: AtomicUsize,
+    size: AtomicUsize,
+    off: AtomicUsize,
+    scale: AtomicUsize,
+}
+
+impl ProfilSlot {
+    const fn new() -> Self {
+        Self {
+            base: AtomicUsize::new(0),
+            size: AtomicUsize::new(0),
+            off: AtomicUsize::new(0),
+            scale: AtomicUsize::new(0),
+        }
+    }
+}
+
+static PROFIL_SLOTS: [ProfilSlot; PROFIL_MAX_REGIONS] =
+    [const { ProfilSlot::new() }; PROFIL_MAX_REGIONS];
+static PROFIL_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static PROFIL_IN_HANDLER: AtomicUsize = AtomicUsize::new(0);
+static PROFIL_USE_UINT32: AtomicBool = AtomicBool::new(false);
+static PROFIL_STATE_LOCK: AtomicBool = AtomicBool::new(false);
+static PROFIL_SIGPROF_INSTALLED: AtomicBool = AtomicBool::new(false);
+static PROFIL_SAVED_SIGACTION: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+
+struct ProfilHandlerGuard;
+
+impl ProfilHandlerGuard {
+    #[inline]
+    fn enter() -> Self {
+        PROFIL_IN_HANDLER.fetch_add(1, Ordering::AcqRel);
+        Self
+    }
+}
+
+impl Drop for ProfilHandlerGuard {
+    #[inline]
+    fn drop(&mut self) {
+        PROFIL_IN_HANDLER.fetch_sub(1, Ordering::Release);
+    }
 }
 
 #[inline]
-unsafe fn host_sprofil_fn() -> Option<HostSprofilFn> {
-    let addr = crate::host_resolve::resolve_host_symbol_raw("sprofil")?;
-    // SAFETY: the raw ELF resolver returns the host libc's `sprofil` symbol,
-    // whose ABI is exactly `HostSprofilFn` on the supported Linux targets.
-    Some(unsafe { core::mem::transmute::<usize, HostSprofilFn>(addr) })
+fn profil_wait_handlers_idle() {
+    while PROFIL_IN_HANDLER.load(Ordering::Acquire) != 0 {
+        core::hint::spin_loop();
+    }
 }
 
-// profil: host sampling engine
+struct ProfilLockGuard;
+
+impl ProfilLockGuard {
+    fn acquire() -> Self {
+        while PROFIL_STATE_LOCK
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        Self
+    }
+}
+
+impl Drop for ProfilLockGuard {
+    fn drop(&mut self) {
+        PROFIL_STATE_LOCK.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn profil_extract_pc(uctx: *const c_void) -> Option<usize> {
+    if uctx.is_null() {
+        return None;
+    }
+    // SAFETY: Linux passes a valid `ucontext_t` to `SA_SIGINFO` signal handlers.
+    let uc = unsafe { &*(uctx as *const libc::ucontext_t) };
+    Some(uc.uc_mcontext.gregs[libc::REG_RIP as usize] as usize)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn profil_extract_pc(uctx: *const c_void) -> Option<usize> {
+    if uctx.is_null() {
+        return None;
+    }
+    // SAFETY: Linux passes a valid `ucontext_t` to `SA_SIGINFO` signal handlers.
+    let uc = unsafe { &*(uctx as *const libc::ucontext_t) };
+    Some(uc.uc_mcontext.pc as usize)
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[inline]
+unsafe fn profil_extract_pc(_uctx: *const c_void) -> Option<usize> {
+    None
+}
+
+#[inline]
+unsafe fn profil_bump_bin(base: usize, idx: usize, use_uint32: bool) {
+    if use_uint32 {
+        let ptr = (base as *mut u32).wrapping_add(idx);
+        // SAFETY: caller registered `[base, base + size)` for profiling samples
+        // and `idx < size / 4`; `read_unaligned`/`write_unaligned` handles
+        // arbitrarily aligned `char *` buffers without alignment UB.
+        unsafe {
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+            let cur = ptr.read_unaligned();
+            ptr.write_unaligned(cur.saturating_add(1));
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+        }
+    } else {
+        let ptr = (base as *mut u16).wrapping_add(idx);
+        // SAFETY: caller registered `[base, base + size)` for profiling samples
+        // and `idx < size / 2`; `read_unaligned`/`write_unaligned` handles
+        // arbitrarily aligned `char *` buffers without alignment UB.
+        unsafe {
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+            let cur = ptr.read_unaligned();
+            ptr.write_unaligned(cur.saturating_add(1));
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+        }
+    }
+}
+
+unsafe extern "C" fn profil_sigprof_handler(_signo: c_int, _info: *mut c_void, uctx: *mut c_void) {
+    let _in_handler = ProfilHandlerGuard::enter();
+    let count = PROFIL_ACTIVE_COUNT.load(Ordering::Acquire);
+    if count == 0 {
+        return;
+    }
+    let Some(pc) = (unsafe { profil_extract_pc(uctx) }) else {
+        return;
+    };
+    let use_uint32 = PROFIL_USE_UINT32.load(Ordering::Relaxed);
+    let elem_size = if use_uint32 { 4usize } else { 2usize };
+    // Per glibc `sysdeps/posix/sprofil.c`, `pr_scale = 0x10000` is a 1:1 byte
+    // ratio between text and histogram buffer: 2 bytes/u16 (`>> 17`) for
+    // `PROF_USHORT` and 4 bytes/u32 (`>> 18`) for `PROF_UINT`.
+    let shift = if use_uint32 { 18u32 } else { 17u32 };
+    let limit = count.min(PROFIL_MAX_REGIONS);
+    let mut overflow_base = 0usize;
+
+    for slot in &PROFIL_SLOTS[..limit] {
+        let base = slot.base.load(Ordering::Relaxed);
+        let size = slot.size.load(Ordering::Relaxed);
+        let off = slot.off.load(Ordering::Relaxed);
+        let scale = slot.scale.load(Ordering::Relaxed);
+        if base == 0 || size < elem_size || scale < 2 {
+            continue;
+        }
+        // Per glibc/Irix `sprofil`: `pr_off == 0 && pr_scale == 2` designates
+        // the overflow bin that captures unmatched PCs.
+        if off == 0 && scale == 2 {
+            if overflow_base == 0 {
+                overflow_base = base;
+            }
+            continue;
+        }
+        if pc < off {
+            continue;
+        }
+        let delta = pc - off;
+        let idx_u128 = if scale == 2 {
+            0u128
+        } else {
+            ((delta as u128).saturating_mul(scale as u128)) >> shift
+        };
+        let max_bins = size / elem_size;
+        if idx_u128 < max_bins as u128 {
+            // SAFETY: `idx_u128 < size / elem_size` within the registered buffer.
+            unsafe { profil_bump_bin(base, idx_u128 as usize, use_uint32) };
+            return;
+        }
+    }
+
+    if overflow_base != 0 {
+        // SAFETY: overflow slot was validated with `size >= elem_size`.
+        unsafe { profil_bump_bin(overflow_base, 0, use_uint32) };
+    }
+}
+
+fn profil_disable_locked() -> Result<(), c_int> {
+    let was_active = PROFIL_ACTIVE_COUNT.swap(0, Ordering::AcqRel);
+    let was_installed = PROFIL_SIGPROF_INSTALLED.swap(false, Ordering::AcqRel);
+    if was_active == 0 && !was_installed {
+        return Ok(());
+    }
+    let sigprof_mask: u64 = 1u64 << ((libc::SIGPROF as u32) - 1);
+    let mut old_mask: u64 = 0;
+    let masked = unsafe {
+        raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_BLOCK,
+            (&raw const sigprof_mask).cast::<u8>(),
+            (&raw mut old_mask).cast::<u8>(),
+            std::mem::size_of::<u64>(),
+        )
+        .is_ok()
+    };
+    let zero_timer = libc::itimerval {
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        it_value: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+    };
+    let _ = unsafe {
+        frankenlibc_core::syscall::sys_setitimer(
+            libc::ITIMER_PROF,
+            (&raw const zero_timer).cast::<u8>(),
+            std::ptr::null_mut(),
+        )
+    };
+    profil_wait_handlers_idle();
+    // Consume any queued SIGPROF generated just before `setitimer(0)` so
+    // restoring a `SIG_DFL` disposition cannot terminate the process.
+    let zero_ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    for _ in 0..8 {
+        if unsafe {
+            raw_syscall::sys_rt_sigtimedwait(
+                (&raw const sigprof_mask).cast::<u8>(),
+                std::ptr::null_mut(),
+                (&raw const zero_ts).cast::<u8>(),
+                std::mem::size_of::<u64>(),
+            )
+            .is_err()
+        } {
+            break;
+        }
+    }
+    if was_installed {
+        let saved = ProfilKernelSigaction {
+            sa_handler: PROFIL_SAVED_SIGACTION[0].load(Ordering::Relaxed),
+            sa_flags: PROFIL_SAVED_SIGACTION[1].load(Ordering::Relaxed),
+            sa_restorer: PROFIL_SAVED_SIGACTION[2].load(Ordering::Relaxed),
+            sa_mask: PROFIL_SAVED_SIGACTION[3].load(Ordering::Relaxed) as c_ulong,
+        };
+        let _ = unsafe {
+            raw_syscall::sys_rt_sigaction(
+                libc::SIGPROF,
+                (&raw const saved).cast::<u8>(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<c_ulong>(),
+            )
+        };
+    }
+    if masked {
+        let _ = unsafe {
+            raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                (&raw const old_mask).cast::<u8>(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        };
+    }
+    Ok(())
+}
+
+unsafe fn sprofil_native_impl(
+    profp: *mut c_void,
+    profcnt: c_int,
+    tvp: *mut c_void,
+    flags: c_uint,
+) -> c_int {
+    if profcnt < 0 || (flags & !(PROF_UINT_FLAG | PROF_FAST_FLAG)) != 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let freq = unsafe { __profile_frequency() }.max(1) as i64;
+    let period_usec = (1_000_000i64 / freq).max(1);
+    if !tvp.is_null() {
+        let tv = libc::timeval {
+            tv_sec: 0,
+            tv_usec: period_usec as _,
+        };
+        // SAFETY: caller supplied a writable `struct timeval` pointer.
+        unsafe { std::ptr::write_unaligned(tvp.cast::<libc::timeval>(), tv) };
+    }
+    if profcnt == 0 {
+        let _guard = ProfilLockGuard::acquire();
+        let _ = profil_disable_locked();
+        return 0;
+    }
+    if profp.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let count = (profcnt as usize).min(PROFIL_MAX_REGIONS);
+    let regions_ptr = profp.cast::<SprofilRegion>();
+
+    let _guard = ProfilLockGuard::acquire();
+    // Pause sampling and wait for any in-flight `SIGPROF` handler to finish
+    // before mutating the descriptor table so old buffers cannot be touched.
+    PROFIL_ACTIVE_COUNT.store(0, Ordering::Release);
+    core::sync::atomic::fence(Ordering::SeqCst);
+    profil_wait_handlers_idle();
+
+    let mut active = 0usize;
+    for i in 0..count {
+        // SAFETY: caller supplied `profcnt` contiguous `struct prof` entries.
+        let r = unsafe { std::ptr::read_unaligned(regions_ptr.add(i)) };
+        if r.pr_base.is_null() || r.pr_size == 0 || r.pr_scale < 2 {
+            continue;
+        }
+        let slot = &PROFIL_SLOTS[active];
+        slot.base.store(r.pr_base as usize, Ordering::Relaxed);
+        slot.size.store(r.pr_size, Ordering::Relaxed);
+        slot.off.store(r.pr_off, Ordering::Relaxed);
+        slot.scale.store(r.pr_scale as usize, Ordering::Relaxed);
+        active += 1;
+    }
+    PROFIL_USE_UINT32.store((flags & PROF_UINT_FLAG) != 0, Ordering::Relaxed);
+
+    if active == 0 {
+        let _ = profil_disable_locked();
+        return 0;
+    }
+
+    if !PROFIL_SIGPROF_INSTALLED.load(Ordering::Acquire) {
+        let mut act = ProfilKernelSigaction::zeroed();
+        act.sa_handler = profil_sigprof_handler as *const () as usize;
+        act.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART) as usize;
+        #[cfg(target_arch = "x86_64")]
+        {
+            act.sa_flags |= PROFIL_SA_RESTORER;
+            act.sa_restorer = crate::signal_abi::signal_restorer_trampoline_addr();
+        }
+        let mut old = ProfilKernelSigaction::zeroed();
+        if let Err(err) = unsafe {
+            raw_syscall::sys_rt_sigaction(
+                libc::SIGPROF,
+                (&raw const act).cast::<u8>(),
+                (&raw mut old).cast::<u8>(),
+                std::mem::size_of::<c_ulong>(),
+            )
+        } {
+            unsafe { set_abi_errno(err) };
+            return -1;
+        }
+        PROFIL_SAVED_SIGACTION[0].store(old.sa_handler, Ordering::Relaxed);
+        PROFIL_SAVED_SIGACTION[1].store(old.sa_flags, Ordering::Relaxed);
+        PROFIL_SAVED_SIGACTION[2].store(old.sa_restorer, Ordering::Relaxed);
+        PROFIL_SAVED_SIGACTION[3].store(old.sa_mask as usize, Ordering::Relaxed);
+        PROFIL_SIGPROF_INSTALLED.store(true, Ordering::Release);
+    }
+
+    PROFIL_ACTIVE_COUNT.store(active, Ordering::Release);
+
+    let timer = libc::itimerval {
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: period_usec as _,
+        },
+        it_value: libc::timeval {
+            tv_sec: 0,
+            tv_usec: period_usec as _,
+        },
+    };
+    if let Err(err) = unsafe {
+        frankenlibc_core::syscall::sys_setitimer(
+            libc::ITIMER_PROF,
+            (&raw const timer).cast::<u8>(),
+            std::ptr::null_mut(),
+        )
+    } {
+        let _ = profil_disable_locked();
+        unsafe { set_abi_errno(err) };
+        return -1;
+    }
+    0
+}
+
+/// `profil` — native `ITIMER_PROF` + `SIGPROF` PC-sample profiling engine.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn profil(
     buf: *mut c_void,
@@ -5343,28 +5783,26 @@ pub unsafe extern "C" fn profil(
     offset: SizeT,
     scale: c_uint,
 ) -> c_int {
-    let Some(host_profil) = (unsafe { host_profil_fn() }) else {
-        unsafe { set_abi_errno(libc::ENOSYS) };
-        return -1;
-    };
-    let result = unsafe { host_profil(buf, bufsiz, offset, scale) };
-    if result != 0 {
-        unsafe { set_abi_errno(crate::host_resolve::host_errno(libc::EINVAL)) };
+    if buf.is_null() || bufsiz == 0 || scale < 2 {
+        return unsafe { sprofil_native_impl(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
     }
-    result
+    let mut region = SprofilRegion {
+        pr_base: buf,
+        pr_size: bufsiz,
+        pr_off: offset,
+        pr_scale: scale as c_ulong,
+    };
+    unsafe {
+        sprofil_native_impl(
+            (&raw mut region).cast::<c_void>(),
+            1,
+            std::ptr::null_mut(),
+            0,
+        )
+    }
 }
-/// `sprofil` — multi-region PC-sample profiling.
-///
-/// glibc does NOT report ENOSYS here, which is what fl returned while this arm
-/// was dark. Measured against glibc 2.42: `sprofil(NULL, 0, NULL, 0)` succeeds
-/// with errno untouched, and a non-NULL `tvp` receives the sampling period
-/// `{0, 1000000 / __profile_frequency()}` — `{0, 10000}` on this host —
-/// independently of `profcnt`.
-///
-/// Like `profil` next door, fl accepts and reports the period but does not
-/// itself deliver samples; bd-br5a1b tracks the real sampling engine. glibc
-/// dereferences `profp` unconditionally once `profcnt` is non-zero and
-/// segfaults on a NULL one — fl returns the safe default instead.
+
+/// `sprofil` — native multi-region `ITIMER_PROF` + `SIGPROF` PC-sample profiling engine.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sprofil(
     profp: *mut c_void,
@@ -5372,15 +5810,7 @@ pub unsafe extern "C" fn sprofil(
     tvp: *mut c_void,
     flags: c_uint,
 ) -> c_int {
-    let Some(host_sprofil) = (unsafe { host_sprofil_fn() }) else {
-        unsafe { set_abi_errno(libc::ENOSYS) };
-        return -1;
-    };
-    let result = unsafe { host_sprofil(profp, profcnt, tvp, flags) };
-    if result != 0 {
-        unsafe { set_abi_errno(crate::host_resolve::host_errno(libc::EINVAL)) };
-    }
-    result
+    unsafe { sprofil_native_impl(profp, profcnt, tvp, flags) }
 }
 
 // Misc POSIX functions
@@ -9587,21 +10017,44 @@ pub unsafe extern "C" fn __gconv_transliterate(
 // Resolver context internals — GLIBC_PRIVATE
 // ---------------------------------------------------------------------------
 
+const NATIVE_RESOLV_CTX_MAGIC: u64 = 0x464c_5245_5356_4354;
+
 #[repr(C)]
 struct NativeResolvContext {
     resp: *mut c_void,
     conf: *mut c_void,
     __refcount: SizeT,
-    __from_res: bool,
+    __from_res: u8,
+    __pad: [u8; 7],
     __next: *mut NativeResolvContext,
+    __magic: u64,
+}
+
+#[inline]
+fn use_owned_resolv_context_tls() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        true
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        #[cfg(not(test))]
+        {
+            crate::malloc_abi::native_thread_backend_active()
+        }
+        #[cfg(test)]
+        {
+            false
+        }
+    }
 }
 
 /// Extract `(statp, use_global_res)` from a `struct resolv_context *` (or `NULL`).
 ///
-/// Both FrankenLibC's `NativeResolvContext` and glibc's `struct resolv_context`
-/// place `struct __res_state *resp` at byte offset `0`. Returns `None` when
-/// `ctx` is misaligned, smaller than a context header in tracked memory, or
-/// holds a null `resp` pointer.
+/// Validates `ctx` against the current thread's `RESOLV_CONTEXT_HEAD` chain first
+/// (and our 64-bit `NATIVE_RESOLV_CTX_MAGIC` for tracked heap contexts) so an
+/// arbitrary heap buffer or `struct __res_state *` is never confused for a
+/// `NativeResolvContext`, and reads `__from_res` as `u8` (never invalid `bool`).
 pub(crate) unsafe fn extract_resolv_context_statp(ctx: *mut c_void) -> Option<(*mut c_void, bool)> {
     if ctx.is_null() {
         return Some((unsafe { __res_state() }, true));
@@ -9609,13 +10062,40 @@ pub(crate) unsafe fn extract_resolv_context_statp(ctx: *mut c_void) -> Option<(*
     if !(ctx as usize).is_multiple_of(core::mem::align_of::<*mut c_void>()) {
         return None;
     }
+    let found_in_thread_chain = with_resolv_context_head(|head| {
+        let target = ctx.cast::<NativeResolvContext>();
+        let mut current = *head as *mut NativeResolvContext;
+        while !current.is_null() {
+            if current == target {
+                // SAFETY: `current` is a live `NativeResolvContext` owned by this thread's stack.
+                let resp = unsafe { (*current).resp };
+                let from_res = unsafe { (*current).__from_res != 0 };
+                return Some((resp, from_res));
+            }
+            // SAFETY: `current` is a live node in this thread's stack.
+            current = unsafe { (*current).__next };
+        }
+        None
+    });
+    if let Some((resp, from_res)) = found_in_thread_chain {
+        if resp.is_null() {
+            return None;
+        }
+        let is_global = from_res && resp == unsafe { __res_state() };
+        return Some((resp, is_global));
+    }
     if let Some(rem) = crate::malloc_abi::known_remaining(ctx as usize) {
         if rem < core::mem::size_of::<NativeResolvContext>() {
             return None;
         }
         let target = ctx.cast::<NativeResolvContext>();
         // SAFETY: `ctx` is pointer-aligned and tracked with `>= size_of::<NativeResolvContext>()`.
-        let (resp, from_res) = unsafe { ((*target).resp, (*target).__from_res) };
+        let magic = unsafe { (*target).__magic };
+        if magic != NATIVE_RESOLV_CTX_MAGIC {
+            return None;
+        }
+        let resp = unsafe { (*target).resp };
+        let from_res = unsafe { (*target).__from_res != 0 };
         if resp.is_null() {
             return None;
         }
@@ -9631,7 +10111,6 @@ pub(crate) unsafe fn extract_resolv_context_statp(ctx: *mut c_void) -> Option<(*
     Some((resp, is_global))
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RESOLV_CONTEXT_HEAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
     crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
 
@@ -9643,19 +10122,46 @@ std::thread_local! {
 
 #[inline]
 fn with_resolv_context_head<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        RESOLV_CONTEXT_HEAD_OWNED_TLS.with(callback)
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RESOLV_CONTEXT_HEAD.with(|head| {
+    if !use_owned_resolv_context_tls() {
+        return RESOLV_CONTEXT_HEAD.with(|head| {
             let mut value = head.get() as usize;
             let result = callback(&mut value);
             head.set(value as *mut NativeResolvContext);
             result
-        })
+        });
     }
+    RESOLV_CONTEXT_HEAD_OWNED_TLS.with(callback)
+}
+
+#[cfg(not(test))]
+pub(crate) fn migrate_creator_resolv_context_for_native_threads() {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let existing = RESOLV_CONTEXT_HEAD
+            .try_with(|head| head.replace(std::ptr::null_mut()) as usize)
+            .unwrap_or(0);
+        if existing != 0 {
+            RESOLV_CONTEXT_HEAD_OWNED_TLS.with(|head| {
+                if *head == 0 {
+                    *head = existing;
+                }
+            });
+        }
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn reclaim_native_thread_resolv_context(tid: i32) {
+    if use_owned_resolv_context_tls() {
+        RESOLV_CONTEXT_HEAD_OWNED_TLS.release_tid(tid);
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn lock_resolv_context_tls_for_fork()
+-> Option<crate::owned_tls_cache::OwnedTlsForkGuard<usize>> {
+    use_owned_resolv_context_tls().then(|| RESOLV_CONTEXT_HEAD_OWNED_TLS.lock_for_fork())
 }
 
 unsafe fn alloc_native_resolv_context(
@@ -9675,8 +10181,10 @@ unsafe fn alloc_native_resolv_context(
             resp,
             conf: std::ptr::null_mut(),
             __refcount: 1,
-            __from_res: from_res,
+            __from_res: u8::from(from_res),
+            __pad: [0; 7],
             __next: next,
+            __magic: NATIVE_RESOLV_CTX_MAGIC,
         });
     }
     raw
@@ -9687,7 +10195,7 @@ unsafe fn alloc_native_resolv_context(
 pub unsafe extern "C" fn __resolv_context_get() -> *mut c_void {
     with_resolv_context_head(|head| {
         let current = *head as *mut NativeResolvContext;
-        if !current.is_null() && unsafe { (*current).__from_res } {
+        if !current.is_null() && unsafe { (*current).__from_res != 0 } {
             unsafe {
                 (*current).__refcount += 1;
             }
@@ -9744,7 +10252,7 @@ pub unsafe extern "C" fn __resolv_context_put(ctx: *mut c_void) {
         while !current.is_null() {
             if current == target {
                 let should_free = unsafe {
-                    if (*current).__from_res && (*current).__refcount > 1 {
+                    if (*current).__from_res != 0 && (*current).__refcount > 1 {
                         (*current).__refcount -= 1;
                         false
                     } else {

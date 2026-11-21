@@ -16399,13 +16399,16 @@ fn res_context_mkquery_accepts_allocated_resolv_context_and_nss_alias_erange() {
         "default resolv_context must enable RD bit"
     );
 
+    #[repr(C, align(8))]
+    struct AlignedAliasEnt([u8; 64]);
+
     let alias_name = CString::new("postmaster").unwrap();
-    let mut alias_ent = [0u8; 64];
+    let mut alias_ent = AlignedAliasEnt([0u8; 64]);
     let mut errnop: c_int = 0;
     let status = unsafe {
         _nss_files_getaliasbyname_r(
             alias_name.as_ptr(),
-            alias_ent.as_mut_ptr() as *mut c_void,
+            alias_ent.0.as_mut_ptr() as *mut c_void,
             std::ptr::null_mut(),
             0,
             &mut errnop,
@@ -16413,6 +16416,30 @@ fn res_context_mkquery_accepts_allocated_resolv_context_and_nss_alias_erange() {
     };
     assert_eq!(status, -2); // NSS_STATUS_TRYAGAIN
     assert_eq!(errnop, libc::ERANGE);
+
+    // Also drive `files_getaliasbyname_r` with a non-null 1-byte scratch buffer
+    // (must cleanly report ERANGE/NOTFOUND/UNAVAIL without UB).
+    let mut tiny_buf = [0 as c_char; 1];
+    let mut tiny_errnop: c_int = 0;
+    let tiny_status = unsafe {
+        _nss_files_getaliasbyname_r(
+            alias_name.as_ptr(),
+            alias_ent.0.as_mut_ptr() as *mut c_void,
+            tiny_buf.as_mut_ptr(),
+            tiny_buf.len(),
+            &mut tiny_errnop,
+        )
+    };
+    assert!(
+        matches!(tiny_status, -2 | -1 | 0),
+        "unexpected NSS status {tiny_status} (errnop={tiny_errnop})"
+    );
+    if tiny_status != 0 {
+        assert_ne!(
+            tiny_errnop, 0,
+            "TRYAGAIN/UNAVAIL NSS lookup must populate *errnop"
+        );
+    }
 }
 
 #[test]

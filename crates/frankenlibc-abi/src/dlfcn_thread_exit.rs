@@ -4,9 +4,12 @@
 //! must never receive a native __dso_handle, nor may we register host callbacks
 //! in this queue. The Rust thread-exit hook merely schedules our owned drain.
 
-use std::cell::{Cell, RefCell};
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::ffi::{c_int, c_void};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::tls::Block;
 use super::{NativeDso, OPERATIONS, lifecycle, registry};
@@ -27,7 +30,9 @@ pub(super) struct ThreadState {
     destructors: RefCell<Vec<Entry>>,
 }
 
+#[cfg(not(feature = "owned-tls-cache"))]
 struct Cleanup;
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     // A trivial key stays accessible while Cleanup is being destroyed. Putting
     // the state directly in a dropping LocalKey would reject TLS access from
@@ -37,32 +42,156 @@ std::thread_local! {
     static PROCESS_EXIT: Cell<bool> = const { Cell::new(false) };
 }
 
-pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
-    STATE
-        .try_with(|slot| {
-            let mut state = slot.get();
-            if state.is_null() {
-                // Ordinary worker teardown must not resurrect a dead cleanup key.
-                // During process exit, late FINI calls may first touch a TLS block;
-                // that state is instead retained until the kernel reclaims it.
-                if !PROCESS_EXIT.with(Cell::get) {
-                    CLEANUP.try_with(|_| ()).ok()?;
-                }
-                let allocation = Box::new(ThreadState::default());
-                state = Box::into_raw(allocation);
-                if !PROCESS_EXIT.with(Cell::get) && !attach_reclaimer(state) {
-                    // SAFETY: registration failed before the pointer was exposed.
-                    unsafe { drop(Box::from_raw(state)) };
-                    return None;
-                }
-                slot.set(state);
+static NATIVE_THREAD_STATES: parking_lot::Mutex<Vec<(i32, usize)>> =
+    parking_lot::Mutex::new(Vec::new());
+static NATIVE_PROCESS_EXIT: AtomicBool = AtomicBool::new(false);
+
+#[cfg(not(test))]
+pub(crate) struct ThreadExitForkGuard {
+    parent_tid: i32,
+    _guard: Option<parking_lot::MutexGuard<'static, Vec<(i32, usize)>>>,
+}
+
+#[cfg(not(test))]
+pub(crate) fn lock_thread_exit_for_fork() -> ThreadExitForkGuard {
+    ThreadExitForkGuard {
+        parent_tid: current_exit_tid(),
+        _guard: Some(NATIVE_THREAD_STATES.lock()),
+    }
+}
+
+#[cfg(not(test))]
+impl ThreadExitForkGuard {
+    pub(crate) fn adopt_and_unlock_in_fork_child(&mut self) {
+        if let Some(mut states) = self._guard.take() {
+            // Dead sibling threads do not exist in the forked child; re-key the
+            // surviving thread's entry from `parent_tid` to `child_tid` and drop
+            // all dead sibling rows so a recycled child TID never aliases them.
+            let child_tid = current_exit_tid();
+            let survivor = states
+                .iter()
+                .find_map(|&(tid, ptr)| (tid == self.parent_tid).then_some(ptr));
+            states.clear();
+            if let Some(ptr) = survivor {
+                states.push((child_tid, ptr));
             }
-            // SAFETY: only this thread accesses its heap-pinned state. Cleanup
-            // leaves it alive until every callback (including new ones) returns.
-            callback(unsafe { &*state })
-        })
-        .ok()
-        .flatten()
+        }
+    }
+}
+
+#[inline]
+fn use_tid_keyed_thread_exit() -> bool {
+    #[cfg(any(feature = "standalone", feature = "owned-tls-cache"))]
+    {
+        true
+    }
+    #[cfg(not(any(feature = "standalone", feature = "owned-tls-cache")))]
+    {
+        #[cfg(not(test))]
+        {
+            crate::malloc_abi::native_thread_backend_active()
+                || frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+        }
+        #[cfg(test)]
+        {
+            false
+        }
+    }
+}
+
+#[inline]
+fn current_exit_tid() -> i32 {
+    frankenlibc_core::syscall::raw_gettid_nocancel().max(1)
+}
+
+fn lookup_native_state(tid: i32) -> *mut ThreadState {
+    let guard = NATIVE_THREAD_STATES.lock();
+    guard
+        .iter()
+        .find_map(|&(entry_tid, ptr)| (entry_tid == tid).then_some(ptr as *mut ThreadState))
+        .unwrap_or(std::ptr::null_mut())
+}
+
+fn insert_native_state(tid: i32, ptr: *mut ThreadState) {
+    let mut guard = NATIVE_THREAD_STATES.lock();
+    if let Some((_, slot)) = guard.iter_mut().find(|(entry_tid, _)| *entry_tid == tid) {
+        *slot = ptr as usize;
+    } else {
+        guard.push((tid, ptr as usize));
+    }
+}
+
+fn remove_native_state_ptr(ptr: *mut ThreadState) {
+    let mut guard = NATIVE_THREAD_STATES.lock();
+    guard.retain(|&(_, stored)| stored != ptr as usize);
+}
+
+#[cfg(not(test))]
+pub(crate) fn migrate_creator_thread_exit_for_native_threads() {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let existing = STATE
+            .try_with(|slot| slot.replace(std::ptr::null_mut()))
+            .unwrap_or(std::ptr::null_mut());
+        if !existing.is_null() {
+            insert_native_state(current_exit_tid(), existing);
+        }
+        if PROCESS_EXIT.try_with(Cell::get).unwrap_or(false) {
+            NATIVE_PROCESS_EXIT.store(true, Ordering::Release);
+        }
+    }
+}
+
+pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
+    if use_tid_keyed_thread_exit() {
+        let tid = current_exit_tid();
+        let mut state = lookup_native_state(tid);
+        if state.is_null() {
+            let allocation = Box::new(ThreadState::default());
+            state = Box::into_raw(allocation);
+            if !NATIVE_PROCESS_EXIT.load(Ordering::Acquire) && !attach_native_reclaimer(state) {
+                // SAFETY: registration failed before the pointer was exposed.
+                unsafe { drop(Box::from_raw(state)) };
+                return None;
+            }
+            insert_native_state(tid, state);
+        }
+        // SAFETY: each TID exclusively owns its heap-pinned `ThreadState`.
+        return callback(unsafe { &*state });
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STATE
+            .try_with(|slot| {
+                let mut state = slot.get();
+                if state.is_null() {
+                    // Ordinary worker teardown must not resurrect a dead cleanup key.
+                    // During process exit, late FINI calls may first touch a TLS block;
+                    // that state is instead retained until the kernel reclaims it.
+                    if !PROCESS_EXIT.with(Cell::get) {
+                        CLEANUP.try_with(|_| ()).ok()?;
+                    }
+                    let allocation = Box::new(ThreadState::default());
+                    state = Box::into_raw(allocation);
+                    if !PROCESS_EXIT.with(Cell::get) && !attach_reclaimer(state) {
+                        // SAFETY: registration failed before the pointer was exposed.
+                        unsafe { drop(Box::from_raw(state)) };
+                        return None;
+                    }
+                    slot.set(state);
+                }
+                // SAFETY: only this thread accesses its heap-pinned state. Cleanup
+                // leaves it alive until every callback (including new ones) returns.
+                callback(unsafe { &*state })
+            })
+            .ok()
+            .flatten()
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let _ = callback;
+        None
+    }
 }
 
 /// Observe TLS without allocating state or registering a reclamation hook.
@@ -70,41 +199,70 @@ pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) ->
 pub(super) fn with_existing_state<T>(
     callback: impl FnOnce(&ThreadState) -> Option<T>,
 ) -> Option<T> {
-    STATE
-        .try_with(|slot| {
-            let state = slot.get();
-            if state.is_null() {
-                return None;
-            }
-            // SAFETY: this thread exclusively owns the state, and the synchronous
-            // observer neither reclaims it nor invokes foreign callbacks.
-            callback(unsafe { &*state })
-        })
-        .ok()
-        .flatten()
+    if use_tid_keyed_thread_exit() {
+        let state = lookup_native_state(current_exit_tid());
+        if state.is_null() {
+            return None;
+        }
+        // SAFETY: this TID exclusively owns the state, and the synchronous
+        // observer neither reclaims it nor invokes foreign callbacks.
+        return callback(unsafe { &*state });
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STATE
+            .try_with(|slot| {
+                let state = slot.get();
+                if state.is_null() {
+                    return None;
+                }
+                // SAFETY: this thread exclusively owns the state, and the synchronous
+                // observer neither reclaims it nor invokes foreign callbacks.
+                callback(unsafe { &*state })
+            })
+            .ok()
+            .flatten()
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let _ = callback;
+        None
+    }
+}
+
+fn drain_state(state: *mut ThreadState) {
+    if state.is_null() {
+        return;
+    }
+    loop {
+        // SAFETY: this thread owns `state` through the entire drain.
+        // Remove before invoking, with no borrow held across user code.
+        let next = unsafe { &*state }.destructors.borrow_mut().pop();
+        let Some(entry) = next else {
+            break;
+        };
+        unsafe { (entry.destructor)(entry.argument) };
+        release_pins(&entry.owners);
+    }
 }
 
 fn drain_current() {
-    let _ = STATE.try_with(|slot| {
-        let state = slot.get();
-        if state.is_null() {
-            return;
-        }
-        loop {
-            // SAFETY: this thread owns state through the entire drain.
-            // Remove before invoking, with no borrow held across user code.
-            let next = unsafe { &*state }.destructors.borrow_mut().pop();
-            let Some(entry) = next else {
-                break;
-            };
-            unsafe { (entry.destructor)(entry.argument) };
-            release_pins(&entry.owners);
-        }
-    });
+    if use_tid_keyed_thread_exit() {
+        drain_state(lookup_native_state(current_exit_tid()));
+        return;
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = STATE.try_with(|slot| drain_state(slot.get()));
+    }
 }
 
 pub(super) fn prepare_process_exit() {
-    PROCESS_EXIT.with(|flag| flag.set(true));
+    NATIVE_PROCESS_EXIT.store(true, Ordering::Release);
+    #[cfg(not(feature = "owned-tls-cache"))]
+    if !use_tid_keyed_thread_exit() {
+        let _ = PROCESS_EXIT.try_with(|flag| flag.set(true));
+    }
     drain_current();
 }
 
@@ -113,59 +271,81 @@ struct Reclaimer {
     key: libc::pthread_key_t,
     set: SetSpecific,
 }
-static RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
+static NATIVE_RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
+#[cfg(not(any(feature = "standalone", feature = "owned-tls-cache")))]
+static HOST_RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
 
-fn attach_reclaimer(state: *mut ThreadState) -> bool {
-    let reclaimer = RECLAIMER.get_or_init(|| {
-        #[cfg(feature = "standalone")]
-        {
-            let mut key = 0;
-            if unsafe { crate::pthread_abi::pthread_key_create(&mut key, Some(reclaim)) } != 0 {
-                return None;
-            }
-            Some(Reclaimer {
-                key,
-                set: crate::pthread_abi::pthread_setspecific,
-            })
+fn attach_native_reclaimer(state: *mut ThreadState) -> bool {
+    let reclaimer = NATIVE_RECLAIMER.get_or_init(|| {
+        let mut key = 0;
+        if unsafe { crate::pthread_abi::pthread_key_create(&mut key, Some(reclaim)) } != 0 {
+            return None;
         }
-        #[cfg(not(feature = "standalone"))]
-        {
-            type Create = unsafe extern "C" fn(
-                *mut libc::pthread_key_t,
-                Option<unsafe extern "C" fn(*mut c_void)>,
-            ) -> c_int;
-            let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
-            let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
-            // SAFETY: the private key belongs to host threads. This schedules only
-            // reclamation of our heap state; native module IDs never enter its DTV.
-            let create: Create = unsafe { core::mem::transmute(create) };
-            let set: SetSpecific = unsafe { std::mem::transmute(set) };
-            let mut key = 0;
-            if unsafe { create(&mut key, Some(reclaim)) } != 0 {
-                return None;
-            }
-            Some(Reclaimer { key, set })
-        }
+        Some(Reclaimer {
+            key,
+            set: crate::pthread_abi::pthread_setspecific,
+        })
     });
     reclaimer
         .as_ref()
         .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
 }
 
+#[cfg(not(any(feature = "standalone", feature = "owned-tls-cache")))]
+fn attach_reclaimer(state: *mut ThreadState) -> bool {
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+        return attach_native_reclaimer(state);
+    }
+    let reclaimer = HOST_RECLAIMER.get_or_init(|| {
+        type Create = unsafe extern "C" fn(
+            *mut libc::pthread_key_t,
+            Option<unsafe extern "C" fn(*mut c_void)>,
+        ) -> c_int;
+        let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
+        let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
+        // SAFETY: the private key belongs to host threads. This schedules only
+        // reclamation of our heap state; native module IDs never enter its DTV.
+        let create: Create = unsafe { core::mem::transmute(create) };
+        let set: SetSpecific = unsafe { std::mem::transmute(set) };
+        let mut key = 0;
+        if unsafe { create(&mut key, Some(reclaim)) } != 0 {
+            return None;
+        }
+        Some(Reclaimer { key, set })
+    });
+    reclaimer
+        .as_ref()
+        .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
+}
+
+#[cfg(all(feature = "standalone", not(feature = "owned-tls-cache")))]
+fn attach_reclaimer(state: *mut ThreadState) -> bool {
+    attach_native_reclaimer(state)
+}
+
 unsafe extern "C" fn reclaim(pointer: *mut c_void) {
     if pointer.is_null() {
         return;
     }
+    let state = pointer.cast::<ThreadState>();
     // pthread-key destructors run on ordinary thread termination, but not on
-    // normal process exit. Deferring allocation reclamation to this stage
-    // keeps TLS valid for process finalizers even when a worker calls exit.
-    // Drain defensively: correctness does not depend on Rust's TLS strategy.
-    drain_current();
-    let _ = STATE.try_with(|slot| slot.set(std::ptr::null_mut()));
-    // SAFETY: one key value owns the one Box registered by attach_reclaimer.
-    unsafe { drop(Box::from_raw(pointer.cast::<ThreadState>())) };
+    // normal process exit. Drain `state` directly (safe for both TID-keyed and
+    // host-TLS paths) before clearing the lookup entry and freeing the Box.
+    drain_state(state);
+    remove_native_state_ptr(state);
+    #[cfg(not(feature = "owned-tls-cache"))]
+    if !use_tid_keyed_thread_exit() {
+        let _ = STATE.try_with(|slot| {
+            if slot.get() == state {
+                slot.set(std::ptr::null_mut());
+            }
+        });
+    }
+    // SAFETY: one key value owns the one Box registered by attach_*_reclaimer.
+    unsafe { drop(Box::from_raw(state)) };
 }
 
+#[cfg(not(feature = "owned-tls-cache"))]
 impl Drop for Cleanup {
     fn drop(&mut self) {
         // Run native C++ TLS callbacks at Rust/C++ thread-exit time, retaining

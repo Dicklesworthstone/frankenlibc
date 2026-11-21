@@ -3343,16 +3343,41 @@ pub unsafe extern "C" fn catopen(name: *const c_char, oflag: c_int) -> nl_catd {
         // Stored NUL-terminated for setlocale's return value.
         let name = category_name(libc::LC_MESSAGES);
         name.split(|&b| b == 0).next().unwrap_or(name).to_vec()
+    } else if secure {
+        // In setuid/AT_SECURE execution, untrusted LANG must never steer
+        // catalog lookup outside the system locale tree (matches catalog_path.rs).
+        b"C".to_vec()
     } else {
-        std::env::var_os("LANG")
-            .map(|v| v.as_os_str().as_bytes().to_vec())
-            .unwrap_or_default()
+        #[cfg(not(test))]
+        {
+            crate::stdlib_abi::getenv_bytes_copy(b"LANG").unwrap_or_default()
+        }
+        #[cfg(test)]
+        {
+            std::env::var_os("LANG")
+                .map(|v| v.as_os_str().as_bytes().to_vec())
+                .unwrap_or_default()
+        }
     };
-    // A setuid program must not let LANG steer the search outside the locale tree.
-    if secure && locale.contains(&b'/') {
+    // Reject '/' and '..' path traversal components in secure mode even if
+    // LC_MESSAGES came from setlocale().
+    if secure
+        && (locale.contains(&b'/') || locale == b".." || locale.windows(2).any(|w| w == b".."))
+    {
         locale = b"C".to_vec();
     }
-    let nlspath = std::env::var_os("NLSPATH").map(|v| v.as_os_str().as_bytes().to_vec());
+    let nlspath = if secure {
+        None
+    } else {
+        #[cfg(not(test))]
+        {
+            crate::stdlib_abi::getenv_bytes_copy(b"NLSPATH")
+        }
+        #[cfg(test)]
+        {
+            std::env::var_os("NLSPATH").map(|v| v.as_os_str().as_bytes().to_vec())
+        }
+    };
 
     let catalog =
         match crate::locale_catalog::open(&name_bytes, &locale, nlspath.as_deref(), secure) {

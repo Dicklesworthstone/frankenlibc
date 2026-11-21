@@ -199,15 +199,33 @@ pub(crate) unsafe fn filter_reserved_sigset_for_wait(
         return set;
     }
     let mut word0: libc::c_ulong = 0;
-    if unsafe {
+    let copied = unsafe {
         crate::io_abi::iov_snapshot::copy_user_bytes_raw(
             set,
             (&raw mut word0).cast::<u8>(),
             core::mem::size_of::<libc::c_ulong>(),
         )
-    }
-    .is_ok()
-    {
+    };
+    let got_word = match copied {
+        Ok(()) => true,
+        Err(libc::EFAULT) => false,
+        Err(_) => {
+            // Seccomp (`ENOSYS`/`EPERM`/`EACCES`) or fd exhaustion (`EMFILE`/`ENFILE`)
+            // prevented `process_vm_readv`/`pipe2` probing; if `set` is a canonical
+            // user-space address, read it directly (the kernel syscall will read it
+            // immediately anyway) so reserved signal 32 (`NATIVE_SIGCANCEL`) is still stripped.
+            let addr = set as usize;
+            let user_canonical = addr >= 4096 && addr < (1usize << 56);
+            if user_canonical {
+                // SAFETY: non-null canonical user address that the kernel will read next.
+                word0 = unsafe { core::ptr::read_unaligned(set.cast::<libc::c_ulong>()) };
+                true
+            } else {
+                false
+            }
+        }
+    };
+    if got_word {
         let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
         if word0 & reserved != 0 {
             *scratch = word0 & !reserved;

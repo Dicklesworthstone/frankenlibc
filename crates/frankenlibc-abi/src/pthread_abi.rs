@@ -640,78 +640,65 @@ fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
     Some(symbol_addr)
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {
-    #[cfg(feature = "standalone")]
-    {
-        let _ = name;
-        std::ptr::null_mut()
-    }
-    #[cfg(not(feature = "standalone"))]
-    {
-        let glibc_v34 = b"GLIBC_2.34\0";
-        let glibc_v232 = b"GLIBC_2.3.2\0";
-        let glibc_v225 = b"GLIBC_2.2.5\0";
-        // Try versions in order: newest first, then NPTL baseline (2.3.2),
-        // then legacy (2.2.5). For pthread_cond_*, the 2.3.2 version uses
-        // the NPTL layout which is the current default; 2.2.5 is the old
-        // LinuxThreads ABI with incompatible struct layout.
-        let mut ptr = unsafe {
+    let glibc_v34 = b"GLIBC_2.34\0";
+    let glibc_v232 = b"GLIBC_2.3.2\0";
+    let glibc_v225 = b"GLIBC_2.2.5\0";
+    // Try versions in order: newest first, then NPTL baseline (2.3.2),
+    // then legacy (2.2.5). For pthread_cond_*, the 2.3.2 version uses
+    // the NPTL layout which is the current default; 2.2.5 is the old
+    // LinuxThreads ABI with incompatible struct layout.
+    let mut ptr = unsafe {
+        crate::dlfcn_abi::dlvsym_next(
+            name.as_ptr().cast::<libc::c_char>(),
+            glibc_v34.as_ptr().cast::<libc::c_char>(),
+        )
+    };
+    if ptr.is_null() {
+        // SAFETY: NPTL baseline — preferred for pthread_cond_* and pthread_mutex_*.
+        ptr = unsafe {
             crate::dlfcn_abi::dlvsym_next(
                 name.as_ptr().cast::<libc::c_char>(),
-                glibc_v34.as_ptr().cast::<libc::c_char>(),
+                glibc_v232.as_ptr().cast::<libc::c_char>(),
             )
         };
-        if ptr.is_null() {
-            // SAFETY: NPTL baseline — preferred for pthread_cond_* and pthread_mutex_*.
-            ptr = unsafe {
-                crate::dlfcn_abi::dlvsym_next(
-                    name.as_ptr().cast::<libc::c_char>(),
-                    glibc_v232.as_ptr().cast::<libc::c_char>(),
-                )
-            };
-        }
-        if ptr.is_null() {
-            // SAFETY: oldest baseline — LinuxThreads era.
-            ptr = unsafe {
-                crate::dlfcn_abi::dlvsym_next(
-                    name.as_ptr().cast::<libc::c_char>(),
-                    glibc_v225.as_ptr().cast::<libc::c_char>(),
-                )
-            };
-        }
-        if ptr.is_null() {
-            let symbol = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok();
-            if let Some(symbol) = symbol
-                && let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)
-            {
-                ptr = addr as *mut c_void;
-            }
-        }
-        ptr
     }
-}
-
-unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {
-    #[cfg(feature = "standalone")]
-    {
-        let _ = name;
-        std::ptr::null_mut()
-    }
-    #[cfg(not(feature = "standalone"))]
-    {
-        let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
-            return std::ptr::null_mut();
+    if ptr.is_null() {
+        // SAFETY: oldest baseline — LinuxThreads era.
+        ptr = unsafe {
+            crate::dlfcn_abi::dlvsym_next(
+                name.as_ptr().cast::<libc::c_char>(),
+                glibc_v225.as_ptr().cast::<libc::c_char>(),
+            )
         };
-        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol) {
-            return addr as *mut c_void;
-        }
-        if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
-            return addr as *mut c_void;
-        }
-        std::ptr::null_mut()
     }
+    if ptr.is_null() {
+        let symbol = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok();
+        if let Some(symbol) = symbol
+            && let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)
+        {
+            ptr = addr as *mut c_void;
+        }
+    }
+    ptr
 }
 
+#[cfg(not(feature = "standalone"))]
+unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {
+    let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
+        return std::ptr::null_mut();
+    };
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol) {
+        return addr as *mut c_void;
+    }
+    if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
+        return addr as *mut c_void;
+    }
+    std::ptr::null_mut()
+}
+
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {
     for name in names {
         // SAFETY: each symbol name is a static NUL-terminated C string.
@@ -2745,15 +2732,8 @@ unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *m
     let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = THREAD_BACKEND_HOST);
     let child_owned = start_ctx.child_owned;
     let host_thread = if child_owned {
-        #[cfg(not(feature = "standalone"))]
-        {
-            // SAFETY: the resolved host symbol points to `pthread_self`.
-            resolved_thread_self_raw().map_or(0, |host_self| unsafe { host_self() })
-        }
-        #[cfg(feature = "standalone")]
-        {
-            0
-        }
+        // SAFETY: the resolved host symbol points to `pthread_self`.
+        resolved_thread_self_raw().map_or(0, |host_self| unsafe { host_self() })
     } else {
         wait_for_host_thread_handoff(start_ctx)
     };
@@ -8301,7 +8281,7 @@ unsafe fn preflight_cancellation_point_for_caller(caller: usize) {
 struct NativeCancelWindowGuard {
     tid: i32,
     was_active: bool,
-    owns_slot: bool,
+    token: raw_syscall::NativeCancelWindowToken,
 }
 
 impl NativeCancelWindowGuard {
@@ -8311,23 +8291,19 @@ impl NativeCancelWindowGuard {
         Self {
             tid,
             was_active,
-            owns_slot: false,
+            token: raw_syscall::NativeCancelWindowToken::None,
         }
     }
 
     #[inline]
     fn arm(&mut self, cancel_word: *const u32, window_rsp: usize) {
-        self.owns_slot = raw_syscall::arm_native_cancel_syscall(self.tid, cancel_word, window_rsp);
+        self.token = raw_syscall::arm_native_cancel_syscall(self.tid, cancel_word, window_rsp);
     }
 
     #[inline]
     fn finish(mut self) -> bool {
-        let interrupted = if self.owns_slot {
-            self.owns_slot = false;
-            raw_syscall::disarm_native_cancel_syscall(self.tid)
-        } else {
-            false
-        };
+        let token = core::mem::replace(&mut self.token, raw_syscall::NativeCancelWindowToken::None);
+        let interrupted = raw_syscall::disarm_native_cancel_syscall(self.tid, token);
         if !self.was_active {
             set_native_cancel_point_active(self.tid, false);
         }
@@ -8338,9 +8314,8 @@ impl NativeCancelWindowGuard {
 
 impl Drop for NativeCancelWindowGuard {
     fn drop(&mut self) {
-        if self.owns_slot {
-            let _ = raw_syscall::disarm_native_cancel_syscall(self.tid);
-        }
+        let token = core::mem::replace(&mut self.token, raw_syscall::NativeCancelWindowToken::None);
+        let _ = raw_syscall::disarm_native_cancel_syscall(self.tid, token);
         if !self.was_active {
             set_native_cancel_point_active(self.tid, false);
         }
@@ -11731,7 +11706,8 @@ unsafe fn finish_native_thread_exit() -> ! {
     // handle. Its ordinary TLS fallback is private because managed children
     // keep all cleanup state in their own handles.
     let tid = core_self_tid();
-    let _ = raw_syscall::disarm_native_cancel_syscall(tid);
+    let _ =
+        raw_syscall::disarm_native_cancel_syscall(tid, raw_syscall::NativeCancelWindowToken::Fresh);
     retire_unregistered_cancellation(tid);
     frankenlibc_core::pthread::tls::run_exiting_thread_key_destructors(tid);
     crate::util::reclaim_current_thread_tls_heap_cells();

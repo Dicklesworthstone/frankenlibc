@@ -290,13 +290,16 @@ impl MallocState {
     }
 
     fn can_track_allocation(&self, size: usize) -> bool {
+        if Arc::strong_count(&self.elimination) > 1 {
+            return true;
+        }
         self.total_allocated.checked_add(size).is_some()
             && self.active_count.checked_add(1).is_some()
     }
 
     fn track_allocation(&mut self, size: usize) {
-        self.total_allocated += size;
-        self.active_count += 1;
+        self.total_allocated = self.total_allocated.saturating_add(size);
+        self.active_count = self.active_count.saturating_add(1);
     }
 
     /// Allocates `size` bytes of memory using the given backend.
@@ -1493,5 +1496,32 @@ mod tests {
             .expect("expected at least one lifecycle record");
         assert_eq!(last.symbol, "free");
         assert!(last.details.contains("path=elimination"));
+    }
+
+    #[test]
+    fn elimination_never_exchanges_mismatched_size_classes() {
+        let mut producer = MallocState::new();
+        let elimination = producer.elimination_handle();
+        elimination.set_wait_budget(Duration::from_millis(30));
+        let mut consumer = MallocState::with_shared_elimination(Arc::clone(&elimination));
+        let small_ptr = producer.malloc(8, test_alloc).unwrap();
+        let barrier = Barrier::new(2);
+
+        let got = thread::scope(|scope| {
+            let barrier_ref = &barrier;
+            let consumer_handle = scope.spawn(move || {
+                barrier_ref.wait();
+                consumer.malloc(32_768, test_alloc).unwrap()
+            });
+
+            barrier.wait();
+            producer.free(small_ptr, 8, |p| test_free(p, 8));
+            consumer_handle.join().expect("consumer thread must join")
+        });
+
+        assert_ne!(
+            got, small_ptr,
+            "elimination array must never hand an 8-byte block to a 32768-byte allocation"
+        );
     }
 }

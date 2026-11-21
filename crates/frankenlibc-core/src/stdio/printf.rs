@@ -1636,7 +1636,7 @@ std::thread_local! {
 static ANY_THREAD_NUMERIC: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-const NATIVE_PRINTF_SLOTS: usize = 64;
+const NATIVE_PRINTF_SLOTS: usize = 1024;
 static NATIVE_NUMERIC_TIDS: [core::sync::atomic::AtomicI32; NATIVE_PRINTF_SLOTS] =
     [const { core::sync::atomic::AtomicI32::new(0) }; NATIVE_PRINTF_SLOTS];
 static NATIVE_NUMERIC_WORDS: [[AtomicU64; 3]; NATIVE_PRINTF_SLOTS] =
@@ -1762,13 +1762,22 @@ pub fn clear_thread_numeric() {
                     let idx = (start + i) % NATIVE_PRINTF_SLOTS;
                     let cur = NATIVE_NUMERIC_TIDS[idx].load(Ordering::Acquire);
                     if cur == tid {
-                        NATIVE_NUMERIC_TIDS[idx].store(-1, Ordering::Release);
+                        let _ = NATIVE_NUMERIC_TIDS[idx].compare_exchange(
+                            tid,
+                            -1,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        );
                         break;
                     }
                     if cur == 0 {
                         break;
                     }
                 }
+            }
+            // Clear any pre-migration compiler-TLS entry on non-native host threads.
+            if crate::pthread::thread::current_thread_handle().is_none() {
+                let _ = THREAD_NUMERIC.try_with(|cell| cell.set(None));
             }
             return;
         }
@@ -1801,11 +1810,16 @@ fn numeric_words() -> [u64; 3] {
                     }
                 }
             }
-            return [
-                DECIMAL_POINT.load(Ordering::Relaxed),
-                GROUPING_SEPARATOR.load(Ordering::Relaxed),
-                GROUPING_RULE.load(Ordering::Relaxed),
-            ];
+            // Native clone threads have a registered handle and share their
+            // creator's `%fs`, so only non-native host threads may fall through
+            // to pre-existing compiler-TLS `THREAD_NUMERIC`.
+            if crate::pthread::thread::current_thread_handle().is_some() {
+                return [
+                    DECIMAL_POINT.load(Ordering::Relaxed),
+                    GROUPING_SEPARATOR.load(Ordering::Relaxed),
+                    GROUPING_RULE.load(Ordering::Relaxed),
+                ];
+            }
         }
         if let Ok(Some(words)) = THREAD_NUMERIC.try_with(core::cell::Cell::get) {
             return words;
@@ -3066,6 +3080,8 @@ static NATIVE_RENDER_FAILURE_TIDS: [core::sync::atomic::AtomicI32; NATIVE_PRINTF
     [const { core::sync::atomic::AtomicI32::new(0) }; NATIVE_PRINTF_SLOTS];
 static NATIVE_RENDER_FAILURE_ERRNOS: [core::sync::atomic::AtomicI32; NATIVE_PRINTF_SLOTS] =
     [const { core::sync::atomic::AtomicI32::new(0) }; NATIVE_PRINTF_SLOTS];
+static NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO: core::sync::atomic::AtomicI32 =
+    core::sync::atomic::AtomicI32::new(0);
 
 /// Fail this thread's current printf call with `errno`.
 #[cold]
@@ -3084,6 +3100,7 @@ pub fn note_render_failure(errno: i32) {
                     let mut cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
                     while is_printf_slot_claiming(cur) {
                         if cur == self_claiming {
+                            NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.store(errno, Ordering::Release);
                             return;
                         }
                         core::hint::spin_loop();
@@ -3134,13 +3151,14 @@ pub fn note_render_failure(errno: i32) {
                 break;
             }
         }
+        NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.store(errno, Ordering::Release);
         return;
     }
     RENDER_FAILURE.with(|failure| failure.set(errno));
 }
 
 /// Remove an exiting thread's entries from the TID-keyed `printf` tables so
-/// sequential thread churn neither saturates the 64 slots nor leaks stale
+/// sequential thread churn neither saturates the slots nor leaks stale
 /// `LC_NUMERIC` / render-failure state onto recycled TIDs.
 pub fn clear_native_printf_tables_for_tid(tid: i32) {
     if tid <= 0 {
@@ -3155,7 +3173,12 @@ pub fn clear_native_printf_tables_for_tid(tid: i32) {
                 NATIVE_NUMERIC_WORDS[idx][0].store(0, Ordering::Release);
                 NATIVE_NUMERIC_WORDS[idx][1].store(0, Ordering::Release);
                 NATIVE_NUMERIC_WORDS[idx][2].store(0, Ordering::Release);
-                NATIVE_NUMERIC_TIDS[idx].store(-1, Ordering::Release);
+                let _ = NATIVE_NUMERIC_TIDS[idx].compare_exchange(
+                    tid,
+                    -1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
                 break;
             }
             if cur == 0 {
@@ -3170,7 +3193,12 @@ pub fn clear_native_printf_tables_for_tid(tid: i32) {
             let cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
             if cur == tid {
                 NATIVE_RENDER_FAILURE_ERRNOS[idx].store(0, Ordering::Release);
-                NATIVE_RENDER_FAILURE_TIDS[idx].store(-1, Ordering::Release);
+                let _ = NATIVE_RENDER_FAILURE_TIDS[idx].compare_exchange(
+                    tid,
+                    -1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
                 break;
             }
             if cur == 0 {
@@ -3213,6 +3241,7 @@ pub fn rekey_native_printf_tables_after_fork(parent_tid: i32, child_tid: i32) {
         }
     }
     if ANY_RENDER_FAILURE.load(Ordering::Acquire) {
+        NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.store(0, Ordering::Release);
         for idx in 0..NATIVE_PRINTF_SLOTS {
             if NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Relaxed) != 0 {
                 NATIVE_RENDER_FAILURE_ERRNOS[idx].store(0, Ordering::Release);
@@ -3244,15 +3273,23 @@ pub fn take_render_failure() -> i32 {
                 let cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
                 if cur == tid {
                     let err = NATIVE_RENDER_FAILURE_ERRNOS[idx].swap(0, Ordering::AcqRel);
-                    NATIVE_RENDER_FAILURE_TIDS[idx].store(-1, Ordering::Release);
-                    return err;
+                    let _ = NATIVE_RENDER_FAILURE_TIDS[idx].compare_exchange(
+                        tid,
+                        -1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                    if err != 0 {
+                        return err;
+                    }
+                    break;
                 }
                 if cur == 0 {
                     break;
                 }
             }
         }
-        return 0;
+        return NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.swap(0, Ordering::AcqRel);
     }
     RENDER_FAILURE.with(|failure| failure.replace(0))
 }

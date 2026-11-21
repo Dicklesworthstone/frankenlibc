@@ -221,6 +221,8 @@ int main(int argc, char **argv) {
         d2u(fl_asin(1.0)) != 0x3ff921fb54442d18ULL || d2u(fl_asin(-1.0)) != 0xbff921fb54442d18ULL ||
         !isnan(fl_asin(1.5)) || !isnan(fl_asin(INFINITY)) ||
         d2u(fl_acos(1.0)) != 0 || d2u(fl_acos(-1.0)) != 0x400921fb54442d18ULL || !isnan(fl_acos(-1.5)) ||
+        d2u(fl_acos(u2d(0xbc8cb3b399d747f3ULL))) != 0x3ff921fb54442d19ULL ||
+        d2u(fl_acos(u2d(0xbc8cb3b399d747f4ULL))) != 0x3ff921fb54442d19ULL ||
         d2u(fl_atan2(-0.0, 1.0)) != (1ULL << 63) || d2u(fl_atan2(-0.0, -1.0)) != 0xc00921fb54442d18ULL ||
         d2u(fl_atan2(u2d((24ULL << 52) | (1ULL << 51)), u2d(1098ULL << 52))) != 1ULL ||
         d2u(fl_atan2(u2d(0x01c2c00000000000ULL), u2d(0x44ce000000000000ULL))) != 2ULL) {

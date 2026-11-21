@@ -404,6 +404,7 @@ unsafe extern "C" fn frankenlibc_abi_stdio_init_entry(
         // preserves host `errno` (even under `dlopen` or test binaries) without
         // ever calling `dlvsym` under lock contention.
         let _ = host_resolve::host_errno_location_raw();
+        glibc_internal_abi::init_host_single_threaded_ptr();
     }
     // SAFETY: this runs during process initialization before user code and
     // publishes the stdio globals/aliases onto stable NativeFile storage while

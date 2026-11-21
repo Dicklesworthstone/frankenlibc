@@ -1408,7 +1408,8 @@ pub fn disable_compiler_tls_cache_for_native_threads() {
 
 #[inline(always)]
 pub(crate) fn compiler_tls_disabled() -> bool {
-    NATIVE_THREAD_COMPILER_TLS_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+    cfg!(feature = "owned-tls-cache")
+        || NATIVE_THREAD_COMPILER_TLS_DISABLED.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// Access the thread-local validation cache.

@@ -1,11 +1,12 @@
 //! Integration gate test for `bd-rv2gv6`:
 //! verifies `.init_array` `environ` preseeding (`dlopen(..., RTLD_LOCAL | RTLD_DEEPBIND)`
 //! `MODE_UNRESOLVED` elimination), single-threaded parked static-slot `fmemopen`
-//! reuse (`PARKED_STATIC_SLOT` + `TLS_FAST_MEM_READ.parked`), frameless buffered
+//! reuse (`PARKED_STATIC_SLOT` + `TLS_FAST_MEM_READ.parked_slot`), frameless buffered
 //! `fread` leaf fast path (`FixedMemCursor::try_take_buffered` + `raw_copy_under_128`),
 //! parked-slot invisibility to `fflush(NULL)` and `EBADF` on double-`fclose`,
-//! ST->MT eviction on `pthread_create`, and live `LD_PRELOAD` + `RTLD_DEEPBIND`
-//! `fmemopen_4k_fread_64b` lifecycle parity in `{strict, hardened}` modes.
+//! ST->MT eviction on `pthread_create`, live `LD_PRELOAD` + `RTLD_DEEPBIND`
+//! `fmemopen_4k_fread_64b` lifecycle parity in `{strict, hardened}` modes, and
+//! live paired `fmemopen_4k_fread_64b` latency against host glibc in the same process.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -78,6 +79,39 @@ fn fmemopen_fread_live_preload_and_deepbind_gate_passes() {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+static uint64_t bench_fmemopen_4k_fread_64b_ns(
+    FILE *(*fn_fmemopen)(void *, size_t, const char *),
+    size_t (*fn_fread)(void *, size_t, size_t, FILE *),
+    int (*fn_fclose)(FILE *),
+    unsigned char *src,
+    int iters
+) {
+    unsigned char out[64];
+    volatile uint64_t sink = 0;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < iters; ++r) {
+        FILE *fp = fn_fmemopen(src, 4096, "rb");
+        if (!fp) return UINT64_MAX;
+        for (int i = 0; i < 64; ++i) {
+            size_t got = fn_fread(out, 1, 64, fp);
+            sink += (uint64_t)got + out[0];
+        }
+        if (fn_fclose(fp) != 0) return UINT64_MAX;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    (void)sink;
+    return (uint64_t)(t1.tv_sec - t0.tv_sec) * 1000000000ull
+         + (uint64_t)(t1.tv_nsec - t0.tv_nsec);
+}
+
+static int cmp_double(const void *a, const void *b) {
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    return (da > db) - (da < db);
+}
 
 static void *mt_reader_worker(void *arg) {
     const unsigned char *buf = (const unsigned char *)arg;
@@ -185,7 +219,45 @@ int main(int argc, char **argv) {
             fprintf(stderr, "deepbind lifecycle failed: %d\n", rc);
             return rc;
         }
-        printf("PASS: deepbind fmemopen_4k_fread_64b verified\n");
+        /* Live paired A/B latency check against host glibc in the same process: */
+        unsigned char bench_src[4096];
+        for (size_t i = 0; i < sizeof(bench_src); ++i) {
+            bench_src[i] = (unsigned char)((i * 53u + 11u) & 0xffu);
+        }
+        /* Warmup both arms */
+        if (bench_fmemopen_4k_fread_64b_ns(fmemopen, fread, fclose, bench_src, 64) == UINT64_MAX
+            || bench_fmemopen_4k_fread_64b_ns(fn_fmemopen, fn_fread, fn_fclose, bench_src, 64) == UINT64_MAX) {
+            fprintf(stderr, "deepbind warmup failed\n");
+            return 60;
+        }
+        enum { TRIALS = 9, ITERS = 256 };
+        double ratios[TRIALS];
+        for (int t = 0; t < TRIALS; ++t) {
+            uint64_t fl_ns = 0, gl_ns = 0;
+            if ((t & 1) == 0) {
+                fl_ns = bench_fmemopen_4k_fread_64b_ns(fn_fmemopen, fn_fread, fn_fclose, bench_src, ITERS);
+                gl_ns = bench_fmemopen_4k_fread_64b_ns(fmemopen, fread, fclose, bench_src, ITERS);
+            } else {
+                gl_ns = bench_fmemopen_4k_fread_64b_ns(fmemopen, fread, fclose, bench_src, ITERS);
+                fl_ns = bench_fmemopen_4k_fread_64b_ns(fn_fmemopen, fn_fread, fn_fclose, bench_src, ITERS);
+            }
+            if (fl_ns == UINT64_MAX || gl_ns == UINT64_MAX || gl_ns == 0) {
+                fprintf(stderr, "deepbind paired timing error\n");
+                return 61;
+            }
+            ratios[t] = (double)fl_ns / (double)gl_ns;
+        }
+        qsort(ratios, TRIALS, sizeof(double), cmp_double);
+        double median_ratio = ratios[TRIALS / 2];
+        if (median_ratio > 1.25) {
+            fprintf(
+                stderr,
+                "deepbind fmemopen_4k_fread_64b perf regression: median fl/glibc ratio=%.3f > 1.25\n",
+                median_ratio
+            );
+            return 62;
+        }
+        printf("PASS: deepbind fmemopen_4k_fread_64b verified (median fl/glibc=%.3f)\n", median_ratio);
         return 0;
     }
 
