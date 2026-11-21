@@ -19,8 +19,8 @@ use std::io::{self, ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::util::LazyBox;
 use crate::util::NoPoisonMutex as Mutex;
+use crate::util::{LazyBox, current_thread_id_u64};
 use serde_json::Value;
 
 use crate::config::SafetyLevel;
@@ -462,6 +462,8 @@ pub enum DecisionType {
 pub struct DecisionCardV1 {
     pub decision_id: u64,
     pub decision_type: DecisionType,
+    /// Linux kernel TID on supported native targets; a stable Rust thread
+    /// identity elsewhere. Zero means the kernel identity was unavailable.
     pub thread_id: u64,
     pub symbol_id: u32,
     pub timestamp_mono_ns: u64,
@@ -1543,11 +1545,14 @@ fn contains_u16(hay: &[u16], needle: u16) -> bool {
 
 /// A systematic evidence log with per-(mode,family) epoch state and a bounded ring buffer.
 ///
-/// Recording is cheap (no allocation). Epoch state uses small per-stream mutexes to keep
-/// ESI assignment and chain hashing sequential per stream.
+/// Recording is allocation-free once the rings are initialized. Initial storage
+/// allocation is fallible: memory pressure can drop diagnostic publications, but
+/// must not abort the libc operation being observed. Epoch state uses small
+/// per-stream mutexes to keep ESI assignment and chain hashing sequential.
 pub struct SystematicEvidenceLog<const CAP: usize> {
     ring: EvidenceRingBuffer<CAP>,
     decision_cards: DecisionCardRingBuffer<CAP>,
+    publication_loss_count: AtomicU64,
     decision_card_journal_enabled: AtomicBool,
     decision_card_journal_errors: AtomicU64,
     decision_card_journal: Mutex<Option<DecisionCardJournal>>,
@@ -1583,6 +1588,7 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         Self {
             ring: EvidenceRingBuffer::new(),
             decision_cards: DecisionCardRingBuffer::new(),
+            publication_loss_count: AtomicU64::new(0),
             decision_card_journal_enabled: AtomicBool::new(false),
             decision_card_journal_errors: AtomicU64::new(0),
             decision_card_journal: Mutex::new(None),
@@ -1591,6 +1597,23 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
             boot_nonce,
             streams: core::array::from_fn(|_| Mutex::new(EpochStreamState::new())),
         }
+    }
+
+    /// Reserve both bounded publication buffers without recording an event.
+    ///
+    /// Preparation is fallible and retryable; it does not consume sequence
+    /// numbers, change hash chains, or report a publication loss. Callers that
+    /// cannot allocate later can prepare on their creating thread first.
+    #[must_use]
+    pub fn prepare_storage(&self) -> bool {
+        self.ring.prepared_slots().is_some()
+            && self.decision_cards.prepared_slots().is_some()
+    }
+
+    /// Whether publication can use its already allocated bounded buffers.
+    #[must_use]
+    pub fn storage_ready(&self) -> bool {
+        self.ring.slots.get().is_some() && self.decision_cards.slots.get().is_some()
     }
 
     /// Enable crash-safe append/replay for decision cards.
@@ -1614,7 +1637,6 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         for card in replay_cards.iter().copied() {
             max_decision_id = max_decision_id.max(card.decision_id);
             max_timestamp = max_timestamp.max(card.timestamp_mono_ns);
-            self.decision_cards.publish(card.decision_id, card);
         }
 
         if max_decision_id > 0 {
@@ -1624,6 +1646,14 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         if max_timestamp > 0 {
             self.last_timestamp_ns
                 .fetch_max(max_timestamp, Ordering::Relaxed);
+        }
+
+        // Reserve every replayed identifier/timestamp before trying storage.
+        // Even a failed replay must not let later decisions reuse journal IDs.
+        for card in replay_cards.iter().copied() {
+            if !self.decision_cards.publish(card.decision_id, card) {
+                return Err(ErrorKind::OutOfMemory.into());
+            }
         }
 
         *self.decision_card_journal.lock() = Some(journal);
@@ -1719,7 +1749,7 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         st.chain_hash = rec.chain_hash();
         drop(st);
 
-        self.ring.publish(seqno, rec);
+        let evidence_published = self.ring.publish(seqno, rec);
 
         let mut decision_with_seq = decision;
         decision_with_seq.evidence_seqno = seqno;
@@ -1743,7 +1773,13 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
             counterfactual_action: derive_counterfactual_action(mode, decision.action),
             loss_evidence,
         };
-        self.decision_cards.publish(decision_id, card);
+        let card_published = self.decision_cards.publish(decision_id, card);
+        if !evidence_published || !card_published {
+            // Count each incomplete decision once even when both rings fail.
+            // Sequence allocation and chain hashing still advance, making the
+            // gap explicit when a later publication succeeds.
+            self.publication_loss_count.fetch_add(1, Ordering::Relaxed);
+        }
         if self.decision_card_journal_enabled.load(Ordering::Relaxed) {
             let mut guard = self.decision_card_journal.lock();
             if let Some(journal) = guard.as_mut()
@@ -1754,6 +1790,13 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
             }
         }
         seqno
+    }
+
+    /// Decisions for which memory pressure prevented at least one ring
+    /// publication. Normal bounded-ring overwrites are not included.
+    #[must_use]
+    pub fn publication_loss_count(&self) -> u64 {
+        self.publication_loss_count.load(Ordering::Relaxed)
     }
 
     /// Snapshot a best-effort consistent view of the ring buffer for tooling/harness.
@@ -2686,11 +2729,25 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
             .wrapping_add(1)
     }
 
-    pub fn publish(&self, decision_id: u64, card: DecisionCardV1) {
+    fn prepared_slots(&self) -> Option<&Vec<DecisionCardSlot>> {
+        if CAP == 0 {
+            return None;
+        }
+        self.slots.get_or_try_init(|| {
+            let mut slots = Vec::new();
+            slots.try_reserve_exact(CAP).ok()?;
+            slots.resize_with(CAP, DecisionCardSlot::new);
+            Some(slots)
+        })
+    }
+
+    /// Publish a card, or return false if initial storage is unavailable.
+    /// A later publication retries initialization after memory pressure eases.
+    pub fn publish(&self, decision_id: u64, card: DecisionCardV1) -> bool {
+        let Some(slots) = self.prepared_slots() else {
+            return false;
+        };
         let idx = (decision_id as usize) % CAP;
-        let slots = self
-            .slots
-            .get_or_init(|| (0..CAP).map(|_| DecisionCardSlot::new()).collect());
         let slot = &slots[idx];
         debug_assert_eq!(card.decision_id, decision_id);
         let mut guard = slot.card.lock();
@@ -2700,6 +2757,7 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
         *guard = card;
         slot.published_decision_id
             .store(decision_id, Ordering::Release);
+        true
     }
 
     pub fn set_next_decision_id_floor(&self, floor: u64) {
@@ -2790,12 +2848,25 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
             .wrapping_add(1)
     }
 
-    /// Publish a record for a previously allocated seqno.
-    pub fn publish(&self, seqno: u64, record: EvidenceSymbolRecord) {
+    fn prepared_slots(&self) -> Option<&Vec<EvidenceSlot>> {
+        if CAP == 0 {
+            return None;
+        }
+        self.slots.get_or_try_init(|| {
+            let mut slots = Vec::new();
+            slots.try_reserve_exact(CAP).ok()?;
+            slots.resize_with(CAP, EvidenceSlot::new);
+            Some(slots)
+        })
+    }
+
+    /// Publish a record for a previously allocated seqno, or return false if
+    /// initial storage is unavailable. A later publication retries allocation.
+    pub fn publish(&self, seqno: u64, record: EvidenceSymbolRecord) -> bool {
+        let Some(slots) = self.prepared_slots() else {
+            return false;
+        };
         let idx = (seqno as usize) % CAP;
-        let slots = self
-            .slots
-            .get_or_init(|| (0..CAP).map(|_| EvidenceSlot::new()).collect());
         let slot = &slots[idx];
         debug_assert_eq!(record.seqno(), seqno);
         // Write record and publish seqno under the slot mutex so out-of-order
@@ -2806,6 +2877,7 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
         }
         *guard = record;
         slot.published_seqno.store(seqno, Ordering::Release);
+        true
     }
 
     /// Snapshot all stable records and return them sorted by `seqno`.

@@ -251,7 +251,7 @@ pub(crate) fn host_fork_fn() -> Option<HostForkFn> {
 /// cached tid. Its own atfork list is not ours (fl implements
 /// pthread_atfork), so no handler runs twice.
 pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_t, c_int> {
-    match host_fork {
+    let result = match host_fork {
         Some(host_fork) => {
             let parent_tid = raw_syscall::sys_gettid();
             // SAFETY: plain call of host fork; fl's locks are held by the caller.
@@ -268,7 +268,14 @@ pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_
             }
         }
         None => raw_syscall::sys_clone_fork(libc::SIGCHLD as usize),
+    };
+    if result == Ok(0) {
+        // Orphaned once initializers belong to vanished parent threads.
+        // Publish the child's generation before fork-guard cleanup or user
+        // handlers can need one; _Fork intentionally bypasses this lifecycle.
+        crate::pthread_abi::note_once_fork_child();
     }
+    result
 }
 
 /// Blocks every blockable signal while a fork-like operation crosses from
@@ -306,6 +313,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     let host_fork = host_fork_fn();
     // Run atfork prepare handlers (acquire locks in parent before fork).
     let atfork = crate::pthread_abi::run_atfork_prepare();
+    // Loader callbacks may acquire stdio, environment, and allocator locks.
+    // Hold the outer loader operation across clone so a vanished thread
+    // cannot leave a partially published DSO or an orphaned loader lock.
+    let loader_guard = crate::dlfcn_abi::native_fork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
@@ -328,8 +339,21 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // has locks to hold across the fork, and building one here gave every
     // strict process that forks the whole hardened pipeline (8 MB bloom
     // filter, 16 arena shards) to lock and COW-fault on every later fork.
-    let mut _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let mut _pipeline_guard = match crate::membrane_state::ready_pipeline() {
+        Some(pipeline) => match pipeline.try_atfork_prepare() {
+            Some(guard) => Some(guard),
+            None => {
+                drop(_environ_guard);
+                stdio_guard.release_in_parent();
+                loader_guard.release_in_parent();
+                crate::pthread_abi::run_atfork_parent(&atfork);
+                runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+                unsafe { set_abi_errno(libc::EAGAIN) };
+                return -1;
+            }
+        },
+        None => None,
+    };
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
     // Taken last and released first: nothing between here and the drop below
@@ -349,6 +373,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(error) };
             runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
@@ -361,6 +386,9 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         policy_tls_guard.adopt_and_unlock_in_fork_child();
         // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
         unsafe { malloc_guard.adopt_in_fork_child() };
+        // SAFETY: only the forking thread survives, with signals blocked.
+        // Retag before inner guard cleanup can reenter the loader.
+        unsafe { loader_guard.adopt_in_child() };
     }
     drop(malloc_guard);
     drop(policy_tls_guard);
@@ -377,6 +405,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             drop(signal_guard);
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(e) };
@@ -408,8 +437,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
+        loader_guard.release_in_child();
     } else {
         stdio_guard.release_in_parent();
+        loader_guard.release_in_parent();
     }
 
     if pid == 0 {

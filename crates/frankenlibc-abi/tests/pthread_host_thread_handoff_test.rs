@@ -75,6 +75,52 @@ use frankenlibc_abi::pthread_abi::{
 const SENTINEL: libc::pthread_t = 0x5A5A_5A5A_0000_1234;
 
 #[test]
+#[cfg(all(debug_assertions, not(feature = "standalone")))]
+fn host_tls_late_callback_repopulates_owned_cache() {
+    const CHILD: &str = "FRANKENLIBC_HOST_TLS_REARM_CHILD";
+    const NAME: &str = "host_tls_late_callback_repopulates_owned_cache";
+    if std::env::var_os(CHILD).is_none() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("start host TLS rearm child");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut timed_out = false;
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                timed_out = true;
+                let _ = child.kill();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !timed_out && output.status.success() && stdout.contains("1 passed;"),
+            "host TLS child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+            output.status
+        );
+        return;
+    }
+
+    let observed =
+        frankenlibc_abi::pthread_abi::pthread_host_cache_late_callback_counts_for_tests();
+    #[cfg(not(feature = "owned-tls-cache"))]
+    // The late callback recreates state after the first DSO-pinned cxa drain;
+    // automatic bridge registration must arrange a second drain for it.
+    assert_eq!(observed, (5, 2));
+    #[cfg(feature = "owned-tls-cache")]
+    // The POSIX-key bridge preserves the original cache through all host C++
+    // TLS callbacks, then destroys its payload once.
+    assert_eq!(observed, (55, 1));
+}
+
+#[test]
 fn handoff_spins_when_published_early_and_blocks_on_the_futex_when_published_late() {
     // Both halves live in ONE test on purpose: the spin half asserts the
     // slow-path counter did not move, so it must not run concurrently with the

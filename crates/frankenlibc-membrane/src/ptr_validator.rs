@@ -17,7 +17,7 @@
 #[path = "ptr_validator_access_tests.rs"]
 mod access_tests;
 
-use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
+use crate::arena::{AllocationArena, ArenaSlot, CachedAllocationIntegrity, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::check_oracle::CheckStage;
 use crate::config::{SafetyLevel, safety_level};
@@ -28,16 +28,18 @@ use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
 use crate::tls_cache::{
-    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs,
-    try_with_tls_cache_hit, with_tls_cache,
+    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, TlsValidationCache,
+    snapshot_shard_epochs, try_with_tls_cache_hit, with_tls_cache,
 };
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
 use serde::Serialize;
-#[cfg(not(feature = "owned-tls-cache"))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const VALIDATION_LOG_CAPACITY: usize = 2048;
 const STRICT_VALIDATION_BUDGET_NS: u64 = 20;
@@ -156,7 +158,7 @@ pub enum ValidationOutcome {
     TemporalViolation(PointerAbstraction),
     /// Pointer belongs to our allocation metadata but fails bounds admissibility.
     Invalid(PointerAbstraction),
-    /// Pointer validation denied by security context before pipeline execution.
+    /// Pointer validation denied before pipeline metadata is accessed.
     Denied(PointerAbstraction),
     /// Validation skipped (SafetyLevel::Off).
     Bypassed,
@@ -343,6 +345,545 @@ thread_local! {
     static EBR_HANDLE: std::cell::RefCell<Option<(std::sync::Arc<crate::ebr::QuarantineEbr>, crate::ebr::EbrHandle<'static>)>> = const { std::cell::RefCell::new(None) };
 }
 
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(crate) fn reset_validation_context_in_fork_child() {
+    kernel_validation_context::reset_validation_context_in_fork_child();
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+pub(crate) fn reset_validation_context_in_fork_child() {}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+impl ValidationExecutionGuard {
+    fn adopt_in_fork_child(&mut self) {}
+}
+struct PinnedEpochGuard<'a> {
+    _guard: crate::ebr::EbrGuard<'a>,
+    /// A registration owned by this guard, when no thread-cached one exists
+    /// (owned-tls-cache builds, or a thread whose TLS is being torn down).
+    _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
+}
+
+// Native clone threads can inherit the creator's compiler TLS. Context ownership
+// must therefore follow the kernel TID in both cache configurations.
+// Admission uses per-tid native slots: fork-child reset and saturating depth.
+// The probe table remains so its remote-ordering and tombstone-reuse tests stay live.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod kernel_validation_context {
+    use std::cell::Cell;
+    use std::marker::PhantomData;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+    const CONTEXT_SLOTS: usize = 4096;
+    const CONTEXT_PROBES: usize = 16;
+    const DEPTH_MASK: u64 = u32::MAX as u64;
+
+    struct ContextTable<const N: usize> {
+        slots: [AtomicU64; N],
+        // A credit is reserved BEFORE publishing a slot. Fork children retain
+        // inherited credits: vanished threads can leave a conservative hint,
+        // but interrupted entry/drop can never make a live context invisible.
+        active_hint: AtomicU32,
+        // Only the fork survivor can own live slots outside its current hash
+        // range. Other threads always have a bounded negative lookup.
+        alias_owner: AtomicU32,
+        identity_unavailable: AtomicBool,
+    }
+
+    impl<const N: usize> ContextTable<N> {
+        const fn new() -> Self {
+            Self {
+                slots: [const { AtomicU64::new(0) }; N],
+                active_hint: AtomicU32::new(0),
+                alias_owner: AtomicU32::new(0),
+                identity_unavailable: AtomicBool::new(false),
+            }
+        }
+
+        fn owner(word: u64) -> u32 {
+            (word >> 32) as u32
+        }
+
+        fn depth(word: u64) -> u32 {
+            (word & DEPTH_MASK) as u32
+        }
+
+        fn pack(owner: u32, depth: u32) -> u64 {
+            ((owner as u64) << 32) | depth as u64
+        }
+
+        fn probe_start(tid: u32) -> usize {
+            (tid as usize).wrapping_mul(0x9e37_79b1) % N
+        }
+
+        fn in_probe_range(index: usize, tid: u32) -> bool {
+            (index + N - Self::probe_start(tid)) % N < N.min(CONTEXT_PROBES)
+        }
+
+        fn has_owned_depth(&self, tid: u32) -> bool {
+            if tid == 0 || self.identity_unavailable.load(Ordering::Acquire) {
+                return false;
+            }
+            if self.alias_owner.load(Ordering::Acquire) == tid {
+                for slot in &self.slots {
+                    let word = slot.load(Ordering::Acquire);
+                    if Self::owner(word) == tid && Self::depth(word) != 0 {
+                        return true;
+                    }
+                }
+                // Same-thread signal entries finish before this scan resumes.
+                // A nested fork changes the tag, so this cannot erase its alias.
+                let _ = self.alias_owner.compare_exchange(
+                    tid, 0, Ordering::AcqRel, Ordering::Acquire,
+                );
+                return false;
+            }
+            let start = Self::probe_start(tid);
+            for offset in 0..N.min(CONTEXT_PROBES) {
+                let word = self.slots[(start + offset) % N].load(Ordering::Acquire);
+                // Inactive duplicate tags can precede a live tag after signal
+                // reentry and reclamation. Only a positive depth is a hit.
+                if Self::owner(word) == tid && Self::depth(word) != 0 {
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn candidate(&self, tid: u32) -> Option<(usize, u64)> {
+            if self.alias_owner.load(Ordering::Acquire) == tid {
+                for (index, slot) in self.slots.iter().enumerate() {
+                    let word = slot.load(Ordering::Acquire);
+                    if Self::owner(word) == tid && Self::depth(word) != 0 {
+                        return Some((index, word));
+                    }
+                }
+            }
+            let start = Self::probe_start(tid);
+            let mut candidate = None;
+            for offset in 0..N.min(CONTEXT_PROBES) {
+                let index = (start + offset) % N;
+                let word = self.slots[index].load(Ordering::Acquire);
+                if Self::owner(word) == tid && Self::depth(word) != 0 {
+                    return Some((index, word));
+                }
+                if Self::depth(word) == 0
+                    && (candidate.is_none() || Self::owner(word) == tid)
+                {
+                    candidate = Some((index, word));
+                }
+            }
+            candidate
+        }
+
+        fn enter(
+            &self,
+            mut current_tid: impl FnMut() -> u32,
+        ) -> Option<ContextGuard<'_, N>> {
+            if self.identity_unavailable.load(Ordering::Acquire) {
+                return None;
+            }
+            self.active_hint.fetch_update(
+                Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1),
+            ).ok()?;
+            let slot = self.acquire(&mut current_tid);
+            match slot {
+                Some(index) => Some(ContextGuard {
+                    table: self,
+                    index,
+                    _not_send_sync: PhantomData,
+                }),
+                None => {
+                    if !self.identity_unavailable.load(Ordering::Acquire) {
+                        self.active_hint.fetch_sub(1, Ordering::Release);
+                    }
+                    None
+                }
+            }
+        }
+
+        fn acquire(&self, current_tid: &mut impl FnMut() -> u32) -> Option<usize> {
+            loop {
+                let tid = current_tid();
+                if tid == 0 || self.identity_unavailable.load(Ordering::Acquire) {
+                    return None;
+                }
+                let (index, word) = self.candidate(tid)?;
+                let depth = Self::depth(word).checked_add(1)?;
+                if self.slots[index].compare_exchange(
+                    word, Self::pack(tid, depth), Ordering::AcqRel, Ordering::Acquire,
+                ).is_err() {
+                    continue;
+                }
+                return self.reconcile(index, tid, current_tid);
+            }
+        }
+
+        fn reconcile(
+            &self,
+            index: usize,
+            mut claimed_tid: u32,
+            current_tid: &mut impl FnMut() -> u32,
+        ) -> Option<usize> {
+            loop {
+                let tid = current_tid();
+                let word = self.slots[index].load(Ordering::Acquire);
+                let owner = Self::owner(word);
+                if self.identity_unavailable.load(Ordering::Acquire) {
+                    return None;
+                }
+                if tid == 0 {
+                    // A stable syscall policy already allowed the pre-claim
+                    // gettid. If it changes now, roll back only a proven claim.
+                    // An ambiguous retag must never become future bypass rights.
+                    if Self::depth(word) == 0 {
+                        return None;
+                    }
+                    if owner == claimed_tid
+                        && self.slots[index].compare_exchange(
+                            word, Self::pack(owner, Self::depth(word) - 1),
+                            Ordering::AcqRel, Ordering::Acquire,
+                        ).is_ok()
+                    {
+                        return None;
+                    }
+                    self.identity_unavailable.store(true, Ordering::Release);
+                    // Keep this conservative credit as well as the ambiguous
+                    // slot. Both lookup and all later admission now fail closed.
+                    return None;
+                }
+                if Self::depth(word) == 0 {
+                    return None;
+                }
+                if owner != tid {
+                    if owner != claimed_tid {
+                        if current_tid() != tid {
+                            continue;
+                        }
+                        return None;
+                    }
+                    if self.slots[index].compare_exchange(
+                        word, Self::pack(tid, Self::depth(word)),
+                        Ordering::AcqRel, Ordering::Acquire,
+                    ).is_err() {
+                        continue;
+                    }
+                    claimed_tid = tid;
+                    // A further signal-side fork may have changed TID again.
+                    continue;
+                }
+                if !Self::in_probe_range(index, tid) {
+                    let alias = self.alias_owner.load(Ordering::Acquire);
+                    if alias != tid {
+                        if current_tid() != tid {
+                            continue;
+                        }
+                        // Never overwrite an alias published by a signal-side
+                        // child repair after this entry captured its TID.
+                        if self.alias_owner.compare_exchange(
+                            alias, tid, Ordering::AcqRel, Ordering::Acquire,
+                        ).is_err() {
+                            continue;
+                        }
+                    }
+                }
+                if current_tid() == tid {
+                    return Some(index);
+                }
+            }
+        }
+
+        fn release_slot(&self, index: usize) {
+            let slot = &self.slots[index];
+            let mut word = slot.load(Ordering::Acquire);
+            loop {
+                let depth = Self::depth(word);
+                if depth == 0 {
+                    return;
+                }
+                // Preserve the observed owner: child repair can retag a live
+                // guard between the load and CAS, in which case retry.
+                match slot.compare_exchange(
+                    word, Self::pack(Self::owner(word), depth - 1),
+                    Ordering::AcqRel, Ordering::Acquire,
+                ) {
+                    Ok(_) => return,
+                    Err(observed) => word = observed,
+                }
+            }
+        }
+
+        // The caller must be the sole fork survivor with signals blocked.
+        fn repair_child(&self, parent_tid: u32, child_tid: u32) {
+            if self.active_hint.load(Ordering::Acquire) == 0 {
+                self.alias_owner.store(0, Ordering::Release);
+                return;
+            }
+            if parent_tid == 0 || child_tid == 0 {
+                self.identity_unavailable.store(true, Ordering::Release);
+                return;
+            }
+            self.alias_owner.store(child_tid, Ordering::Release);
+            for slot in &self.slots {
+                let word = slot.load(Ordering::Relaxed);
+                let depth = Self::depth(word);
+                if Self::owner(word) == parent_tid && depth != 0 {
+                    slot.store(Self::pack(child_tid, depth), Ordering::Release);
+                } else if word != 0 {
+                    slot.store(0, Ordering::Release);
+                }
+            }
+            // Do not reconstruct active_hint: an interrupted reservation or
+            // release has not necessarily reached its slot CAS yet.
+        }
+
+        fn contains(&self, mut current_tid: impl FnMut() -> u32) -> bool {
+            if self.active_hint.load(Ordering::Acquire) == 0 {
+                return false;
+            }
+            loop {
+                let tid = current_tid();
+                if tid == 0 {
+                    return false;
+                }
+                if self.has_owned_depth(tid) {
+                    return true;
+                }
+                // _Fork may interrupt lookup and retag the inherited guard.
+                if current_tid() == tid {
+                    return false;
+                }
+            }
+        }
+    }
+
+    struct ContextGuard<'a, const N: usize> {
+        table: &'a ContextTable<N>,
+        index: usize,
+        _not_send_sync: PhantomData<*mut ()>,
+    }
+
+    impl<const N: usize> Drop for ContextGuard<'_, N> {
+        fn drop(&mut self) {
+            self.table.release_slot(self.index);
+            self.table.active_hint.fetch_sub(1, Ordering::Release);
+        }
+    }
+
+
+    #[cfg(test)]
+    pub(super) fn test_probe_exhaustion_and_reclamation() {
+        let table = ContextTable::<64>::new();
+        let tid = 7;
+        let start = ContextTable::<64>::probe_start(tid);
+        for offset in 0..CONTEXT_PROBES {
+            table.slots[(start + offset) % 64].store(
+                ContextTable::<64>::pack(100 + offset as u32, 1),
+                Ordering::Relaxed,
+            );
+        }
+        table.active_hint.store(CONTEXT_PROBES as u32, Ordering::Relaxed);
+        assert!(table.enter(|| tid).is_none());
+        assert!(!table.contains(|| tid));
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), CONTEXT_PROBES as u32);
+        // A released owner leaves a reusable tag, not a lifetime reservation.
+        table.slots[start].store(ContextTable::<64>::pack(100, 0), Ordering::Relaxed);
+        let guard = table.enter(|| tid).expect("inactive collision is reusable");
+        assert!(table.contains(|| tid));
+        assert!(!table.contains(|| 100));
+        drop(guard);
+        assert!(!table.contains(|| tid));
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_inactive_duplicate_does_not_hide_live_depth() {
+        let table = ContextTable::<4>::new();
+        let tid = 7;
+        let start = ContextTable::<4>::probe_start(tid);
+        table.slots[start].store(ContextTable::<4>::pack(tid, 0), Ordering::Relaxed);
+        let live = (start + 1) % 4;
+        table.slots[live].store(ContextTable::<4>::pack(tid, 1), Ordering::Relaxed);
+        table.active_hint.store(1, Ordering::Relaxed);
+        let outer = ContextGuard {
+            table: &table, index: live, _not_send_sync: PhantomData,
+        };
+        assert!(table.contains(|| tid));
+        let inner = table.enter(|| tid).expect("live duplicate is nested");
+        assert_eq!(inner.index, live);
+        assert_eq!(ContextTable::<4>::depth(table.slots[live].load(Ordering::Relaxed)), 2);
+        drop(inner);
+        assert!(table.contains(|| tid));
+        drop(outer);
+        assert!(!table.contains(|| tid));
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_fork_preserves_all_exact_slot_guards() {
+        let table = ContextTable::<64>::new();
+        let parent_tid = 2;
+        let child_tid = 1;
+        let start = ContextTable::<64>::probe_start(parent_tid);
+        assert!(!ContextTable::<64>::in_probe_range(start, child_tid));
+        assert!(!ContextTable::<64>::in_probe_range(start + 1, child_tid));
+        for index in [start, start + 1] {
+            table.slots[index].store(
+                ContextTable::<64>::pack(parent_tid, 1), Ordering::Relaxed,
+            );
+        }
+        table.slots[0].store(ContextTable::<64>::pack(99, 1), Ordering::Relaxed);
+        table.active_hint.store(3, Ordering::Relaxed);
+        let first = ContextGuard { table: &table, index: start, _not_send_sync: PhantomData };
+        let second = ContextGuard { table: &table, index: start + 1, _not_send_sync: PhantomData };
+        table.repair_child(parent_tid, child_tid);
+        assert!(!table.contains(|| parent_tid));
+        assert!(!table.contains(|| 99));
+        assert!(table.contains(|| child_tid));
+        drop(first);
+        assert!(table.contains(|| child_tid));
+        drop(second);
+        assert!(!table.contains(|| child_tid));
+        assert_eq!(table.alias_owner.load(Ordering::Relaxed), 0);
+        // The vanished thread's credit remains a hint, never bypass authority.
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
+        let next = table.enter(|| child_tid).expect("child can enter again");
+        assert!(table.contains(|| child_tid));
+        drop(next);
+        assert!(!table.contains(|| child_tid));
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_fork_between_identity_and_slot_publication() {
+        let table = ContextTable::<64>::new();
+        let parent_tid = 2;
+        let child_tid = 1;
+        let mut reads = 0;
+        let guard = table.enter(|| {
+            reads += 1;
+            if reads == 1 {
+                // The entry credit exists, but no slot has been published.
+                table.repair_child(parent_tid, child_tid);
+                assert!(!table.contains(|| child_tid));
+                assert_eq!(table.alias_owner.load(Ordering::Relaxed), 0);
+                // Simulate resuming an entry with the pre-signal TID value.
+                parent_tid
+            } else {
+                child_tid
+            }
+        }).expect("pending entry reconciles its inherited identity");
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
+        assert_eq!(table.alias_owner.load(Ordering::Relaxed), child_tid);
+        assert!(table.contains(|| child_tid));
+        assert!(!table.contains(|| parent_tid));
+        drop(guard);
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 0);
+        assert!(!table.contains(|| child_tid));
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_fork_after_slot_publication() {
+        let table = ContextTable::<64>::new();
+        let parent_tid = 2;
+        let child_tid = 1;
+        let mut reads = 0;
+        let guard = table.enter(|| {
+            reads += 1;
+            if reads == 1 {
+                parent_tid
+            } else {
+                if reads == 2 {
+                    table.repair_child(parent_tid, child_tid);
+                }
+                child_tid
+            }
+        }).expect("published claim survives child repair");
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
+        assert!(table.contains(|| child_tid));
+        assert!(!table.contains(|| parent_tid));
+        drop(guard);
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_fork_repeated_during_reconciliation() {
+        let table = ContextTable::<64>::new();
+        let mut reads = 0;
+        let guard = table.enter(|| {
+            reads += 1;
+            match reads {
+                1 => {
+                    table.repair_child(2, 1);
+                    2
+                }
+                2 => 1,
+                3 => {
+                    // A second child starts after the stale claim was retagged.
+                    table.repair_child(1, 3);
+                    3
+                }
+                _ => 3,
+            }
+        }).expect("every retag is followed by a fresh identity check");
+        assert!(table.contains(|| 3));
+        assert!(!table.contains(|| 1));
+        assert!(!table.contains(|| 2));
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
+        drop(guard);
+        assert!(!table.contains(|| 3));
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_fork_during_negative_lookup() {
+        let table = ContextTable::<64>::new();
+        let guard = table.enter(|| 2).expect("parent context");
+        let mut reads = 0;
+        assert!(table.contains(|| {
+            reads += 1;
+            if reads == 1 {
+                table.repair_child(2, 1);
+                2
+            } else {
+                1
+            }
+        }));
+        drop(guard);
+        assert!(!table.contains(|| 1));
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_missing_identity_and_depth_overflow() {
+        let table = ContextTable::<1>::new();
+        assert!(table.enter(|| 0).is_none());
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 0);
+        assert!(!table.contains(|| 0));
+
+        table.slots[0].store(ContextTable::<1>::pack(7, u32::MAX), Ordering::Relaxed);
+        table.active_hint.store(1, Ordering::Relaxed);
+        assert!(table.enter(|| 7).is_none());
+        assert!(table.contains(|| 7));
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
+        assert_eq!(ContextTable::<1>::depth(table.slots[0].load(Ordering::Relaxed)), u32::MAX);
+
+        table.repair_child(7, 0);
+        assert!(!table.contains(|| 7));
+        assert!(table.enter(|| 7).is_none());
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_identity_failure_rolls_back_published_claim() {
+        let table = ContextTable::<4>::new();
+        let mut reads = 0;
+        assert!(table.enter(|| {
+            reads += 1;
+            if reads == 1 { 7 } else { 0 }
+        }).is_none());
+        assert_eq!(table.active_hint.load(Ordering::Relaxed), 0);
+        assert!(!table.contains(|| 7));
+        let later = table.enter(|| 9).expect("another owner still has admission");
+        assert!(!table.contains(|| 7));
+        drop(later);
+    }
+
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
@@ -461,8 +1002,33 @@ fn enter_native_validation_tid() -> NativeValidationSlot {
 fn leave_native_validation_tid(idx: usize, tid: u32) -> bool {
     let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
     loop {
-        if cur == NATIVE_VALIDATION_TOMBSTONE || (cur >> 32) as u32 != tid {
+        if cur == NATIVE_VALIDATION_TOMBSTONE || cur == NATIVE_VALIDATION_EMPTY {
             return false;
+        }
+        // A fork retag can change the owner between the load and the CAS.
+        // Release the observed word (AcqRel) instead of dropping the update.
+        // Depth zero still retires ACTIVE; a nested depth must not drop it.
+        // Tombstones keep probe chains intact.
+        let owner = (cur >> 32) as u32;
+        if owner != tid {
+            let depth = cur as u32;
+            let next = if depth <= 1 {
+                NATIVE_VALIDATION_TOMBSTONE
+            } else {
+                pack_native_validation(owner, depth - 1)
+            };
+            match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
+                cur,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return depth <= 1,
+                Err(observed) => {
+                    cur = observed;
+                    continue;
+                }
+            }
         }
         let depth = cur as u32;
         let (next, zeroed) = if depth <= 1 {
@@ -509,15 +1075,21 @@ fn in_native_validation_tid() -> bool {
 /// Clear dead sibling threads' validation-context slots in a forked child while
 /// preserving any active validation entry owned by the surviving child TID.
 pub(crate) fn reset_validation_context_in_fork_child() {
+    reset_validation_slots(None);
+}
+
+fn reset_validation_slots(also_owner: Option<u32>) {
     let child_tid = crate::heal::raw_native_tid().max(1) as u32;
     let mut survivor_depth = 0u32;
     for entry in &NATIVE_VALIDATION_ENTRIES {
         let cur = entry.swap(NATIVE_VALIDATION_EMPTY, Ordering::AcqRel);
-        if cur != NATIVE_VALIDATION_EMPTY
-            && cur != NATIVE_VALIDATION_TOMBSTONE
-            && (cur >> 32) as u32 == child_tid
-        {
-            survivor_depth = survivor_depth.saturating_add(cur as u32);
+        if cur != NATIVE_VALIDATION_EMPTY && cur != NATIVE_VALIDATION_TOMBSTONE {
+            let owner = (cur >> 32) as u32;
+            // `also_owner` is the pre-clone parent TID. Slots are still tagged
+            // with that TID until this reset retags them onto the child.
+            if owner == child_tid || Some(owner) == also_owner {
+                survivor_depth = survivor_depth.saturating_add(cur as u32);
+            }
         }
     }
     NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
@@ -539,19 +1111,12 @@ pub(crate) fn reset_validation_context_in_fork_child() {
     ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
 }
 
-struct PinnedEpochGuard<'a> {
-    _guard: crate::ebr::EbrGuard<'a>,
-    /// A registration owned by this guard, when no thread-cached one exists
-    /// (owned-tls-cache builds, or a thread whose TLS is being torn down).
-    _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
-}
-
-struct ValidationExecutionGuard {
+pub(super) struct ValidationExecutionGuard {
     native_slot: NativeValidationSlot,
 }
 
 impl ValidationExecutionGuard {
-    fn adopt_in_fork_child(&mut self) {
+    pub(super) fn adopt_in_fork_child(&mut self) {
         let child_tid = crate::heal::raw_native_tid().max(1) as u32;
         match self.native_slot {
             NativeValidationSlot::Slot {
@@ -640,9 +1205,11 @@ impl Drop for ValidationExecutionGuard {
     }
 }
 
-fn enter_validation_execution_context() -> ValidationExecutionGuard {
+pub(super) fn enter_validation_execution_context() -> Option<ValidationExecutionGuard> {
     #[cfg(not(feature = "owned-tls-cache"))]
-    if !crate::tls_cache::compiler_tls_disabled() {
+    if !crate::tls_cache::compiler_tls_disabled()
+        && !crate::tls_cache::native_threads_may_share_compiler_tls()
+    {
         let _ = VALIDATION_DEPTH.try_with(|depth| {
             let prev = depth.get();
             if prev == 0 {
@@ -652,12 +1219,12 @@ fn enter_validation_execution_context() -> ValidationExecutionGuard {
             }
             depth.set(prev.saturating_add(1));
         });
-        return ValidationExecutionGuard {
+        return Some(ValidationExecutionGuard {
             native_slot: NativeValidationSlot::None,
-        };
+        });
     }
     let native_slot = enter_native_validation_tid();
-    ValidationExecutionGuard { native_slot }
+    Some(ValidationExecutionGuard { native_slot })
 }
 
 #[cold]
@@ -672,12 +1239,28 @@ fn in_validation_context_slow() -> bool {
         if in_native_validation_tid() {
             return true;
         }
-        if !crate::tls_cache::compiler_tls_disabled() {
+        if !crate::tls_cache::compiler_tls_disabled()
+            && !crate::tls_cache::native_threads_may_share_compiler_tls()
+        {
             return VALIDATION_DEPTH
                 .try_with(|depth| depth.get() > 0)
                 .unwrap_or(false);
         }
         false
+    }
+}
+
+
+/// Retain validation recursion ownership in a newly forked child.
+///
+/// # Safety
+/// Call before any potentially interposed memory operation, as the sole
+/// surviving thread, with blockable signals masked. `parent_tid` is the
+/// positive raw kernel TID captured before clone.
+pub unsafe fn note_validation_fork_child(parent_tid: i32) {
+    match u32::try_from(parent_tid) {
+        Ok(parent) if parent != 0 => reset_validation_slots(Some(parent)),
+        _ => reset_validation_slots(None),
     }
 }
 
@@ -689,6 +1272,71 @@ pub fn in_validation_context() -> bool {
     }
     in_validation_context_slow()
 }
+}
+
+// Other targets do not use the native clone backend. Keep their full-width
+// Rust thread identity implicit in compiler TLS rather than truncating a hash.
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+thread_local! {
+    static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+struct ValidationExecutionGuard {
+    _not_send_sync: std::marker::PhantomData<*mut ()>,
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+impl Drop for ValidationExecutionGuard {
+    fn drop(&mut self) {
+        let _ = VALIDATION_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
+        ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+fn enter_validation_execution_context() -> Option<ValidationExecutionGuard> {
+    ACTIVE_VALIDATION_CONTEXTS.fetch_update(
+        Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1),
+    ).ok()?;
+    let entered = VALIDATION_DEPTH.try_with(|depth| {
+        let next = depth.get().checked_add(1)?;
+        depth.set(next);
+        Some(())
+    }).ok().flatten();
+    if entered.is_none() {
+        ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
+        return None;
+    }
+    Some(ValidationExecutionGuard { _not_send_sync: std::marker::PhantomData })
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[inline(always)]
+#[must_use]
+pub fn in_validation_context() -> bool {
+    ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) != 0
+        && VALIDATION_DEPTH.try_with(|depth| depth.get() != 0).unwrap_or(false)
+}
+
+/// Retain validation recursion ownership in a newly forked child.
+///
+/// # Safety
+/// The caller is the sole survivor, with blockable signals masked, before
+/// any operation that may enter the membrane. parent_tid was captured raw
+/// before clone. A syscall policy that changes gettid availability across
+/// clone is not a supported recovery path; ambiguous ownership fails closed.
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+pub unsafe fn note_validation_fork_child(_parent_tid: i32) {}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+use kernel_validation_context::{ValidationExecutionGuard, enter_validation_execution_context};
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub use kernel_validation_context::{in_validation_context, note_validation_fork_child};
 
 impl ValidationPipeline {
     /// Create a new validation pipeline.
@@ -718,7 +1366,9 @@ impl ValidationPipeline {
     /// Pin the EBR epoch for the duration of validation.
     fn pin_epoch(&self) -> PinnedEpochGuard<'_> {
         #[cfg(not(feature = "owned-tls-cache"))]
-        if !crate::tls_cache::compiler_tls_disabled() {
+        if !crate::tls_cache::compiler_tls_disabled()
+            && !crate::tls_cache::native_threads_may_share_compiler_tls()
+        {
             let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
             // `try_with`: validation also runs during thread teardown -- host
             // thread-key destructors (OpenSSL's per-thread cleanup) call
@@ -1089,18 +1739,29 @@ impl ValidationPipeline {
     /// against a concurrent free (hardened fixture_fork_mt: fork waiting for
     /// page-oracle readers to drain while holding every shard). The arena
     /// guard does not allocate, so taking it under the page lock is safe.
+    ///
+    /// # Panics
+    /// Panics before taking pipeline locks if recursion ownership cannot be
+    /// registered. ABI fork paths use `try_atfork_prepare` to report EAGAIN.
     pub fn atfork_prepare(&self) -> PipelineAtforkGuard<'_> {
+        self.try_atfork_prepare()
+            .expect("validation context unavailable before fork")
+    }
+
+    /// Acquire fork guards only after recursion ownership is registered.
+    /// Returns `None` before taking any pipeline lock if admission is unavailable.
+    pub fn try_atfork_prepare(&self) -> Option<PipelineAtforkGuard<'_>> {
         // Before the locks: moving the guards is a `memcpy`, which in the
         // libc build is the exported, membrane-validated one. Its validation
         // took the page-oracle lock this thread had just taken for writing,
         // and the forking thread (git's test shell under hardened) hung.
-        let validation = enter_validation_execution_context();
+        let validation = enter_validation_execution_context()?;
         let page_oracle = self.page_oracle.atfork_prepare();
-        PipelineAtforkGuard {
+        Some(PipelineAtforkGuard {
             _arena: self.arena.atfork_prepare(),
             _page_oracle: page_oracle,
             _validation: validation,
-        }
+        })
     }
 
     /// Run a pointer through the validation pipeline.
@@ -1184,13 +1845,116 @@ impl ValidationPipeline {
         }
 
         let cached = try_with_tls_cache_hit(None, |cache| {
-            let hit = cache.lookup_hit_only_with_arena(addr, Some(&self.arena));
+            let mut hit = cache.lookup_hit_only_with_arena(addr, Some(&self.arena));
             if hit.is_some() {
                 cache.record_pipeline_hits(1);
+                if cache.integrity_recheck_due(addr) {
+                    hit = hit.and_then(|cv| self.recheck_cached_allocation(cache, addr, cv));
+                }
             }
             hit
         });
-        cached.map(|cv| ValidationOutcome::CachedValid(Self::abstraction_from_cached(addr, cv)))
+        cached.map(|cv| Self::outcome_from_cached(addr, cv))
+    }
+
+    /// Authenticate cached geometry against the live arena while its shard is
+    /// locked. An epoch check alone cannot keep memory alive across a raw read:
+    /// a concurrent free may reclaim it immediately after that check.
+    #[inline(never)]
+    fn recheck_cached_allocation(
+        &self,
+        cache: &mut TlsValidationCache,
+        addr: usize,
+        cached: CachedValidation,
+    ) -> Option<CachedValidation> {
+        let _validation_context = enter_validation_execution_context()?;
+        let integrity = self.arena.verify_cached_allocation(
+            cached.user_base,
+            cached.user_size,
+            cached.generation,
+        );
+        match integrity {
+            CachedAllocationIntegrity::Valid => Some(cached),
+            CachedAllocationIntegrity::Stale => {
+                cache.invalidate(cached.user_base);
+                None
+            }
+            CachedAllocationIntegrity::FingerprintCorruption
+            | CachedAllocationIntegrity::CanaryCorruption => {
+                // Remove every alias, including the exact-address table, so a
+                // later unsampled access cannot resurrect the old valid extent.
+                cache.invalidate(cached.user_base);
+                if safety_level().heals_enabled() {
+                    let symbol = match integrity {
+                        CachedAllocationIntegrity::FingerprintCorruption => {
+                            "cached_header_integrity"
+                        }
+                        _ => "cached_tail_integrity",
+                    };
+                    crate::heal::global_healing_policy().record_allocation_free(
+                        "pointer_validation",
+                        symbol,
+                        &crate::heal::HealingAction::ClampSize {
+                            requested: cached
+                                .user_size
+                                .saturating_sub(addr.wrapping_sub(cached.user_base)),
+                            clamped: 0,
+                        },
+                        crate::heal::RepairLogContext::new(0, Some(addr)),
+                    );
+                }
+                Some(CachedValidation {
+                    state: crate::lattice::SafetyState::Invalid,
+                    ..cached
+                })
+            }
+        }
+    }
+
+    #[inline]
+    fn outcome_from_cached(addr: usize, cached: CachedValidation) -> ValidationOutcome {
+        let abstraction = Self::abstraction_from_cached(addr, cached);
+        if cached.state == crate::lattice::SafetyState::Invalid {
+            ValidationOutcome::Invalid(abstraction)
+        } else {
+            ValidationOutcome::CachedValid(abstraction)
+        }
+    }
+
+    #[inline]
+    fn recheck_cached_remaining(
+        &self,
+        cache: &mut TlsValidationCache,
+        addr: usize,
+    ) -> CachedRemaining {
+        let Some(cached) = cache.peek(addr) else {
+            return CachedRemaining::MISS;
+        };
+        let Some(checked) = self.recheck_cached_allocation(cache, addr, cached) else {
+            return CachedRemaining::MISS;
+        };
+        if checked.state == crate::lattice::SafetyState::Invalid {
+            CachedRemaining::from_option(Some(0))
+        } else {
+            CachedRemaining::from_option(Some(
+                checked
+                    .user_size
+                    .saturating_sub(addr.wrapping_sub(checked.user_base)),
+            ))
+        }
+    }
+
+    /// Force an integrity check before a write reaches an allocation's last
+    /// cache line. The caller falls back to ordinary validation on a cache miss.
+    #[inline]
+    pub fn try_revalidate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
+        if addr == 0 || !safety_level().validation_enabled() {
+            return None;
+        }
+        try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
+            self.recheck_cached_remaining(cache, addr)
+        })
+        .decode()
     }
 
     #[cold]
@@ -1268,6 +2032,16 @@ impl ValidationPipeline {
             }
             return Some(Some(0));
         }
+        if cached.is_known_bound() {
+            return try_with_tls_cache_hit(cached, |cache| {
+                if cache.integrity_recheck_due(addr) {
+                    self.recheck_cached_remaining(cache, addr)
+                } else {
+                    cached
+                }
+            })
+            .decode();
+        }
         cached.decode()
     }
 
@@ -1314,19 +2088,42 @@ impl ValidationPipeline {
             Some(&self.arena),
             write_len,
         );
-        if l.is_corrupted() {
+        let l_corrupt = l.is_corrupted();
+        let r_corrupt = r.is_corrupted();
+        if l_corrupt {
             l = if mode.heals_enabled() {
                 CachedRemaining::clamped_zero()
             } else {
                 CachedRemaining::MISS
             };
         }
-        if r.is_corrupted() {
+        if r_corrupt {
             r = if mode.heals_enabled() {
                 CachedRemaining::clamped_zero()
             } else {
                 CachedRemaining::MISS
             };
+        }
+        if (!l_corrupt && l.is_known_bound()) || (!r_corrupt && r.is_known_bound()) {
+            let current = (l, r);
+            (l, r) = try_with_tls_cache_hit(current, |cache| {
+                let mut left = current.0;
+                let mut right = current.1;
+                let left_due =
+                    !l_corrupt && left.is_known_bound() && cache.integrity_recheck_due(lhs);
+                let right_due = !r_corrupt
+                    && right.is_known_bound()
+                    && cache.integrity_recheck_due(rhs);
+                if left_due || right_due {
+                    if left_due {
+                        left = self.recheck_cached_remaining(cache, lhs);
+                    }
+                    if right_due {
+                        right = self.recheck_cached_remaining(cache, rhs);
+                    }
+                }
+                (left, right)
+            });
         }
         (l, r)
     }
@@ -1365,7 +2162,7 @@ impl ValidationPipeline {
         // this thread meanwhile sees it and does not wait for a writer lock
         // behind its own read (bd-na6ede).
         let owned_page = {
-            let _validation_context = enter_validation_execution_context();
+            let _validation_context = enter_validation_execution_context()?;
             self.page_oracle.query(addr)
         };
         if owned_page {
@@ -1386,7 +2183,9 @@ impl ValidationPipeline {
         addr: usize,
         security_context: ValidationSecurityContext,
     ) -> ValidationOutcome {
-        let _validation_context = enter_validation_execution_context();
+        let Some(_validation_context) = enter_validation_execution_context() else {
+            return ValidationOutcome::Denied(PointerAbstraction::invalid(addr));
+        };
         let metrics = global_metrics();
         MembraneMetrics::inc(&metrics.validations);
         let mode = safety_level();
@@ -1563,9 +2362,18 @@ impl ValidationPipeline {
                 CheckStage::TlsCache => {
                     elapsed_ns =
                         elapsed_ns.saturating_add(u64::from(CheckStage::TlsCache.cost_ns()));
-                    let cached =
-                        with_tls_cache(|cache| cache.lookup_with_arena(addr, Some(&self.arena)));
+                    let cached = with_tls_cache(|cache| {
+                        let cached = cache.lookup_with_arena(addr, Some(&self.arena));
+                        if cached.is_some() && cache.integrity_recheck_due(addr) {
+                            cached.and_then(|cv| self.recheck_cached_allocation(cache, addr, cv))
+                        } else {
+                            cached
+                        }
+                    });
                     if let Some(cv) = cached {
+                        if cv.state == crate::lattice::SafetyState::Invalid {
+                            return Self::outcome_from_cached(addr, cv);
+                        }
                         MembraneMetrics::inc(&metrics.tls_cache_hits);
                         self.emit_validation_log(
                             &trace,
@@ -2404,6 +3212,7 @@ impl ValidationPipeline {
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
         let res = self.arena.allocate(size)?;
         self.register_allocation(res.user_base, res.raw_base, res.total_size);
+        self.observe_arena_fragmentation();
         Some(res.ptr)
     }
 
@@ -2411,6 +3220,7 @@ impl ValidationPipeline {
     pub fn allocate_aligned(&self, size: usize, align: usize) -> Option<*mut u8> {
         let res = self.arena.allocate_aligned(size, align)?;
         self.register_allocation(res.user_base, res.raw_base, res.total_size);
+        self.observe_arena_fragmentation();
         Some(res.ptr)
     }
 
@@ -2458,7 +3268,28 @@ impl ValidationPipeline {
             let _ = self.collector.try_advance();
         }
 
+        // Report the real outcome after arena and retirement locks are gone.
+        // The ABI observer skips healthy allocations and certified frees, so
+        // it cannot drive this controller. Keep its existing 20 ns cost proxy;
+        // retirement counts, quarantine hits and contention are live signals.
+        self.runtime_math
+            .observe_allocator_free(safety_level(), result, 20);
+        self.observe_arena_fragmentation();
+
         (result, user_size)
+    }
+
+    /// Completed arena transitions supply their own sampled feedback. Generic
+    /// ABI observations cannot identify allocations/frees or measure the heap.
+    fn observe_arena_fragmentation(&self) {
+        if !safety_level().heals_enabled() || !self.runtime_math.validation_feedback_enabled() {
+            return;
+        }
+        if let Some(sample) = self.arena.take_fragmentation_observation()
+            && !self.runtime_math.observe_allocator_fragmentation(sample)
+        {
+            self.arena.defer_fragmentation_observation();
+        }
     }
 
     /// Deterministically corrupt the trailing canary for a user allocation.
@@ -2696,7 +3527,6 @@ mod tests {
     /// `in_validation_context()`; fork's guard must keep that true for as
     /// long as it holds the page-oracle lock, or a guard move (a memcpy)
     /// re-enters `PageOracle::query` and blocks on its own write lock.
-    #[cfg(not(feature = "owned-tls-cache"))]
     #[test]
     fn atfork_guard_marks_thread_in_validation_while_locks_held() {
         let pipeline = ValidationPipeline::new();
@@ -2721,6 +3551,100 @@ mod tests {
             rx.recv_timeout(std::time::Duration::from_secs(10))
                 .expect("oracle readable after the fork guard drops");
         });
+    }
+
+    #[test]
+    fn validation_context_isolated_between_kernel_threads() {
+        assert!(!in_validation_context());
+        let outer = enter_validation_execution_context().expect("outer context");
+        assert!(in_validation_context());
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                assert!(!in_validation_context(), "another thread must still validate");
+                let inner = enter_validation_execution_context().expect("independent context");
+                assert!(in_validation_context());
+                drop(inner);
+                assert!(!in_validation_context(), "the parent's live guard grants no bypass");
+            }).join().expect("independent validation thread");
+            assert!(in_validation_context());
+        });
+        drop(outer);
+        assert!(!in_validation_context());
+    }
+
+    #[test]
+    fn validation_context_nested_guards_release_on_unwind() {
+        assert!(!in_validation_context());
+        let outer = enter_validation_execution_context().expect("outer context");
+        let result = std::panic::catch_unwind(|| {
+            let _inner = enter_validation_execution_context().expect("nested context");
+            assert!(in_validation_context());
+            panic!("exercise validation guard unwind");
+        });
+        assert!(result.is_err());
+        assert!(in_validation_context(), "unwind retains the enclosing guard");
+        drop(outer);
+        assert!(!in_validation_context());
+        let result = std::panic::catch_unwind(|| {
+            let _guard = enter_validation_execution_context().expect("unwound outer context");
+            panic!("exercise outer validation guard unwind");
+        });
+        assert!(result.is_err());
+        assert!(!in_validation_context());
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_probe_exhaustion_and_reclamation() {
+        kernel_validation_context::test_probe_exhaustion_and_reclamation();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_inactive_duplicate_does_not_hide_live_depth() {
+        kernel_validation_context::test_inactive_duplicate_does_not_hide_live_depth();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_fork_preserves_all_exact_slot_guards() {
+        kernel_validation_context::test_fork_preserves_all_exact_slot_guards();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_fork_between_identity_and_slot_publication() {
+        kernel_validation_context::test_fork_between_identity_and_slot_publication();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_fork_after_slot_publication() {
+        kernel_validation_context::test_fork_after_slot_publication();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_fork_repeated_during_reconciliation() {
+        kernel_validation_context::test_fork_repeated_during_reconciliation();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_fork_during_negative_lookup() {
+        kernel_validation_context::test_fork_during_negative_lookup();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_missing_identity_and_depth_overflow() {
+        kernel_validation_context::test_missing_identity_and_depth_overflow();
+    }
+
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[test]
+    fn validation_context_identity_failure_rolls_back_published_claim() {
+        kernel_validation_context::test_identity_failure_rolls_back_published_claim();
     }
 
     #[test]
@@ -2813,10 +3737,10 @@ mod tests {
     fn owned_tls_cache_lane_tracks_validation_depth_without_rust_tls() {
         assert!(!in_validation_context());
         {
-            let _outer = enter_validation_execution_context();
+            let _outer = enter_validation_execution_context().expect("outer context");
             assert!(in_validation_context());
             {
-                let _inner = enter_validation_execution_context();
+                let _inner = enter_validation_execution_context().expect("nested context");
                 assert!(in_validation_context());
             }
             assert!(in_validation_context());
@@ -3061,6 +3985,179 @@ mod tests {
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn warm_cache_corruption_is_detected_by_every_validation_entrypoint() {
+        use crate::tls_cache::INTEGRITY_RECHECK_INTERVAL;
+
+        // Exercise both members of paired lookups: checking only the second
+        // operand at an even cadence would leave the first permanently warm.
+        for corrupt_header in [false, true] {
+            for route in 0..5 {
+                let pipeline = ValidationPipeline::with_runtime_math(false);
+                let size = 1024;
+                let ptr = pipeline.allocate(size).expect("tracked allocation");
+                let peer = pipeline.allocate(size).expect("paired positive control");
+                let addr = ptr as usize;
+                let peer_addr = peer as usize;
+                let corrupt_addr = if corrupt_header {
+                    addr - FINGERPRINT_SIZE
+                } else {
+                    addr + size
+                };
+                {
+                    let _epochs = lock_tls_cache_epoch_for_tests();
+                    pipeline.set_validation_logging_enabled(route == 4);
+                    assert!(pipeline.validate(addr).can_write());
+                    assert!(pipeline.validate(peer_addr).can_write());
+                    assert!(matches!(
+                        pipeline.validate(addr),
+                        ValidationOutcome::CachedValid(_)
+                    ));
+                    // SAFETY: both allocations remain live, and the selected byte
+                    // is inside the allocator-owned header or trailing redzone.
+                    let original = unsafe {
+                        let byte = corrupt_addr as *mut u8;
+                        let original = byte.read_volatile();
+                        byte.write_volatile(original ^ 1);
+                        original
+                    };
+                    let metrics = global_metrics();
+                    let failures = if corrupt_header {
+                        &metrics.fingerprint_failures
+                    } else {
+                        &metrics.canary_failures
+                    };
+                    let before = MembraneMetrics::get(failures);
+                    let mut detected = false;
+                    for _ in 0..INTEGRITY_RECHECK_INTERVAL {
+                        let remaining = match route {
+                            1 => pipeline.try_validate_cached_remaining(addr).flatten(),
+                            2 => pipeline
+                                .try_validate_cached_remaining_pair(addr, peer_addr)
+                                .0
+                                .decode()
+                                .flatten(),
+                            3 => pipeline
+                                .try_validate_cached_remaining_pair(peer_addr, addr)
+                                .1
+                                .decode()
+                                .flatten(),
+                            _ => pipeline
+                                .validate(addr)
+                                .access_abstraction()
+                                .and_then(|a| a.remaining),
+                        };
+                        if remaining == Some(0) {
+                            detected = true;
+                            break;
+                        }
+                    }
+                    assert!(
+                        detected,
+                        "warm corruption escaped route={route}, header={corrupt_header}"
+                    );
+                    assert!(MembraneMetrics::get(failures) > before);
+                    assert!(
+                        with_tls_cache(|cache| cache.peek(addr).is_none()),
+                        "all cached aliases must be evicted"
+                    );
+                    assert!(
+                        !pipeline.validate(addr).can_write(),
+                        "a later call must not revive cached access"
+                    );
+                    assert!(
+                        pipeline.validate(peer_addr).can_write(),
+                        "intact peer remains usable"
+                    );
+                    // SAFETY: restore the same live redzone byte before cleanup.
+                    unsafe { (corrupt_addr as *mut u8).write_volatile(original) };
+                }
+                assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+                assert_eq!(pipeline.free(peer), FreeResult::Freed);
+            }
+        }
+    }
+
+    #[test]
+    fn forced_warm_cache_integrity_check_rejects_immediately() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let size = 1024;
+        let ptr = pipeline.allocate(size).expect("tracked allocation");
+        let addr = ptr as usize;
+        {
+            let _epochs = lock_tls_cache_epoch_for_tests();
+            assert!(pipeline.validate(addr).can_write());
+            assert_eq!(
+                pipeline.try_revalidate_cached_remaining(addr + 960),
+                Some(Some(64))
+            );
+            // SAFETY: the tail belongs to this live allocation; corrupt exactly
+            // one byte and restore it after the immediate-denial observation.
+            let original = unsafe {
+                let tail = ptr.add(size);
+                let original = tail.read_volatile();
+                tail.write_volatile(original ^ 0x80);
+                original
+            };
+            assert_eq!(
+                pipeline.try_revalidate_cached_remaining(addr + 960),
+                Some(Some(0))
+            );
+            assert!(with_tls_cache(|cache| cache.peek(addr).is_none()));
+            // SAFETY: same live trailing redzone byte as above.
+            unsafe { ptr.add(size).write_volatile(original) };
+        }
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+
+    #[test]
+    fn warm_cache_sampling_cannot_be_steered_to_healthy_allocations() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let size = 1024;
+        let ptr = pipeline.allocate(size).expect("corruption target");
+        let peer = pipeline
+            .allocate(size)
+            .expect("intact interleaved allocation");
+        {
+            let _epochs = lock_tls_cache_epoch_for_tests();
+            assert!(pipeline.validate(ptr as usize).can_write());
+            assert!(pipeline.validate(peer as usize).can_write());
+            let _ = pipeline.try_validate_cached_remaining(ptr as usize);
+            let _ = pipeline.try_validate_cached_remaining(peer as usize);
+            // SAFETY: the target is live, including its 8-byte redzone.
+            let original = unsafe {
+                let tail = ptr.add(size);
+                let original = tail.read_volatile();
+                tail.write_volatile(original ^ 1);
+                original
+            };
+            let mut detected = false;
+            for hit in 0..crate::tls_cache::INTEGRITY_RECHECK_INTERVAL {
+                // Vary the interior address as well: aliases must share a budget.
+                if pipeline.try_validate_cached_remaining(ptr as usize + usize::from(hit))
+                    == Some(Some(0))
+                {
+                    detected = true;
+                    break;
+                }
+                for _ in 0..15 {
+                    assert_eq!(
+                        pipeline.try_validate_cached_remaining(peer as usize),
+                        Some(Some(size))
+                    );
+                }
+            }
+            assert!(
+                detected,
+                "healthy interleaving must not starve a corrupt allocation's probe"
+            );
+            // SAFETY: restore the still-live tail before freeing the allocation.
+            unsafe { ptr.add(size).write_volatile(original) };
+        }
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+        assert_eq!(pipeline.free(peer), FreeResult::Freed);
     }
 
     #[test]

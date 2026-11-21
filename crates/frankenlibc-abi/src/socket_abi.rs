@@ -370,9 +370,14 @@ pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flag
     }
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
-        })
+        crate::pthread_abi::cancellation_point_sendto(
+            sockfd,
+            buf as *const u8,
+            len,
+            flags,
+            std::ptr::null(),
+            0,
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -530,16 +535,14 @@ pub(crate) unsafe fn sendto_cp(
     }
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendto(
-                sockfd,
-                buf as *const u8,
-                len,
-                flags,
-                dest_addr as *const u8,
-                addrlen as usize,
-            )
-        })
+        crate::pthread_abi::cancellation_point_sendto(
+            sockfd,
+            buf as *const u8,
+            len,
+            flags,
+            dest_addr as *const u8,
+            addrlen as usize,
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -998,6 +1001,28 @@ pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: 
         match msg_snapshot::PreparedMessage::prepare(msg) {
             Ok(message) => Some(message),
             Err(error) => {
+                // Linux resolves the descriptor as a socket before importing
+                // msghdr/iovecs. Preserve EBADF/ENOTSOCK on a rejected graph,
+                // without ever submitting that unchecked graph to sendmsg.
+                // The success path pays no additional descriptor query.
+                let mut socket_type: c_int = 0;
+                let mut option_length = std::mem::size_of::<c_int>() as u32;
+                // SAFETY: both output arguments are live, aligned scalar
+                // storage; this read-only query transmits no caller bytes.
+                let descriptor_error = unsafe {
+                    raw_syscall::sys_getsockopt(
+                        sockfd,
+                        libc::SOL_SOCKET,
+                        libc::SO_TYPE,
+                        std::ptr::from_mut(&mut socket_type).cast(),
+                        &mut option_length,
+                    )
+                }
+                .err();
+                let error = match descriptor_error {
+                    Some(error @ (libc::EBADF | libc::ENOTSOCK)) => error,
+                    _ => error,
+                };
                 unsafe { set_abi_errno(error) };
                 runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
                 return -1;
@@ -1011,9 +1036,7 @@ pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: 
         .map_or(msg, |message| message.as_mut_ptr().cast_const());
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendmsg(sockfd, submitted.cast(), flags)
-        })
+        crate::pthread_abi::cancellation_point_sendmsg(sockfd, submitted.cast(), flags)
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -1081,9 +1104,7 @@ pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_
         .map_or(msg, |message| message.as_mut_ptr());
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_recvmsg(sockfd, submitted.cast(), flags)
-        })
+        crate::pthread_abi::cancellation_point_recvmsg(sockfd, submitted.cast(), flags)
     } {
         Ok(n) => {
             if let Some(message) = prepared.as_ref() {

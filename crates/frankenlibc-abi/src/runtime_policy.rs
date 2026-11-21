@@ -25,6 +25,9 @@ use frankenlibc_membrane::decision_contract::{
     DecisionAction as DecisionContractAction, DecisionContractMachine,
     DecisionEvent as DecisionContractEvent, TsmState,
 };
+use frankenlibc_membrane::runtime_math::allocator_telemetry::{
+    SegmentSizeClassMapping, SegmentSizeClassTelemetry, SegmentSizeClassTelemetrySnapshot,
+};
 use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeEvidenceContractSnapshot,
     RuntimeKernelSnapshot, RuntimeMathKernel, ValidationProfile,
@@ -93,6 +96,7 @@ pub(crate) const FFI_PCC_STRNCPY_INDEX: u8 = 23;
 // sees INITIALIZING returns None (passthrough).
 static KERNEL_STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
 static KERNEL_PTR: AtomicPtr<RuntimeMathKernel> = AtomicPtr::new(std::ptr::null_mut());
+static ALLOCATOR_SIZE_CLASS_TELEMETRY: SegmentSizeClassTelemetry = SegmentSizeClassTelemetry::new();
 static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);
 static PANIC_HOOK_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_UNSET);
 static PANIC_HOOK_WRITE_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_WRITE_IDLE);
@@ -1358,10 +1362,13 @@ fn resolved_mode_cold() -> SafetyLevel {
 pub(crate) fn mode() -> SafetyLevel {
     // Owned scratch storage grows through the allocator. Its first access can
     // therefore call back into mode() while RUNTIME_POLICY_OWNED_TLS is locked,
-    // including before the process mode has been resolved. Consult only the
-    // immutable atomic in that context: trying the TLS cache again waits for
-    // this very frame. Unresolved/resolving retains the existing strict
-    // bootstrap behavior, without caching that temporary answer.
+    // including before the process mode has been resolved. Owned policy state,
+    // including default native-thread state, can also be in use when allocator
+    // callbacks or signal handlers reenter mode(). Consult only the immutable
+    // process atomic: trying the TLS cache again waits for this very frame, and
+    // another owned borrow would also hit the unavailable-TLS sampler's
+    // environment scan and logging lock. Unresolved/resolving retains the
+    // existing strict bootstrap behavior, without caching that temporary answer.
     if runtime_policy_tls_reentry_active() {
         return u8_to_mode(MODE_STATE.load(AtomicOrdering::Acquire));
     }
@@ -1970,9 +1977,9 @@ struct RuntimePolicyCells {
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static RUNTIME_POLICY_TLS: RuntimePolicyCells = const {
-        RuntimePolicyCells {
+impl RuntimePolicyCells {
+    const fn new() -> Self {
+        Self {
             mode_cache: Cell::new(MODE_UNRESOLVED),
             mode_switch_counter: Cell::new(0),
             trace_counter: Cell::new(0),
@@ -1987,7 +1994,56 @@ thread_local! {
                 DECISION_CONTRACT_CLEAR_THRESHOLD,
             )),
         }
-    };
+    }
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static HOST_RUNTIME_POLICY_TLS: RuntimePolicyCells = const { RuntimePolicyCells::new() };
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+static NATIVE_RUNTIME_POLICY_TLS: crate::owned_tls_cache::OwnedTlsCache<RuntimePolicyCells> =
+    crate::owned_tls_cache::OwnedTlsCache::new(RuntimePolicyCells::new);
+
+/// Hosted callers retain their compiler-TLS state even after creating a native
+/// child. Registered native callers instead use the private key table whose
+/// lifetime is tied to their own kernel TID. Never let a child's policy guard,
+/// trace, certificate or RefCell borrow become its creator's state.
+#[cfg(not(feature = "owned-tls-cache"))]
+struct RuntimePolicyTlsAccess;
+
+#[cfg(not(feature = "owned-tls-cache"))]
+static RUNTIME_POLICY_TLS: RuntimePolicyTlsAccess = RuntimePolicyTlsAccess;
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[inline]
+fn native_runtime_policy_state_required() -> Result<bool, ()> {
+    if !frankenlibc_membrane::tls_cache::native_threads_may_share_compiler_tls() {
+        return Ok(false);
+    }
+    let tid = frankenlibc_core::syscall::sys_gettid();
+    if tid <= 0 {
+        return Err(());
+    }
+    Ok(frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some())
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+impl RuntimePolicyTlsAccess {
+    #[inline]
+    fn try_with<R>(&self, callback: impl FnOnce(&RuntimePolicyCells) -> R) -> Result<R, ()> {
+        if native_runtime_policy_state_required()? {
+            // Initialization can reach an interposed memcpy before the payload
+            // exists. A recursive access must fail, never borrow the same slot
+            // twice or fall back to the creator's inherited compiler TLS.
+            if NATIVE_RUNTIME_POLICY_TLS.is_accessed_by_current_thread() {
+                return Err(());
+            }
+            return Ok(NATIVE_RUNTIME_POLICY_TLS.with(|state| callback(state)));
+        }
+        HOST_RUNTIME_POLICY_TLS.try_with(callback).map_err(|_| ())
+    }
 }
 
 fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
@@ -3103,23 +3159,127 @@ fn record_pcc_explainability(
     });
 }
 
+/// Record an actual fresh segment class selection without constructing a kernel.
+/// The producer is integer-only, allocation-free, lock-free and TLS-free. An
+/// unresolved switch or busy controller leaves bounded pending telemetry.
+#[inline]
+pub(crate) fn observe_allocator_size_class_selection(
+    requested_size: u16,
+    mapped_class_size: u32,
+    class_membership_valid: bool,
+) {
+    if !frankenlibc_membrane::runtime_math::RUNTIME_MATH_PRODUCTION_ENABLED
+        || RUNTIME_MATH_STATE.load(AtomicOrdering::Relaxed) == RUNTIME_MATH_OFF
+    {
+        return;
+    }
+    if !ALLOCATOR_SIZE_CLASS_TELEMETRY.record(SegmentSizeClassMapping {
+        requested_size,
+        mapped_class_size,
+        class_membership_valid,
+    }) {
+        return;
+    }
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        // SAFETY: READY publishes an immutable, process-lifetime kernel.
+        let kernel = unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) };
+        flush_pending_allocator_size_classes(kernel);
+    }
+}
+
+#[inline]
+fn flush_pending_allocator_size_classes(kernel: &RuntimeMathKernel) {
+    // Resolving the environment switch can log/allocate. Only explicit kernel
+    // initialization/export paths resolve it; malloc never does that work.
+    if RUNTIME_MATH_STATE.load(AtomicOrdering::Acquire) == RUNTIME_MATH_ON {
+        let _ = kernel.observe_pending_allocator_size_classes(&ALLOCATOR_SIZE_CLASS_TELEMETRY);
+    }
+}
+
+pub(crate) fn allocator_size_class_telemetry_snapshot() -> SegmentSizeClassTelemetrySnapshot {
+    ALLOCATOR_SIZE_CLASS_TELEMETRY.snapshot()
+}
+
+pub(crate) fn runtime_kernel_is_ready() -> bool {
+    KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY
+}
+
 /// Build the runtime-math kernel now if no call has yet. Process startup does
 /// this before main: built lazily, the kernel's first use can come after the
 /// program has capped RLIMIT_AS, where its ~158 KiB construction frame cannot
 /// grow the stack and faults (gnulib test-dprintf-posix2 under strict).
 pub(crate) fn prewarm_kernel() {
-    let _ = kernel();
+    if runtime_math_enabled() {
+        let _ = kernel();
+    }
+}
+
+/// Complete policy allocation before a native clone inherits host TLS.
+///
+/// Strict cold startup and an explicit runtime-math opt-out stay lazy. An
+/// already native creator may only use prepared storage; allocating from its
+/// inherited host allocator would race its creator's allocator state.
+pub(crate) fn prepare_native_thread_runtime() -> Result<(), i32> {
+    // Key publication and per-thread slot allocation use raw mappings. Publish
+    // the key on the creator so the child's first policy access only needs its
+    // own payload; strict cold startup still leaves the math kernel lazy.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    NATIVE_RUNTIME_POLICY_TLS.prepare_key();
+    #[cfg(feature = "owned-tls-cache")]
+    RUNTIME_POLICY_OWNED_TLS.prepare_key();
+    let state = KERNEL_STATE.load(AtomicOrdering::Acquire);
+    if state == STATE_BROKEN {
+        return Ok(());
+    }
+    let _ = mode();
+    let mode_state = MODE_STATE.load(AtomicOrdering::Acquire);
+    if matches!(mode_state, MODE_UNRESOLVED | MODE_RESOLVING) {
+        return Err(libc::EAGAIN);
+    }
+    let level = u8_to_mode(mode_state);
+    if !level.heals_enabled() && state != STATE_READY {
+        return Ok(());
+    }
+    match resolved_runtime_math_enabled() {
+        Some(false) => return Ok(()),
+        Some(true) => {}
+        None => return Err(libc::EAGAIN),
+    }
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+        if state != STATE_READY {
+            return Err(libc::EAGAIN);
+        }
+        // SAFETY: READY publishes the process-lifetime kernel.
+        let ready = unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) }.runtime_storage_ready();
+        return if ready { Ok(()) } else { Err(libc::EAGAIN) };
+    }
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return Err(libc::EAGAIN);
+    };
+    let Some(kernel) = kernel() else {
+        return if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_BROKEN {
+            Ok(())
+        } else {
+            Err(libc::EAGAIN)
+        };
+    };
+    if kernel.prepare_runtime_storage() {
+        Ok(())
+    } else {
+        Err(libc::EAGAIN)
+    }
 }
 
 #[inline]
 fn kernel() -> Option<&'static RuntimeMathKernel> {
-    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
-        // Fast path: already initialized.
+    let kernel = if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
         // SAFETY: once READY, KERNEL_PTR is valid and never changes.
-        let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
-        return Some(unsafe { &*ptr });
-    }
-    kernel_init()
+        unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) }
+    } else {
+        kernel_init()?
+    };
+    flush_pending_allocator_size_classes(kernel);
+    Some(kernel)
 }
 
 /// [`kernel`]'s initialization path, kept out of line. With the kernel's
@@ -3145,6 +3305,13 @@ fn kernel_init() -> Option<&'static RuntimeMathKernel> {
 
     if state == STATE_INITIALIZING {
         // Reentrant call during init — passthrough to raw C behavior.
+        return None;
+    }
+
+    // A native clone has no independent host allocator TLS. Its creator must
+    // prepare the kernel; even an explicit diagnostic on the worker cannot
+    // safely become the first constructor. A host caller can retry later.
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
         return None;
     }
 
@@ -3182,6 +3349,17 @@ fn kernel_init() -> Option<&'static RuntimeMathKernel> {
             return None;
         }
     };
+    // READY must include the evidence rings. A strict native worker can exist
+    // before a host diagnostic first creates the kernel; publishing a lazy
+    // kernel would make that worker allocate on its first observation.
+    if !kernel.prepare_runtime_storage() {
+        // Keep INITIALIZING through destruction so interposed frees cannot
+        // recursively construct a second kernel. Reservation failure is
+        // transient and may be retried by a later host caller.
+        drop(kernel);
+        KERNEL_STATE.store(STATE_UNINIT, AtomicOrdering::Release);
+        return None;
+    }
     let ptr = Box::into_raw(kernel);
     KERNEL_PTR.store(ptr, AtomicOrdering::Release);
     KERNEL_STATE.store(STATE_READY, AtomicOrdering::Release);
@@ -3196,6 +3374,9 @@ fn kernel_init() -> Option<&'static RuntimeMathKernel> {
 
 #[inline]
 fn kernel_with_retry(spins: usize) -> Option<&'static RuntimeMathKernel> {
+    // Explicit diagnostic/export calls may initialize the kernel. Resolve the
+    // switch here too so pre-init allocator observations have a real consumer.
+    let _ = runtime_math_enabled();
     for _ in 0..spins {
         if let Some(k) = kernel() {
             return Some(k);
@@ -5114,9 +5295,19 @@ mod tests {
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_RESOLVING, AtomicOrdering::SeqCst);
         sync_pipeline_runtime_math_state(false);
         assert_eq!(resolved_runtime_math_enabled(), None);
+        {
+            let _hardened = set_mode_state_for_tests(MODE_HARDENED);
+            assert_eq!(prepare_native_thread_runtime(), Err(libc::EAGAIN));
+        }
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
         sync_pipeline_runtime_math_state(true);
         assert_eq!(resolved_runtime_math_enabled(), Some(false));
+        {
+            let _hardened = set_mode_state_for_tests(MODE_HARDENED);
+            assert_eq!(prepare_native_thread_runtime(), Ok(()));
+            let _resolving = set_mode_state_for_tests(MODE_RESOLVING);
+            assert_eq!(prepare_native_thread_runtime(), Err(libc::EAGAIN));
+        }
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_ON, AtomicOrdering::SeqCst);
         sync_pipeline_runtime_math_state(false);
         assert_eq!(resolved_runtime_math_enabled(), Some(true));
@@ -5596,6 +5787,245 @@ mod tests {
         assert!(in_policy_reentry_context());
         drop(outer);
         assert!(!in_policy_reentry_context());
+    }
+
+    #[test]
+    fn native_policy_state_isolated_from_creator_and_reclaimed() {
+        use std::ffi::c_void;
+        use std::sync::atomic::AtomicUsize;
+
+        const CHILD: &str = "FRANKENLIBC_NATIVE_POLICY_TLS_CHILD";
+        const NAME: &str =
+            "runtime_policy::tests::native_policy_state_isolated_from_creator_and_reclaimed";
+        if std::env::var_os(CHILD).is_none() {
+            // Native admission irreversibly disables shared compiler-TLS
+            // caches. Isolate that transition from the rest of this test binary.
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .env("FRANKENLIBC_MODE", "strict")
+                .env("FRANKENLIBC_RUNTIME_MATH", "off")
+                .env_remove("FRANKENLIBC_LOG")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start native policy child");
+            let deadline = Instant::now() + std::time::Duration::from_secs(30);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !timed_out && output.status.success() && stdout.contains("1 passed;"),
+                "native policy child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+                output.status
+            );
+            return;
+        }
+
+        struct Probe {
+            payload_addr: AtomicUsize,
+        }
+        const CONTEXT: RuntimeContext = RuntimeContext {
+            family: ApiFamily::Socket,
+            addr_hint: 0x1234,
+            requested_bytes: 64,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: false,
+        };
+        const DECISION: RuntimeDecision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Fast,
+            policy_id: 42,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 9,
+        };
+        fn reentrant_mode_keeps_sampler_idle() -> bool {
+            // A signal-handler write reaches mode() through decide() even
+            // while this thread's owned policy slot is accessed. At this
+            // boundary the unavailable-TLS fallback would scan environ and
+            // potentially acquire the mode-event log lock. Reentry must read
+            // the immutable mode without touching that sampler.
+            let boundary = MODE_SWITCH_CHECK_STRIDE - 1;
+            let previous = MODE_SWITCH_CHECK_COUNTER.swap(boundary, AtomicOrdering::SeqCst);
+            let resolved = mode();
+            let sampled = MODE_SWITCH_CHECK_COUNTER.swap(previous, AtomicOrdering::SeqCst);
+            resolved == SafetyLevel::Hardened && sampled == boundary
+        }
+        unsafe extern "C" fn worker(raw: *mut c_void) -> *mut c_void {
+            // The creator allocates all test state. Native code below uses
+            // only policy POD, owned mmap slots, raw identity and atomics; it
+            // must not format, assert, panic or call the inherited allocator.
+            let probe = unsafe { &*raw.cast::<Probe>() };
+            let mut failures = 0usize;
+            if in_policy_reentry_context()
+                || with_mode_cache(|value| *value) != Some(MODE_UNRESOLVED)
+                || with_trace_counter(|value| *value) != Some(0)
+                || with_decision_counter(|value| *value) != Some(0)
+                || with_last_explainability(|value| value.is_none()) != Some(true)
+                || peek_active_pcc_index().is_some()
+            {
+                failures |= 1;
+            }
+            let guard = enter_policy_reentry_guard();
+            if guard.is_none()
+                || !in_policy_reentry_context()
+                || enter_policy_reentry_guard().is_some()
+            {
+                failures |= 2;
+            }
+            let scope = entrypoint_scope_active("memcmp", FFI_PCC_MEMCMP_INDEX);
+            let trace = with_trace_context(|context| *context).flatten();
+            if !trace.is_some_and(|trace| {
+                trace.symbol == "memcmp" && trace.trace_seq == 1 && trace.parent_span_seq == 1
+            }) || peek_active_pcc_index() != Some(FFI_PCC_MEMCMP_INDEX)
+            {
+                failures |= 4;
+            }
+            record_last_explainability(
+                SafetyLevel::Hardened,
+                CONTEXT,
+                DECISION,
+                DECISION_GATE_RUNTIME_POLICY,
+            );
+            if !peek_last_explainability().is_some_and(|record| {
+                record.symbol == "memcmp" && record.policy_id == 42 && record.span_seq == 1
+            }) {
+                failures |= 8;
+            }
+            record_pcc_explainability(
+                SafetyLevel::Hardened,
+                FFI_PCC_MEMCMP_INDEX,
+                0x5678,
+                17,
+                false,
+                false,
+            );
+            if !peek_last_explainability().is_some_and(|record| {
+                record.symbol == "memcmp"
+                    && record.addr_hint == 0x5678
+                    && record.requested_bytes == 17
+                    && record.span_seq == 2
+            }) {
+                failures |= 16;
+            }
+            let nested = entrypoint_scope_active("memcpy", FFI_PCC_MEMCPY_INDEX);
+            if peek_active_pcc_index() != Some(FFI_PCC_MEMCPY_INDEX) {
+                failures |= 32;
+            }
+            drop(nested);
+            if with_trace_context(|context| *context).flatten() != trace {
+                failures |= 64;
+            }
+            drop(scope);
+            drop(guard);
+            if peek_active_pcc_index().is_some() || in_policy_reentry_context() {
+                failures |= 128;
+            }
+            #[cfg(not(feature = "owned-tls-cache"))]
+            let protected = NATIVE_RUNTIME_POLICY_TLS.with(|state| {
+                probe
+                    .payload_addr
+                    .store(state as *mut _ as usize, AtomicOrdering::Release);
+                runtime_policy_tls_reentry_active()
+                    && RUNTIME_POLICY_TLS.try_with(|_| ()).is_err()
+                    && reentrant_mode_keeps_sampler_idle()
+            });
+            #[cfg(feature = "owned-tls-cache")]
+            let protected = with_runtime_policy_tls(|state| {
+                probe
+                    .payload_addr
+                    .store(state as *mut _ as usize, AtomicOrdering::Release);
+                runtime_policy_tls_reentry_active() && reentrant_mode_keeps_sampler_idle()
+            });
+            if !protected {
+                failures |= 256;
+            }
+            failures as *mut c_void
+        }
+
+        prepare_native_thread_runtime().expect("prepare policy key without activating math");
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        with_mode_cache(|value| *value = MODE_STRICT);
+        with_trace_counter(|value| *value = 100);
+        with_decision_counter(|value| *value = 200);
+        let guard = enter_policy_reentry_guard().expect("creator policy guard");
+        let scope = entrypoint_scope_active("memcpy", FFI_PCC_MEMCPY_INDEX);
+        record_last_explainability(
+            SafetyLevel::Hardened,
+            CONTEXT,
+            DECISION,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let creator_trace = with_trace_context(|context| *context).flatten();
+        let creator_record = peek_last_explainability();
+        let probe = Probe {
+            payload_addr: AtomicUsize::new(0),
+        };
+        // SAFETY: sysconf reads a process property before native execution.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        assert!(page_size > 0);
+        let joined = with_last_explainability(|record| {
+            let before = *record;
+            // Keep the creator's RefCell/cache borrow live throughout native
+            // execution: a child must neither share it nor evade that borrow.
+            // SAFETY: worker has the C entry ABI and probe outlives the join.
+            let handle = unsafe {
+                frankenlibc_core::pthread::create_thread(
+                    worker as *const () as usize,
+                    &probe as *const Probe as usize,
+                    0,
+                )
+            }
+            .expect("create native policy worker");
+            // SAFETY: this is the live joinable handle; probe outlives join.
+            let result = unsafe { frankenlibc_core::pthread::join_thread(handle) };
+            assert_eq!(*record, before, "child overwrote creator explainability");
+            result
+        });
+        assert_eq!(joined, Some(Ok(0)), "native policy regression bitmask");
+        assert_eq!(
+            with_trace_context(|context| *context).flatten(),
+            creator_trace
+        );
+        assert_eq!(peek_last_explainability(), creator_record);
+        assert_eq!(peek_active_pcc_index(), Some(FFI_PCC_MEMCPY_INDEX));
+        assert!(in_policy_reentry_context());
+        assert_eq!(with_mode_cache(|value| *value), Some(MODE_STRICT));
+        assert_eq!(with_trace_counter(|value| *value), Some(101));
+        assert_eq!(with_decision_counter(|value| *value), Some(201));
+
+        let payload_addr = probe.payload_addr.load(AtomicOrdering::Acquire);
+        assert_ne!(
+            payload_addr, 0,
+            "worker did not expose its owned policy slot"
+        );
+        let page = payload_addr / page_size as usize * page_size as usize;
+        let mut residency = 0u8;
+        // SAFETY: mincore only queries this page; it never dereferences the
+        // reclaimed payload. No intervening mmap can reuse the slot's address.
+        assert_eq!(
+            unsafe { libc::mincore(page as *mut c_void, page_size as usize, &mut residency) },
+            -1,
+            "native policy slot mapping survived thread exit"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ENOMEM)
+        );
+        drop(scope);
+        drop(guard);
+        assert!(!in_policy_reentry_context());
+        assert!(peek_active_pcc_index().is_none());
     }
 
     #[test]

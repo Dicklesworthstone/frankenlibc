@@ -4,6 +4,102 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The owned-cache feature must keep scratch state through C++ TLS callbacks
+# and all application key-destructor rounds, without spending public keys.
+if [[ "${1:-}" == "--cache-lifecycle" ]]; then
+  LIBRARY="${FRANKENLIBC_TEST_LIBRARY:-${CARGO_TARGET_DIR:-${ROOT}/target}/release/libfrankenlibc_abi.so}"
+  if [[ ! -f "${LIBRARY}" ]]; then
+    echo "FAIL: build frankenlibc-abi with owned-tls-cache or set FRANKENLIBC_TEST_LIBRARY" >&2
+    exit 1
+  fi
+  LIBRARY="$(realpath "${LIBRARY}")"
+  CACHE_OUT="${FRANKENLIBC_PTHREAD_KEYS_OUT_DIR:-${ROOT}/target/conformance/pthread_cache/$(date -u +%Y%m%dT%H%M%SZ)}"
+  mkdir -p "${CACHE_OUT}"
+  "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -pthread -ldl \
+    -o "${CACHE_OUT}/keys"
+  "${CXX:-c++}" -std=c++17 -O2 -fno-builtin -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_exit_tls.cpp" -pthread -ldl \
+    -o "${CACHE_OUT}/cpp"
+  c_cases=(cache-return cache-exit cache-rounds cache-capacity)
+  cpp_cases=(cache-worker-return cache-worker-exit)
+  host_count=0
+  candidate_count=0
+  for scenario in "${c_cases[@]}"; do
+    prefix="${CACHE_OUT}/host-${scenario}"
+    env -u LD_PRELOAD -u LD_AUDIT -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
+      -u FRANKENLIBC_TEST_LIBRARY timeout 30s \
+      "${CACHE_OUT}/keys" --key-lifecycle "${scenario}" >"${prefix}.txt" 2>"${prefix}.stderr"
+    grep -Fxq "key-lifecycle ${scenario} PASS" "${prefix}.txt"
+    [[ "$(wc -l < "${prefix}.txt")" -eq 1 && ! -s "${prefix}.stderr" ]]
+    host_count=$((host_count + 1))
+    for mode in strict hardened; do
+      for backend in 0 1; do
+        prefix="${CACHE_OUT}/${mode}-native${backend}-${scenario}"
+        if ! timeout 30s env LD_PRELOAD="${LIBRARY}" FRANKENLIBC_MODE="${mode}" \
+          FRANKENLIBC_THREAD_NATIVE="${backend}" FRANKENLIBC_RUNTIME_MATH=off \
+          "${CACHE_OUT}/keys" --key-lifecycle "${scenario}" "${LIBRARY}" \
+          >"${prefix}.txt" 2>"${prefix}.stderr"; then
+          cat "${prefix}.stderr" >&2
+          echo "FAIL: ${mode} native=${backend} cache lifecycle ${scenario}" >&2
+          exit 1
+        fi
+        diff -u "${CACHE_OUT}/host-${scenario}.txt" "${prefix}.txt"
+        [[ ! -s "${prefix}.stderr" ]]
+        candidate_count=$((candidate_count + 1))
+      done
+    done
+  done
+  for scenario in "${cpp_cases[@]}"; do
+    prefix="${CACHE_OUT}/host-${scenario}"
+    env -u LD_PRELOAD -u LD_AUDIT -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
+      -u FRANKENLIBC_TEST_LIBRARY timeout 30s "${CACHE_OUT}/cpp" "${scenario}" \
+      >"${prefix}.txt" 2>"${prefix}.stderr"
+    grep -Fxq "cache-lifecycle ${scenario} PASS" "${prefix}.txt"
+    [[ "$(wc -l < "${prefix}.txt")" -eq 1 && ! -s "${prefix}.stderr" ]]
+    host_count=$((host_count + 1))
+    # This checks the owned feature's host-key bridge after host C++ TLS.
+    # Native compiler TLS remains a separate, explicitly unsupported contract.
+    for mode in strict hardened; do
+      prefix="${CACHE_OUT}/${mode}-hosted-${scenario}"
+      if ! timeout 30s env LD_PRELOAD="${LIBRARY}" FRANKENLIBC_MODE="${mode}" \
+        FRANKENLIBC_THREAD_NATIVE=0 FRANKENLIBC_RUNTIME_MATH=off \
+        FRANKENLIBC_TEST_LIBRARY="${LIBRARY}" "${CACHE_OUT}/cpp" "${scenario}" \
+        >"${prefix}.txt" 2>"${prefix}.stderr"; then
+        cat "${prefix}.stderr" >&2
+        echo "FAIL: ${mode} hosted C++ cache lifecycle ${scenario}" >&2
+        exit 1
+      fi
+      diff -u "${CACHE_OUT}/host-${scenario}.txt" "${prefix}.txt"
+      [[ ! -s "${prefix}.stderr" ]]
+      candidate_count=$((candidate_count + 1))
+    done
+  done
+  negative_rc=0
+  env -u LD_PRELOAD -u LD_AUDIT timeout 30s "${CACHE_OUT}/keys" \
+    --key-lifecycle cache-return "${LIBRARY}" \
+    >"${CACHE_OUT}/provider-negative-c.txt" 2>&1 || negative_rc=$?
+  [[ "${negative_rc}" -eq 1 ]]
+  grep -Fxq 'FAIL: pthread_create is not from the requested candidate' \
+    "${CACHE_OUT}/provider-negative-c.txt"
+  negative_rc=0
+  env -u LD_PRELOAD -u LD_AUDIT FRANKENLIBC_TEST_LIBRARY="${LIBRARY}" \
+    timeout 30s "${CACHE_OUT}/cpp" cache-worker-return \
+    >"${CACHE_OUT}/provider-negative-cpp.txt" 2>&1 || negative_rc=$?
+  [[ "${negative_rc}" -eq 113 ]]
+  grep -Fxq 'WRONG EXIT/TLS PROVIDER' "${CACHE_OUT}/provider-negative-cpp.txt"
+  negative_rc=0
+  env -u LD_PRELOAD -u LD_AUDIT FRANKENLIBC_THREAD_NATIVE=1 \
+    timeout 30s "${CACHE_OUT}/keys" --key-lifecycle cache-return \
+    >"${CACHE_OUT}/backend-negative.txt" 2>&1 || negative_rc=$?
+  [[ "${negative_rc}" -eq 86 ]]
+  grep -Fxq 'FAIL: cache thread backend mismatch' "${CACHE_OUT}/backend-negative.txt"
+  [[ "${host_count}" -eq 6 && "${candidate_count}" -eq 20 ]]
+  echo "owned cache lifecycle: PASS (6 live GNU cases, 20 candidate cases, 2 provider negatives, backend negative)"
+  echo "artifacts=${CACHE_OUT}"
+  exit 0
+fi
+
 # Compare real key lifetimes, callback reentry and minimum native stacks.
 if [[ "${1:-}" == "--key-destructors" ]]; then
   LIBRARY="${FRANKENLIBC_TEST_LIBRARY:-${CARGO_TARGET_DIR:-${ROOT}/target}/release/libfrankenlibc_abi.so}"
@@ -12,7 +108,7 @@ if [[ "${1:-}" == "--key-destructors" ]]; then
     exit 1
   fi
   LIBRARY="$(realpath "${LIBRARY}")"
-  KEY_OUT="${ROOT}/target/conformance/pthread_keys/$(date -u +%Y%m%dT%H%M%SZ)"
+  KEY_OUT="${FRANKENLIBC_PTHREAD_KEYS_OUT_DIR:-${ROOT}/target/conformance/pthread_keys/$(date -u +%Y%m%dT%H%M%SZ)}"
   mkdir -p "${KEY_OUT}"
   "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
     "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -pthread -ldl \

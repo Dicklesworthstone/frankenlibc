@@ -109,6 +109,340 @@ const EAI_ADDRFAMILY: c_int = -9;
 static RESOLVER_FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
 static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
 
+fn run_native_resolver_test_in_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_NATIVE_RESOLVER_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return false;
+    }
+    // Each regression must observe the first native clone without changing
+    // compiler-TLS admission for unrelated tests in this integration binary.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start native resolver child");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out && output.status.success() && stdout.contains("1 passed;"),
+        "native resolver child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+        output.status
+    );
+    true
+}
+
+fn run_native_resolver_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> usize {
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(
+        frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests(),
+    );
+    let mut thread = 0;
+    // SAFETY: all callback arguments stay alive through the matching join.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::pthread_abi::pthread_create(
+                &mut thread,
+                ptr::null(),
+                Some(worker),
+                argument,
+            )
+        },
+        0
+    );
+    let mut result = ptr::null_mut();
+    // SAFETY: this is the live joinable native thread returned above.
+    assert_eq!(
+        unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) },
+        0
+    );
+    result as usize
+}
+
+#[test]
+fn resolver_native_tls_preserves_errors_hooks_and_format_buffers() {
+    if run_native_resolver_test_in_child(
+        "resolver_native_tls_preserves_errors_hooks_and_format_buffers",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn resolve(creator_error: *mut c_void) -> *mut c_void {
+        // SAFETY: each function returns this caller's live resolver storage;
+        // opaque hook tokens are only stored and compared, never called.
+        unsafe {
+            let error = resolv_abi::__h_errno_location();
+            if error.cast::<c_void>() == creator_error || *error != 0 {
+                return 1usize as *mut c_void;
+            }
+            if !resolv_abi::res_send_qhook_for_tests().is_null()
+                || !resolv_abi::res_send_rhook_for_tests().is_null()
+            {
+                return 2usize as *mut c_void;
+            }
+            *error = 91;
+            resolv_abi::res_send_setqhook(3usize as *mut c_void);
+            resolv_abi::res_send_setrhook(4usize as *mut c_void);
+            if CStr::from_ptr(resolv_abi::__p_type(65001)).to_bytes() != b"65001"
+                || CStr::from_ptr(resolv_abi::__p_option(0x40000001)).to_bytes() != b"?0x40000001?"
+                || CStr::from_ptr(resolv_abi::__p_secstodate(86400)).to_bytes() != b"19700102000000"
+                || CStr::from_ptr(resolv_abi::__sym_ntop(ptr::null(), 654, ptr::null_mut()))
+                    .to_bytes()
+                    != b"654"
+                || CStr::from_ptr(resolv_abi::__sym_ntos(ptr::null(), 765, ptr::null_mut()))
+                    .to_bytes()
+                    != b"765"
+            {
+                return 4usize as *mut c_void;
+            }
+            if error != resolv_abi::__h_errno_location() || *error != 91 {
+                return 8usize as *mut c_void;
+            }
+        }
+        ptr::null_mut()
+    }
+    // Retain the addresses, not copies: a child writing the creator's buffers
+    // or consuming the creator's error state must be observable after join.
+    unsafe {
+        let error = resolv_abi::__h_errno_location();
+        *error = 73;
+        resolv_abi::res_send_setqhook(1usize as *mut c_void);
+        resolv_abi::res_send_setrhook(2usize as *mut c_void);
+        let class = resolv_abi::__p_class(65000);
+        let option = resolv_abi::__p_option(0x40000000);
+        let date = resolv_abi::__p_secstodate(0);
+        let ntop = resolv_abi::__sym_ntop(ptr::null(), 123, ptr::null_mut());
+        let ntos = resolv_abi::__sym_ntos(ptr::null(), 234, ptr::null_mut());
+        for _ in 0..2 {
+            assert_eq!(run_native_resolver_worker(resolve, error.cast()), 0);
+            assert_eq!(resolv_abi::__h_errno_location(), error);
+            assert_eq!(*error, 73);
+            assert_eq!(resolv_abi::res_send_qhook_for_tests() as usize, 1);
+            assert_eq!(resolv_abi::res_send_rhook_for_tests() as usize, 2);
+            assert_eq!(CStr::from_ptr(class).to_bytes(), b"65000");
+            assert_eq!(CStr::from_ptr(option).to_bytes(), b"?0x40000000?");
+            assert_eq!(CStr::from_ptr(date).to_bytes(), b"19700101000000");
+            assert_eq!(CStr::from_ptr(ntop).to_bytes(), b"123");
+            assert_eq!(CStr::from_ptr(ntos).to_bytes(), b"234");
+        }
+        assert_eq!(resolv_abi::__p_class(65000), class);
+        assert_eq!(resolv_abi::__p_option(0x40000000), option);
+        resolv_abi::res_send_setqhook(ptr::null_mut());
+        resolv_abi::res_send_setrhook(ptr::null_mut());
+    }
+}
+
+const NATIVE_TLS_HOSTS: &[u8] =
+    b"192.0.2.1 creator-host\n198.51.100.2 native-host\n203.0.113.3 final-host\n";
+const NATIVE_TLS_SERVICES: &[u8] = b"creator-svc 41001/tcp\nnative-svc 41002/udp\n";
+const NATIVE_TLS_PROTOCOLS: &[u8] = b"creator-proto 201\nnative-proto 202\n";
+
+#[test]
+fn resolver_native_tls_preserves_returned_results_and_iterator() {
+    if run_native_resolver_test_in_child(
+        "resolver_native_tls_preserves_returned_results_and_iterator",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn lookup(creator_results: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator keeps the address array live through join. All
+        // result pointers below are checked before dereferencing and consumed
+        // before this native thread's storage is reclaimed.
+        unsafe {
+            let creator = &*creator_results.cast::<[usize; 4]>();
+            let first = resolv_abi::_gethtent().cast::<libc::hostent>();
+            if first.is_null()
+                || first as usize == creator[0]
+                || CStr::from_ptr((*first).h_name).to_bytes() != b"creator-host"
+            {
+                return 1usize as *mut c_void;
+            }
+            let second = resolv_abi::_gethtent().cast::<libc::hostent>();
+            if second.is_null() || CStr::from_ptr((*second).h_name).to_bytes() != b"native-host" {
+                return 2usize as *mut c_void;
+            }
+            let service = resolv_abi::getservbyname(c"native-svc".as_ptr(), c"udp".as_ptr())
+                .cast::<libc::servent>();
+            if service.is_null()
+                || service as usize == creator[1]
+                || CStr::from_ptr((*service).s_name).to_bytes() != b"native-svc"
+                || u16::from_be((*service).s_port as u16) != 41002
+            {
+                return 4usize as *mut c_void;
+            }
+            let protocol =
+                resolv_abi::getprotobyname(c"native-proto".as_ptr()).cast::<libc::protoent>();
+            if protocol.is_null()
+                || protocol as usize == creator[2]
+                || CStr::from_ptr((*protocol).p_name).to_bytes() != b"native-proto"
+                || (*protocol).p_proto != 202
+            {
+                return 8usize as *mut c_void;
+            }
+            let address = inet_abi::inet_ntoa(u32::from_ne_bytes([198, 51, 100, 2]));
+            if address as usize == creator[3]
+                || CStr::from_ptr(address).to_bytes() != b"198.51.100.2"
+            {
+                return 16usize as *mut c_void;
+            }
+        }
+        ptr::null_mut()
+    }
+    // Pin the service provider so no machine-specific NSS module is involved.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup(
+                c"services".as_ptr(),
+                c"files".as_ptr(),
+            )
+        },
+        0
+    );
+    with_resolver_backends_full(
+        Some(NATIVE_TLS_HOSTS),
+        Some(NATIVE_TLS_SERVICES),
+        Some(NATIVE_TLS_PROTOCOLS),
+        None,
+        None,
+        |_| unsafe {
+            resolv_abi::_sethtent(0);
+            let host = resolv_abi::_gethtent().cast::<libc::hostent>();
+            let service = resolv_abi::getservbyname(c"creator-svc".as_ptr(), c"tcp".as_ptr())
+                .cast::<libc::servent>();
+            let protocol =
+                resolv_abi::getprotobyname(c"creator-proto".as_ptr()).cast::<libc::protoent>();
+            let address = inet_abi::inet_ntoa(u32::from_ne_bytes([192, 0, 2, 1]));
+            assert!(!host.is_null() && !service.is_null() && !protocol.is_null());
+            let mut creator = [
+                host as usize,
+                service as usize,
+                protocol as usize,
+                address as usize,
+            ];
+            for _ in 0..2 {
+                assert_eq!(
+                    run_native_resolver_worker(lookup, (&raw mut creator).cast()),
+                    0
+                );
+                assert_eq!(CStr::from_ptr((*host).h_name).to_bytes(), b"creator-host");
+                assert_eq!(CStr::from_ptr((*service).s_name).to_bytes(), b"creator-svc");
+                assert_eq!(u16::from_be((*service).s_port as u16), 41001);
+                assert_eq!(
+                    CStr::from_ptr((*protocol).p_name).to_bytes(),
+                    b"creator-proto"
+                );
+                assert_eq!((*protocol).p_proto, 201);
+                assert_eq!(CStr::from_ptr(address).to_bytes(), b"192.0.2.1");
+            }
+            let next = resolv_abi::_gethtent().cast::<libc::hostent>();
+            assert_eq!(next, host, "hosted result storage must not migrate");
+            assert_eq!(CStr::from_ptr((*next).h_name).to_bytes(), b"native-host");
+            assert_eq!(
+                inet_abi::inet_ntoa(u32::from_ne_bytes([203, 0, 113, 1])),
+                address
+            );
+            assert_eq!(CStr::from_ptr(address).to_bytes(), b"203.0.113.1");
+        },
+    );
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn resolver_native_tls_ignores_the_creators_borrowed_caches() {
+    if run_native_resolver_test_in_child("resolver_native_tls_ignores_the_creators_borrowed_caches")
+    {
+        return;
+    }
+    unsafe extern "C" fn lookup(_: *mut c_void) -> *mut c_void {
+        // SAFETY: all names are terminated literals and all returned records
+        // are consumed while this native thread's result storage is live.
+        unsafe {
+            let host = resolv_abi::_gethtbyname(c"native-host".as_ptr()).cast::<libc::hostent>();
+            if host.is_null() || CStr::from_ptr((*host).h_name).to_bytes() != b"native-host" {
+                return 1usize as *mut c_void;
+            }
+            let service = resolv_abi::getservbyname(c"native-svc".as_ptr(), c"udp".as_ptr())
+                .cast::<libc::servent>();
+            if service.is_null() || u16::from_be((*service).s_port as u16) != 41002 {
+                return 2usize as *mut c_void;
+            }
+            let protocol =
+                resolv_abi::getprotobyname(c"native-proto".as_ptr()).cast::<libc::protoent>();
+            if protocol.is_null() || (*protocol).p_proto != 202 {
+                return 4usize as *mut c_void;
+            }
+            let mut hints: libc::addrinfo = mem::zeroed();
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_ADDRCONFIG | libc::AI_NUMERICHOST | libc::AI_NUMERICSERV;
+            let mut result = ptr::null_mut();
+            if resolv_abi::getaddrinfo(
+                c"198.51.100.2".as_ptr(),
+                c"41002".as_ptr(),
+                &hints,
+                &mut result,
+            ) != 0
+                || result.is_null()
+            {
+                return 8usize as *mut c_void;
+            }
+            resolv_abi::freeaddrinfo(result);
+        }
+        ptr::null_mut()
+    }
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup(
+                c"services".as_ptr(),
+                c"files".as_ptr(),
+            )
+        },
+        0
+    );
+    with_resolver_backends_full(
+        Some(NATIVE_TLS_HOSTS),
+        Some(NATIVE_TLS_SERVICES),
+        Some(NATIVE_TLS_PROTOCOLS),
+        Some(b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n"),
+        Some(b""),
+        |_| {
+            let result = resolv_abi::with_resolver_cache_borrows_for_tests(|| {
+                run_native_resolver_worker(lookup, ptr::null_mut())
+            })
+            .expect("load the creator's files backend caches");
+            assert_eq!(result, 0);
+            // The creator remains able to use those same caches after its
+            // outstanding borrows end; the child never invalidates them.
+            let host = unsafe { resolv_abi::_gethtbyname(c"creator-host".as_ptr()) }
+                .cast::<libc::hostent>();
+            assert!(!host.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*host).h_name).to_bytes() },
+                b"creator-host"
+            );
+        },
+    );
+}
+
 struct ResolverFixturePaths {
     hosts: std::path::PathBuf,
     services: std::path::PathBuf,
@@ -2617,9 +2951,10 @@ fn getnameinfo_null_sockaddr_returns_error() {
 
 #[test]
 fn getnameinfo_unsupported_family_returns_eai_family() {
-    // Use AF_UNIX which is not supported by numeric getnameinfo
+    // GNU supports AF_UNIX as an extension; AF_UNSPEC is not a renderable
+    // sockaddr family and returns EAI_FAMILY in the live host oracle.
     let mut sa: libc::sockaddr = unsafe { mem::zeroed() };
-    sa.sa_family = libc::AF_UNIX as u16;
+    sa.sa_family = libc::AF_UNSPEC as u16;
 
     let mut host = [0u8; 64];
     let rc = unsafe {
@@ -2637,7 +2972,6 @@ fn getnameinfo_unsupported_family_returns_eai_family() {
 }
 
 #[test]
-#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn getnameinfo_rejects_tracked_short_host_buffer() {
     let sin = libc::sockaddr_in {
         sin_family: libc::AF_INET as u16,
@@ -2666,7 +3000,6 @@ fn getnameinfo_rejects_tracked_short_host_buffer() {
 }
 
 #[test]
-#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn getnameinfo_rejects_tracked_short_service_buffer() {
     let sin = libc::sockaddr_in {
         sin_family: libc::AF_INET as u16,
@@ -7342,7 +7675,7 @@ fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
     let mut flags = 0x8180u16; // NOERROR
 
     match qname.as_str() {
-        "dual.hermetic.test" => {
+        "dual.hermetic.test" | "xn--bcher-kva.hermetic.test" | "xn--r8jz45g.xn--zckzah" => {
             if qtype == 1 {
                 push_rr(&mut answers, &[0xc0, 0x0c], 1, &[198, 51, 100, 42]);
                 ancount = 1;
@@ -8408,4 +8741,488 @@ fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
 
     stop.store(true, Ordering::Relaxed);
     let _ = server_thread.join();
+}
+
+// GNU IDN input and output flags are independent.
+const TEST_AI_IDN: c_int = 0x40;
+const TEST_AI_CANONIDN: c_int = 0x80;
+const TEST_NI_IDN: c_int = 0x20;
+const TEST_EAI_IDN_ENCODE: c_int = -105;
+
+struct ResolverIdnLocale {
+    handle: frankenlibc_abi::locale_abi::LocaleT,
+    previous: frankenlibc_abi::locale_abi::LocaleT,
+}
+
+impl ResolverIdnLocale {
+    fn new(name: &CStr) -> Self {
+        // SAFETY: the C string is terminated; the resulting locale is kept
+        // alive until after this thread's previous selection is restored.
+        unsafe {
+            let handle = frankenlibc_abi::locale_abi::newlocale(
+                libc::LC_CTYPE_MASK,
+                name.as_ptr(),
+                ptr::null_mut(),
+            );
+            assert!(!handle.is_null(), "create resolver test locale {name:?}");
+            let previous = frankenlibc_abi::locale_abi::uselocale(handle);
+            assert!(!previous.is_null());
+            Self { handle, previous }
+        }
+    }
+}
+
+impl Drop for ResolverIdnLocale {
+    fn drop(&mut self) {
+        // SAFETY: both handles remain valid; no other thread uses this object.
+        unsafe {
+            frankenlibc_abi::locale_abi::uselocale(self.previous);
+            frankenlibc_abi::locale_abi::freelocale(self.handle);
+        }
+    }
+}
+
+const IDN_HOSTS: &[u8] = b"\
+192.0.2.241 xn--bcher-kva.test idn-latin\n\
+192.0.2.242 xn--r8jz45g.xn--zckzah idn-japanese\n\
+192.0.2.243 XN--bcher-kva.CaSe idn-case\n\
+192.0.2.244 xn--bad_.test idn-malformed\n\
+192.0.2.245 xn--bcher-kva.xn--bad_ idn-partial\n\
+192.0.2.246 ordinary.CaSe idn-ascii\n\
+192.0.2.247 xn--0.test idn-incomplete\n\
+192.0.2.248 xn-- idn-empty\n\
+192.0.2.249 xn--bcher-kva.xn--0 idn-partial-incomplete\n\
+192.0.2.250 xn--hello-.test idn-basic\n\
+192.0.2.251 xn--bad_-a.test idn-literal-underscore\n";
+
+fn resolver_idn_canonical(query: &CStr, flags: c_int) -> Vec<Option<Vec<u8>>> {
+    // SAFETY: hints/output are owned and initialized, and the result is freed
+    // through the same ABI that allocated the addrinfo chain.
+    unsafe {
+        let mut hints: libc::addrinfo = mem::zeroed();
+        hints.ai_family = libc::AF_INET;
+        hints.ai_flags = flags;
+        let mut result = ptr::null_mut();
+        let code = resolv_abi::getaddrinfo(query.as_ptr(), c"443".as_ptr(), &hints, &mut result);
+        assert_eq!(code, 0, "IDN canonical lookup {query:?}");
+        assert!(!result.is_null());
+        let names = collect_addrinfo_canonname(result);
+        let profiles = collect_addrinfo_profiles(result);
+        resolv_abi::freeaddrinfo(result);
+        assert_eq!(
+            profiles.len(),
+            3,
+            "exercise all addrinfo allocation profiles"
+        );
+        names
+    }
+}
+
+#[test]
+fn resolver_idn_forward_lookup_normalizes_before_nss_and_canonical_output() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        for (input, encoded, decoded) in [
+            ("bücher.test", "xn--bcher-kva.test", "bücher.test"),
+            ("BÜCHER.test", "xn--bcher-kva.test", "bücher.test"),
+            ("bu\u{308}cher.test", "xn--bcher-kva.test", "bücher.test"),
+            ("例え。テスト", "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+            ("例え．テスト", "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+            ("例え｡テスト", "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+        ] {
+            let input = CString::new(input).unwrap();
+            for obsolete in [0, 0x100, 0x200, 0x300] {
+                assert_eq!(
+                    resolver_idn_canonical(&input, TEST_AI_IDN | libc::AI_CANONNAME | obsolete),
+                    vec![Some(encoded.as_bytes().to_vec()), None, None],
+                );
+                assert_eq!(
+                    resolver_idn_canonical(
+                        &input,
+                        TEST_AI_IDN | libc::AI_CANONNAME | TEST_AI_CANONIDN | obsolete
+                    ),
+                    vec![Some(decoded.as_bytes().to_vec()), None, None],
+                );
+            }
+            assert_eq!(
+                resolver_idn_canonical(&input, TEST_AI_IDN | TEST_AI_CANONIDN),
+                vec![None, None, None],
+            );
+        }
+    });
+}
+
+#[test]
+fn resolver_idn_forward_native_dns_sends_normalized_ascii_queries() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_IDN_DNS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        let latin = CString::new("bu\u{308}cher.hermetic.test.").unwrap();
+        assert_eq!(
+            resolver_idn_canonical(&latin, TEST_AI_IDN | libc::AI_CANONNAME),
+            vec![Some(b"xn--bcher-kva.hermetic.test".to_vec()), None, None],
+        );
+        let japanese = CString::new("例え。テスト.").unwrap();
+        assert_eq!(
+            resolver_idn_canonical(
+                &japanese,
+                TEST_AI_IDN | libc::AI_CANONNAME | TEST_AI_CANONIDN
+            ),
+            vec![Some("例え.テスト".as_bytes().to_vec()), None, None],
+        );
+        let _ascii = ResolverIdnLocale::new(c"C");
+        // SAFETY: a zeroed addrinfo is valid hints storage.
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_flags = TEST_AI_IDN;
+        assert_eq!(
+            resolver_idn_lookup_error(&latin, &hints, c"443"),
+            TEST_EAI_IDN_ENCODE,
+        );
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("idn-dns-resolv");
+    let nsswitch_path = temp_resolver_path("idn-dns-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = udp.local_addr().unwrap().port();
+    udp.set_read_timeout(Some(Duration::from_millis(20)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let worker = std::thread::spawn(move || {
+        let mut observed = Vec::new();
+        let mut buffer = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            if let Ok((length, peer)) = udp.recv_from(&mut buffer) {
+                let query = &buffer[..length];
+                let (name, kind, _) = parse_dns_question(query).unwrap();
+                observed.push((name, kind));
+                udp.send_to(&build_hermetic_dns_reply(query, false).unwrap(), peer)
+                    .unwrap();
+            }
+        }
+        observed
+    });
+    // Apply resolver settings only in a child. Parallel tests cannot observe
+    // these overrides or perturb the exact DNS wire-query assertions.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "resolver_idn_forward_native_dns_sends_normalized_ascii_queries",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+        .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+        .env("FRANKENLIBC_DNS_PORT", port.to_string())
+        .env("LOCALDOMAIN", "")
+        .env("RES_OPTIONS", "")
+        .output();
+    stop.store(true, Ordering::Relaxed);
+    let observed = worker.join().unwrap();
+    let output = output.unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+    assert_eq!(
+        observed,
+        [
+            ("xn--bcher-kva.hermetic.test".to_owned(), 1),
+            ("xn--r8jz45g.xn--zckzah".to_owned(), 1),
+        ],
+    );
+}
+
+fn resolver_idn_lookup_error(query: &CStr, hints: &libc::addrinfo, service: &CStr) -> c_int {
+    let mut result = ptr::null_mut();
+    // SAFETY: all caller storage is initialized and stays live for the call.
+    let code =
+        unsafe { resolv_abi::getaddrinfo(query.as_ptr(), service.as_ptr(), hints, &mut result) };
+    assert!(result.is_null(), "unexpected result for {query:?}: {code}");
+    code
+}
+
+#[test]
+fn resolver_idn_forward_errors_respect_locale_flags_and_validation_order() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        // A query without AI_IDN must miss the encoded hosts entry. Keep that
+        // negative lookup files-only so the runner's DNS cannot turn the
+        // defined EAI_NONAME result into a network-dependent EAI_AGAIN.
+        struct RestoreNsswitch(Option<std::ffi::OsString>);
+        impl Drop for RestoreNsswitch {
+            fn drop(&mut self) {
+                // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+                unsafe {
+                    if let Some(value) = &self.0 {
+                        std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", value);
+                    } else {
+                        std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                    }
+                }
+            }
+        }
+        let nsswitch = temp_resolver_path("idn-errors-files-only");
+        std::fs::write(&nsswitch, b"hosts: files\n").unwrap();
+        let _restore = RestoreNsswitch(std::env::var_os("FRANKENLIBC_NSSWITCH_CONF"));
+        // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        // SAFETY: a zeroed addrinfo is valid input hints.
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_flags = TEST_AI_IDN | libc::AI_NUMERICHOST;
+        let valid = CString::new("bücher.test").unwrap();
+        assert_eq!(
+            resolver_idn_lookup_error(&valid, &hints, c"443"),
+            libc::EAI_NONAME
+        );
+        for input in [
+            b"\xff.test".as_slice(),
+            b"\xc0\xaf.test",
+            b"\xed\xa0\x80.test",
+            b"\xf8\x88\x80\x80\x80.test",
+            "😀.test".as_bytes(),
+            "אa.test".as_bytes(),
+            "a\u{200d}b.test".as_bytes(),
+            "\u{378}.test".as_bytes(),
+        ] {
+            let input = CString::new(input).unwrap();
+            for obsolete in [0, 0x100, 0x200, 0x300] {
+                hints.ai_flags = TEST_AI_IDN | libc::AI_NUMERICHOST | obsolete;
+                assert_eq!(
+                    resolver_idn_lookup_error(&input, &hints, c"443"),
+                    TEST_EAI_IDN_ENCODE,
+                );
+            }
+            hints.ai_family = libc::AF_UNIX;
+            assert_eq!(
+                resolver_idn_lookup_error(&input, &hints, c"443"),
+                libc::EAI_FAMILY
+            );
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = 999;
+            assert_eq!(
+                resolver_idn_lookup_error(&input, &hints, c"443"),
+                libc::EAI_SOCKTYPE
+            );
+            hints.ai_socktype = 0;
+            hints.ai_flags = TEST_AI_IDN | libc::AI_NUMERICHOST | libc::AI_NUMERICSERV;
+            assert_eq!(
+                resolver_idn_lookup_error(&input, &hints, c"http"),
+                libc::EAI_NONAME
+            );
+        }
+        // Output conversion alone must not enable normalization of the query.
+        hints.ai_flags = TEST_AI_CANONIDN | libc::AI_CANONNAME;
+        assert_eq!(
+            resolver_idn_lookup_error(&valid, &hints, c"443"),
+            libc::EAI_NONAME
+        );
+        {
+            let _ascii = ResolverIdnLocale::new(c"C");
+            hints.ai_flags = TEST_AI_IDN;
+            assert_eq!(
+                resolver_idn_lookup_error(&valid, &hints, c"443"),
+                TEST_EAI_IDN_ENCODE,
+            );
+            assert_eq!(
+                resolver_idn_canonical(c"xn--bcher-kva.test", TEST_AI_IDN | libc::AI_CANONNAME),
+                vec![Some(b"xn--bcher-kva.test".to_vec()), None, None],
+            );
+        }
+        assert_eq!(
+            resolver_idn_canonical(&valid, TEST_AI_IDN | libc::AI_CANONNAME),
+            vec![Some(b"xn--bcher-kva.test".to_vec()), None, None],
+        );
+    });
+}
+
+#[test]
+fn resolver_idn_canonical_names_follow_flags_and_thread_locale() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        let encoded = b"xn--bcher-kva.test".to_vec();
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME),
+            vec![Some(encoded.clone()), None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("bücher.test".as_bytes().to_vec()), None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", TEST_AI_CANONIDN),
+            vec![None, None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-japanese", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("例え.テスト".as_bytes().to_vec()), None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-case", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("bücher.CaSe".as_bytes().to_vec()), None, None],
+        );
+        // GNU treats an underscore as digit zero only in the encoded
+        // portion; these bytes are observed ToUnicode output, not a Unicode
+        // normalization or hostname-validity rule.
+        for (query, expected) in [
+            (c"idn-malformed", "\u{83}\u{83}\u{81}.test"),
+            (c"idn-partial", "bücher.\u{83}\u{83}\u{81}"),
+            (c"idn-literal-underscore", "\u{80}bad_.test"),
+        ] {
+            assert_eq!(
+                resolver_idn_canonical(query, libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(expected.as_bytes().to_vec()), None, None],
+            );
+        }
+        {
+            let _ascii = ResolverIdnLocale::new(c"C");
+            assert_eq!(
+                resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(encoded), None, None],
+            );
+            assert_eq!(
+                resolver_idn_canonical(c"idn-malformed", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(b"xn--bad_.test".to_vec()), None, None],
+            );
+        }
+        // Restoring uselocale must restore output conversion too.
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("bücher.test".as_bytes().to_vec()), None, None],
+        );
+    });
+}
+
+fn resolver_idn_reverse(last_octet: u8, flags: c_int, capacity: usize) -> (c_int, [u8; 128]) {
+    // SAFETY: sockaddr_in and output storage are fully initialized, with a
+    // capacity no larger than the actual output allocation.
+    unsafe {
+        assert!(capacity <= 128);
+        let mut address: libc::sockaddr_in = mem::zeroed();
+        address.sin_family = libc::AF_INET as _;
+        address.sin_addr.s_addr = u32::from_ne_bytes([192, 0, 2, last_octet]);
+        let mut output = [0x5a; 128];
+        let code = resolv_abi::getnameinfo(
+            (&address as *const libc::sockaddr_in).cast(),
+            mem::size_of_val(&address) as _,
+            output.as_mut_ptr().cast(),
+            capacity as _,
+            ptr::null_mut(),
+            0,
+            flags | libc::NI_NUMERICSERV,
+        );
+        assert!(output[capacity..].iter().all(|&byte| byte == 0x5a));
+        (code, output)
+    }
+}
+
+#[test]
+fn resolver_idn_reverse_names_convert_before_capacity_checks() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        for (last, encoded, decoded) in [
+            (241, "xn--bcher-kva.test", "bücher.test"),
+            (242, "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+            (243, "XN--bcher-kva.CaSe", "bücher.CaSe"),
+            (244, "xn--bad_.test", "\u{83}\u{83}\u{81}.test"),
+            (245, "xn--bcher-kva.xn--bad_", "bücher.\u{83}\u{83}\u{81}"),
+            (246, "ordinary.CaSe", "ordinary.CaSe"),
+            (251, "xn--bad_-a.test", "\u{80}bad_.test"),
+        ] {
+            for (flags, expected) in [
+                (libc::NI_NAMEREQD, encoded),
+                (libc::NI_NAMEREQD | TEST_NI_IDN, decoded),
+            ] {
+                let bytes = expected.as_bytes();
+                let (code, output) = resolver_idn_reverse(last, flags, bytes.len() + 1);
+                assert_eq!(code, 0, "{encoded}, flags {flags:#x}");
+                assert_eq!(&output[..bytes.len()], bytes);
+                assert_eq!(output[bytes.len()], 0);
+                let (code, _) = resolver_idn_reverse(last, flags, bytes.len());
+                assert_eq!(code, libc::EAI_OVERFLOW);
+            }
+        }
+        let (code, output) = resolver_idn_reverse(241, libc::NI_NUMERICHOST | TEST_NI_IDN, 32);
+        assert_eq!(code, 0);
+        assert_eq!(&output[..12], b"192.0.2.241\0");
+        // Both purely numeric output fields retain the same overflow
+        // contract in hardened mode, independently of the IDN flag.
+        for idn in [0, TEST_NI_IDN] {
+            for (host_capacity, service_capacity, expected) in [
+                (12, 4, 0),
+                (11, 4, libc::EAI_OVERFLOW),
+                (12, 3, libc::EAI_OVERFLOW),
+            ] {
+                let mut host = [0x5au8; 16];
+                let mut service = [0x5au8; 8];
+                // SAFETY: both outputs and the address are initialized and
+                // each advertised capacity fits its corresponding array.
+                let code = unsafe {
+                    let mut address: libc::sockaddr_in = mem::zeroed();
+                    address.sin_family = libc::AF_INET as _;
+                    address.sin_port = 443u16.to_be();
+                    address.sin_addr.s_addr = u32::from_ne_bytes([192, 0, 2, 241]);
+                    resolv_abi::getnameinfo(
+                        (&address as *const libc::sockaddr_in).cast(),
+                        mem::size_of_val(&address) as _,
+                        host.as_mut_ptr().cast(),
+                        host_capacity as _,
+                        service.as_mut_ptr().cast(),
+                        service_capacity as _,
+                        libc::NI_NUMERICHOST | libc::NI_NUMERICSERV | idn,
+                    )
+                };
+                assert_eq!(code, expected);
+                assert!(host[host_capacity..].iter().all(|&byte| byte == 0x5a));
+                assert!(service[service_capacity..].iter().all(|&byte| byte == 0x5a));
+                if expected == 0 {
+                    assert_eq!(&host[..host_capacity], b"192.0.2.241\0");
+                    assert_eq!(&service[..service_capacity], b"443\0");
+                }
+            }
+        }
+        let _ascii = ResolverIdnLocale::new(c"C");
+        let (code, output) = resolver_idn_reverse(241, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
+        assert_eq!(code, 0);
+        assert_eq!(&output[..19], b"xn--bcher-kva.test\0");
+    });
+}
+
+#[test]
+fn resolver_idn_malformed_ace_preserves_the_complete_original_name() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        for (query, last, original) in [
+            (c"idn-incomplete", 247, "xn--0.test"),
+            (c"idn-empty", 248, "xn--"),
+            (c"idn-partial-incomplete", 249, "xn--bcher-kva.xn--0"),
+            (c"idn-basic", 250, "xn--hello-.test"),
+        ] {
+            assert_eq!(
+                resolver_idn_canonical(query, libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(original.as_bytes().to_vec()), None, None],
+            );
+            let (code, output) = resolver_idn_reverse(last, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
+            assert_eq!(code, 0);
+            assert_eq!(&output[..original.len()], original.as_bytes());
+            assert_eq!(output[original.len()], 0);
+        }
+    });
 }

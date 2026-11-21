@@ -258,19 +258,28 @@ impl CheckOracle {
     /// / Weitzman index problem.
     fn recompute_orderings(&mut self) {
         for ctx_idx in 0..NUM_CONTEXTS {
-            let mut stages: Vec<(CheckStage, f64)> = DEFAULT_ORDER
-                .iter()
-                .map(|&stage| {
-                    let exit_prob = self.stats[ctx_idx][stage as usize].mean();
-                    let cost = stage.cost_ns() as f64;
-                    // Weitzman index: value of checking this stage next
-                    let index = exit_prob / cost.max(1.0);
-                    (stage, index)
-                })
-                .collect();
+            let mut stages = DEFAULT_ORDER.map(|stage| {
+                let exit_prob = self.stats[ctx_idx][stage as usize].mean();
+                let cost = stage.cost_ns() as f64;
+                // Weitzman index: value of checking this stage next
+                let index = exit_prob / cost.max(1.0);
+                (stage, index)
+            });
 
-            // Sort by index descending (highest value first)
-            stages.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            // Stable descending insertion over seven stages preserves the old
+            // equal-score ordering without any heap-backed sorting scratch.
+            for end in 1..stages.len() {
+                let stage = stages[end];
+                let mut position = end;
+                while position > 0
+                    && stages[position - 1].1.partial_cmp(&stage.1)
+                        == Some(std::cmp::Ordering::Less)
+                {
+                    stages[position] = stages[position - 1];
+                    position -= 1;
+                }
+                stages[position] = stage;
+            }
 
             // Safety constraint: Null check must always be first
             // (it's the cheapest and catches the most common error)
@@ -278,8 +287,7 @@ impl CheckOracle {
             if let Some(pos) = null_pos
                 && pos != 0
             {
-                let null_element = stages.remove(pos);
-                stages.insert(0, null_element);
+                stages[..=pos].rotate_right(1);
             }
 
             let mut ordering = DEFAULT_ORDER;

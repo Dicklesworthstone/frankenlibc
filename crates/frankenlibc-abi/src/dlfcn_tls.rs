@@ -368,16 +368,29 @@ impl Module {
 
 pub(super) struct Block {
     id: usize,
-    module: Weak<Module>,
+    // Hosted blocks retain the existing weak lifetime check. Native blocks
+    // use registry IDs instead: dropping a last Weak could free a host-heap
+    // Arc allocation on a clone thread with inherited allocator TLS.
+    module: Option<Weak<Module>>,
     allocation: NonNull<u8>,
     data: NonNull<u8>,
     layout: Layout,
+    native_allocation: Option<super::thread_exit::MappedAllocation>,
 }
 
 impl Block {
-    fn new(module: &Arc<Module>) -> Option<Self> {
-        // SAFETY: nonzero, validated allocation layout; matching dealloc below.
-        let allocation = NonNull::new(unsafe { alloc_zeroed(module.layout) })?;
+    fn new(module: &Arc<Module>, native: bool) -> Option<Self> {
+        let native_allocation = if native {
+            Some(super::thread_exit::MappedAllocation::new(module.layout)?)
+        } else {
+            None
+        };
+        let allocation = if let Some(mapping) = &native_allocation {
+            NonNull::new(mapping.as_ptr())?
+        } else {
+            // SAFETY: validated hosted layout; matching dealloc below.
+            NonNull::new(unsafe { alloc_zeroed(module.layout) })?
+        };
         // SAFETY: first_byte + size fits the allocation. The zero tail is .tbss.
         let data = unsafe { NonNull::new_unchecked(allocation.as_ptr().add(module.first_byte)) };
         unsafe {
@@ -389,18 +402,23 @@ impl Block {
         };
         Some(Self {
             id: module.id,
-            module: Arc::downgrade(module),
+            module: if native { None } else { Some(Arc::downgrade(module)) },
             allocation,
             data,
             layout: module.layout,
+            native_allocation,
         })
     }
 }
 
 impl Drop for Block {
     fn drop(&mut self) {
-        // SAFETY: this thread exclusively owns the allocation and its layout.
-        unsafe { dealloc(self.allocation.as_ptr(), self.layout) };
+        if self.native_allocation.is_none() {
+            // SAFETY: hosted allocation with its exact original layout.
+            unsafe { dealloc(self.allocation.as_ptr(), self.layout) };
+        }
+        // Native mappings are released by their field's Drop, with no host
+        // heap reference count or allocator call in this path.
     }
 }
 
@@ -408,16 +426,30 @@ pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void
     if offset > module.size {
         return None;
     }
+    let _operation = OPERATIONS.lock();
     super::thread_exit::with_state(|state| {
         let mut blocks = state.blocks.try_borrow_mut().ok()?;
         // Weak ownership permits dlclose to unload modules. Never reuse an ID:
         // stale per-thread blocks cannot become the TLS of a later dlopen.
-        blocks.retain(|block| block.module.strong_count() != 0);
+        if state.native {
+            // Every caller materializes outside the registry lock. OPERATIONS
+            // protects module identity while we prune without owning a Weak.
+            let dsos = registry().lock().ok()?;
+            blocks.retain(|block| {
+                block.id == module.id
+                    || dsos.iter().any(|dso| dso.id == block.id)
+                    || super::ifunc::temporary_tls_module(block.id).is_some()
+            });
+        } else {
+            blocks.retain(|block| {
+                block.module.as_ref().is_some_and(|module| module.strong_count() != 0)
+            });
+        }
         let index = match blocks.iter().position(|block| block.id == module.id) {
             Some(index) => index,
             None => {
-                blocks.try_reserve(1).ok()?;
-                blocks.push(Block::new(module)?);
+                blocks.try_reserve(1)?;
+                blocks.push_reserved(Block::new(module, state.native)?);
                 blocks.len() - 1
             }
         };

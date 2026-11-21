@@ -10,7 +10,8 @@ import time
 
 CASES = ["backlog", "limit", "clamp", "default-limit", "idle-restart",
          "callback-progress", "canceled-notifications", "retirement-race",
-         "startup-burst", "spawn-failure"]
+         "startup-burst", "spawn-failure", "priority-same-fd", "priority-list",
+         "priority-across-fds", "priority-invalid", "priority-fsync", "priority-policy"]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

@@ -124,6 +124,7 @@ impl CallPins {
 }
 impl Drop for CallPins {
     fn drop(&mut self) {
+        let _operation = OPERATIONS.lock();
         if let Ok(mut dsos) = registry().lock() {
             for dso in dsos.iter_mut().filter(|dso| self.0.contains(&dso.id)) {
                 dso.thread_exit_pins -= 1;

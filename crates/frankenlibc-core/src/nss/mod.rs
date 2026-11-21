@@ -66,9 +66,9 @@ impl Status {
             .map(|index| Self::ALL[index])
     }
 
-    /// Map a module's `enum nss_status` value. `NSS_STATUS_RETURN` (2) is an
-    /// internal glibc status no module should report; treat it, and anything
-    /// else unexpected, as an unavailable source.
+    /// Map the four ordinary module statuses. Stateful netgroup dispatch
+    /// handles `NSS_STATUS_RETURN` (2) through `Service::return_action` before
+    /// using this classification. Other unexpected values are unavailable.
     pub fn from_raw(raw: i32) -> Self {
         match raw {
             1 => Self::Success,
@@ -102,6 +102,7 @@ pub enum SourceKind {
 pub struct Service {
     name: Vec<u8>,
     actions: [Action; 4],
+    return_action: Action,
 }
 
 impl Service {
@@ -114,6 +115,7 @@ impl Service {
                 Action::Continue,
                 Action::Continue,
             ],
+            return_action: Action::Return,
         }
     }
 
@@ -131,6 +133,13 @@ impl Service {
 
     pub fn action(&self, status: Status) -> Action {
         self.actions[status.index()]
+    }
+
+    /// Action for the stateful netgroup module's `NSS_STATUS_RETURN` status.
+    /// It stops by default, but a negated ordinary-status clause also applies
+    /// to this distinct status, as GNU's switch configuration specifies.
+    pub fn return_action(&self) -> Action {
+        self.return_action
     }
 }
 
@@ -274,6 +283,9 @@ pub fn parse_sources(line: &[u8]) -> Result<Vec<Service>, ParseError> {
                     if (candidate == status) != negate {
                         service.actions[candidate.index()] = action;
                     }
+                }
+                if negate {
+                    service.return_action = action;
                 }
                 count += 1;
             }
@@ -700,6 +712,24 @@ mod tests {
         assert_eq!(s[0].action(Status::TryAgain), Action::Return);
         assert_eq!(s[1].action(Status::Success), Action::Merge);
         assert_eq!(s[1].action(Status::NotFound), Action::Continue);
+    }
+
+    #[test]
+    fn netgroup_return_status_obeys_negated_actions() {
+        let default = line("netgroup", "module files");
+        assert_eq!(default[0].return_action(), Action::Return);
+        for status in ["SUCCESS", "NOTFOUND", "UNAVAIL", "TRYAGAIN"] {
+            let positive = line("netgroup", &format!("module [{status}=continue] files"));
+            assert_eq!(positive[0].return_action(), Action::Return);
+            let negative = line("netgroup", &format!("module [!{status}=continue] files"));
+            assert_eq!(negative[0].return_action(), Action::Continue);
+            assert_eq!(negative[1].return_action(), Action::Return);
+        }
+        let reset = line(
+            "netgroup",
+            "module [!SUCCESS=continue] [!NOTFOUND=return] files",
+        );
+        assert_eq!(reset[0].return_action(), Action::Return);
     }
 
     #[test]

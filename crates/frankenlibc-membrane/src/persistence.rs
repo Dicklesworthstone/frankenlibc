@@ -49,6 +49,7 @@
 
 /// Point cloud size for persistence computation.
 const PERSIST_CLOUD: usize = 24;
+const PERSIST_EDGES: usize = PERSIST_CLOUD * (PERSIST_CLOUD - 1) / 2;
 
 /// Observation dimension.
 const PERSIST_DIM: usize = 4;
@@ -163,49 +164,60 @@ struct Edge {
 
 /// Compute 0-dimensional persistent homology of a point cloud.
 ///
-/// Returns (pairs, diameter) where pairs are (birth=0, death=merge_distance)
-/// for each component merge.
-fn compute_persistence_h0(points: &[[f64; PERSIST_DIM]]) -> (Vec<PersistencePair>, f64) {
+/// Returns (pair storage, initialized pair count, diameter), with one
+/// (birth=0, death=merge_distance) pair for each component merge.
+fn compute_persistence_h0(
+    points: &[[f64; PERSIST_DIM]],
+) -> ([PersistencePair; PERSIST_CLOUD - 1], usize, f64) {
     let n = points.len();
+    assert!(n <= PERSIST_CLOUD);
+    let mut pairs = [PersistencePair { birth: 0.0, death: 0.0 }; PERSIST_CLOUD - 1];
     if n < 2 {
-        return (vec![], 0.0);
+        return (pairs, 0, 0.0);
     }
 
-    // Compute all pairwise distances.
-    let mut edges = Vec::with_capacity(n * (n - 1) / 2);
+    // The live cloud is bounded, so recomputing it never needs the host heap.
+    let mut edges = [Edge { dist: 0.0, i: 0, j: 0 }; PERSIST_EDGES];
+    let mut edge_count = 0;
     let mut diameter = 0.0f64;
     for i in 0..n {
         for j in (i + 1)..n {
             let dist = euclidean_dist(&points[i], &points[j]);
             diameter = diameter.max(dist);
-            edges.push(Edge {
+            edges[edge_count] = Edge {
                 dist,
                 i: i as u16,
                 j: j as u16,
-            });
+            };
+            edge_count += 1;
         }
     }
 
-    // Sort edges by distance (Kruskal-style for minimum spanning forest).
-    edges.sort_by(|a, b| {
+    // Original (i, j) insertion order breaks equal-distance ties, matching the
+    // old stable sort while allowing a guaranteed allocation-free in-place sort.
+    let edges = &mut edges[..edge_count];
+    edges.sort_unstable_by(|a, b| {
         a.dist
             .partial_cmp(&b.dist)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.i.cmp(&b.i))
+            .then_with(|| a.j.cmp(&b.j))
     });
 
     // Process edges: each successful union kills a connected component.
     let mut uf = UnionFind::new(n);
-    let mut pairs = Vec::with_capacity(n - 1);
-    for edge in &edges {
+    let mut pair_count = 0;
+    for edge in edges.iter() {
         if uf.union(edge.i as usize, edge.j as usize) {
-            pairs.push(PersistencePair {
+            pairs[pair_count] = PersistencePair {
                 birth: 0.0,
                 death: edge.dist,
-            });
+            };
+            pair_count += 1;
         }
     }
 
-    (pairs, diameter)
+    (pairs, pair_count, diameter)
 }
 
 fn euclidean_dist(a: &[f64; PERSIST_DIM], b: &[f64; PERSIST_DIM]) -> f64 {
@@ -355,11 +367,8 @@ impl PersistenceDetector {
     }
 
     fn recompute(&mut self) {
-        // Extract point cloud (already in order, no need to sort).
-        let points: Vec<[f64; PERSIST_DIM]> = (0..self.count).map(|i| self.window[i]).collect();
-
-        let (pairs, diameter) = compute_persistence_h0(&points);
-        let summary = summarize(&pairs, diameter);
+        let (pairs, pair_count, diameter) = compute_persistence_h0(&self.window[..self.count]);
+        let summary = summarize(&pairs[..pair_count], diameter);
         self.last_summary = Some(summary);
 
         if !self.baseline_ready {
@@ -434,15 +443,15 @@ mod tests {
 
     #[test]
     fn empty_cloud_has_no_pairs() {
-        let (pairs, _) = compute_persistence_h0(&[]);
-        assert!(pairs.is_empty());
+        let (_, pair_count, _) = compute_persistence_h0(&[]);
+        assert_eq!(pair_count, 0);
     }
 
     #[test]
     fn two_points_one_pair() {
         let points = [[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
-        let (pairs, _) = compute_persistence_h0(&points);
-        assert_eq!(pairs.len(), 1);
+        let (pairs, pair_count, _) = compute_persistence_h0(&points);
+        assert_eq!(pair_count, 1);
         assert!(
             (pairs[0].death - 1.0).abs() < 1e-10,
             "death = {}",
@@ -457,8 +466,8 @@ mod tests {
         for (i, p) in points.iter_mut().enumerate() {
             p[0] = i as f64;
         }
-        let (pairs, _) = compute_persistence_h0(&points);
-        assert_eq!(pairs.len(), 9);
+        let (_, pair_count, _) = compute_persistence_h0(&points);
+        assert_eq!(pair_count, 9);
     }
 
     #[test]
@@ -468,8 +477,8 @@ mod tests {
         for (i, p) in points.iter_mut().enumerate() {
             p[0] = i as f64 * 10.0;
         }
-        let (pairs, _) = compute_persistence_h0(&points);
-        for i in 1..pairs.len() {
+        let (pairs, pair_count, _) = compute_persistence_h0(&points);
+        for i in 1..pair_count {
             assert!(
                 pairs[i].death >= pairs[i - 1].death - 1e-10,
                 "death[{}]={} < death[{}]={}",
@@ -495,8 +504,8 @@ mod tests {
         for (i, p) in points[4..8].iter_mut().enumerate() {
             p[0] = 100.0 + i as f64 * 0.1;
         }
-        let (pairs, diameter) = compute_persistence_h0(&points);
-        let summary = summarize(&pairs, diameter);
+        let (pairs, pair_count, diameter) = compute_persistence_h0(&points);
+        let summary = summarize(&pairs[..pair_count], diameter);
         // The inter-cluster merge has persistence ≈ 100, which is >> 15% of diameter.
         assert!(
             summary.significant_features >= 1,
@@ -518,8 +527,8 @@ mod tests {
                 [x, x * 0.5, x * 0.3, x * 0.1]
             })
             .collect();
-        let (pairs, diameter) = compute_persistence_h0(&points);
-        let summary = summarize(&pairs, diameter);
+        let (pairs, pair_count, diameter) = compute_persistence_h0(&points);
+        let summary = summarize(&pairs[..pair_count], diameter);
         assert!(
             summary.persistence_entropy >= 0.0,
             "entropy = {}",

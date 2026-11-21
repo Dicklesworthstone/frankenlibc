@@ -66,7 +66,7 @@
     "report_json": "target/conformance/support_reality_regeneration.report.json"
   },
   "schema_version": "support_reality_regeneration.v1",
-  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+  "source_commit": "4d0f827bb167af864b9f41fde4a2fdd9e8d40ab7",
   "source_commit_policy": {
     "checker_records_git_head": true,
     "committed_contract_token": "full_git_oid",

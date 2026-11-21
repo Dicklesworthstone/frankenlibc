@@ -170,6 +170,7 @@ pub(crate) use floating_environment::Guard as FloatingEnvironmentGuard;
 pub use floating_environment::Guard as RuntimeMathEnvironmentGuard;
 
 pub mod admm_budget;
+pub mod allocator_telemetry;
 pub mod alpha_investing;
 pub mod approachability;
 pub mod atiyah_bott;
@@ -277,7 +278,9 @@ use crate::mean_field_game::{MeanFieldGameController, MfgState};
 use crate::padic_valuation::{PadicState, PadicValuationMonitor};
 use crate::persistence::{PersistenceDetector, TopologicalState};
 use crate::pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};
-use crate::quarantine_controller::{QuarantineController, current_depth, publish_depth};
+use crate::quarantine_controller::{
+    QuarantineController, QuarantineSnapshot, current_depth, publish_depth,
+};
 use crate::risk_engine::{CallFamily, RiskDecision, RiskEngine};
 use crate::rough_path::{RoughPathMonitor, SignatureState};
 use crate::schrodinger_bridge::{BridgeState, SchrodingerBridgeController};
@@ -750,7 +753,7 @@ pub trait RuntimeKernelFramework {
 /// - Additive-only changes are allowed without bumping the version.
 /// - Any rename/removal/semantic change requires bump + explicit migration plan
 ///   for fixtures and harness diff tooling.
-pub const RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+pub const RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// Runtime state snapshot useful for tests/telemetry export.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -939,10 +942,21 @@ pub struct RuntimeKernelSnapshot {
     pub sos_barrier_provenance_value: i64,
     /// SOS barrier quarantine certificate value (milli-units, negative = violation).
     pub sos_barrier_quarantine_value: i64,
-    /// SOS barrier fragmentation certificate value (milli-units, negative = violation).
+    /// Advisory resource-pressure score; not an observed result while
+    /// evaluations is zero. A negative score does not deny valid accesses.
     pub sos_barrier_fragmentation_value: i64,
-    /// SOS barrier thread-safety certificate value (milli-units, negative = violation).
+    /// Thread-safety score; not an observed result while evaluations is zero.
     pub sos_barrier_thread_safety_value: i64,
+    #[serde(default)]
+    pub sos_barrier_fragmentation_evaluations: u64,
+    #[serde(default)]
+    pub sos_barrier_fragmentation_pressure_events: u64,
+    #[serde(default)]
+    pub sos_barrier_thread_safety_evaluations: u64,
+    /// Actual hardened-arena counters behind the most recent measured score.
+    /// None means this kernel has received no arena sample.
+    #[serde(default)]
+    pub sos_barrier_arena_fragmentation: Option<allocator_telemetry::ArenaFragmentationSnapshot>,
     /// SOS barrier size-class certificate value (milli-units, negative = violation).
     pub sos_barrier_size_class_value: i64,
     /// SOS barrier total violation count.
@@ -2381,10 +2395,12 @@ impl RuntimeMathKernel {
         {
             profile = ValidationProfile::Full;
         }
-        if self.cached_sparse_state.load(Ordering::Relaxed) >= 4 {
+        let sparse_requires_full = self.cached_sparse_state.load(Ordering::Relaxed) >= 4;
+        if sparse_requires_full {
             profile = ValidationProfile::Full;
         }
-        if self.cached_equivariant_state.load(Ordering::Relaxed) >= 3 {
+        let equivariant_requires_full = self.cached_equivariant_state.load(Ordering::Relaxed) >= 3;
+        if equivariant_requires_full {
             profile = ValidationProfile::Full;
         }
         let sos_barrier_state = self.cached_sos_barrier_state.load(Ordering::Relaxed);
@@ -2424,14 +2440,16 @@ impl RuntimeMathKernel {
 
         // Adaptive allocator guard: when quarantine depth is low under elevated
         // risk, force full validation to preserve temporal safety.
-        if matches!(ctx.family, ApiFamily::Allocator)
+        let allocator_requires_full = matches!(ctx.family, ApiFamily::Allocator)
             && mode.heals_enabled()
             && current_depth() < 128
-            && risk_upper_bound_ppm >= limits.repair_trigger_ppm / 2
-        {
+            && risk_upper_bound_ppm >= limits.repair_trigger_ppm / 2;
+        if allocator_requires_full {
             profile = ValidationProfile::Full;
         }
-        if self.cached_cvar_state[usize::from(ctx.family as u8)].load(Ordering::Relaxed) >= 3 {
+        let cvar_requires_full =
+            self.cached_cvar_state[usize::from(ctx.family as u8)].load(Ordering::Relaxed) >= 3;
+        if cvar_requires_full {
             profile = ValidationProfile::Full;
         }
 
@@ -2454,6 +2472,23 @@ impl RuntimeMathKernel {
             if cell.profile.requires_full() {
                 profile = ValidationProfile::Full;
             }
+        }
+
+        // Reapply hard depth requirements after all soft profile preferences.
+        // Latency budgets and routing recommendations cannot override a risk,
+        // certificate, critical-controller, or allocator temporal-safety guard.
+        let hard_full_profile = ConstrainedBanditRouter::requires_full_profile(
+            mode,
+            risk_upper_bound_ppm,
+            ctx.contention_hint,
+        ) || sos_barrier_state >= SosBarrierState::Warning as u8
+            || (mode.heals_enabled() && consistency_faults > 0)
+            || sparse_requires_full
+            || equivariant_requires_full
+            || allocator_requires_full
+            || cvar_requires_full;
+        if hard_full_profile {
+            profile = ValidationProfile::Full;
         }
 
         let admissible = self
@@ -2493,8 +2528,18 @@ impl RuntimeMathKernel {
         } else if matches!(policy_escalation, Some(MembraneAction::FullValidate))
             || profile.requires_full()
             || risk_upper_bound_ppm >= limits.full_validation_trigger_ppm
+            || matches!(policy_escalation, Some(MembraneAction::FullValidate))
+            || (mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm)
         {
-            MembraneAction::FullValidate
+            // Repair augments full validation; it is not a shallower alternative.
+            // The former FullValidate-first fallthrough made this upgrade
+            // unreachable whenever the router or controller required Full.
+            if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
+                profile = ValidationProfile::Full;
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+            } else {
+                MembraneAction::FullValidate
+            }
         } else {
             MembraneAction::Allow
         };
@@ -2503,6 +2548,11 @@ impl RuntimeMathKernel {
         if pressure_regime == SystemRegime::Pressured
             && matches!(action, MembraneAction::FullValidate)
             && risk_upper_bound_ppm < limits.repair_trigger_ppm
+            && risk_upper_bound_ppm < limits.full_validation_trigger_ppm
+            && !hard_full_profile
+            && consistency_faults == 0
+            && policy_escalation.is_none()
+            && policy_cell.is_none_or(|cell| !cell.profile.requires_full())
             && ctx.contention_hint >= 64
             && sos_barrier_state < SosBarrierState::Warning as u8
         {
@@ -2511,7 +2561,13 @@ impl RuntimeMathKernel {
             overload_policy_tag = OVERLOAD_POLICY_PRESSURED_FAST_ALLOW;
         } else if pressure_regime == SystemRegime::Overloaded
             && admissible
-            && !matches!(action, MembraneAction::Deny | MembraneAction::Repair(_))
+            // A generic upgrade still yields to the existing safe fallback.
+            // Explicit policy-table repairs and denials remain authoritative.
+            && (matches!(action, MembraneAction::Allow | MembraneAction::FullValidate)
+                || (matches!(
+                    action,
+                    MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+                ) && !matches!(policy_escalation, Some(MembraneAction::Repair(_)))))
             && sos_barrier_state < SosBarrierState::Warning as u8
         {
             profile = ValidationProfile::Fast;
@@ -2617,6 +2673,10 @@ impl RuntimeMathKernel {
                     seqno,
                 );
             }
+            self.cached_evidence_loss.fetch_max(
+                self.evidence_log.publication_loss_count(),
+                Ordering::Relaxed,
+            );
         }
 
         decision
@@ -4043,11 +4103,11 @@ impl RuntimeMathKernel {
                 self.cached_sos_state.store(sos_code, Ordering::Relaxed);
             }
 
-            // Feed SOS barrier certificate evaluator for non-allocator families.
-            // (`ApiFamily::Allocator` already updated quarantine + SOS barriers
-            // above `CASCADE_STRIDE`.)
-            if !matches!(family, ApiFamily::Allocator) {
-                let barrier_code = {
+            // Feed SOS barrier certificate evaluator (cadence-gated).
+            // Evaluates provenance + quarantine. Allocator geometry and
+            // thread ownership cannot be inferred from generic severity.
+            {
+                {
                     let mut barrier = self.sos_barrier.lock();
                     // Provenance barrier: use cached risk and profile.
                     let risk_ppm = risk_bound_ppm;
@@ -4110,15 +4170,19 @@ impl RuntimeMathKernel {
                             allocation_epoch_lag_ppm,
                         );
                     }
-                    match barrier.state() {
+                    // Fragmentation is supplied by completed arena operations
+                    // through observe_allocator_fragmentation.
+                    let barrier_code = match barrier.state() {
                         SosBarrierState::Calibrating => 0u8,
                         SosBarrierState::Safe => 1u8,
                         SosBarrierState::Warning => 2u8,
                         SosBarrierState::Violated => 3u8,
-                    }
-                };
-                self.cached_sos_barrier_state
-                    .store(barrier_code, Ordering::Relaxed);
+                    };
+                    // Publish before unlocking: a later allocator fault must
+                    // not be overwritten by this observer's older state.
+                    self.cached_sos_barrier_state
+                        .store(barrier_code, Ordering::Relaxed);
+                }
             }
 
             // Feed spectral-sequence obstruction detector.
@@ -4978,12 +5042,121 @@ impl RuntimeMathKernel {
         self.sos_barrier.lock().summary()
     }
 
+    /// Feed an actual completed arena free into the quarantine controller.
+    ///
+    /// This bypasses generic ABI observation sampling and certificate shortcuts.
+    /// Every successful retirement and every detected double free contributes
+    /// once to the rate denominator; only double frees contribute to its hit
+    /// numerator. Allocation failures and integrity corruption are not UAF hits.
+    /// The fixed-window percentile and depth update run once per 256 attempts.
+    pub fn observe_allocator_free(
+        &self,
+        mode: SafetyLevel,
+        result: crate::arena::FreeResult,
+        estimated_cost_ns: u64,
+    ) {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED
+            || !matches!(mode, SafetyLevel::Hardened)
+            || !self.validation_feedback_enabled()
+        {
+            return;
+        }
+        let was_quarantine_hit = match result {
+            crate::arena::FreeResult::Freed
+            | crate::arena::FreeResult::FreedWithCanaryCorruption
+            | crate::arena::FreeResult::FreedWithFingerprintCorruption => false,
+            crate::arena::FreeResult::DoubleFree => true,
+            crate::arena::FreeResult::ForeignPointer | crate::arena::FreeResult::InvalidPointer => {
+                return;
+            }
+        };
+        let _floating_environment = floating_environment::Guard::enter();
+        // NoPoisonMutex uses raw futex syscalls, and the fixed-size controller
+        // update allocates nothing: neither path changes the caller's errno.
+        let mut quarantine = self.quarantine.lock();
+        if quarantine.record_free(estimated_cost_ns, was_quarantine_hit) {
+            publish_depth(&quarantine);
+        }
+    }
+
+    /// Exact retirement feedback counts and the resulting local controller state.
+    #[must_use]
+    pub fn quarantine_snapshot(&self) -> QuarantineSnapshot {
+        self.quarantine.lock().snapshot()
+    }
+
+    /// Apply a measured hardened-arena sample after releasing allocator locks.
+    /// Busy or reentrant observers never wait for the SOS controller; the
+    /// producer retains pending work and retries on a later completed operation.
+    /// Integer arithmetic only: no allocation, TLS, errno or fenv side effects.
+    /// Samples must belong to one arena's cumulative history; the production
+    /// pipeline owns a matching arena/kernel pair. Mixing arenas is unsupported.
+    pub fn observe_allocator_fragmentation(
+        &self,
+        sample: allocator_telemetry::ArenaFragmentationSnapshot,
+    ) -> bool {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED || !self.validation_feedback_enabled() {
+            return true;
+        }
+        let Some(mut barrier) = self.sos_barrier.try_lock() else {
+            return false;
+        };
+        barrier.evaluate_arena_fragmentation(sample);
+        self.cached_sos_barrier_state
+            .store(barrier.state() as u8, Ordering::Relaxed);
+        true
+    }
+
     /// Record overlap information for cross-shard consistency checks.
     ///
     /// Returns true when overlap is consistent, false when a cocycle fault is detected.
     pub fn note_overlap(&self, left_shard: usize, right_shard: usize, witness_hash: u64) -> bool {
         self.cohomology
             .note_overlap(left_shard, right_shard, witness_hash)
+    }
+
+    /// Apply bounded observations from actual segment class selections.
+    ///
+    /// An allocator must never wait on a controller already held by interrupted
+    /// or reentrant code. A busy controller leaves both mailboxes untouched for
+    /// the next sample or kernel lookup. The existing mutex is fork-aware.
+    /// This path uses integer arithmetic only and does not allocate or touch TLS.
+    pub fn observe_pending_allocator_size_classes(
+        &self,
+        telemetry: &allocator_telemetry::SegmentSizeClassTelemetry,
+    ) -> u32 {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED
+            || !self.validation_feedback_enabled()
+            || !telemetry.has_pending()
+        {
+            return 0;
+        }
+        let Some(mut barrier) = self.sos_barrier.try_lock() else {
+            return 0;
+        };
+        let mut consumed = 0;
+        // Healthy first, urgent last, under one controller lock: a coalesced
+        // healthy sample cannot erase an unconsumed mapping failure.
+        for mapping in telemetry.take_pending().into_iter().flatten() {
+            barrier.evaluate_size_class(
+                usize::from(mapping.requested_size),
+                mapping.mapped_class_size as usize,
+                mapping.class_membership_valid,
+            );
+            telemetry.note_consumed(mapping);
+            consumed += 1;
+        }
+        if consumed != 0 {
+            let barrier_code = match barrier.state() {
+                SosBarrierState::Calibrating => 0,
+                SosBarrierState::Safe => 1,
+                SosBarrierState::Warning => 2,
+                SosBarrierState::Violated => 3,
+            };
+            self.cached_sos_barrier_state
+                .store(barrier_code, Ordering::Relaxed);
+        }
+        consumed
     }
 
     /// Report a size-class mapping event to the SOS barrier certificate controller.
@@ -5202,10 +5375,13 @@ impl RuntimeMathKernel {
             sos_barrier_quarantine_value: sos_barrier_summary.quarantine_value,
             sos_barrier_fragmentation_value: sos_barrier_summary.fragmentation_value,
             sos_barrier_thread_safety_value: sos_barrier_summary.thread_safety_value,
+            sos_barrier_fragmentation_evaluations: sos_barrier_summary.fragmentation_evaluations,
+            sos_barrier_fragmentation_pressure_events: sos_barrier_summary.fragmentation_violations,
+            sos_barrier_thread_safety_evaluations: sos_barrier_summary.thread_safety_evaluations,
+            sos_barrier_arena_fragmentation: sos_barrier_summary.last_arena_fragmentation,
             sos_barrier_size_class_value: sos_barrier_summary.size_class_value,
             sos_barrier_violations: sos_barrier_summary.provenance_violations
                 + sos_barrier_summary.quarantine_violations
-                + sos_barrier_summary.fragmentation_violations
                 + sos_barrier_summary.thread_safety_violations
                 + sos_barrier_summary.size_class_violations
                 + if sos_barrier_summary.fragmentation_hash_valid {
@@ -5390,6 +5566,23 @@ impl RuntimeMathKernel {
             tls_cache_hit_delta: tls_cache_hits.saturating_sub(previous_hits),
             tls_cache_miss_delta: tls_cache_misses.saturating_sub(previous_misses),
         }
+    }
+
+    /// Prepare bounded hot-path storage without manufacturing observations.
+    ///
+    /// Construction initializes controllers, while evidence rings stay lazy
+    /// for callers that never record. Native thread creators reserve those
+    /// rings here before a worker can enter policy through its inherited host
+    /// TLS. A failed reservation remains retryable on a suitable caller.
+    #[must_use]
+    pub fn prepare_runtime_storage(&self) -> bool {
+        self.evidence_log.prepare_storage()
+    }
+
+    /// Check readiness without allocating or changing runtime evidence.
+    #[must_use]
+    pub fn runtime_storage_ready(&self) -> bool {
+        self.evidence_log.storage_ready()
     }
 
     /// Snapshot reverse-round branch-diversity state for runtime enforcement.
@@ -6337,6 +6530,56 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::collections::{BTreeSet, HashMap};
+
+    #[test]
+    fn allocator_class_feedback_defers_without_losing_a_fault_when_sos_is_busy() {
+        use allocator_telemetry::{SegmentSizeClassMapping, SegmentSizeClassTelemetry};
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+        let telemetry = SegmentSizeClassTelemetry::new();
+        let invalid = SegmentSizeClassMapping {
+            requested_size: 64,
+            mapped_class_size: 32,
+            class_membership_valid: true,
+        };
+        assert!(telemetry.record(invalid));
+        let controller = kernel.sos_barrier.lock();
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 0);
+        assert_eq!(telemetry.snapshot().pending_urgent, Some(invalid));
+        assert_eq!(telemetry.snapshot().consumed_samples, 0);
+        drop(controller);
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
+        assert!(!telemetry.has_pending());
+        assert_eq!(kernel.cached_sos_barrier_state.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn arena_fragmentation_feedback_defers_and_rejects_stale_snapshots() {
+        let arena = crate::arena::AllocationArena::new();
+        let first = arena.allocate(64).expect("first allocation");
+        let older = arena.try_fragmentation_snapshot().expect("first snapshot");
+        let _second = arena.allocate(1024).expect("second allocation");
+        let newer = arena.try_fragmentation_snapshot().expect("second snapshot");
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let controller = kernel.sos_barrier.lock();
+        assert!(!kernel.observe_allocator_fragmentation(newer));
+        assert_eq!(controller.summary().fragmentation_evaluations, 0);
+        drop(controller);
+        assert!(kernel.observe_allocator_fragmentation(newer));
+        assert!(kernel.observe_allocator_fragmentation(older));
+        let summary = kernel.sos_barrier.lock().summary();
+        assert_eq!(summary.fragmentation_evaluations, 1);
+        assert_eq!(summary.last_arena_fragmentation, Some(newer));
+        assert_eq!(summary.thread_safety_evaluations, 0);
+
+        assert_eq!(arena.free(first.ptr).0, crate::arena::FreeResult::Freed);
+        let retired = arena
+            .try_fragmentation_snapshot()
+            .expect("retirement snapshot");
+        assert!(kernel.observe_allocator_fragmentation(retired));
+        let summary = kernel.sos_barrier.lock().summary();
+        assert_eq!(summary.fragmentation_evaluations, 2);
+        assert_eq!(summary.last_arena_fragmentation, Some(retired));
+    }
 
     fn snapshot_struct_field_names(source: &str) -> Vec<String> {
         let struct_start = source
@@ -9025,9 +9268,368 @@ mod tests {
         }
     }
 
-    /// Decision-law invariant (behavioral): in hardened mode, admissible calls
-    /// with risk above `repair_trigger_ppm` produce `Repair(UpgradeToSafeVariant)`
-    /// with `ValidationProfile::Full`.
+    #[test]
+    fn decide_hardened_upgrade_after_public_feedback_and_warm_routing() {
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+        for _ in 0..4 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+        assert!(kernel.validation_feedback_enabled());
+        for i in 0..64 {
+            kernel.observe_validation_result(
+                SafetyLevel::Hardened,
+                ApiFamily::PointerValidation,
+                ValidationProfile::Full,
+                20,
+                i % 16 == 0,
+            );
+        }
+        let before = kernel.snapshot(SafetyLevel::Hardened);
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        assert!(decision.risk_upper_bound_ppm >= before.repair_trigger_ppm);
+        assert!(decision.risk_upper_bound_ppm < 900_000);
+        assert_eq!(decision.profile, ValidationProfile::Full);
+        assert_eq!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+        );
+        assert!(decision.requires_full_validation());
+        assert_ne!(decision.evidence_seqno, 0);
+        let after = kernel.snapshot(SafetyLevel::Hardened);
+        assert_eq!(
+            after.policy_action_dist[2],
+            before.policy_action_dist[2] + 1
+        );
+    }
+
+    #[test]
+    fn decide_upgrade_thresholds_preserve_full_validation() {
+        let mut below_repair = 0;
+        let mut above_repair = 0;
+        for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+            for prior in [0, 79_999, 80_000, 139_999, 140_000, 299_999, 300_000] {
+                let mut kernel = RuntimeMathKernel::new_for_mode(mode);
+                kernel.risk = ConformalRiskEngine::new(prior, 3.0);
+                kernel
+                    .cached_design_ident_ppm
+                    .store(1_000_000, Ordering::Relaxed);
+                // Every case previously requested Full; repair may strengthen it.
+                kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+                let limits = kernel.controller.limits(mode);
+                let decision =
+                    kernel.decide(mode, RuntimeContext::pointer_validation(0x1000, false));
+                assert!(decision.requires_full_validation());
+                assert_eq!(decision.profile, ValidationProfile::Full);
+                if mode.heals_enabled()
+                    && decision.risk_upper_bound_ppm >= limits.repair_trigger_ppm
+                {
+                    above_repair += 1;
+                    assert_eq!(
+                        decision.action,
+                        MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+                    );
+                } else {
+                    if mode.heals_enabled() {
+                        below_repair += 1;
+                    }
+                    assert_eq!(decision.action, MembraneAction::FullValidate);
+                }
+            }
+        }
+        assert!(below_repair > 0);
+        assert!(above_repair > 0);
+    }
+
+    #[test]
+    fn pressured_regime_preserves_hard_validation_requirements() {
+        for (mode, prior, contention_hint, fault, warning) in [
+            (SafetyLevel::Strict, 220_000, 80, false, false),
+            (SafetyLevel::Hardened, 80_000, 80, false, false),
+            (SafetyLevel::Hardened, 0, 96, false, false),
+            (SafetyLevel::Hardened, 0, 80, true, false),
+            (SafetyLevel::Strict, 0, 80, false, true),
+        ] {
+            let mut kernel = RuntimeMathKernel::new_for_mode(mode);
+            kernel.risk = ConformalRiskEngine::new(prior, 3.0);
+            kernel
+                .cached_design_ident_ppm
+                .store(1_000_000, Ordering::Relaxed);
+            kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+            if fault {
+                assert!(!kernel.cohomology.note_overlap(0, 1, 1));
+            }
+            if warning {
+                kernel
+                    .cached_sos_barrier_state
+                    .store(SosBarrierState::Warning as u8, Ordering::Relaxed);
+            }
+            drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+            let decision = kernel.decide(
+                mode,
+                RuntimeContext {
+                    contention_hint,
+                    ..RuntimeContext::pointer_validation(0x1000, false)
+                },
+            );
+            assert_eq!(
+                kernel.cached_pressure_regime.load(Ordering::Relaxed),
+                PRESSURE_REGIME_PRESSURED
+            );
+            assert_ne!(decision.action, MembraneAction::Allow);
+            assert!(decision.requires_full_validation());
+            assert_eq!(decision.profile, ValidationProfile::Full);
+            assert_eq!(
+                kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                OVERLOAD_POLICY_NONE
+            );
+        }
+    }
+
+    #[test]
+    fn pressured_regime_preserves_alarm_and_allocator_guards() {
+        const CHILD_ENV: &str = "FRANKENLIBC_TEST_PRESSURE_HARD_GUARDS";
+        // Quarantine depth and tropical metrics are process-global. Run these
+        // boundary cases alone so concurrent controller tests cannot publish
+        // unrelated state or observe our deliberately shallow quarantine.
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("test executable"),
+            )
+            .args([
+                "--exact",
+                "runtime_math::tests::pressured_regime_preserves_alarm_and_allocator_guards",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("run isolated pressure regression");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "isolated pressure regression did not pass: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        for alarm in 0..3 {
+            let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+            kernel.risk = ConformalRiskEngine::new(0, 3.0);
+            kernel
+                .cached_design_ident_ppm
+                .store(1_000_000, Ordering::Relaxed);
+            match alarm {
+                0 => kernel.cached_sparse_state.store(4, Ordering::Relaxed),
+                1 => kernel.cached_equivariant_state.store(3, Ordering::Relaxed),
+                _ => kernel.cached_cvar_state[ApiFamily::PointerValidation as usize]
+                    .store(3, Ordering::Relaxed),
+            }
+            drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+            let decision = kernel.decide(
+                SafetyLevel::Strict,
+                RuntimeContext {
+                    contention_hint: 80,
+                    ..RuntimeContext::pointer_validation(0x1000, false)
+                },
+            );
+            assert_eq!(
+                kernel.cached_pressure_regime.load(Ordering::Relaxed),
+                PRESSURE_REGIME_PRESSURED
+            );
+            assert!(
+                decision.risk_upper_bound_ppm
+                    < kernel
+                        .controller
+                        .limits(SafetyLevel::Strict)
+                        .full_validation_trigger_ppm
+            );
+            assert_eq!(decision.profile, ValidationProfile::Full, "alarm {alarm}");
+            assert_eq!(
+                decision.action,
+                MembraneAction::FullValidate,
+                "alarm {alarm}"
+            );
+            assert_eq!(
+                kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                OVERLOAD_POLICY_NONE
+            );
+        }
+
+        for depth in [64, 127, 128] {
+            crate::quarantine_controller::QUARANTINE_DEPTH.store(depth, Ordering::Release);
+            let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+            kernel.risk = ConformalRiskEngine::new(70_000, 3.0);
+            kernel
+                .cached_design_ident_ppm
+                .store(1_000_000, Ordering::Relaxed);
+            drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+            let decision = kernel.decide(
+                SafetyLevel::Hardened,
+                RuntimeContext {
+                    family: ApiFamily::Allocator,
+                    requested_bytes: 64,
+                    contention_hint: 80,
+                    ..RuntimeContext::pointer_validation(0x1000, false)
+                },
+            );
+            assert_eq!(
+                kernel.cached_pressure_regime.load(Ordering::Relaxed),
+                PRESSURE_REGIME_PRESSURED
+            );
+            assert_eq!(decision.risk_upper_bound_ppm, 70_000);
+            let (profile, action, tag) = if depth < 128 {
+                (
+                    ValidationProfile::Full,
+                    MembraneAction::FullValidate,
+                    OVERLOAD_POLICY_NONE,
+                )
+            } else {
+                (
+                    ValidationProfile::Fast,
+                    MembraneAction::Allow,
+                    OVERLOAD_POLICY_PRESSURED_FAST_ALLOW,
+                )
+            };
+            assert_eq!(decision.profile, profile, "quarantine depth {depth}");
+            assert_eq!(decision.action, action, "quarantine depth {depth}");
+            assert_eq!(
+                kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn pressured_regime_preserves_policy_table_requirements() {
+        let per_family = policy_table::RISK_BUCKETS_V1
+            * policy_table::BUDGET_BUCKETS_V1
+            * policy_table::CONSISTENCY_BUCKETS_V1;
+        let per_mode = ApiFamily::COUNT * per_family;
+        for (action, repair, hardened_action) in [
+            (0, 0, MembraneAction::FullValidate),
+            (1, 0, MembraneAction::FullValidate),
+            (
+                2,
+                6,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            ),
+            (3, 0, MembraneAction::Deny),
+        ] {
+            let mut overrides = Vec::new();
+            for i in 0..per_family {
+                let strict_action = if action == 2 { 1 } else { action };
+                overrides.push((i, 1, strict_action, 0));
+                overrides.push((per_mode + i, 1, action, repair));
+            }
+            let artifact = policy_table::build_test_pcpt(&overrides);
+            for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+                let mut kernel = RuntimeMathKernel::new_for_mode(mode);
+                kernel.risk = ConformalRiskEngine::new(0, 3.0);
+                kernel
+                    .cached_design_ident_ppm
+                    .store(1_000_000, Ordering::Relaxed);
+                kernel
+                    .load_policy_table(&artifact)
+                    .expect("load policy table");
+                drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+                let decision = kernel.decide(
+                    mode,
+                    RuntimeContext {
+                        contention_hint: 80,
+                        ..RuntimeContext::pointer_validation(0x1000, false)
+                    },
+                );
+                assert_eq!(decision.profile, ValidationProfile::Full);
+                assert_eq!(
+                    decision.action,
+                    if mode.heals_enabled() {
+                        hardened_action
+                    } else {
+                        MembraneAction::FullValidate
+                    }
+                );
+                assert_eq!(
+                    kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                    OVERLOAD_POLICY_NONE
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decide_upgrade_preserves_policy_and_barrier_precedence() {
+        let per_family = policy_table::RISK_BUCKETS_V1
+            * policy_table::BUDGET_BUCKETS_V1
+            * policy_table::CONSISTENCY_BUCKETS_V1;
+        let per_mode = ApiFamily::COUNT * per_family;
+        for (action, repair, expected) in [
+            (
+                1,
+                0,
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+            ),
+            (
+                2,
+                6,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            ),
+            (3, 0, MembraneAction::Deny),
+        ] {
+            let mut overrides = Vec::new();
+            for i in 0..per_family {
+                let strict_action = if action == 2 { 1 } else { action };
+                overrides.push((i, 1, strict_action, 0));
+                overrides.push((per_mode + i, 1, action, repair));
+            }
+            let artifact = policy_table::build_test_pcpt(&overrides);
+            let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+            kernel.risk = ConformalRiskEngine::new(300_000, 3.0);
+            kernel
+                .load_policy_table(&artifact)
+                .expect("load policy table");
+            let ctx = RuntimeContext::pointer_validation(0x1000, false);
+            let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+            assert!(decision.risk_upper_bound_ppm >= 300_000);
+            assert_eq!(decision.action, expected);
+            assert_eq!(decision.profile, ValidationProfile::Full);
+            let blocked = kernel.decide(
+                SafetyLevel::Hardened,
+                RuntimeContext {
+                    requested_bytes: 512 * 1024 * 1024,
+                    ..ctx
+                },
+            );
+            assert_eq!(
+                blocked.action,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+            );
+        }
+    }
+
+    #[test]
+    fn overloaded_regime_keeps_safe_fallback_above_repair_threshold() {
+        let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        kernel.risk = ConformalRiskEngine::new(300_000, 3.0);
+        drive_pressure_sensor_to(&kernel, SystemRegime::Overloaded);
+        let decision = kernel.decide(
+            SafetyLevel::Hardened,
+            RuntimeContext::pointer_validation(0x1000, false),
+        );
+        assert!(decision.risk_upper_bound_ppm >= 300_000);
+        assert_eq!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        );
+        assert_eq!(
+            kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+            OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK
+        );
+    }
+
+    /// Decision-law invariant (behavioral): in hardened mode, risk above
+    /// repair_trigger_ppm produces Repair or stronger, never Allow.
     #[test]
     fn decide_hardened_repair_trigger_never_allows() {
         let kernel = RuntimeMathKernel::new();

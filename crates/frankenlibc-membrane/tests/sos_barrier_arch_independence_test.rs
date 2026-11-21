@@ -24,6 +24,13 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, RuntimeMathKernel, Validatio
 #[path = "../build.rs"]
 mod build_script;
 
+// Cargo does not run build.rs unit tests by itself. Compile its verifier into
+// this existing certificate test target so adversarial witness checks exercise
+// the exact code that accepts or rejects the shipped runtime coefficients.
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod build_verifier;
+
 /// Expected barrier values for canonical inputs (golden values).
 ///
 /// These values were computed on x86_64 and must match on aarch64/RISC-V.

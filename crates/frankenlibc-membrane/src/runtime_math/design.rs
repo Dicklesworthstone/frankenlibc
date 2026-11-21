@@ -107,6 +107,9 @@ pub struct DesignSummary {
 /// factors and greedily pick probes that maximize Δlogdet / cost under budget.
 pub struct OptimalDesignController {
     fisher: [[f64; LATENT_DIM]; LATENT_DIM],
+    // Fisher changes only in record_probe(). Keep its derived scalar ready for
+    // decide(): querying the score must not perform Cholesky/log/exp work.
+    identifiability_ppm: u32,
     last_plan: ProbePlan,
     observations: u64,
     anomaly_events: u64,
@@ -122,6 +125,7 @@ impl OptimalDesignController {
         }
         Self {
             fisher,
+            identifiability_ppm: compute_identifiability_ppm(&fisher),
             last_plan: ProbePlan {
                 mask: Probe::all_mask(),
                 budget_ns: 0,
@@ -192,7 +196,8 @@ impl OptimalDesignController {
         } else {
             0.0
         };
-        let mut candidates: Vec<(Probe, f64, u64)> = Vec::with_capacity(Probe::COUNT);
+        let mut candidates = [(Probe::Spectral, 0.0, 0u64); Probe::COUNT];
+        let mut candidate_count = 0;
         for probe in Probe::ALL {
             if (mask & probe.bit()) != 0 {
                 continue;
@@ -216,11 +221,25 @@ impl OptimalDesignController {
                 (logdet_spd(&trial) - base_logdet).max(0.0)
             };
             let score = gain / (cost_ns as f64 + 1.0);
-            candidates.push((probe, score, cost_ns));
+            candidates[candidate_count] = (probe, score, cost_ns);
+            candidate_count += 1;
         }
 
-        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-        for (probe, _, cost_ns) in candidates {
+        let candidates = &mut candidates[..candidate_count];
+        // At most seventeen candidates: stable insertion keeps the previous
+        // equal-score probe order without allocating sorting scratch space.
+        for end in 1..candidates.len() {
+            let candidate = candidates[end];
+            let mut position = end;
+            while position > 0
+                && candidates[position - 1].1.partial_cmp(&candidate.1) == Some(Ordering::Less)
+            {
+                candidates[position] = candidates[position - 1];
+                position -= 1;
+            }
+            candidates[position] = candidate;
+        }
+        for &(probe, _, cost_ns) in candidates.iter() {
             let next = expected_cost_ns.saturating_add(cost_ns);
             if next <= budget_ns {
                 add_probe(&mut mask, &mut expected_cost_ns, probe);
@@ -257,17 +276,14 @@ impl OptimalDesignController {
                 row[i] += 1e-4;
             }
         }
+        self.identifiability_ppm = compute_identifiability_ppm(&self.fisher);
     }
 
     /// 0..1e6 identifiability score from log-determinant information volume.
     #[must_use]
+    #[inline]
     pub fn identifiability_ppm(&self) -> u32 {
-        // Since updates are PSD rank-one additions, logdet is monotone
-        // and gives a stable scalar identifiability proxy.
-        let logdet = logdet_spd(&self.fisher);
-        let shifted = (logdet + 20.0).max(0.0);
-        let score = (1.0 - crate::util::exp_f64(-0.05 * shifted)).clamp(0.0, 1.0);
-        (score * 1_000_000.0) as u32
+        self.identifiability_ppm
     }
 
     #[must_use]
@@ -285,6 +301,15 @@ impl Default for OptimalDesignController {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn compute_identifiability_ppm(fisher: &[[f64; LATENT_DIM]; LATENT_DIM]) -> u32 {
+    // Preserve the score's information-volume model, including the periodic
+    // forgetting step. Only its evaluation site moves off the decision path.
+    let logdet = logdet_spd(fisher);
+    let shifted = (logdet + 20.0).max(0.0);
+    let score = (1.0 - crate::util::exp_f64(-0.05 * shifted)).clamp(0.0, 1.0);
+    (score * 1_000_000.0) as u32
 }
 
 fn rank_one_update(matrix: &mut [[f64; LATENT_DIM]; LATENT_DIM], v: [f64; LATENT_DIM], w: f64) {
@@ -437,6 +462,57 @@ mod tests {
         }
         let after = ctrl.identifiability_ppm();
         assert!(after >= before);
+    }
+
+    #[test]
+    fn identifiability_matches_information_volume_after_updates_and_forgetting() {
+        let mut ctrl = OptimalDesignController::new();
+        let mut reference = ctrl.fisher;
+        assert_eq!(ctrl.identifiability_ppm(), 0);
+        for step in 1..=2050 {
+            let probe = Probe::ALL[step % Probe::COUNT];
+            let adverse = step % 5 == 0;
+            let features = probe_features(probe);
+            let weight = if adverse { 1.25 } else { 0.20 };
+            for i in 0..LATENT_DIM {
+                for j in 0..LATENT_DIM {
+                    reference[i][j] += weight * features[i] * features[j];
+                }
+            }
+            if step % 1024 == 0 {
+                for (i, row) in reference.iter_mut().enumerate() {
+                    for value in row.iter_mut() {
+                        *value *= 0.985;
+                    }
+                    row[i] += 1e-4;
+                }
+            }
+            ctrl.record_probe(probe, adverse);
+
+            // Independent determinant by Gaussian elimination, followed by the
+            // host logarithm/exp. This catches stale caches and missed decay,
+            // without recomputing the implementation's Cholesky-based score.
+            let mut triangular = reference;
+            let mut determinant = 1.0;
+            for i in 0..LATENT_DIM {
+                let pivot = triangular[i][i];
+                determinant *= pivot;
+                for j in i + 1..LATENT_DIM {
+                    let ratio = triangular[j][i] / pivot;
+                    for k in i + 1..LATENT_DIM {
+                        triangular[j][k] -= ratio * triangular[i][k];
+                    }
+                }
+            }
+            let shifted = (determinant.ln() + 20.0).max(0.0);
+            let expected = ((1.0 - (-0.05 * shifted).exp()) * 1_000_000.0) as u32;
+            assert!(
+                ctrl.identifiability_ppm().abs_diff(expected) <= 1,
+                "score drift after probe {step}: {} vs {expected}",
+                ctrl.identifiability_ppm(),
+            );
+            assert_eq!(ctrl.summary().identifiability_ppm, ctrl.identifiability_ppm());
+        }
     }
 
     #[test]

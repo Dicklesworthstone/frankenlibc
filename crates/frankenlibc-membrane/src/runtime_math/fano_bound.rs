@@ -176,7 +176,7 @@ impl ControllerJoint {
         }
         // P(error) >= 1 - [I(X;Y) + ln(2)] / ln(K)
         // Clamp to [0, 1].
-        let bound = 1.0 - (mi + core::f64::consts::LN_2) / log_k;
+        let bound = 1.0 - (mi + crate::util::ln_f64(2.0)) / log_k;
         bound.clamp(0.0, 1.0)
     }
 }

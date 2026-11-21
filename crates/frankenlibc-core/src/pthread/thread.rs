@@ -32,7 +32,7 @@
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::syscall;
 
-use core::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
 pub use super::tls::CancellationWait;
 
@@ -119,6 +119,10 @@ pub unsafe fn maybe_exit_process_as_last_native_thread() {
     }
 }
 
+const ENTRY_WAITING: u32 = 0;
+const ENTRY_RUN: u32 = 1;
+const ENTRY_ABORT: u32 = 2;
+
 /// Clone flags for creating a POSIX thread.
 ///
 /// Shares: virtual memory, filesystem info, file descriptors, signal handlers,
@@ -160,7 +164,24 @@ const MAP_ANONYMOUS: usize = 0x20;
 /// Magic value for identifying a valid ThreadHandle.
 const THREAD_HANDLE_MAGIC: u32 = 0x5448_444c; // "THDL"
 
-/// Per-thread control block. Allocated on the heap, pointed to by `pthread_t`.
+/// ABI-owned dynamic TLS state attached to one native thread.
+///
+/// The ABI embeds this immutable header at the start of its allocation and
+/// publishes it through `ThreadHandle::runtime_tls`. The calling thread alone
+/// accesses the payload. `drain` removes callbacks before invoking them and
+/// permits those callbacks to access TLS or register further destructors.
+/// `reclaim` releases storage without invoking application code.
+#[repr(C)]
+pub struct RuntimeTlsState {
+    /// Drain C++/runtime TLS destructors while the native identity is live.
+    /// A true final-drain flag requires returning with signals blocked, even
+    /// if an application destructor changed its signal mask.
+    pub drain: unsafe fn(*mut RuntimeTlsState, bool),
+    /// Reclaim the allocation after the final drain, with signals blocked.
+    pub reclaim: unsafe fn(*mut RuntimeTlsState),
+}
+
+/// Per-thread control block. Owned anonymous mapping, pointed to by `pthread_t`.
 ///
 /// The `tid` field doubles as the join futex: `CLONE_CHILD_CLEARTID` tells the
 /// kernel to set `*child_tid = 0` and `futex_wake(child_tid)` when the thread
@@ -185,6 +206,10 @@ pub struct ThreadHandle {
     /// `errno + 1` when setup failed before the user entry point ran.
     pub started: AtomicU32,
 
+    /// Creator publication gate. The child keeps application signals blocked
+    /// until the ABI has published its handle and transferred exit ownership.
+    entry_gate: AtomicU32,
+
     /// Return value from the user's `start_routine`.
     /// Written by the child before exit; read by the joiner after `tid == 0`.
     pub retval: core::cell::UnsafeCell<usize>,
@@ -192,6 +217,12 @@ pub struct ThreadHandle {
     /// The native thread's errno slot. Only its owner and that owner's signal
     /// handlers access this cell; no inherited compiler TLS is involved.
     pub errno: core::cell::UnsafeCell<i32>,
+
+    /// Formatting state belongs to the native owner, including during key
+    /// destructors. A new thread starts on the global numeric locale and with
+    /// no pending render error, independently of its creator's compiler TLS.
+    numeric_locale: core::cell::UnsafeCell<Option<[u64; 3]>>,
+    render_failure: core::cell::UnsafeCell<i32>,
 
     /// POSIX cancellation settings, initialized independently of the creator.
     /// These settings do not imply native asynchronous cancellation delivery.
@@ -225,6 +256,12 @@ pub struct ThreadHandle {
     /// Native threads must not use the creator's compiler TLS for this state.
     pub cxa_eh_globals: core::cell::UnsafeCell<[usize; 2]>,
 
+    /// ABI dynamic TLS and destructor state. Atomic publication allows an
+    /// interrupted first access to lose initialization to a signal handler
+    /// without exposing a partially initialized allocation. The native owner
+    /// keeps this state across fork and reclaims it before retiring its TID.
+    pub runtime_tls: AtomicPtr<RuntimeTlsState>,
+
     /// Base address of the owned mapping, including its guard. Zero for a
     /// caller-provided stack, which this implementation must never unmap.
     pub stack_base: usize,
@@ -242,14 +279,20 @@ pub struct ThreadHandle {
     /// Caller-provided stacks always have zero libc-managed guard bytes.
     pub guard_size: usize,
 
+    /// Whether creation explicitly selected the scheduling policy/priority.
+    /// Immutable before clone; getattr can report this even inside user entry
+    /// before the creator has published its ABI registry record.
+    pub explicit_scheduling: bool,
+
     /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
-    /// heap-allocated ThreadHandle so clone-based threads never need malloc.
-    pub tls_values: [super::tls::TlsEntry; super::tls::PTHREAD_KEYS_MAX],
+    /// owned ThreadHandle mapping so clone-based threads never need malloc.
+    pub tls_values: [super::tls::TlsEntry; super::tls::TLS_KEY_SLOTS],
 }
 
 // SAFETY: ThreadHandle is designed for cross-thread sharing via atomic fields.
 // The `retval` field is accessed only after synchronization (tid cleared to 0).
-// The errno cell is accessed only by its owning thread and its signal handlers.
+// The errno cell is accessed only by its owning thread and its signal handlers;
+// formatting cells are private to that owner and never exposed by reference.
 #[allow(unsafe_code)]
 unsafe impl Send for ThreadHandle {}
 #[allow(unsafe_code)]
@@ -282,8 +325,8 @@ struct ThreadStartArgs {
 /// This function:
 /// 1. Reads the `ThreadStartArgs` from the pointer
 /// 2. Applies scheduling/affinity and registers its thread-local key storage
-/// 3. Signals the parent that setup is complete and restores the signal mask
-/// 4. Calls the user's `start_routine(arg)`
+/// 3. Signals setup completion and waits for creator-side handle publication
+/// 4. Restores the signal mask and calls the user's `start_routine(arg)`
 /// 5. Stores the return value in the handle and exits
 ///
 /// # Safety
@@ -344,9 +387,8 @@ unsafe extern "C-unwind" fn thread_trampoline(args_raw: usize) -> usize {
         Ordering::AcqRel,
         Ordering::Acquire,
     );
-    // Nothing below reads the parent's affinity buffer. Publish readiness
-    // before restoring the mask: a pending signal handler may immediately
-    // wait for the creator, which must already be able to return from create.
+    // Nothing below reads the parent's affinity buffer. Readiness lets the
+    // creator finish publishing ABI ownership while signals remain blocked.
     let unwind_boundary: usize;
     // SAFETY: read this frame's stack pointer without changing machine state.
     // Publish before signals can run pthread_exit from an application handler.
@@ -364,6 +406,13 @@ unsafe extern "C-unwind" fn thread_trampoline(args_raw: usize) -> usize {
         .unwind_stack_boundary
         .store(unwind_boundary, Ordering::Relaxed);
     publish_startup(handle, 1);
+    if !wait_for_entry_publication(handle) {
+        // No application code or signal handler has run. Retire the fresh
+        // identity directly, without executing application TLS destructors.
+        super::tls::discard_thread_tls_before_entry(current_tid);
+        handle.state.store(THREAD_FINISHED, Ordering::Release);
+        syscall::sys_exit_thread(0);
+    }
     // SAFETY: Linux's kernel sigset is exactly one u64 on both supported ISAs.
     // The parent used this same syscall successfully before clone. With valid
     // arguments, restoring a mask cannot fail under the ordinary Linux ABI.
@@ -436,6 +485,49 @@ fn publish_startup(handle: &ThreadHandle, outcome: u32) {
     };
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+fn wait_for_entry_publication(handle: &ThreadHandle) -> bool {
+    loop {
+        match handle.entry_gate.load(Ordering::Acquire) {
+            ENTRY_RUN => return true,
+            ENTRY_ABORT => return false,
+            _ => {
+                // SAFETY: the creator retains this mapping until it opens
+                // the gate; the child cannot run or reclaim it while parked.
+                let _ = unsafe {
+                    syscall::sys_futex(
+                        core::ptr::from_ref(&handle.entry_gate).cast(),
+                        0x80, // FUTEX_WAIT_PRIVATE
+                        ENTRY_WAITING,
+                        0,
+                        0,
+                        0,
+                    )
+                };
+            }
+        }
+    }
+}
+
+/// Open the entry gate without dereferencing the handle after ownership can
+/// transfer. The private wake uses an integer address as a kernel lookup key;
+/// it remains safe if an immediately exiting detached child unmaps the handle.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+unsafe fn release_entry_gate(handle_ptr: *mut ThreadHandle, outcome: u32) {
+    // SAFETY: the caller owns this prepared mapping while its gate is closed.
+    let address = {
+        let gate = unsafe { &(*handle_ptr).entry_gate };
+        let address = core::ptr::from_ref(gate) as usize;
+        gate.store(outcome, Ordering::Release);
+        address
+    };
+    // No handle/reference access follows the release. A realtime child can
+    // proceed immediately without waiting for another creator-side action.
+    let _ = syscall::sys_futex_wake_private(address, 1);
+}
+
 // ---------------------------------------------------------------------------
 // Stack reclamation for detached threads
 // ---------------------------------------------------------------------------
@@ -479,17 +571,18 @@ unsafe fn detached_thread_self_cleanup_and_exit(tid: i32, handle_ptr: *mut Threa
     // that is no longer accessible by any joiner.
     let handle = unsafe { &*handle_ptr };
 
-    // CRITICAL: Before freeing the handle, tell the kernel not to write to the
-    // TID address on thread exit. Otherwise CLONE_CHILD_CLEARTID would write 0
-    // to freed memory.
-    let _ = syscall::sys_set_tid_address(0);
-
     let stack_base = handle.stack_base;
     let stack_total_size = handle.stack_total_size;
 
-    // SAFETY: `handle_ptr` was allocated via Box::into_raw in create_thread and
-    // detached threads own their final cleanup path.
-    unsafe { drop(Box::from_raw(handle_ptr)) };
+    // The kernel still owns the clear-TID address until this succeeds. If a
+    // sandbox denies the syscall, retain the handle mapping through SYS_exit:
+    // a late kernel store must never target unmapped or recycled storage.
+    if syscall::sys_set_tid_address(0) > 0 {
+        // SAFETY: this detached owner has completed TLS teardown and disabled
+        // the kernel's final access. No joiner can retain this handle.
+        // The mapping is mmap-backed, not a Box.
+        unsafe { free_thread_handle(handle_ptr) };
+    }
     super::tls::run_native_post_handle_drop_hook(tid);
     super::tls::finish_exiting_native_tid(tid);
 
@@ -514,7 +607,16 @@ unsafe fn detached_thread_self_cleanup_and_exit(tid: i32, handle_ptr: *mut Threa
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
     let _ = syscall::disarm_native_cancel_syscall(tid, syscall::NativeCancelWindowToken::Fresh);
+    // Explicit pthread_exit/cancellation already marks exit_started before
+    // unwinding, so its destructors cannot restart that active unwind. An
+    // ordinary start-routine return has no unwind in progress: GNU permits a
+    // new cancellation in a key destructor to replace the eventual join value.
+    // Keep that distinction until application callbacks have all completed.
+    drain_native_runtime_tls(tid);
     super::tls::teardown_native_thread_tls(tid);
+    // Signals are blocked and the native identity is withdrawn at this point.
+    // No application callback remains which could initiate cancellation.
+    unsafe { (*handle_ptr).exit_started.store(1, Ordering::Relaxed) };
 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return
     // value becomes visible only after the FINISHED/DETACHED synchronization.
@@ -739,9 +841,83 @@ fn free_thread_stack(base: usize, total_size: usize) {
     let _ = unsafe { syscall::sys_munmap(base as *mut u8, total_size) };
 }
 
+/// Reclaim the control block after its owner and kernel have released it.
+///
+/// Native exit may run after identity removal, when inherited compiler TLS
+/// still belongs to the creator. Reclamation therefore uses only raw munmap,
+/// never a host allocator or a TLS-dependent runtime path.
+///
+/// # Safety
+///
+/// The pointer must be an exclusively owned, initialized ThreadHandle mapping.
+/// The kernel must no longer retain its clear-TID address.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+unsafe fn free_thread_handle(handle: *mut ThreadHandle) {
+    // All fields are native values or non-owning pointers. ABI dynamic TLS is
+    // drained and reclaimed before a native thread releases its identity.
+    unsafe { core::ptr::drop_in_place(handle) };
+    // SAFETY: mmap provided a page-aligned base and this exact extent.
+    let _ =
+        unsafe { syscall::sys_munmap(handle.cast::<u8>(), core::mem::size_of::<ThreadHandle>()) };
+}
+
 // ---------------------------------------------------------------------------
 // Thread creation (public API for ABI layer)
 // ---------------------------------------------------------------------------
+
+/// A fully initialized native thread whose application entry is still closed.
+/// The creator exclusively owns its handle and stack until publication.
+/// Dropping this guard aborts and reaps the child without running user code.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[must_use]
+pub struct PreparedThread {
+    handle: *mut ThreadHandle,
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+impl PreparedThread {
+    /// Inspect the initialized handle while this guard retains ownership.
+    pub fn handle(&self) -> *mut ThreadHandle {
+        self.handle
+    }
+
+    /// Publish complete lifecycle ownership and allow application entry.
+    ///
+    /// # Safety
+    ///
+    /// The caller must finish all registry/output publication before this
+    /// call. A detached child may exit and reclaim its handle immediately;
+    /// neither the creator nor its cleanup guards may dereference it afterward.
+    #[allow(unsafe_code)]
+    pub unsafe fn start(self, detached: bool) -> *mut ThreadHandle {
+        // Disarm abort/reap before the final release. No Drop can touch the
+        // mapping after the detached child is permitted to reclaim it.
+        let prepared = core::mem::ManuallyDrop::new(self);
+        let handle = prepared.handle;
+        if detached {
+            // SAFETY: the child is parked, and only this guard owns lifecycle
+            // transitions until the publication gate opens.
+            unsafe { (*handle).state.store(THREAD_DETACHED, Ordering::Release) };
+        }
+        // SAFETY: publication is complete and the guard has been disarmed.
+        unsafe { release_entry_gate(handle, ENTRY_RUN) };
+        handle
+    }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+impl Drop for PreparedThread {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        // SAFETY: unpublished guards remain joinable and exclusively owned.
+        // Raw syscall helpers preserve the creator's errno during abort/reap.
+        unsafe {
+            release_entry_gate(self.handle, ENTRY_ABORT);
+            let _ = join_thread(self.handle);
+        }
+    }
+}
 
 /// Create a new thread using the Linux `clone` syscall.
 ///
@@ -835,36 +1011,95 @@ pub unsafe fn create_thread_with_startup(
     stack: ThreadStack,
     startup: ThreadStartup<'_>,
 ) -> Result<*mut ThreadHandle, i32> {
+    // Direct core callers have no additional ABI registry to publish.
+    let prepared = unsafe { prepare_thread_with_startup(start_routine, arg, stack, startup) }?;
+    // SAFETY: the returned joinable handle remains owned until join/detach.
+    Ok(unsafe { prepared.start(false) })
+}
+
+/// Prepare a native thread and retain creator ownership before user entry.
+///
+/// Setup errors are reaped before return. On success, application signals
+/// remain blocked and the child waits for [`PreparedThread::start`]. Dropping
+/// the returned guard aborts the unpublished thread without user callbacks.
+///
+/// # Safety
+///
+/// The entry point, argument and stack have the same requirements as
+/// `create_thread_with_startup`. Until `start`, the caller may inspect metadata
+/// but must not otherwise join, detach, reclaim or expose the prepared handle
+/// to an operation that could transfer its lifecycle ownership.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub unsafe fn prepare_thread_with_startup(
+    start_routine: usize,
+    arg: usize,
+    stack: ThreadStack,
+    startup: ThreadStartup<'_>,
+) -> Result<PreparedThread, i32> {
     let stack = prepare_thread_stack(stack)?;
     let stack_base = stack.mapping_base;
     let stack_total_size = stack.mapping_size;
     let stack_top = stack.top;
 
-    // Allocate the ThreadHandle on the heap (Box).
-    let handle = Box::new(ThreadHandle {
-        magic: THREAD_HANDLE_MAGIC,
-        tid: AtomicI32::new(0),
-        self_tid: AtomicI32::new(0),
-        state: AtomicU32::new(THREAD_STARTING),
-        started: AtomicU32::new(0),
-        retval: core::cell::UnsafeCell::new(0),
-        errno: core::cell::UnsafeCell::new(0),
-        cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
-        cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
-        threading_policy_depth: AtomicU32::new(0),
-        cleanup_head: AtomicUsize::new(0),
-        exit_started: AtomicU32::new(0),
-        unwind_stack_boundary: AtomicUsize::new(0),
-        unwind_exception: core::cell::UnsafeCell::new([0; 2]),
-        cxa_eh_globals: core::cell::UnsafeCell::new([0; 2]),
-        stack_base,
-        stack_total_size,
-        stack_addr: stack.address,
-        stack_size: stack.size,
-        guard_size: stack.guard_size,
-        tls_values: [super::tls::TlsEntry::default(); super::tls::PTHREAD_KEYS_MAX],
-    });
-    let handle_ptr = Box::into_raw(handle);
+    // The control block must be reclaimable by a detached native child without
+    // using its creator's host allocator/TLS. Its fixed alignment fits every
+    // supported Linux page size; allocation failure also releases our stack.
+    const { assert!(core::mem::align_of::<ThreadHandle>() <= GUARD_PAGE_SIZE) };
+    let mapping = match unsafe {
+        syscall::sys_mmap(
+            core::ptr::null_mut(),
+            core::mem::size_of::<ThreadHandle>(),
+            (PROT_READ | PROT_WRITE) as i32,
+            (MAP_PRIVATE | MAP_ANONYMOUS) as i32,
+            -1,
+            0,
+        )
+    } {
+        Ok(mapping) => mapping,
+        Err(error) => {
+            free_thread_stack(stack_base, stack_total_size);
+            return Err(error);
+        }
+    };
+    if mapping.is_null() {
+        // A null pthread handle cannot be published, even if mmap succeeded.
+        let _ = unsafe { syscall::sys_munmap(mapping, core::mem::size_of::<ThreadHandle>()) };
+        free_thread_stack(stack_base, stack_total_size);
+        return Err(12); // ENOMEM
+    }
+    let handle_ptr = mapping.cast::<ThreadHandle>();
+    // SAFETY: the fresh mapping is aligned, writable, and exclusively owned.
+    unsafe {
+        handle_ptr.write(ThreadHandle {
+            magic: THREAD_HANDLE_MAGIC,
+            tid: AtomicI32::new(0),
+            self_tid: AtomicI32::new(0),
+            state: AtomicU32::new(THREAD_STARTING),
+            started: AtomicU32::new(0),
+            entry_gate: AtomicU32::new(ENTRY_WAITING),
+            retval: core::cell::UnsafeCell::new(0),
+            errno: core::cell::UnsafeCell::new(0),
+            numeric_locale: core::cell::UnsafeCell::new(None),
+            render_failure: core::cell::UnsafeCell::new(0),
+            cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
+            cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
+            threading_policy_depth: AtomicU32::new(0),
+            cleanup_head: AtomicUsize::new(0),
+            exit_started: AtomicU32::new(0),
+            unwind_stack_boundary: AtomicUsize::new(0),
+            unwind_exception: core::cell::UnsafeCell::new([0; 2]),
+            cxa_eh_globals: core::cell::UnsafeCell::new([0; 2]),
+            runtime_tls: AtomicPtr::new(core::ptr::null_mut()),
+            stack_base,
+            stack_total_size,
+            stack_addr: stack.address,
+            stack_size: stack.size,
+            guard_size: stack.guard_size,
+            explicit_scheduling: startup.scheduling.is_some(),
+            tls_values: [super::tls::TlsEntry::default(); super::tls::TLS_KEY_SLOTS],
+        })
+    };
 
     // Prepare ThreadStartArgs on the child stack.
     // The args struct goes near the top of the stack, and the trampoline
@@ -884,7 +1119,7 @@ pub unsafe fn create_thread_with_startup(
         )
     } {
         // SAFETY: clone has not run and handle_ptr is exclusively ours.
-        unsafe { drop(Box::from_raw(handle_ptr)) };
+        unsafe { free_thread_handle(handle_ptr) };
         free_thread_stack(stack_base, stack_total_size);
         return Err(error);
     }
@@ -938,7 +1173,7 @@ pub unsafe fn create_thread_with_startup(
     let child_sp = trampoline_frame;
 
     // parent_tid: kernel writes child TID here via CLONE_PARENT_SETTID.
-    // SAFETY: handle_ptr was just created via Box::into_raw and is valid.
+    // SAFETY: handle_ptr names our initialized, exclusively owned mapping.
     let parent_tid_ptr = unsafe { &(*handle_ptr).tid as *const AtomicI32 as *mut i32 };
     // child_tid: kernel clears this to 0 and futex-wakes on thread exit
     // via CLONE_CHILD_CLEARTID.
@@ -982,7 +1217,7 @@ pub unsafe fn create_thread_with_startup(
             // This ensures the stack-based ThreadStartArgs are consumed before
             // we consider the create operation complete.
             match wait_for_startup(handle_ptr) {
-                Ok(()) => Ok(handle_ptr),
+                Ok(()) => Ok(PreparedThread { handle: handle_ptr }),
                 Err(error) => {
                     let _ = decrement_live_native_threads();
                     // SAFETY: the failed child never entered application code
@@ -995,9 +1230,9 @@ pub unsafe fn create_thread_with_startup(
         }
         Err(errno) => {
             let _ = decrement_live_native_threads();
-            // Clone failed — clean up.
-            // SAFETY: handle_ptr was just created via Box::into_raw.
-            unsafe { drop(Box::from_raw(handle_ptr)) };
+            // Clone failed — the kernel retains neither mapping.
+            // SAFETY: handle_ptr is initialized and exclusively ours.
+            unsafe { free_thread_handle(handle_ptr) };
             free_thread_stack(stack_base, stack_total_size);
             Err(errno)
         }
@@ -1204,8 +1439,8 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
     // Thread is gone. Reclaim its resources.
     free_thread_stack(stack_base, stack_total_size);
 
-    // SAFETY: handle_ptr was created via Box::into_raw in create_thread.
-    unsafe { drop(Box::from_raw(handle_ptr)) };
+    // SAFETY: the kernel has cleared tid and this caller owns reclamation.
+    unsafe { free_thread_handle(handle_ptr) };
 
     Ok(retval)
 }
@@ -1303,8 +1538,8 @@ pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
     // Thread is gone. Reclaim its resources.
     free_thread_stack(stack_base, stack_total_size);
 
-    // SAFETY: handle_ptr was created via Box::into_raw in create_thread.
-    unsafe { drop(Box::from_raw(handle_ptr)) };
+    // SAFETY: the kernel has cleared tid and this caller owns reclamation.
+    unsafe { free_thread_handle(handle_ptr) };
 
     Ok(())
 }
@@ -1333,6 +1568,108 @@ pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
         return None;
     }
     handle_for_tid(syscall::sys_gettid())
+}
+
+/// Formatting must never interpret a failed owner lookup as permission to use
+/// compiler TLS, which a native child may share with its creator.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+fn formatting_thread_handle() -> Option<*mut ThreadHandle> {
+    if !super::tls::native_threads_may_exist() {
+        return None;
+    }
+    let tid = syscall::sys_gettid();
+    if tid <= 0 {
+        std::process::abort();
+    }
+    handle_for_tid(tid)
+}
+
+/// `None` denotes a hosted caller; `Some(None)` is a native caller using the
+/// live global locale. Never confuse the latter with permission to read the
+/// creator's compiler TLS. Only copied values escape this ownership boundary.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn current_numeric_locale() -> Option<Option<[u64; 3]>> {
+    let handle = formatting_thread_handle()?;
+    // SAFETY: the current native owner keeps its handle live through every
+    // application destructor. Locale changes/formatting are not signal-safe;
+    // no reference or callback spans this scalar snapshot.
+    Some(unsafe { *(*handle).numeric_locale.get() })
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn set_current_numeric_locale(value: Option<[u64; 3]>) -> bool {
+    let Some(handle) = formatting_thread_handle() else {
+        return false;
+    };
+    // SAFETY: only the current owner accesses this private formatting cell.
+    unsafe { *(*handle).numeric_locale.get() = value };
+    true
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn set_current_render_failure(errno: i32) -> bool {
+    let Some(handle) = formatting_thread_handle() else {
+        return false;
+    };
+    // SAFETY: only the current owner accesses this private formatting cell.
+    unsafe { *(*handle).render_failure.get() = errno };
+    true
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn take_current_render_failure() -> Option<i32> {
+    let handle = formatting_thread_handle()?;
+    // SAFETY: no reference escapes, and no callback can reenter while replacing
+    // the current native owner's pending formatting error.
+    Some(unsafe { core::mem::replace(&mut *(*handle).render_failure.get(), 0) })
+}
+
+/// Run the current native owner's ABI TLS callbacks before withdrawing its
+/// identity. The callback itself removes entries before invoking user code.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn drain_native_runtime_tls(tid: i32) {
+    let Some(handle) = handle_for_tid(tid) else {
+        return;
+    };
+    // SAFETY: exit runs on the owner and the registration keeps its handle
+    // live. Acquire observes the ABI's fully initialized immutable header.
+    let state = unsafe { (*handle).runtime_tls.load(Ordering::Acquire) };
+    if !state.is_null() {
+        // SAFETY: the published hook and payload belong to this live owner.
+        unsafe { ((*state).drain)(state, false) };
+    }
+}
+
+/// Finish ABI TLS teardown after POSIX key destructors, with signals blocked.
+/// A key destructor may have registered another C++ TLS destructor, so drain
+/// once more while lookup can still resolve the calling native thread.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn reclaim_native_runtime_tls(tid: i32) {
+    let Some(handle) = handle_for_tid(tid) else {
+        return;
+    };
+    // SAFETY: the native owner and its identity remain live. The final drain
+    // restores the blocked signal mask after each application callback.
+    let pending = unsafe { (*handle).runtime_tls.load(Ordering::Acquire) };
+    if !pending.is_null() {
+        unsafe { ((*pending).drain)(pending, true) };
+    }
+    // SAFETY: signals are blocked and this is the owner after all callbacks.
+    // Withdrawal transfers the unique allocation to its reclaim hook.
+    let state = unsafe {
+        (*handle)
+            .runtime_tls
+            .swap(core::ptr::null_mut(), Ordering::AcqRel)
+    };
+    if !state.is_null() {
+        // SAFETY: reclaim does not run application callbacks or consult TLS.
+        unsafe { ((*state).reclaim)(state) };
+    }
 }
 
 /// Request cooperative cancellation of a live native thread without borrowing
@@ -1430,6 +1767,98 @@ mod tests {
         let flag = unsafe { &*(arg as *const AtomicU32) };
         flag.store(42, Ordering::Release);
         0
+    }
+
+    #[test]
+    fn prepared_thread_waits_for_creator_publication() {
+        let flag = AtomicU32::new(0);
+        let page_size = unsafe { host_page_size() } as usize;
+        let prepared = unsafe {
+            prepare_thread_with_startup(
+                signal_start as *const () as usize,
+                core::ptr::from_ref(&flag) as usize,
+                ThreadStack::Allocated {
+                    size: 128 * 1024,
+                    guard_size: page_size,
+                    page_size,
+                },
+                ThreadStartup::default(),
+            )
+        }
+        .unwrap();
+        // Setup has completed, but repeated scheduling opportunities must
+        // not permit the callback before creator-side publication.
+        for _ in 0..32 {
+            syscall::sys_sched_yield();
+            assert_eq!(flag.load(Ordering::Acquire), 0);
+        }
+        let handle = unsafe { prepared.start(false) };
+        assert_eq!(unsafe { join_thread(handle) }, Ok(0));
+        assert_eq!(flag.load(Ordering::Acquire), 42);
+    }
+
+    #[test]
+    fn prepared_thread_abort_reaps_without_callbacks_or_errno_changes() {
+        unsafe extern "C" {
+            #[link_name = "__errno_location"]
+            fn host_errno_location() -> *mut i32;
+        }
+        let flag = AtomicU32::new(0);
+        let page_size = unsafe { host_page_size() } as usize;
+        let mut residency = vec![0u8; (128 * 1024 + page_size) / page_size];
+        for _ in 0..32 {
+            let prepared = unsafe {
+                prepare_thread_with_startup(
+                    signal_start as *const () as usize,
+                    core::ptr::from_ref(&flag) as usize,
+                    ThreadStack::Allocated {
+                        size: 128 * 1024,
+                        guard_size: page_size,
+                        page_size,
+                    },
+                    ThreadStartup::default(),
+                )
+            }
+            .unwrap();
+            let handle = unsafe { &*prepared.handle() };
+            let (address, size, tid) = (
+                handle.stack_base,
+                handle.stack_total_size,
+                handle.tid.load(Ordering::Acquire),
+            );
+            unsafe { *host_errno_location() = 33 }; // EDOM sentinel
+            drop(prepared);
+            assert_eq!(unsafe { *host_errno_location() }, 33);
+            assert_eq!(flag.load(Ordering::Acquire), 0);
+            assert!(super::super::tls::table_lookup(tid).is_null());
+            assert_eq!(
+                unsafe { syscall::sys_mincore(address, size, residency.as_mut_ptr()) },
+                Err(12), // ENOMEM: the owned stack was reclaimed.
+            );
+        }
+    }
+
+    #[test]
+    fn private_entry_wake_uses_address_after_unmapping() {
+        let page_size = unsafe { host_page_size() } as usize;
+        let mapping = unsafe {
+            syscall::sys_mmap(
+                core::ptr::null_mut(),
+                page_size,
+                PROT_NONE as i32,
+                (MAP_PRIVATE | MAP_ANONYMOUS) as i32,
+                -1,
+                0,
+            )
+        }
+        .unwrap();
+        let address = mapping as usize;
+        // Neither an unreadable word nor a retired mapping is dereferenced
+        // by the restricted private-wake operation.
+        assert_eq!(syscall::sys_futex_wake_private(address, 1), Ok(0));
+        unsafe { syscall::sys_munmap(mapping, page_size).unwrap() };
+        assert_eq!(syscall::sys_futex_wake_private(address, 1), Ok(0));
+        assert_eq!(syscall::sys_futex_wake_private(address + 1, 1), Err(22));
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -2165,5 +2594,5 @@ mod tests {
 
     // Note: concurrent double-join is undefined behavior per POSIX (pthread_join
     // on an already-joined thread). We don't test it because the losing joiner
-    // would access freed memory after the winner calls Box::from_raw.
+    // would access unmapped memory after the winner reclaims the handle.
 }

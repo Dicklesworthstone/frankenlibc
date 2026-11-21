@@ -7,58 +7,84 @@
 //! relocation would expose a transaction which can still fail and be unmapped.
 //! Lazy PLT binding and IFUNC-valued TLS template relocations remain unsupported.
 
-use std::cell::{Cell, RefCell};
 use std::ffi::c_int;
+use std::marker::PhantomData;
+use std::ptr::NonNull;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use frankenlibc_core::elf::{Elf64ProgramHeader, Elf64Rela, ProgramType, RelocationType};
+use frankenlibc_core::pthread::thread::current_thread_handle;
 
-use super::{NativeDso, binding, lifecycle, registry, tls, unique};
+use super::{NativeDso, binding, lifecycle, registry, thread_exit, tls, unique};
 
 std::thread_local! {
-    static ACTIVE: Cell<bool> = const { Cell::new(false) };
-    static MODULES: RefCell<Vec<(usize, Arc<tls::Module>)>> = const { RefCell::new(Vec::new()) };
+    // Real hosted threads already have independent compiler TLS. This trivial
+    // borrowed slot needs neither heap ownership nor a host pthread-key
+    // reclaimer merely to execute a resolver that never uses dynamic TLS.
+    // Publish one atomic thin pointer: a signal may inspect it at any point.
+    static HOST_MODULES: AtomicPtr<thread_exit::TemporaryTlsModules> =
+        const { AtomicPtr::new(std::ptr::null_mut()) };
 }
 
 pub(super) fn active() -> bool {
-    ACTIVE.try_with(Cell::get).unwrap_or(true)
+    if current_thread_handle().is_some() {
+        thread_exit::with_existing_state(|state| {
+            Some(!state.ifunc_modules.load(Ordering::Acquire).is_null())
+        }).unwrap_or(false)
+    } else {
+        HOST_MODULES.try_with(|slot| !slot.load(Ordering::Acquire).is_null()).unwrap_or(true)
+    }
 }
 
 pub(super) fn temporary_tls_module(id: usize) -> Option<Arc<tls::Module>> {
-    MODULES
-        .try_with(|modules| {
-            modules
-                .try_borrow()
-                .ok()?
-                .iter()
-                .find(|(module, _)| *module == id)
-                .map(|(_, module)| Arc::clone(module))
+    let modules = if current_thread_handle().is_some() {
+        thread_exit::with_existing_state(|state| {
+            NonNull::new(state.ifunc_modules.load(Ordering::Acquire))
         })
-        .ok()
-        .flatten()
+    } else {
+        HOST_MODULES.try_with(|slot| NonNull::new(slot.load(Ordering::Acquire))).ok().flatten()
+    }?;
+    // SAFETY: Execution's lifetime retains the immutable Context Vec
+    // on this thread's stack and clears the pointer before it can expire.
+    unsafe { modules.as_ref() }
+        .iter()
+        .find(|(module, _)| *module == id)
+        .map(|(_, module)| Arc::clone(module))
 }
 
-struct Execution;
-impl Execution {
-    fn enter(modules: Vec<(usize, Arc<tls::Module>)>) -> Option<Self> {
-        if ACTIVE.try_with(|active| active.replace(true)).ok()? {
-            return None;
+struct Execution<'a> {
+    state: Option<NonNull<thread_exit::ThreadState>>,
+    modules: PhantomData<&'a thread_exit::TemporaryTlsModules>,
+}
+impl<'a> Execution<'a> {
+    fn enter(modules: &'a thread_exit::TemporaryTlsModules) -> Option<Self> {
+        let pointer = std::ptr::from_ref(modules).cast_mut();
+        if current_thread_handle().is_none() {
+            return HOST_MODULES.try_with(|slot| {
+                slot.compare_exchange(
+                    std::ptr::null_mut(), pointer, Ordering::AcqRel, Ordering::Acquire,
+                ).ok()?;
+                Some(Self { state: None, modules: PhantomData })
+            }).ok().flatten();
         }
-        let guard = Self;
-        MODULES
-            .try_with(|slot| {
-                *slot.try_borrow_mut().ok()? = modules;
-                Some(())
-            })
-            .ok()
-            .flatten()?;
-        Some(guard)
+        thread_exit::with_state(|state| {
+            state.ifunc_modules.compare_exchange(
+                std::ptr::null_mut(), pointer, Ordering::AcqRel, Ordering::Acquire,
+            ).ok()?;
+            Some(Self { state: Some(NonNull::from(state)), modules: PhantomData })
+        })
     }
 }
-impl Drop for Execution {
+impl Drop for Execution<'_> {
     fn drop(&mut self) {
-        let _ = MODULES.try_with(|slot| slot.borrow_mut().clear());
-        let _ = ACTIVE.try_with(|active| active.set(false));
+        // SAFETY: this guard remains on the owning thread and its ThreadState
+        // outlives the execution. Release the borrow before Context is dropped.
+        if let Some(state) = self.state {
+            unsafe { state.as_ref() }.ifunc_modules.store(std::ptr::null_mut(), Ordering::Release);
+        } else {
+            let _ = HOST_MODULES.try_with(|slot| slot.store(std::ptr::null_mut(), Ordering::Release));
+        }
     }
 }
 
@@ -330,11 +356,11 @@ unsafe fn invoke(address: usize) -> usize {
 }
 
 pub(super) fn execute(
-    mut context: Context,
+    context: Context,
     plans: &[Vec<Fixup>],
     order: &[usize],
 ) -> Option<Vec<Vec<usize>>> {
-    let _execution = Execution::enter(std::mem::take(&mut context.modules))?;
+    let _execution = Execution::enter(&context.modules)?;
     let mut providers = vec![Vec::new(); plans.len()];
     for &index in order {
         for fixup in plans.get(index)? {
@@ -366,13 +392,13 @@ pub(super) fn execute(
 /// dlsym resolves IFUNC anew on every request; PLT/data relocations retain the
 /// previously selected address. The caller holds OPERATIONS for this function.
 pub(super) fn resolve_symbol(root: usize, resolver: usize) -> Option<usize> {
-    let mut context = {
+    let context = {
         let dsos = registry().lock().ok()?;
         let context = Context::new(&dsos, &[]);
         context.provider(resolver)?;
         context
     };
-    let _execution = Execution::enter(std::mem::take(&mut context.modules))?;
+    let _execution = Execution::enter(&context.modules)?;
     let selected = unsafe { invoke(resolver) };
     if selected != 0 {
         let provider = context.provider(selected)?;

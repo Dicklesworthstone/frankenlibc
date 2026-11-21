@@ -42,7 +42,31 @@
 //! monotonicity-only consumer; it is no longer used as the cache-entry tag.
 
 use crate::lattice::SafetyState;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+// Native clone threads currently inherit their creator's compiler TLS. This
+// latch switches membrane cache and EBR entrypoints away from that shared
+// storage for every thread, including the creator and ordinary host threads.
+static NATIVE_THREADS_MAY_SHARE_COMPILER_TLS: AtomicBool = AtomicBool::new(false);
+
+/// Disable compiler-TLS-backed membrane caches before admitting a native thread.
+///
+/// Publish before clone can start a child that inherits its creator's TLS.
+/// The latch remains set after spawn failure, fork, and thread exit. Existing
+/// creator cache borrows and EBR registrations are left untouched; new accesses
+/// use independent temporary storage. This does not provide a native TCB or
+/// make other compiler-TLS state safe to share.
+#[inline]
+pub fn note_native_thread_tls_sharing() {
+    NATIVE_THREADS_MAY_SHARE_COMPILER_TLS.store(true, Ordering::SeqCst);
+}
+
+/// Whether native-thread admission requires avoiding compiler-TLS membrane state.
+#[inline(always)]
+#[must_use]
+pub fn native_threads_may_share_compiler_tls() -> bool {
+    NATIVE_THREADS_MAY_SHARE_COMPILER_TLS.load(Ordering::Acquire)
+}
 
 /// Number of entries in the TLS cache (must be power of 2).
 const CACHE_SIZE: usize = 1024;
@@ -332,6 +356,8 @@ pub fn set_pipeline_runtime_math_disabled(disabled: bool) {
 /// header and trailing canary immediately on warm `TLS_CACHE` hits.
 #[cfg(any(test, not(feature = "owned-tls-cache")))]
 pub(crate) const WARM_WRITE_TAIL_THRESHOLD: usize = 64;
+/// Upper bound on hits to one allocation between integrity probes.
+pub(crate) const INTEGRITY_RECHECK_INTERVAL: u8 = 16;
 
 /// Thread-local validation cache.
 pub struct TlsValidationCache {
@@ -351,6 +377,11 @@ pub struct TlsValidationCache {
     unflushed_bloom_misses: u64,
     cadence_counter: u32,
     next_range: u8,
+    /// Allocation-keyed budgets prevent interleaved healthy hits from always
+    /// consuming the probe while a corrupt allocation stays unsampled. Losing
+    /// a budget slot forces a probe on its next hit, so eviction fails closed.
+    integrity_budgets: [(usize, u8); 4],
+    next_integrity_budget: usize,
     unbacked: bool,
 }
 
@@ -374,6 +405,8 @@ impl TlsValidationCache {
             unflushed_bloom_misses: 0,
             cadence_counter: 0,
             next_range: 0,
+            integrity_budgets: [(0, 0); 4],
+            next_integrity_budget: 0,
             unbacked: false,
         }
     }
@@ -391,6 +424,8 @@ impl TlsValidationCache {
             unflushed_bloom_misses: 0,
             cadence_counter: 0,
             next_range: 0,
+            integrity_budgets: [(0, 0); 4],
+            next_integrity_budget: 0,
             unbacked: true,
         }
     }
@@ -407,6 +442,8 @@ impl TlsValidationCache {
             unflushed_bloom_misses: 0,
             cadence_counter: 0,
             next_range: 0,
+            integrity_budgets: [(0, 0); 4],
+            next_integrity_budget: 0,
             unbacked: false,
         }
     }
@@ -712,7 +749,61 @@ impl TlsValidationCache {
     #[inline]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn lookup_hit_only(&mut self, addr: usize) -> Option<CachedValidation> {
-        self.lookup_hit_only_with_arena(addr, None)
+        let hit = self.lookup_hit_only_with_arena(addr, None);
+        // lookup_hit_only_with_arena already counted this hit. The shared
+        // tail increments again, so give that increment back before it runs.
+        if hit.is_some() {
+            self.hits = self.hits.saturating_sub(1);
+            self.hits += 1;
+        }
+        hit
+    }
+
+    /// Inspect a cached allocation without counting an additional validation.
+    /// This returns metadata only: callers must use the arena to authenticate
+    /// allocation bytes while holding its lifetime lock, never dereference a
+    /// cached address based solely on an epoch comparison.
+    pub(crate) fn peek(&mut self, addr: usize) -> Option<CachedValidation> {
+        let arena: Option<&crate::arena::AllocationArena> = None;
+        if let Some(hit) = self.range_hit(addr, None) {
+            return Some(hit);
+        }
+        let found_entry = if let Some(entries) = self.entries.as_deref_mut() {
+            let idx = Self::index(addr);
+            let entry = &mut entries[idx];
+            if entry.valid && entry.addr == addr {
+                if entry.shard_epoch == current_shard_epoch(entry.shard_idx as usize) {
+                    Some(*entry)
+                } else {
+                    entry.valid = false;
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(entry) = found_entry {
+            if let Some(arena_ref) = arena
+                && entry.has_integrity
+            {
+                self.cadence_counter = self.cadence_counter.wrapping_add(1);
+                if (self.cadence_counter & warm_integrity_cadence_mask()) == 0
+                    && !self.verify_entry_validation_slow(entry, arena_ref)
+                {
+                    return None;
+                }
+            }
+            self.hits += 1;
+            return Some(CachedValidation {
+                user_base: entry.user_base,
+                user_size: entry.user_size,
+                generation: entry.generation,
+                state: entry.state,
+            });
+        }
+        None
     }
 
     #[inline]
@@ -761,6 +852,30 @@ impl TlsValidationCache {
             });
         }
         None
+    }
+
+    /// Sample by allocation, not by thread-wide call number. Interior pointers
+    /// share the budget of their base, and interleaved allocations cannot defer
+    /// another allocation's check. A missing/evicted budget requires a check.
+    #[inline(always)]
+    pub(crate) fn integrity_recheck_due(&mut self, addr: usize) -> bool {
+        let Some(cached) = self.peek(addr) else {
+            return true;
+        };
+        for (base, remaining) in &mut self.integrity_budgets {
+            if *base == cached.user_base {
+                if *remaining > 1 {
+                    *remaining -= 1;
+                    return false;
+                }
+                *remaining = INTEGRITY_RECHECK_INTERVAL;
+                return true;
+            }
+        }
+        self.integrity_budgets[self.next_integrity_budget] =
+            (cached.user_base, INTEGRITY_RECHECK_INTERVAL);
+        self.next_integrity_budget = (self.next_integrity_budget + 1) & 3;
+        true
     }
 
     #[cfg(any(test, not(feature = "owned-tls-cache")))]
@@ -1419,7 +1534,7 @@ pub fn with_tls_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
-    if compiler_tls_disabled() {
+    if compiler_tls_disabled() || native_threads_may_share_compiler_tls() {
         let mut fallback = TlsValidationCache::unbacked();
         return f(&mut fallback);
     }
@@ -1465,7 +1580,7 @@ pub(crate) fn try_with_tls_cache_hit<F, R: Copy>(default: R, f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
-    if compiler_tls_disabled() {
+    if compiler_tls_disabled() || native_threads_may_share_compiler_tls() {
         return default;
     }
     let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
@@ -1495,7 +1610,7 @@ pub(crate) fn lookup_tls_cache_hit_remaining<const IS_WRITE: bool>(
     arena: Option<&crate::arena::AllocationArena>,
     write_len: usize,
 ) -> CachedRemaining {
-    if compiler_tls_disabled() {
+    if compiler_tls_disabled() || native_threads_may_share_compiler_tls() {
         return CachedRemaining::MISS;
     }
     let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
@@ -1528,7 +1643,7 @@ pub(crate) fn lookup_tls_cache_hit_remaining_pair<const LHS_IS_WRITE: bool>(
     arena: Option<&crate::arena::AllocationArena>,
     write_len: usize,
 ) -> (CachedRemaining, CachedRemaining) {
-    if compiler_tls_disabled() {
+    if compiler_tls_disabled() || native_threads_may_share_compiler_tls() {
         return (CachedRemaining::MISS, CachedRemaining::MISS);
     }
     let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
@@ -1567,7 +1682,7 @@ fn init_tls_cache_fast_ptr_slow() -> *const std::cell::RefCell<TlsValidationCach
 
 #[cfg(not(feature = "owned-tls-cache"))]
 pub(crate) fn flush_current_thread_hit_metrics() {
-    if compiler_tls_disabled() {
+    if compiler_tls_disabled() || native_threads_may_share_compiler_tls() {
         return;
     }
     let _ = TLS_CACHE.try_with(|cache| {

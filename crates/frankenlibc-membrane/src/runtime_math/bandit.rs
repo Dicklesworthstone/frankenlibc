@@ -41,6 +41,17 @@ pub struct ConstrainedBanditRouter {
 }
 
 impl ConstrainedBanditRouter {
+    /// Mandatory depth gates shared by the initial route and final policy merge.
+    /// Soft latency preferences must never undo these risk/contention limits.
+    #[inline]
+    pub(super) fn requires_full_profile(
+        mode: SafetyLevel,
+        risk_upper_bound_ppm: u32,
+        contention_hint: u16,
+    ) -> bool {
+        (mode.heals_enabled() && (risk_upper_bound_ppm >= 100_000 || contention_hint >= 96))
+            || risk_upper_bound_ppm >= 300_000
+    }
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -65,10 +76,7 @@ impl ConstrainedBanditRouter {
         contention_hint: u16,
     ) -> ValidationProfile {
         // Hard safety/robustness gates first.
-        if mode.heals_enabled() && (risk_upper_bound_ppm >= 100_000 || contention_hint >= 96) {
-            return ValidationProfile::Full;
-        }
-        if risk_upper_bound_ppm >= 300_000 {
+        if Self::requires_full_profile(mode, risk_upper_bound_ppm, contention_hint) {
             return ValidationProfile::Full;
         }
 

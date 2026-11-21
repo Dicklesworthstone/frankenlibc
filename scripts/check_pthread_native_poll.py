@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare native descriptor, receive, sleep and signal cancellation with GNU libc."""
+"""Compare native descriptor, socket, sleep and signal cancellation with GNU libc."""
 
 from __future__ import annotations
 
@@ -45,14 +45,14 @@ EPOLL_CASES = tuple(
 )
 SLEEP_CASES = tuple(
     f"sleep-{entry}-{case}"
-    for entry in ("nano", "clock", "absolute", "seconds", "micro", "c11")
+    for entry in ("nano", "clock", "absolute", "seconds", "micro", "c11", "realtime", "boottime")
     for case in (
         "pending", "blocked", "disabled", "signal", "signal-restart", "timeout",
         "mask-block", "zero",
     )
 ) + tuple(
     f"sleep-{entry}-{case}"
-    for entry in ("nano", "clock", "absolute", "c11")
+    for entry in ("nano", "clock", "absolute", "c11", "realtime", "boottime")
     for case in (
         "readonly-request", "unaligned-request", "remainder", "alias-remainder",
         "readonly-remainder", "errors",
@@ -61,6 +61,27 @@ SLEEP_CASES = tuple(
     f"sleep-{entry}-alias-{case}"
     for entry in ("nano", "clock")
     for case in ("pending", "blocked")
+) + tuple(
+    f"sleep-{entry}-expired"
+    for entry in ("absolute", "realtime", "boottime")
+) + tuple(
+    f"sleep-{entry}-{case}"
+    for entry in ("realtime", "boottime")
+    for case in ("timer-create-denied", "timer-arm-denied")
+) + tuple(
+    f"sleep-{entry}-{case}"
+    for entry in ("nano", "clock", "absolute", "realtime", "boottime", "c11")
+    for case in ("personality-denied", "null-remainder-personality-denied")
+) + tuple(
+    f"sleep-{entry}-import-denied-{case}"
+    for entry in ("nano", "clock", "absolute", "realtime", "boottime", "c11")
+    for case in ("timeout", "zero", "errors", "readonly-request", "unaligned-request", "pending")
+) + tuple(
+    f"sleep-{entry}-import-denied-expired"
+    for entry in ("absolute", "realtime", "boottime")
+) + tuple(
+    f"sleep-{entry}-import-denied-syscall-denied-timeout"
+    for entry in ("nano", "clock", "absolute", "realtime", "boottime", "c11")
 )
 SELECT_CASES = tuple(
     f"{entry}-{case}"
@@ -85,6 +106,112 @@ SUSPEND_CASES = tuple(
     "sigsuspend-mask-unblock", "sigsuspend-mask-cancel", "sigsuspend-mask-cancel-block",
     "sigsuspend-errors", "sigsuspend-guarded-mask",
 )
+READ_CASES = tuple(
+    f"read-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock",
+        "timeout", "signal", "signal-restart", "competing", "lowat", "eof",
+        "errors", "length-zero", "pipe-fallback", "datagram-fallback",
+        "probe-enosys", "probe-eperm", "probe-eacces",
+    )
+) + tuple(
+    f"read-{entry}-{case}"
+    for entry in ("alias", "fortified")
+    for case in ("blocked", "pending", "competing", "errors", "length-zero")
+)
+READV_CASES = tuple(
+    f"readv-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock",
+        "timeout", "signal", "signal-restart", "competing", "lowat", "eof",
+        "errors", "length-zero", "pipe-fallback", "datagram-fallback",
+        "probe-enosys", "probe-eperm", "probe-eacces", "alias-blocked", "alias-pending",
+        "alias-competing", "alias-errors", "mapped-blocked", "mapped-pending",
+        "mapped-ready-late", "mapped-competing", "mapped-length-zero",
+    )
+)
+WRITE_CASES = tuple(
+    f"{entry}-{case}"
+    for entry in ("write", "writev")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock",
+        "timeout", "signal", "signal-restart", "errors", "length-zero",
+        "peer-closed", "partial", "partial-error", "seqpacket", "pipe-fallback",
+        "datagram-fallback", "probe-enosys", "probe-eperm", "probe-eacces",
+        "alias-blocked", "alias-pending", "alias-partial", "alias-partial-error", "alias-errors",
+    )
+) + tuple(
+    f"writev-{case}"
+    for case in (
+        "iov-max", "descriptor-errors", "mapped-blocked", "mapped-pending",
+        "mapped-ready-late", "mapped-partial",
+    )
+)
+FD_REUSE_CASES = tuple(
+    f"fd-reuse-{entry}"
+    for entry in ("read", "recv", "recvfrom", "recvmsg", "readv",
+                  "write", "send", "sendto", "sendmsg", "writev")
+)
+FD_IO_CASES = READV_CASES + WRITE_CASES + FD_REUSE_CASES
+FD_IO_NATIVE_CASES = ("write-partial-cancel", "writev-partial-cancel")
+MESSAGE_IO_CASES = tuple(
+    f"{entry}-{transport}-{case}"
+    for entry in ("read", "readv")
+    for transport in ("datagram", "seqpacket", "udp", "udp6")
+    for case in (
+        "blocked", "pending", "disabled", "ready-late", "zero", "length-zero",
+        "empty-record", "truncate", "competing",
+    )
+) + tuple(
+    f"{entry}-{transport}-{case}"
+    for entry in ("read", "readv", "write", "writev")
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "nonblock", "timeout", "signal", "signal-restart", "errors",
+        "probe-enosys", "probe-eperm", "probe-eacces",
+    )
+) + tuple(
+    f"{entry}-{transport}-{case}"
+    for entry in ("write", "writev")
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "length-zero",
+        "peer-closed", "oversize",
+    )
+) + tuple(
+    f"{entry}-{transport}-{case}"
+    for entry in ("write", "writev")
+    for transport in ("udp", "udp6")
+    for case in ("pending", "ready", "length-zero", "oversize", "errors")
+) + tuple(
+    f"{entry}-alias-{transport}-blocked"
+    for entry in ("read", "readv", "write", "writev")
+    for transport in ("datagram", "seqpacket")
+) + tuple(
+    f"read-fortified-{transport}-blocked"
+    for transport in ("datagram", "seqpacket")
+) + tuple(
+    f"{entry}-mapped-{transport}-{case}"
+    for entry in ("readv", "writev")
+    for transport in ("datagram", "seqpacket")
+    for case in ("blocked", "ready-late")
+) + tuple(
+    f"write-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in ("zero-blocked", "zero-ready-late")
+) + tuple(
+    f"writev-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in ("iov-max", "descriptor-errors", "empty-queued")
+) + tuple(
+    f"fd-reuse-{transport}-{entry}"
+    for transport in ("datagram", "seqpacket")
+    for entry in ("read", "readv", "write", "writev")
+) + tuple(
+    f"fd-reuse-{transport}-{entry}"
+    for transport in ("udp", "udp6")
+    for entry in ("read", "readv")
+)
 RECEIVE_CASES = tuple(
     f"{entry}-{case}"
     for entry in ("recv", "recvfrom")
@@ -98,10 +225,104 @@ RECEIVE_CASES = tuple(
     "recv-alias-blocked", "recv-alias-pending",
     "recv-fortified-blocked", "recv-fortified-pending",
     "recvfrom-fortified-blocked", "recvfrom-fortified-pending",
+) + tuple(
+    f"recvmsg-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "peek",
+        "nonblock", "dontwait", "timeout", "signal", "signal-restart", "competing", "errors",
+        "length-zero", "waitall", "lowat", "eof", "alias-blocked", "alias-pending",
+        "datagram-blocked", "datagram-pending", "datagram-ready-late", "datagram-zero",
+        "datagram-truncate", "rights", "rights-cloexec", "control-truncate",
+        "rights-pressure", "mapped-rights-pressure",
+        "mapped-blocked", "mapped-pending", "mapped-ready-late",
+    )
 )
+SEND_CASES = tuple(
+    f"{entry}-{case}"
+    for entry in ("send", "sendto")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
+        "timeout", "signal", "signal-restart", "errors", "length-zero", "peer-closed", "seqpacket",
+    )
+) + (
+    "send-partial", "send-partial-error", "sendto-address", "sendto-oversize",
+    "send-alias-blocked", "send-alias-pending",
+    "sendto-alias-blocked", "sendto-alias-pending",
+)
+SENDMSG_CASES = tuple(
+    f"sendmsg-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
+        "timeout", "signal", "signal-restart", "errors", "length-zero", "peer-closed",
+        "seqpacket", "partial", "partial-error", "address", "rights", "rights-partial", "rights-invalid",
+        "iov-max", "descriptor-errors", "mapped-partial", "alias-blocked", "alias-pending",
+        "datagram-blocked", "datagram-pending", "datagram-ready-late", "datagram-length-zero",
+        "datagram-oversize", "datagram-rights",
+    )
+)
+# GNU 2.41 preserves a send prefix when cancellation arrives after progress.
+# The hosted bridge still uses its documented asynchronous window; validate
+# this stronger contract for the native adapter in the GNU 2.41 socket job.
+SENDMMSG_CASES = tuple(
+    f"sendmmsg-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
+        "timeout", "signal", "signal-restart", "partial-error", "errors", "zero", "count-zero",
+        "rights-invalid", "output-fault", "reuse",
+    )
+) + tuple(
+    f"sendmmsg-alias-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in ("blocked", "pending", "partial-error", "output-fault")
+)
+RECVMMSG_CASES = tuple(
+    f"recvmmsg-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "prefix",
+        "single", "single-blocked", "fullbatch", "nonblock", "dontwait", "timeout",
+        "finite-timeout", "trunc-empty", "output-fault", "errors", "count-zero", "reuse",
+        "rights", "signal", "signal-restart",
+    )
+) + tuple(
+    f"recvmmsg-{transport}-explicit-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "single", "single-blocked",
+        "zero-ready", "zero-ready-late", "expired-blocked", "expired-ready-late",
+        "timeout", "zero-timeout", "output-fault", "errors", "count-zero", "reuse", "rights",
+        "readonly-ready", "readonly-ready-late", "readonly-timeout", "readonly-count-zero",
+        "readonly-output-fault", "unaligned-ready", "alias-ready", "denied-ready-late", "fullbatch",
+        "signal", "signal-restart", "nonblock", "dontwait", "trunc-empty",
+    )
+)
+SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
+SOCKET_TIMEOUT_CASES = tuple(
+    f"{entry}-timed-{case}"
+    for entry in ("read", "readv", "recv", "recvfrom", "recvmsg",
+                  "write", "writev", "send", "sendto", "sendmsg")
+    for case in ("blocked", "pending", "ready-late", "timeout")
+) + tuple(
+    f"{entry}-timed-partial-timeout"
+    for entry in ("write", "writev", "send", "sendmsg")
+) + (
+    "recv-timed-disabled", "send-timed-disabled",
+    "recv-alias-timed-blocked", "recvfrom-fortified-timed-blocked",
+    "send-alias-timed-blocked", "writev-alias-timed-blocked",
+    "recvmsg-timed-rights", "sendmsg-timed-rights-partial",
+) + tuple(
+    f"{entry}-{transport}-timed-{case}"
+    for entry in ("sendmmsg", "recvmmsg")
+    for transport in ("datagram", "seqpacket")
+    for case in ("blocked", "ready-late", "timeout")
+) + ("sendmmsg-datagram-timed-budgets", "sendmmsg-seqpacket-timed-budgets")
+
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
-CASES = POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + RECEIVE_CASES
+CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + READ_CASES + FD_IO_CASES +
+         MESSAGE_IO_CASES + RECEIVE_CASES + SEND_CASES + SENDMSG_CASES + SENDMMSG_CASES +
+         RECVMMSG_CASES + SOCKET_TIMEOUT_CASES)
 
 
 def digest(path: Path) -> str:
@@ -119,20 +340,70 @@ def main() -> int:
         help="Run only the GNU oracle; report no candidate validation.",
     )
     parser.add_argument(
+        "--sleep-only", action="store_true",
+        help="Run sleep cancellation, absolute clocks, timer fallback and remainder contracts.",
+    )
+    parser.add_argument(
         "--suspend-only", action="store_true",
         help="Run only pause/sigsuspend cases and the provider/backend negative controls.",
+    )
+    parser.add_argument(
+        "--read-only", action="store_true",
+        help="Run stream read cancellation and original-syscall fallback cases.",
+    )
+    parser.add_argument(
+        "--fd-io-only", action="store_true",
+        help="Run write/readv/writev cancellation, partial progress and syscall fallback cases.",
+    )
+    parser.add_argument(
+        "--message-io-only", action="store_true",
+        help="Run descriptor I/O on datagram and SEQPACKET sockets, including record boundaries and empty records.",
     )
     parser.add_argument(
         "--receive-only", action="store_true",
         help="Run only socket receive cases and the provider/backend negative controls.",
     )
+    parser.add_argument(
+        "--send-only", action="store_true",
+        help="Run socket send cases against GNU 2.41, including native partial cancellation.",
+    )
+    parser.add_argument(
+        "--sendmsg-only", action="store_true",
+        help="Run vectored and ancillary sendmsg cases, including native partial cancellation.",
+    )
+    parser.add_argument(
+        "--sendmmsg-only", action="store_true",
+        help="Run atomic batch sends, cancellation, prefix errors and message-length publication.",
+    )
+    parser.add_argument(
+        "--recvmmsg-only", action="store_true",
+        help="Run record batch receives, WAITFORONE cancellation, explicit timeouts and deferred errors.",
+    )
+    parser.add_argument(
+        "--socket-timeout-only", action="store_true",
+        help="Run finite socket timeouts, blocked cancellation, delayed progress and partial expiry.",
+    )
     args = parser.parse_args()
-    if args.suspend_only and args.receive_only:
-        parser.error("--suspend-only and --receive-only are mutually exclusive")
+    if sum((args.sleep_only, args.suspend_only, args.read_only, args.fd_io_only, args.message_io_only,
+            args.receive_only, args.send_only, args.sendmsg_only, args.sendmmsg_only,
+            args.recvmmsg_only, args.socket_timeout_only)) > 1:
+        parser.error("--sleep-only, --suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only, --sendmsg-only, --sendmmsg-only, --recvmmsg-only and --socket-timeout-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
-    cases = SUSPEND_CASES if args.suspend_only else RECEIVE_CASES if args.receive_only else CASES
+    cases = (SLEEP_CASES if args.sleep_only else
+             SUSPEND_CASES if args.suspend_only else READ_CASES if args.read_only else
+             FD_IO_CASES + FD_IO_NATIVE_CASES if args.fd_io_only else
+             MESSAGE_IO_CASES if args.message_io_only else
+             RECEIVE_CASES if args.receive_only else
+             SEND_CASES + SENDMSG_CASES + SEND_NATIVE_CASES if args.send_only else
+             SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else
+             SENDMMSG_CASES if args.sendmmsg_only else
+             RECVMMSG_CASES if args.recvmmsg_only else
+             SOCKET_TIMEOUT_CASES if args.socket_timeout_only else CASES)
+    native_only_cases = SEND_NATIVE_CASES + FD_IO_NATIVE_CASES
+    native_only_cases = tuple(case for case in native_only_cases if case in cases)
+    candidate_cases = 0 if args.host_only else 4 * len(cases) - 2 * len(native_only_cases)
     source = root / "tests/integration/fixture_pthread_native_poll.c"
     library = args.library.resolve(strict=True) if args.library is not None else None
     out = args.out_dir.resolve()
@@ -206,8 +477,14 @@ def main() -> int:
             "epoll-wait-alias-", "epoll-wait-"
         ).replace("epoll-pwait-alias-", "epoll-pwait-").replace(
             "pselect-alias-", "pselect-"
-        ).replace("select-alias-", "select-").replace(
+        ).replace("select-alias-", "select-").replace("read-alias-", "read-").replace(
+            "readv-alias-", "readv-"
+        ).replace("write-alias-", "write-").replace("writev-alias-", "writev-").replace(
             "recv-alias-", "recv-"
+        ).replace("recvmsg-alias-", "recvmsg-").replace(
+            "send-alias-", "send-"
+        ).replace("sendto-alias-", "sendto-").replace("sendmsg-alias-", "sendmsg-").replace(
+            "sendmmsg-alias-", "sendmmsg-"
         ).replace(
             "pause-alias-", "pause-"
         ).replace("sigsuspend-alias-", "sigsuspend-")
@@ -219,7 +496,7 @@ def main() -> int:
         if not args.host_only:
             assert library is not None
             for mode in ("strict", "hardened"):
-                for native in ("0", "1"):
+                for native in (("1",) if case in native_only_cases else ("0", "1")):
                     execute(
                         f"{mode}-native{native}-{case}", case, library,
                         dict(env, LD_PRELOAD=str(library), FRANKENLIBC_MODE=mode,
@@ -241,36 +518,53 @@ def main() -> int:
         "thread backend does not match inherited/native or hosted TP\n",
     )
 
-    expected_rows = len(cases) * (1 if args.host_only else 5) + 2
+    expected_rows = len(cases) + candidate_cases + 2
     assert len(rows) == expected_rows
     failures = [row["label"] for row in rows if row["status"] != "PASS"]
     report = {
         "schema_version": 2,
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
-        "case_scope": "pause/sigsuspend only" if args.suspend_only else
-                      "socket receives only" if args.receive_only else "poll/epoll/sleep/select/receive",
+        "case_scope": "sleep cancellation and absolute clock contracts only" if args.sleep_only else
+                      "pause/sigsuspend only" if args.suspend_only else
+                      "stream reads and fallback contracts only" if args.read_only else
+                      "stream write/readv/writev and fallback contracts only" if args.fd_io_only else
+                      "descriptor I/O on datagram and SEQPACKET sockets only" if args.message_io_only else
+                      "socket receives only" if args.receive_only else
+                      "socket sends only" if args.send_only else
+                      "vectored socket sends only" if args.sendmsg_only else
+                      "batched atomic socket sends only" if args.sendmmsg_only else
+                      "batched record socket receives only" if args.recvmmsg_only else
+                      "finite socket timeouts and cancellation only" if args.socket_timeout_only else "poll/epoll/sleep/select/socket",
         "revision": revision.stdout.strip() if revision.returncode == 0 else None,
         "fixture_sha256": digest(source), "runner_sha256": digest(Path(__file__)),
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
         "gnu_provider": str(host), "gnu_provider_sha256": digest(host),
         "compiler_command": command, "case_count": len(cases),
-        "poll_cases": 0 if args.suspend_only or args.receive_only else len(POLL_CASES),
-        "epoll_cases": 0 if args.suspend_only or args.receive_only else len(EPOLL_CASES),
-        "sleep_cases": 0 if args.suspend_only or args.receive_only else len(SLEEP_CASES),
-        "select_cases": 0 if args.suspend_only or args.receive_only else len(SELECT_CASES),
-        "suspend_cases": len(SUSPEND_CASES) if args.suspend_only else 0,
-        "receive_cases": 0 if args.suspend_only else len(RECEIVE_CASES),
-        "oracle_cases": len(cases), "candidate_cases": 0 if args.host_only else 4 * len(cases),
+        "poll_cases": sum(case in POLL_CASES for case in cases),
+        "epoll_cases": sum(case in EPOLL_CASES for case in cases),
+        "sleep_cases": sum(case in SLEEP_CASES for case in cases),
+        "select_cases": sum(case in SELECT_CASES for case in cases),
+        "suspend_cases": sum(case in SUSPEND_CASES for case in cases),
+        "read_cases": sum(case in READ_CASES for case in cases),
+        "fd_io_cases": sum(case in FD_IO_CASES + FD_IO_NATIVE_CASES for case in cases),
+        "message_io_cases": sum(case in MESSAGE_IO_CASES for case in cases),
+        "receive_cases": sum(case in RECEIVE_CASES for case in cases),
+        "send_cases": sum(case.startswith(("send-", "sendto-", "sendmsg-")) for case in cases),
+        "sendmmsg_cases": sum(case in SENDMMSG_CASES for case in cases),
+        "recvmmsg_cases": sum(case in RECVMMSG_CASES for case in cases),
+        "socket_timeout_cases": sum(case in SOCKET_TIMEOUT_CASES for case in cases),
+        "native_only_cases": list(native_only_cases),
+        "oracle_cases": len(cases), "candidate_cases": candidate_cases,
         "provider_negatives": 1, "backend_negatives": 1,
         "explicit_skips": [row["label"] for row in rows if row["status"] == "SKIP"],
         "failures": failures, "results": rows,
     }
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
-        print("Required poll/select/epoll/sleep/suspend/receive coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
+        print("Required poll/select/epoll/sleep/suspend/socket coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
         return 1
-    candidate = "no candidate validation" if args.host_only else f"{4 * len(cases)} candidate cases"
-    print(f"Native poll/select/epoll/sleep/suspend/receive: {len(cases)} GNU oracle cases, {candidate}, 2 negative controls passed")
+    candidate = "no candidate validation" if args.host_only else f"{candidate_cases} candidate cases"
+    print(f"Native poll/select/epoll/sleep/suspend/socket: {len(cases)} GNU oracle cases, {candidate}, 2 negative controls passed")
     return 0
 
 

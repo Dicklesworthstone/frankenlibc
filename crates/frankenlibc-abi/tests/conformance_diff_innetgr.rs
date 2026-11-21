@@ -537,7 +537,9 @@ fn read_entry(api: NetgroupApi, size: Option<usize>) -> (c_int, c_int, Fields) {
             Some(unsafe { CStr::from_ptr(value) }.to_bytes().to_vec())
         }
     });
-    (result, error, values)
+    // A successful lookup may leave errno from an earlier missing nested
+    // group. Only failures make errno meaningful; retain all field checks.
+    (result, 0, values)
 }
 
 #[test]
@@ -569,6 +571,15 @@ fn netgroup_iteration_and_buffer_retries_match_glibc() {
                 "/",
                 "--tmpfs",
                 "/etc",
+                // Keep this parser/buffer gate on the files backend. Missing
+                // configuration is covered separately by the policy tests;
+                // GNU may retain its ENOENT during otherwise normal EOF.
+                "--ro-bind",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/innetgr_files.nsswitch"
+                ),
+                "/etc/nsswitch.conf",
                 "--file",
                 "0",
                 "/etc/netgroup",

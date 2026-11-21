@@ -335,6 +335,19 @@ impl StreamBuffer {
         self.write_len = 0;
     }
 
+    /// Retire bytes acknowledged by a descriptor write before another write
+    /// can block or unwind. The still-pending suffix keeps its original order.
+    pub fn consume_flushed_prefix(&mut self, count: usize) {
+        let consumed = count.min(self.write_len);
+        if consumed == 0 {
+            return;
+        }
+        if consumed < self.write_len {
+            self.data.copy_within(consumed..self.write_len, 0);
+        }
+        self.write_len -= consumed;
+    }
+
     /// The write buffer as `(base address, bytes staged, capacity)` for a
     /// Full-buffered buffer whose storage exists: what glibc exposes as
     /// `_IO_write_base`, `_IO_write_ptr - _IO_write_base` and

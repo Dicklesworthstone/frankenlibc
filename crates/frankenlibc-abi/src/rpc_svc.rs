@@ -277,6 +277,7 @@ struct Transport {
     unix: bool,
     operation: AtomicBool,
     dispatching: AtomicBool,
+    registered: AtomicBool,
     destroyed: AtomicBool,
     close_fd: AtomicBool,
     dead: AtomicBool,
@@ -337,6 +338,33 @@ fn lookup(x: *mut SvcXprt) -> Option<Arc<Transport>> {
         .find(|t| t.public.get() == x)
         .cloned();
     socket.or_else(|| with_raw(|slot| slot.as_ref().filter(|t| t.public.get() == x).cloned()))
+}
+
+/// Readiness registration is independent of transport ownership. In particular,
+/// unregistering must neither close the socket nor invalidate its XDR methods.
+/// A callback may unregister itself; the dispatch loop observes the change
+/// before receiving another request while its Arc still retains the buffers.
+pub(crate) unsafe fn register_transport(x: *mut c_void) {
+    let Some(t) = lookup(x.cast()) else {
+        error(libc::EINVAL);
+        return;
+    };
+    let r = registry();
+    if !t.destroyed.load(Ordering::Acquire) {
+        t.registered.store(true, Ordering::Release);
+    }
+    drop(r);
+    refresh();
+}
+
+pub(crate) unsafe fn unregister_transport(x: *mut c_void) {
+    let Some(t) = lookup(x.cast()) else {
+        return;
+    };
+    let r = registry();
+    t.registered.store(false, Ordering::Release);
+    drop(r);
+    refresh();
 }
 
 // Raw handles are caller-thread objects, never entries in a descriptor set.
@@ -408,6 +436,7 @@ pub(super) fn create_raw() -> *mut c_void {
             unix: false,
             operation: AtomicBool::new(false),
             dispatching: AtomicBool::new(false),
+            registered: AtomicBool::new(true),
             destroyed: AtomicBool::new(false),
             close_fd: AtomicBool::new(false),
             dead: AtomicBool::new(false),
@@ -484,8 +513,17 @@ const EMPTY_POLL: libc::pollfd = libc::pollfd {
     revents: 0,
 };
 struct PollSnapshot {
-    entries: [libc::pollfd; LIMIT],
+    // The published ABI pointer remains stable after the first successful
+    // refresh: capacity is reserved for the entire bounded registry, and no
+    // subsequent refresh grows or shrinks the allocation.
+    entries: Vec<libc::pollfd>,
 }
+// The first RPC-state owner publishes this backing array through the exported
+// svc_pollfd object. It must survive that owner's thread exit; later threads
+// keep their own snapshots and must never free or repurpose the global array.
+static GLOBAL_POLL_SNAPSHOT: Mutex<PollSnapshot> = Mutex::new(PollSnapshot {
+    entries: Vec::new(),
+});
 #[cfg(not(feature = "owned-tls-cache"))]
 unsafe fn clear_rpc_svc_pollfd_tls() {
     unsafe {
@@ -511,10 +549,16 @@ fn empty_snapshot() -> PollSnapshot {
         revents: 0,
     };
     PollSnapshot {
-        entries: [ZERO_POLL; LIMIT],
+        entries: Vec::new(),
     }
 }
 fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
+    if super::rpc_uses_global_svc_state() {
+        let mut snapshot = GLOBAL_POLL_SNAPSHOT
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        return f(&mut snapshot);
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         POLL_SNAPSHOT.with(f)
@@ -529,16 +573,40 @@ fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
     }
 }
 
-/// Refresh existing ABI TLS slots. Their addresses stay valid, and the poll
-/// backing array has thread lifetime. Never retain a lock across C access.
+/// Refresh the calling thread's ABI slots. The first owner's globals and poll
+/// backing have process lifetime; other snapshots have thread lifetime. Never
+/// retain a lock across C access.
 pub(super) fn refresh() {
     with_snapshot(|snapshot| {
-        snapshot.entries.fill(EMPTY_POLL);
-        let r = registry();
         let bits = super::rpc_svc_fdset_ptr().cast::<u64>();
         // SAFETY: existing accessors own aligned, initialized per-thread slots.
         unsafe { ptr::write_bytes(bits, 0, LIMIT / 64) };
-        for (index, t) in r.transports.iter().enumerate() {
+        if snapshot.entries.is_empty() {
+            if snapshot.entries.try_reserve_exact(LIMIT).is_err() {
+                // Never publish a dangling Vec sentinel as a poll array, and
+                // never advertise descriptors when no snapshot was prepared.
+                unsafe {
+                    super::rpc_svc_max_pollfd_ptr().cast::<c_int>().write(0);
+                    super::rpc_svc_pollfd_ptr()
+                        .cast::<*mut libc::pollfd>()
+                        .write(ptr::null_mut());
+                }
+                error(libc::ENOMEM);
+                return;
+            }
+            snapshot.entries.resize(LIMIT, EMPTY_POLL);
+        } else {
+            snapshot.entries.fill(EMPTY_POLL);
+        }
+        let r = registry();
+        let mut count = 0;
+        for t in r
+            .transports
+            .iter()
+            .filter(|t| t.registered.load(Ordering::Acquire))
+        {
+            let index = count;
+            count += 1;
             snapshot.entries[index].fd = t.fd;
             if t.wants_write.load(Ordering::Acquire) {
                 snapshot.entries[index].events = libc::POLLOUT;
@@ -548,7 +616,7 @@ pub(super) fn refresh() {
         unsafe {
             super::rpc_svc_max_pollfd_ptr()
                 .cast::<c_int>()
-                .write(r.transports.len() as c_int);
+                .write(count as c_int);
             super::rpc_svc_pollfd_ptr()
                 .cast::<*mut libc::pollfd>()
                 .write(snapshot.entries.as_mut_ptr());
@@ -668,6 +736,7 @@ pub(super) unsafe fn create(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut
             }),
             operation: AtomicBool::new(false),
             dispatching: AtomicBool::new(false),
+            registered: AtomicBool::new(true),
             destroyed: AtomicBool::new(false),
             close_fd: AtomicBool::new(created),
             dead: AtomicBool::new(false),
@@ -933,6 +1002,7 @@ unsafe fn create_stream(
             unix,
             operation: AtomicBool::new(false),
             dispatching: AtomicBool::new(false),
+            registered: AtomicBool::new(true),
             destroyed: AtomicBool::new(false),
             close_fd: AtomicBool::new(created),
             dead: AtomicBool::new(false),
@@ -1046,6 +1116,9 @@ unsafe extern "C" fn destroy(x: *mut SvcXprt) {
         let Some(index) = r.transports.iter().position(|t| t.public.get() == x) else {
             return;
         };
+        r.transports[index]
+            .registered
+            .store(false, Ordering::Release);
         r.transports[index].destroyed.store(true, Ordering::Release);
         if r.simple_transport == Some(x as usize) {
             r.simple_transport = None;
@@ -2460,7 +2533,11 @@ pub unsafe extern "C" fn svc_unregister(program: u64, version: u64) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
-    let t = registry().transports.iter().find(|t| t.fd == fd).cloned();
+    let t = registry()
+        .transports
+        .iter()
+        .find(|t| t.fd == fd && t.registered.load(Ordering::Acquire))
+        .cloned();
     let Some(t) = t else {
         return;
     };
@@ -2476,7 +2553,7 @@ unsafe fn dispatch_transport(t: Arc<Transport>) {
     let t = &dispatch_guard.0;
     // Bound one readiness turn so a perpetually busy socket cannot starve peers.
     for _ in 0..32 {
-        if t.destroyed.load(Ordering::Acquire) {
+        if t.destroyed.load(Ordering::Acquire) || !t.registered.load(Ordering::Acquire) {
             break;
         }
         let Some(op) = Operation::begin(Arc::clone(t)) else {
@@ -2650,7 +2727,13 @@ pub unsafe extern "C-unwind" fn svc_run() {
         let mut buffered = [-1; LIMIT];
         let count = {
             let r = registry();
-            for ((p, buffered), t) in fds.iter_mut().zip(&mut buffered).zip(&r.transports) {
+            let active = r
+                .transports
+                .iter()
+                .filter(|t| t.registered.load(Ordering::Acquire));
+            let mut count = 0;
+            for ((p, buffered), t) in fds.iter_mut().zip(&mut buffered).zip(active) {
+                count += 1;
                 p.fd = t.fd;
                 if t.wants_write.load(Ordering::Acquire) {
                     p.events = libc::POLLOUT;
@@ -2658,7 +2741,7 @@ pub unsafe extern "C-unwind" fn svc_run() {
                     *buffered = t.fd;
                 }
             }
-            r.transports.len()
+            count
         };
         if count == 0 {
             return;

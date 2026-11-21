@@ -640,62 +640,51 @@ fn ascii_casefold_hash(bytes: &[u8]) -> u64 {
     hash ^ (bytes.len() as u64)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_hosts_backend_cache() -> BackendFileCache {
     BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_services_backend_cache() -> BackendFileCache {
     BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_protocols_backend_cache() -> BackendFileCache {
     BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_proc_net_route_cache() -> BackendFileCache {
     BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_proc_net_if_inet6_cache() -> BackendFileCache {
     BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_service_lookup_cache() -> ServiceLookupCache {
     ServiceLookupCache::new()
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_protocol_lookup_cache() -> ProtocolLookupCache {
     ProtocolLookupCache::new()
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static HOSTS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_hosts_backend_cache);
-#[cfg(feature = "owned-tls-cache")]
 static SERVICES_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_services_backend_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROTOCOLS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_protocols_backend_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROC_NET_ROUTE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_route_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROC_NET_IF_INET6_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_if_inet6_cache);
-#[cfg(feature = "owned-tls-cache")]
 static SERVICE_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServiceLookupCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_service_lookup_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROTOCOL_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtocolLookupCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_protocol_lookup_cache);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+use crate::owned_tls_cache::uses_owned_tls;
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
@@ -734,6 +723,9 @@ fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot());
+        }
         HOSTS_BACKEND_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)),
@@ -755,6 +747,9 @@ pub(crate) fn with_hosts_backend_snapshot<R>(
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback));
+        }
         HOSTS_BACKEND_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)),
@@ -898,6 +893,9 @@ fn read_services_backend() -> std::io::Result<Vec<u8>> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot());
+        }
         SERVICES_BACKEND_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)),
@@ -914,6 +912,9 @@ fn with_services_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback));
+        }
         SERVICES_BACKEND_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)),
@@ -930,6 +931,9 @@ fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVICE_LOOKUP_OWNED_TLS.with(callback);
+        }
         SERVICE_LOOKUP_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(ServiceLookupCache::new()),
@@ -1137,6 +1141,9 @@ fn with_protocols_backend_snapshot<R>(
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return PROTOCOLS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback));
+        }
         PROTOCOLS_BACKEND_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)),
@@ -1208,6 +1215,9 @@ fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return PROTOCOL_LOOKUP_OWNED_TLS.with(callback);
+        }
         PROTOCOL_LOOKUP_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(ProtocolLookupCache::new()),
@@ -1218,6 +1228,21 @@ fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache)
             )
         })
     }
+}
+
+/// Hold the creator's real files-backend and parsed-index borrows across a
+/// native create/join regression. Production never invokes NSS callbacks while
+/// holding these borrows; this hook deliberately tests another thread's access.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_resolver_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> std::io::Result<R> {
+    with_hosts_backend_snapshot(|_, _| {
+        with_services_backend_snapshot(|_, _| {
+            with_protocols_backend_snapshot(|_, _| {
+                with_service_lookup_cache(|_| with_protocol_lookup_cache(|_| f()))
+            })
+        })
+    })??
 }
 
 fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
@@ -1235,7 +1260,10 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
     #[cfg(feature = "owned-tls-cache")]
     let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
-    let route = PROC_NET_ROUTE_TLS.with(|slot| {
+    let route = if uses_owned_tls() {
+        PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?
+    } else {
+        PROC_NET_ROUTE_TLS.with(|slot| {
         slot.with_init(
             || {
                 RefCell::new(BackendFileCache::new(
@@ -1245,12 +1273,16 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
             },
             |cell| cell.borrow_mut().read_snapshot().ok(),
         )
-    })?;
+    })?
+    };
 
     #[cfg(feature = "owned-tls-cache")]
     let if_inet6 = PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
-    let if_inet6 = PROC_NET_IF_INET6_TLS.with(|slot| {
+    let if_inet6 = if uses_owned_tls() {
+        PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?
+    } else {
+        PROC_NET_IF_INET6_TLS.with(|slot| {
         slot.with_init(
             || {
                 RefCell::new(BackendFileCache::new(
@@ -1260,16 +1292,12 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
             },
             |cell| cell.borrow_mut().read_snapshot().ok(),
         )
-    })?;
+    })?
+    };
 
     Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
         &route, &if_inet6,
     ))
-}
-
-#[inline]
-fn repair_enabled(mode_heals: bool, action: MembraneAction) -> bool {
-    mode_heals || matches!(action, MembraneAction::Repair(_))
 }
 
 #[inline]
@@ -2234,14 +2262,11 @@ impl HostentTlsStorage {
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed hostent result per thread
-// id. `hostent` and its alias/address lists only point into the same boxed
-// storage, so moving the box while the cache mutex is held does not transfer
-// ownership of pointees across threads.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: owned TLS keeps each native thread's result at a stable address.
+// `hostent` and its alias/address lists point only into that thread's storage;
+// no pointee ownership is transferred to another thread.
 unsafe impl Send for HostentTlsStorage {}
 
-#[cfg(feature = "owned-tls-cache")]
 static GETHOSTBYNAME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostentTlsStorage> =
     crate::owned_tls_cache::OwnedTlsCache::new(HostentTlsStorage::new);
 
@@ -2259,6 +2284,9 @@ fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return GETHOSTBYNAME_OWNED_TLS.with(callback);
+        }
         GETHOSTBYNAME_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(HostentTlsStorage::new()),
@@ -3178,6 +3206,123 @@ fn module_addrinfo_lookup(
     .map(convert)
 }
 
+// GNU input and output conversion flags are independent.
+const AI_IDN: c_int = 0x40;
+const AI_CANONIDN: c_int = 0x80;
+const NI_IDN: c_int = 0x20;
+pub(crate) const EAI_IDN_ENCODE: c_int = -105;
+
+/// Convert caller bytes from the effective LC_CTYPE into a DNS name. The core
+/// owns Unicode mapping/validation; this boundary owns locale conversion. Both
+/// getaddrinfo and the GLIBC_PRIVATE helper use the same native implementation.
+pub(crate) fn idn_name_to_dns(name: &[u8]) -> Result<Cow<'_, [u8]>, c_int> {
+    if name.is_ascii() {
+        return Ok(Cow::Borrowed(name));
+    }
+    use frankenlibc_core::string::wchar::Utf8Step;
+
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let mut input = name;
+    let mut unicode = String::with_capacity(name.len());
+    while !input.is_empty() {
+        let Utf8Step::Char { wc, len } = codec.decode(input) else {
+            return Err(EAI_IDN_ENCODE);
+        };
+        let character = char::from_u32(wc).ok_or(EAI_IDN_ENCODE)?;
+        if character == '\0' || len == 0 {
+            return Err(EAI_IDN_ENCODE);
+        }
+        unicode.push(character);
+        input = &input[len..];
+    }
+    frankenlibc_core::idna::to_dns_encoding(&unicode)
+        .map(|encoded| Cow::Owned(encoded.into_owned().into_bytes()))
+        .map_err(|_| EAI_IDN_ENCODE)
+}
+
+/// Decode DNS A-labels and render the complete name in the current LC_CTYPE.
+/// Punycode decoding does not require the normalization/mapping machinery
+/// needed for forward AI_IDN lookup. Keep that separate from this output path.
+///
+/// A failed conversion leaves the original name available to the caller:
+/// malformed Punycode, invalid Unicode and an unrepresentable locale must not
+/// turn a successful address lookup into a failure or a partially decoded name.
+fn idn_name_in_current_locale(name: &[u8]) -> Option<Vec<u8>> {
+    if !name.is_ascii() {
+        return None;
+    }
+    let mut codepoints = Vec::with_capacity(name.len());
+    let mut decoded = false;
+    for (index, label) in name.split(|&byte| byte == b'.').enumerate() {
+        if index != 0 {
+            codepoints.push(u32::from(b'.'));
+        }
+        if label.len() >= 4 && label[..4].eq_ignore_ascii_case(b"xn--") {
+            let payload = &label[4..];
+            let encoded_start = payload
+                .iter()
+                .rposition(|&byte| byte == b'-')
+                .map_or(0, |position| position + 1);
+            // GNU's ToUnicode accepts '_' as digit zero in the encoded
+            // portion. Preserve literal underscores before the delimiter.
+            // Keep this observed GNU ABI compatibility rule out of the
+            // strict RFC 3492 primitive used by other callers.
+            let payload = if payload[encoded_start..].contains(&b'_') {
+                let mut compatible = payload.to_vec();
+                for byte in &mut compatible[encoded_start..] {
+                    if *byte == b'_' {
+                        *byte = b'a';
+                    }
+                }
+                Cow::Owned(compatible)
+            } else {
+                Cow::Borrowed(payload)
+            };
+            let label = frankenlibc_core::idna::punycode::decode(&payload)?;
+            // An A-label must represent a non-ASCII label. GNU rejects an
+            // empty payload and an all-basic payload such as "hello-".
+            if !label.iter().any(|&codepoint| codepoint >= 0x80) {
+                return None;
+            }
+            codepoints.extend(label);
+            decoded = true;
+        } else {
+            codepoints.extend(label.iter().copied().map(u32::from));
+        }
+    }
+    if !decoded {
+        return None;
+    }
+
+    // Snapshot the effective thread locale once, including named legacy
+    // encodings. UTF-8 output alone would violate AI_CANONIDN/NI_IDN in C or
+    // in a single-byte locale, and consulting LC_ALL would ignore uselocale.
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let mut output = Vec::with_capacity(name.len());
+    for codepoint in codepoints {
+        char::from_u32(codepoint)?;
+        if codepoint == 0 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        let length = codec.encode(codepoint, &mut bytes)?;
+        output.extend_from_slice(&bytes[..length]);
+    }
+    Some(output)
+}
+
+fn addrinfo_canonical_name(name: Option<&CStr>, flags: c_int) -> Option<Cow<'_, CStr>> {
+    name.map(|name| {
+        if flags & AI_CANONIDN != 0
+            && let Some(bytes) = idn_name_in_current_locale(name.to_bytes())
+            && let Ok(decoded) = std::ffi::CString::new(bytes)
+        {
+            return Cow::Owned(decoded);
+        }
+        Cow::Borrowed(name)
+    })
+}
+
 /// POSIX `getaddrinfo`: numeric/scoped hosts and configured NSS sources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo(
@@ -3388,6 +3533,32 @@ pub unsafe extern "C" fn getaddrinfo(
         flags & libc::AI_V4MAPPED != 0,
         flags & libc::AI_ALL != 0,
     );
+    // GNU performs input IDNA conversion after family/service validation but
+    // before AI_NUMERICHOST and NSS lookup. ASCII bypass preserves names and
+    // case; non-ASCII input is decoded using this thread's LC_CTYPE. Obsolete
+    // AI_IDN_ALLOW_UNASSIGNED/AI_IDN_USE_STD3_ASCII_RULES bits remain ignored.
+    let encoded_node = if flags & AI_IDN != 0
+        && let Some(name) = node_cstr.filter(|name| !name.to_bytes().is_ascii())
+    {
+        match idn_name_to_dns(name.to_bytes()).and_then(|encoded| {
+            std::ffi::CString::new(encoded.into_owned()).map_err(|_| EAI_IDN_ENCODE)
+        }) {
+            Ok(encoded) => Some(encoded),
+            Err(error) => {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                return error;
+            }
+        }
+    } else {
+        None
+    };
+    let node_cstr = encoded_node.as_deref().or(node_cstr);
     let host_text = match node_cstr.map(CStr::to_str).transpose() {
         Ok(text) => text,
         Err(_) => {
@@ -3606,6 +3777,7 @@ pub unsafe extern "C" fn getaddrinfo(
                                 .map(|address| (address, 0))
                                 .collect()
                         };
+                        let name = addrinfo_canonical_name(name.as_deref().or(canonname), flags);
                         for (address, scope_id) in addresses {
                             push_addrinfo_address_nodes(
                                 &mut nodes,
@@ -3613,11 +3785,12 @@ pub unsafe extern "C" fn getaddrinfo(
                                 scope_id,
                                 &profiles,
                                 hints_ref,
-                                name.as_deref().or(canonname),
+                                name.as_deref(),
                             );
                         }
                     }
                     Ok(HostAnswer::Files { addresses, name }) => {
+                        let name = addrinfo_canonical_name(name.as_deref().or(canonname), flags);
                         for address in addresses {
                             push_addrinfo_address_nodes(
                                 &mut nodes,
@@ -3625,12 +3798,13 @@ pub unsafe extern "C" fn getaddrinfo(
                                 0,
                                 &profiles,
                                 hints_ref,
-                                name.as_deref().or(canonname),
+                                name.as_deref(),
                             );
                         }
                     }
                     Ok(HostAnswer::Dns { resolution, name }) => {
-                        let resolved_name = name.as_deref().or(canonname);
+                        let name = addrinfo_canonical_name(name.as_deref().or(canonname), flags);
+                        let resolved_name = name.as_deref();
                         for v4 in &resolution.ipv4 {
                             if family == libc::AF_UNSPEC || family == libc::AF_INET {
                                 push_addrinfo_v4_nodes(
@@ -3988,8 +4162,7 @@ fn scope_id_text(scope_id: u32, flags: c_int, addr: &[u8; 16]) -> String {
 /// Strict-passthrough `getnameinfo`: the load-bearing work only (salen bounds, byte-exact numeric
 /// format, and `write_c_buffer`'s `known_remaining` output-bounds check), with the membrane's
 /// adaptive check-ordering bookkeeping skipped. Behaviourally identical to the full path in strict
-/// mode (where `decide()` always-Allows, so `repair == mode heals`), validated byte-for-byte against
-/// host glibc by `getnameinfo_differential_fuzz`.
+/// mode, validated byte-for-byte against host glibc by `getnameinfo_differential_fuzz`.
 #[inline]
 unsafe fn getnameinfo_strict_fast(
     sa: *const libc::sockaddr,
@@ -4003,10 +4176,6 @@ unsafe fn getnameinfo_strict_fast(
     if sa.is_null() {
         return libc::EAI_FAIL;
     }
-    // Strict `decide()` never yields a `Repair` action, so `repair_enabled` reduces to the mode's
-    // heal flag — the same value the full path computes.
-    let repair = runtime_policy::mode().heals_enabled();
-
     let mut ipv4_buf = [0u8; 15];
     let mut port_buf = [0u8; 5];
 
@@ -4056,13 +4225,15 @@ unsafe fn getnameinfo_strict_fast(
         _ => return libc::EAI_FAMILY,
     };
 
+    // Insufficient capacity is EAI_OVERFLOW in every mode, including when
+    // named lookup uses this helper to render its private numeric fallback.
     // SAFETY: caller-provided output buffers per the getnameinfo contract; `write_c_buffer` bounds
     // each write against `known_remaining` before copying.
-    match unsafe { write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) } {
+    match unsafe { write_c_buffer("getnameinfo", host, hostlen, &host_text, false) } {
         Ok(_) => {}
         Err(err) => return err,
     }
-    match unsafe { write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) } {
+    match unsafe { write_c_buffer("getnameinfo", serv, servlen, &serv_text, false) } {
         Ok(_) => {}
         Err(err) => return err,
     }
@@ -4207,7 +4378,12 @@ unsafe fn getnameinfo_named(
                     if flags & libc::NI_NOFQDN != 0 {
                         shorten_local_hostname(&mut name);
                     }
-                    host_name = Some(name);
+                    host_name = Some(if flags & NI_IDN != 0 {
+                        idn_name_in_current_locale(name.as_bytes())
+                            .unwrap_or_else(|| name.into_bytes())
+                    } else {
+                        name.into_bytes()
+                    });
                 }
                 Err(libc::EAI_AGAIN) => return Err(libc::EAI_AGAIN),
                 Err(_) if flags & libc::NI_NAMEREQD != 0 => return Err(libc::EAI_NONAME),
@@ -4234,11 +4410,11 @@ unsafe fn getnameinfo_named(
         // permission to return a silently truncated name in hardened mode.
         // SAFETY: write_c_buffer checks advertised and tracked output bounds.
         unsafe {
-            write_c_buffer(
+            write_c_buffer_bytes(
                 "getnameinfo",
                 host,
                 hostlen,
-                host_name.as_deref().unwrap_or(host_number),
+                host_name.as_deref().unwrap_or(host_number.as_bytes()),
                 false,
             )?;
             write_c_buffer(
@@ -4473,7 +4649,7 @@ unsafe fn getnameinfo_full(
         );
         return libc::EAI_FAIL;
     }
-    let (mode, decision) = runtime_policy::decide(
+    let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         sa as usize,
         (hostlen as usize).saturating_add(servlen as usize),
@@ -4491,8 +4667,6 @@ unsafe fn getnameinfo_full(
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
         return libc::EAI_FAIL;
     }
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-
     // Stack scratch for the numeric renders, declared in function scope so the borrowed `Cow`
     // slices below outlive the `write_c_buffer` calls. The AF_INET path and every port render
     // borrow these buffers instead of allocating a `String` per call.
@@ -4579,9 +4753,12 @@ unsafe fn getnameinfo_full(
         }
     };
 
+    // Numeric outputs have the same defined EAI_OVERFLOW contract as named
+    // outputs. Truncated success prevents callers from retrying with room for
+    // the complete address/service and its terminating NUL.
     // SAFETY: output buffers are caller-provided according to getnameinfo contract.
     let host_truncated = unsafe {
-        match write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) {
+        match write_c_buffer("getnameinfo", host, hostlen, &host_text, false) {
             Ok(truncated) => truncated,
             Err(err) => {
                 record_resolver_stage_outcome(
@@ -4597,7 +4774,7 @@ unsafe fn getnameinfo_full(
     };
     // SAFETY: output buffers are caller-provided according to getnameinfo contract.
     let serv_truncated = unsafe {
-        match write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) {
+        match write_c_buffer("getnameinfo", serv, servlen, &serv_text, false) {
             Ok(truncated) => truncated,
             Err(err) => {
                 record_resolver_stage_outcome(
@@ -4744,14 +4921,11 @@ impl ServentTlsStorage {
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed service result per thread
-// id. `servent` only points into the same boxed storage, so moving the box while
-// the cache mutex is held does not transfer ownership of pointees across
-// threads.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: owned TLS keeps each native thread's result at a stable address.
+// `servent` points only into that thread's storage; no pointee ownership is
+// transferred to another thread.
 unsafe impl Send for ServentTlsStorage {}
 
-#[cfg(feature = "owned-tls-cache")]
 static SERVENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServentTlsStorage> =
     crate::owned_tls_cache::OwnedTlsCache::new(ServentTlsStorage::new);
 
@@ -4771,6 +4945,9 @@ fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVENT_OWNED_TLS.with(callback);
+        }
         SERVENT_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(ServentTlsStorage::new()),
@@ -4881,14 +5058,11 @@ impl ProtoentTlsStorage {
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed protocol result per thread
-// id. `protoent` only points into the same boxed storage, so moving the box
-// while the cache mutex is held does not transfer ownership of pointees across
-// threads.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: owned TLS keeps each native thread's result at a stable address.
+// `protoent` points only into that thread's storage; no pointee ownership is
+// transferred to another thread.
 unsafe impl Send for ProtoentTlsStorage {}
 
-#[cfg(feature = "owned-tls-cache")]
 static PROTOENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoentTlsStorage> =
     crate::owned_tls_cache::OwnedTlsCache::new(ProtoentTlsStorage::new);
 
@@ -4908,6 +5082,9 @@ fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return PROTOENT_OWNED_TLS.with(callback);
+        }
         PROTOENT_TLS.with(|slot| {
             slot.with_init(
                 || RefCell::new(ProtoentTlsStorage::new()),
@@ -5943,7 +6120,6 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
 // h_errno — thread-local resolver error variable
 // ===========================================================================
 
-#[cfg(feature = "owned-tls-cache")]
 static H_ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
 
@@ -5960,6 +6136,9 @@ fn set_h_errno_tls(value: c_int) {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return H_ERRNO_OWNED_TLS.with(|slot| *slot = value);
+        }
         H_ERRNO_TLS.with(|cell| cell.set(value));
     }
 }
@@ -5972,6 +6151,9 @@ fn h_errno_location_ptr() -> *mut c_int {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return H_ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int);
+        }
         H_ERRNO_TLS.with(|cell| cell.as_ptr())
     }
 }
@@ -6616,18 +6798,15 @@ pub unsafe extern "C" fn res_gethostbyaddr(
 // store them per-thread for any caller that registers and re-reads them
 // (some test harnesses do exactly this).
 
-#[cfg(feature = "owned-tls-cache")]
 struct ResSendHooks {
     qhook: *mut c_void,
     rhook: *mut c_void,
 }
 
-#[cfg(feature = "owned-tls-cache")]
 // SAFETY: `ResSendHooks` stores opaque callback pointer tokens for round-trip
 // ABI compatibility. The cache never dereferences or invokes the pointers.
 unsafe impl Send for ResSendHooks {}
 
-#[cfg(feature = "owned-tls-cache")]
 const fn empty_res_send_hooks() -> ResSendHooks {
     ResSendHooks {
         qhook: core::ptr::null_mut(),
@@ -6635,7 +6814,6 @@ const fn empty_res_send_hooks() -> ResSendHooks {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RES_SEND_HOOKS_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ResSendHooks> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_res_send_hooks);
 
@@ -6652,6 +6830,9 @@ fn current_res_send_qhook() -> *mut c_void {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook);
+        }
         RES_QHOOK.with(|c| c.get())
     }
 }
@@ -6663,6 +6844,9 @@ fn current_res_send_rhook() -> *mut c_void {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook);
+        }
         RES_RHOOK.with(|c| c.get())
     }
 }
@@ -6674,6 +6858,9 @@ fn set_res_send_qhook(qhook: *mut c_void) {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook = qhook);
+        }
         RES_QHOOK.with(|c| c.set(qhook));
     }
 }
@@ -6685,6 +6872,9 @@ fn set_res_send_rhook(rhook: *mut c_void) {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook = rhook);
+        }
         RES_RHOOK.with(|c| c.set(rhook));
     }
 }
@@ -8194,12 +8384,10 @@ pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void)
 // variants parse enough DNS wire data to return the next cursor while
 // intentionally not rendering to FILE* streams.
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_p_fallback_buf() -> [u8; 16] {
     [0u8; 16]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static P_FALLBACK_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 16]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_p_fallback_buf);
 
@@ -8218,6 +8406,9 @@ fn with_p_fallback_buf<R>(f: impl FnOnce(&mut [u8; 16]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return P_FALLBACK_BUF_OWNED_TLS.with(f);
+        }
         P_FALLBACK_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8237,12 +8428,10 @@ unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
     })
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_p_option_buf() -> [u8; 24] {
     [0u8; 24]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static P_OPTION_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_p_option_buf);
 
@@ -8259,6 +8448,9 @@ fn with_p_option_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return P_OPTION_BUF_OWNED_TLS.with(f);
+        }
         P_OPTION_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8385,12 +8577,10 @@ pub unsafe extern "C" fn __p_rcode(rcode: c_int) -> *const c_char {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_secstodate_buf() -> [u8; 24] {
     [0u8; 24]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static SECSTODATE_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_secstodate_buf);
 
@@ -8407,6 +8597,9 @@ fn with_secstodate_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SECSTODATE_BUF_OWNED_TLS.with(f);
+        }
         SECSTODATE_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8415,12 +8608,10 @@ fn with_secstodate_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_p_time_buf() -> [u8; 32] {
     [0u8; 32]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static P_TIME_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 32]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_p_time_buf);
 
@@ -8437,6 +8628,9 @@ fn with_p_time_buf<R>(f: impl FnOnce(&mut [u8; 32]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return P_TIME_BUF_OWNED_TLS.with(f);
+        }
         P_TIME_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8597,12 +8791,10 @@ pub unsafe extern "C" fn __p_fqnname(
 
 const HOSTALIAS_BUF_LEN: usize = 1025;
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_hostalias_buf() -> [u8; HOSTALIAS_BUF_LEN] {
     [0u8; HOSTALIAS_BUF_LEN]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static HOSTALIAS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; HOSTALIAS_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_hostalias_buf);
 
@@ -8621,6 +8813,9 @@ fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTALIAS_BUF_OWNED_TLS.with(f);
+        }
         HOSTALIAS_BUF.with(|slot| {
             slot.with_init(
                 || RefCell::new([0u8; HOSTALIAS_BUF_LEN]),
@@ -8757,12 +8952,10 @@ pub unsafe extern "C" fn __res_hostalias(
 
 const LOC_NTOA_BUF_LEN: usize = 96;
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_loc_ntoa_buf() -> [u8; LOC_NTOA_BUF_LEN] {
     [0u8; LOC_NTOA_BUF_LEN]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static LOC_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; LOC_NTOA_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_loc_ntoa_buf);
 
@@ -8779,6 +8972,9 @@ fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return LOC_NTOA_BUF_OWNED_TLS.with(f);
+        }
         LOC_NTOA_BUF.with(|slot| {
             slot.with_init(
                 || RefCell::new([0u8; LOC_NTOA_BUF_LEN]),
@@ -9279,15 +9475,12 @@ struct ResSym {
 
 const SYM_UNKNOWN_BUF_LEN: usize = 24;
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_sym_unknown_buf() -> [u8; SYM_UNKNOWN_BUF_LEN] {
     [0u8; SYM_UNKNOWN_BUF_LEN]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static SYM_NTOP_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
-#[cfg(feature = "owned-tls-cache")]
 static SYM_NTOS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
 
@@ -9315,6 +9508,9 @@ fn write_decimal_to_sym_ntop_buf(value: c_int) -> *const c_char {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SYM_NTOP_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value));
+        }
         SYM_NTOP_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
     }
 }
@@ -9326,6 +9522,9 @@ fn write_decimal_to_sym_ntos_buf(value: c_int) -> *const c_char {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SYM_NTOS_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value));
+        }
         SYM_NTOS_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
     }
 }
@@ -9629,7 +9828,6 @@ pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
 // reuse the same files-backend parser as the non-iterator lookup hooks and
 // expose IPv4 entries through the shared thread-local hostent storage.
 
-#[cfg(feature = "owned-tls-cache")]
 static HOSTS_ITER_LINE_OFFSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
 
@@ -9645,6 +9843,9 @@ fn reset_hosts_iterator() {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(|offset| *offset = 0);
+        }
         HOSTS_ITER_LINE_OFFSET.with(|cell| *cell.borrow_mut() = 0);
     }
 }
@@ -9656,6 +9857,9 @@ fn with_hosts_iterator_offset<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(callback);
+        }
         HOSTS_ITER_LINE_OFFSET.with(|cell| {
             let mut offset = cell.borrow_mut();
             callback(&mut offset)

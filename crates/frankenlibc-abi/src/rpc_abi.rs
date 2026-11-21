@@ -39,6 +39,7 @@ pub use rpc_svc::{
     svcerr_weakauth, svcfd_create, svctcp_create, svcudp_bufcreate, svcudp_create,
     svcudp_enablecache, svcunix_create, svcunixfd_create,
 };
+pub(crate) use rpc_svc::{register_transport, unregister_transport};
 
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
@@ -2807,10 +2808,30 @@ pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
 
 // --- Thread-local RPC state accessors (native TLS) ---
 //
-// In glibc these return pointers to thread-local structs. We provide native
-// TLS storage for the rpc_createerr, svc_fdset, svc_max_pollfd, and
-// svc_pollfd thread-local variables. Programs that use these accessors will
-// get per-thread storage without needing to call into glibc.
+// GNU's service accessors use the exported data objects for the first thread
+// that acquires RPC state, even if it is a worker. Later threads get independent
+// storage. Cache ownership in TLS instead of remembering a kernel TID, which
+// may be reused after the first thread exits. Ownership is never transferred.
+static RPC_GLOBAL_STATE_CLAIMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn claim_rpc_global_state() -> bool {
+    !RPC_GLOBAL_STATE_CLAIMED.swap(true, std::sync::atomic::Ordering::AcqRel)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_GLOBAL_STATE_OWNER: crate::owned_tls_cache::OwnedTlsCache<bool> =
+    crate::owned_tls_cache::OwnedTlsCache::new(claim_rpc_global_state);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RPC_GLOBAL_STATE_OWNER: bool = claim_rpc_global_state();
+}
+
+#[inline]
+pub(super) fn rpc_uses_global_svc_state() -> bool {
+    RPC_GLOBAL_STATE_OWNER.with(|owner| *owner)
+}
 
 // rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
 // This is 32 bytes on x86_64 (4 + padding + 24 for rpc_err).
@@ -2839,6 +2860,9 @@ std::thread_local! {
 
 #[inline]
 fn rpc_createerr_ptr() -> *mut c_void {
+    if rpc_uses_global_svc_state() {
+        return std::ptr::addr_of_mut!(crate::glibc_internal_abi::rpc_createerr).cast();
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         RPC_CREATEERR_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
@@ -2849,7 +2873,8 @@ fn rpc_createerr_ptr() -> *mut c_void {
     }
 }
 
-/// Returns pointer to thread-local rpc_createerr struct.
+/// Returns the calling thread's rpc_createerr, backed by the exported global
+/// for the first RPC-state owner and TLS for other threads.
 ///
 /// # Safety
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
@@ -2888,6 +2913,11 @@ std::thread_local! {
 
 #[inline]
 fn rpc_svc_fdset_ptr() -> *mut c_void {
+    if rpc_uses_global_svc_state() {
+        // Address the exported object itself so ELF copy relocations remain
+        // authoritative; never shadow it with a separate internal fd_set.
+        return std::ptr::addr_of_mut!(crate::glibc_internal_abi::svc_fdset).cast();
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
@@ -2898,7 +2928,8 @@ fn rpc_svc_fdset_ptr() -> *mut c_void {
     }
 }
 
-/// Returns pointer to thread-local svc_fdset (fd_set).
+/// Returns the calling thread's svc_fdset (fd_set), using the exported global
+/// object for the first RPC-state owner and TLS for other threads.
 ///
 /// # Safety
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
@@ -2925,6 +2956,9 @@ std::thread_local! {
 
 #[inline]
 fn rpc_svc_max_pollfd_ptr() -> *mut c_void {
+    if rpc_uses_global_svc_state() {
+        return std::ptr::addr_of_mut!(crate::glibc_internal_abi::svc_max_pollfd).cast();
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         RPC_SVC_MAX_POLLFD_OWNED_TLS.with(|value| (value as *mut c_int).cast())
@@ -2935,7 +2969,8 @@ fn rpc_svc_max_pollfd_ptr() -> *mut c_void {
     }
 }
 
-/// Returns pointer to thread-local svc_max_pollfd (int).
+/// Returns the calling thread's svc_max_pollfd (int), backed by the exported
+/// global for the first RPC-state owner and TLS for other threads.
 ///
 /// # Safety
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
@@ -2962,6 +2997,9 @@ std::thread_local! {
 
 #[inline]
 fn rpc_svc_pollfd_ptr() -> *mut c_void {
+    if rpc_uses_global_svc_state() {
+        return std::ptr::addr_of_mut!(crate::glibc_internal_abi::svc_pollfd).cast();
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         RPC_SVC_POLLFD_OWNED_TLS.with(|value| (value as *mut usize).cast())
@@ -2972,7 +3010,8 @@ fn rpc_svc_pollfd_ptr() -> *mut c_void {
     }
 }
 
-/// Returns pointer to thread-local svc_pollfd (struct pollfd *).
+/// Returns the calling thread's svc_pollfd (struct pollfd *), backed by the
+/// exported global for the first RPC-state owner and TLS for other threads.
 ///
 /// # Safety
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.

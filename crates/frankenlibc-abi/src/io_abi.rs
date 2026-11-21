@@ -547,11 +547,7 @@ pub(crate) unsafe fn readv_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int)
     // Keep prepared alive across the existing cancellation point. Its raw
     // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
     let iov = prepared.as_ptr();
-    match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_readv(fd, iov as *const u8, iovcnt)
-        })
-    } {
+    match unsafe { crate::pthread_abi::cancellation_point_readv(fd, iov, iovcnt) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -617,11 +613,7 @@ pub(crate) unsafe fn writev_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
     // Keep prepared alive across the existing cancellation point. Its raw
     // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
     let iov = prepared.as_ptr();
-    match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_writev(fd, iov as *const u8, iovcnt)
-        })
-    } {
+    match unsafe { crate::pthread_abi::cancellation_point_writev(fd, iov, iovcnt) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t

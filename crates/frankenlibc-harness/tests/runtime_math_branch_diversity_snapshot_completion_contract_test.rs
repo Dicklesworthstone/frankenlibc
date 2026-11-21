@@ -145,7 +145,7 @@ fn manifest_binds_branch_diversity_snapshot_completion_items() -> TestResult {
     );
     assert_eq!(
         contract["snapshot_capture"]["snapshot_schema_version"].as_u64(),
-        Some(2)
+        Some(3)
     );
     assert_eq!(
         contract["multi_kernel_interaction"]["minimum_decision_steps"].as_u64(),

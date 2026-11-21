@@ -4,7 +4,7 @@
   "bead": "bd-5unc9",
   "owner_bead": "bd-zyck1",
   "generated_utc": "2026-11-18T23:15:02Z",
-  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+  "source_commit": "4d0f827bb167af864b9f41fde4a2fdd9e8d40ab7",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",

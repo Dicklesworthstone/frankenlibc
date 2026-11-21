@@ -1929,7 +1929,7 @@ static int test_internal_line_reads(void) {
  * still leave ordinary operations blocked. */
 enum stream_lock_operation {
     LOCK_FGETC, LOCK_GETC, LOCK_FGETS, LOCK_FREAD,
-    LOCK_FPUTC, LOCK_PUTC, LOCK_FPUTS, LOCK_FWRITE, LOCK_FFLUSH,
+    LOCK_FPUTC, LOCK_PUTC, LOCK_FPUTS, LOCK_FWRITE, LOCK_FFLUSH, LOCK_FFLUSH_ALL,
     LOCK_FSEEK, LOCK_FTELL, LOCK_REWIND, LOCK_FGETPOS, LOCK_FSETPOS,
     LOCK_FEOF, LOCK_FERROR, LOCK_CLEARERR, LOCK_UNGETC, LOCK_SETVBUF,
     LOCK_FCLOSE, LOCK_FREOPEN, LOCK_FPRINTF, LOCK_FSCANF, LOCK_GETLINE,
@@ -1976,6 +1976,7 @@ static void *run_stream_lock_operation(void *opaque) {
     case LOCK_FPUTS: state->failed |= fputs("xyz", fp) == EOF; break;
     case LOCK_FWRITE: state->failed |= fwrite("xyz", 1, 3, fp) != 3; break;
     case LOCK_FFLUSH: state->failed |= fflush(fp) != 0; break;
+    case LOCK_FFLUSH_ALL: state->failed |= fflush(NULL) != 0; break;
     case LOCK_FSEEK: state->failed |= fseek(fp, 0, SEEK_SET) != 0; break;
     case LOCK_FTELL: state->failed |= ftell(fp) != 0; break;
     case LOCK_REWIND: rewind(fp); break;
@@ -2204,6 +2205,9 @@ static int test_stream_lock_case(const struct stream_lock_case *test, int lockin
         .stream = fp, .operation = test->operation, .ready_fd = ready[1], .done_fd = done[1],
     };
     if (test->operation == LOCK_FSETPOS && fgetpos(fp, &state.position)) return 1;
+    /* Global flush may skip streams with no pending output. Give this case
+     * real buffered work before requiring it to honor the public FILE lock. */
+    if (test->operation == LOCK_FFLUSH_ALL && fputc('x', fp) != 'x') return 1;
     flockfile(fp);
     flockfile(fp);
     pthread_t thread;
@@ -2293,13 +2297,233 @@ static int test_puts_records_are_atomic(void) {
     return failed != 0;
 }
 
+struct flush_snapshot_group;
+struct flush_snapshot_cookie {
+    struct flush_snapshot_group *group;
+    int index, writes, closes;
+    char buffer[128];
+};
+
+struct flush_snapshot_group {
+    FILE *streams[2], *replacement;
+    struct flush_snapshot_cookie cookies[2];
+    int armed, changed, failed;
+};
+
+static ssize_t flush_snapshot_write(void *opaque, const char *bytes, size_t size) {
+    struct flush_snapshot_cookie *cookie = opaque;
+    struct flush_snapshot_group *group = cookie->group;
+    ++cookie->writes;
+    group->failed |= size != 1 || bytes[0] != 'a' + cookie->index;
+    if (group->armed && !group->changed) {
+        /* Whichever stream the provider visits first closes the other one.
+         * This drives the same lifetime transition for GNU's linked list and
+         * the candidate's sorted snapshot without assuming iteration order. */
+        group->changed = 1;
+        int other = 1 - cookie->index;
+        FILE *closing = group->streams[other];
+        group->streams[other] = NULL;
+        group->failed |= fclose(closing) != 0;
+        group->replacement = tmpfile();
+        if (!group->replacement) group->failed = 1;
+        else {
+            /* A stale cell must not clear flags or publish its buffer into a
+             * replacement FILE occupying the old slot. */
+            group->failed |= fgetc(group->replacement) != EOF;
+            group->failed |= !feof(group->replacement) || ferror(group->replacement);
+        }
+    }
+    return (ssize_t)size;
+}
+
+static int flush_snapshot_close(void *opaque) {
+    struct flush_snapshot_cookie *cookie = opaque;
+    ++cookie->closes;
+    return 0;
+}
+
+static int test_flush_all_snapshot_lifetime(void) {
+    struct flush_snapshot_group group = {0};
+    cookie_io_functions_t functions = {
+        .write = flush_snapshot_write, .close = flush_snapshot_close,
+    };
+    for (int i = 0; i < 2; ++i) {
+        group.cookies[i].group = &group;
+        group.cookies[i].index = i;
+        group.streams[i] = fopencookie(&group.cookies[i], "w", functions);
+        if (!group.streams[i]) return 1;
+        group.failed |= setvbuf(group.streams[i], group.cookies[i].buffer,
+                               _IOFBF, sizeof(group.cookies[i].buffer)) != 0;
+        group.failed |= fputc('a' + i, group.streams[i]) != 'a' + i;
+        group.failed |= group.cookies[i].writes != 0;
+    }
+    group.armed = 1;
+    group.failed |= fflush(NULL) != 0;
+    group.failed |= !group.changed || !group.replacement;
+    if (group.replacement) {
+        group.failed |= !feof(group.replacement) || ferror(group.replacement);
+        group.failed |= fclose(group.replacement) != 0;
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (group.streams[i]) group.failed |= fclose(group.streams[i]) != 0;
+        group.failed |= group.cookies[i].writes != 1 || group.cookies[i].closes != 1;
+    }
+    printf("locks global flush snapshot lifetime: %s\n", group.failed ? "FAIL" : "PASS");
+    return group.failed != 0;
+}
+
+struct fork_stream_lock_worker {
+    FILE *stream;
+    int ready_fd, command_fd, caller_owned, failed;
+};
+
+static int fork_stream_lock_send(int fd, unsigned char value) {
+    ssize_t count;
+    do { count = write(fd, &value, 1); } while (count < 0 && errno == EINTR);
+    return count == 1;
+}
+
+static int fork_stream_lock_receive(int fd) {
+    unsigned char value;
+    ssize_t count;
+    do { count = read(fd, &value, 1); } while (count < 0 && errno == EINTR);
+    return count == 1 ? value : -1;
+}
+
+static void *run_fork_stream_lock_worker(void *opaque) {
+    struct fork_stream_lock_worker *state = opaque;
+    int depth = 0;
+    if (!state->caller_owned) {
+        flockfile(state->stream);
+        flockfile(state->stream);
+        depth = 2;
+    }
+    state->failed |= !fork_stream_lock_send(state->ready_fd, 'r');
+    for (int stage = 0; stage < (state->caller_owned ? 3 : 2); ++stage) {
+        if (state->failed || fork_stream_lock_receive(state->command_fd) < 0) {
+            state->failed = 1;
+            break;
+        }
+        int acquired = 0;
+        if (state->caller_owned) {
+            acquired = ftrylockfile(state->stream) == 0;
+            if (acquired) funlockfile(state->stream);
+        } else {
+            funlockfile(state->stream);
+            --depth;
+        }
+        state->failed |= !fork_stream_lock_send(state->ready_fd, (unsigned char)acquired);
+    }
+    while (depth-- > 0) funlockfile(state->stream);
+    return NULL;
+}
+
+static FILE *fork_stream_lock_probe;
+static int fork_stream_lock_handler_ok;
+
+static void fork_stream_lock_child_handler(void) {
+    if (!fork_stream_lock_probe) return;
+    fork_stream_lock_handler_ok = ftrylockfile(fork_stream_lock_probe) == 0;
+    if (fork_stream_lock_handler_ok) funlockfile(fork_stream_lock_probe);
+}
+
+/* The owner keeps its recursive flockfile lock until the child has exited.
+ * This avoids timing races: resetting a parent lock, failing to reset an
+ * orphan, or invoking child handlers before recovery each has its own witness.
+ * No thread is mutating a stream buffer or borrowing native state at clone. */
+static int test_fork_stream_lock(int backing, int caller_owned) {
+    char fixed[16] = {0};
+    char *published = NULL;
+    size_t published_size = 0;
+    FILE *fp = backing == 0 ? tmpfile()
+             : backing == 1 ? fmemopen(fixed, sizeof(fixed), "w+")
+             : backing == 2 ? open_memstream(&published, &published_size)
+             : backing == 3 ? stdin : backing == 4 ? stdout : stderr;
+    if (!fp) return 1;
+    int expected_error = ferror(fp);
+    int ready[2], command[2];
+    if (pipe(ready) != 0 || pipe(command) != 0) _exit(3);
+    if (caller_owned) {
+        flockfile(fp);
+        flockfile(fp);
+    }
+    struct fork_stream_lock_worker state = {
+        .stream = fp, .ready_fd = ready[1], .command_fd = command[0],
+        .caller_owned = caller_owned,
+    };
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, run_fork_stream_lock_worker, &state) != 0)
+        _exit(3);
+    if (fork_stream_lock_receive(ready[0]) != 'r') _exit(3);
+    fork_stream_lock_probe = fp;
+    fork_stream_lock_handler_ok = 0;
+    pid_t child = fork();
+    if (child == 0) {
+        alarm(3);
+        if (!fork_stream_lock_handler_ok || ftrylockfile(fp) != 0) _exit(11);
+        if (ftrylockfile(fp) != 0 || ferror(fp) != expected_error) _exit(12);
+        if (backing < 3 && (fputc('x', fp) != 'x' || fflush(fp) != 0)) _exit(13);
+        funlockfile(fp);
+        funlockfile(fp);
+        _exit(0);
+    }
+    fork_stream_lock_probe = NULL;
+    int failed = child < 0;
+    if (child > 0) {
+        int status = 0;
+        pid_t waited;
+        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+        failed |= waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0;
+    }
+
+    /* The parent must still have both levels, then one, then none. Observe
+     * from a different thread when the forking caller itself owns the lock. */
+    for (int stage = 0; stage < 3; ++stage) {
+        int acquired;
+        if (caller_owned) {
+            if (!fork_stream_lock_send(command[1], 't')) _exit(3);
+            acquired = fork_stream_lock_receive(ready[0]);
+            if (acquired < 0) _exit(3);
+        } else {
+            acquired = ftrylockfile(fp) == 0;
+            if (acquired) funlockfile(fp);
+        }
+        failed |= acquired != (stage == 2);
+        if (stage < 2) {
+            if (caller_owned) {
+                funlockfile(fp);
+            } else {
+                if (!fork_stream_lock_send(command[1], 'u') ||
+                    fork_stream_lock_receive(ready[0]) < 0) _exit(3);
+            }
+        }
+    }
+    failed |= pthread_join(thread, NULL) != 0;
+    failed |= state.failed;
+    close(ready[0]); close(ready[1]); close(command[0]); close(command[1]);
+    if (backing < 3) failed |= fclose(fp) != 0;
+    free(published);
+    printf("locks fork backing=%d caller=%d: %s\n",
+           backing, caller_owned, failed ? "FAIL" : "PASS");
+    return failed != 0;
+}
+
+static int test_fork_stream_locks(void) {
+    if (pthread_atfork(NULL, NULL, fork_stream_lock_child_handler) != 0) return 1;
+    int failed = 0;
+    for (int backing = 0; backing < 6; ++backing)
+        for (int caller_owned = 0; caller_owned < 2; ++caller_owned)
+            failed += test_fork_stream_lock(backing, caller_owned);
+    return failed;
+}
+
 static int test_stream_locking(void) {
     const struct stream_lock_case cases[] = {
 #define LOCK_CASE(op) {#op, LOCK_##op, 0, 0}
 #define UNLOCK_CASE(op) {#op "_UNLOCKED", UNLOCK_##op, 1, 0}
         LOCK_CASE(FGETC), LOCK_CASE(GETC), LOCK_CASE(FGETS), LOCK_CASE(FREAD),
         LOCK_CASE(FPUTC), LOCK_CASE(PUTC), LOCK_CASE(FPUTS), LOCK_CASE(FWRITE),
-        LOCK_CASE(FFLUSH), LOCK_CASE(FSEEK), LOCK_CASE(FTELL), LOCK_CASE(REWIND),
+        LOCK_CASE(FFLUSH), LOCK_CASE(FFLUSH_ALL), LOCK_CASE(FSEEK), LOCK_CASE(FTELL), LOCK_CASE(REWIND),
         LOCK_CASE(FGETPOS), LOCK_CASE(FSETPOS), LOCK_CASE(FEOF), LOCK_CASE(FERROR),
         LOCK_CASE(CLEARERR), LOCK_CASE(UNGETC), LOCK_CASE(SETVBUF), LOCK_CASE(FCLOSE),
         LOCK_CASE(FREOPEN), LOCK_CASE(FPRINTF), LOCK_CASE(FSCANF), LOCK_CASE(GETLINE),
@@ -2363,10 +2587,12 @@ static int test_stream_locking(void) {
         failed += test_stream_lock_case(&caller_cases[i], FSETLOCKING_INTERNAL);
     }
     failed += test_puts_records_are_atomic();
+    failed += test_flush_all_snapshot_lifetime();
+    failed += test_fork_stream_locks();
     alarm(0);
     printf("fixture_stdio locks: %s (%zu cases, %d failed)\n",
            failed ? "FAIL" : "PASS",
-           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 1,
+           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 14,
            failed);
     return failed != 0;
 }
@@ -2382,7 +2608,7 @@ int main(int argc, char **argv) {
             "__overflow", "fputs_unlocked", "fwrite_unlocked", "fflush_unlocked", "feof_unlocked",
             "ferror_unlocked", "clearerr_unlocked", "fgetwc_unlocked", "getwc_unlocked", "fgetws_unlocked",
             "fputwc_unlocked", "putwc_unlocked", "fputws_unlocked", "__fgets_chk", "__fgets_unlocked_chk",
-            "__fgetws_chk", "__fgetws_unlocked_chk", "fmemopen", "open_memstream", "open_wmemstream", "fopencookie", "puts"};
+            "__fgetws_chk", "__fgetws_unlocked_chk", "fmemopen", "open_memstream", "open_wmemstream", "fopencookie", "puts", "fork"};
         if (argc != 3 || check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_stream_locking();

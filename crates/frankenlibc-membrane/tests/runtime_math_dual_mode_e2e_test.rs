@@ -1,10 +1,13 @@
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::heal::HealingAction;
+use frankenlibc_membrane::runtime_math::allocator_telemetry::{
+    SegmentSizeClassMapping, SegmentSizeClassTelemetry,
+};
 use frankenlibc_membrane::runtime_math::evidence::{LossEvidenceV1, SystematicEvidenceLog};
 use frankenlibc_membrane::runtime_math::{
-    ApiFamily, MembraneAction, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION, RuntimeContext,
-    RuntimeDecision, RuntimeKernelFramework, RuntimeMathKernel, RuntimeReverseRoundDiversityState,
-    ValidationProfile,
+    ApiFamily, MembraneAction, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION,
+    RUNTIME_MATH_PRODUCTION_ENABLED, RuntimeContext, RuntimeDecision, RuntimeKernelFramework,
+    RuntimeMathKernel, RuntimeReverseRoundDiversityState, ValidationProfile,
 };
 use serde_json::Value;
 
@@ -72,6 +75,288 @@ fn runtime_decision_rows(rows: &[Value]) -> Vec<&Value> {
                 .is_some_and(|event| event == "runtime_decision")
         })
         .collect()
+}
+
+#[test]
+fn e2e_cold_sos_violation_enforces_both_modes_and_recovers() {
+    assert!(RUNTIME_MATH_PRODUCTION_ENABLED);
+    let ctx = RuntimeContext::pointer_validation(0x1234, false);
+    for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        kernel.observe_size_class_mapping(64, 64, true);
+        let healthy = kernel.decide(mode, ctx);
+        assert!(!matches!(
+            healthy.action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+        assert!(kernel.snapshot(mode).sos_barrier_size_class_value > 0);
+
+        // A valid class that is smaller than the request is a concrete mapping
+        // failure. No provenance observations have warmed this fresh kernel.
+        kernel.observe_size_class_mapping(64, 32, true);
+        let violated = kernel.snapshot(mode);
+        assert!(violated.sos_barrier_size_class_value < 0);
+        assert_eq!(violated.sos_barrier_violations, 1);
+        let enforced = kernel.decide(mode, ctx);
+        let expected = match mode {
+            SafetyLevel::Strict => MembraneAction::Deny,
+            SafetyLevel::Hardened => MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            SafetyLevel::Off => unreachable!(),
+        };
+        assert_eq!(enforced.action, expected, "mode {mode:?}");
+        assert_eq!(enforced.profile, ValidationProfile::Full);
+        assert!(enforced.evidence_seqno > 0);
+
+        // A later valid mapping restores ordinary routing, while the earlier
+        // violation remains visible in telemetry.
+        kernel.observe_size_class_mapping(64, 64, true);
+        let restored = kernel.snapshot(mode);
+        assert!(restored.sos_barrier_size_class_value > 0);
+        assert_eq!(restored.sos_barrier_violations, 1);
+        let recovered = kernel.decide(mode, ctx);
+        assert!(!matches!(
+            recovered.action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+    }
+}
+
+#[test]
+fn e2e_real_allocation_pressure_remains_advisory_in_both_modes() {
+    let arena = frankenlibc_membrane::arena::AllocationArena::new();
+    let allocation = arena.allocate(4096).expect("valid allocation");
+    let sample = arena
+        .try_fragmentation_snapshot()
+        .expect("uncontended arena");
+    for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        assert!(kernel.observe_allocator_fragmentation(sample));
+        let snapshot = kernel.snapshot(mode);
+        assert_eq!(snapshot.sos_barrier_fragmentation_evaluations, 1);
+        assert_eq!(snapshot.sos_barrier_arena_fragmentation, Some(sample));
+        assert!(snapshot.sos_barrier_fragmentation_value < 0);
+        assert_eq!(snapshot.sos_barrier_fragmentation_pressure_events, 1);
+        assert_eq!(snapshot.sos_barrier_violations, 0);
+        assert_eq!(snapshot.sos_barrier_thread_safety_evaluations, 0);
+        let ctx = RuntimeContext::pointer_validation(allocation.user_base, false);
+        assert!(!matches!(
+            kernel.decide(mode, ctx).action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+
+        // A genuine mapping violation still changes admission in both modes;
+        // making utilization advisory must not bypass independent safety checks.
+        kernel.observe_size_class_mapping(64, 32, true);
+        let decision = kernel.decide(mode, ctx);
+        assert!(matches!(
+            decision.action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+    }
+}
+
+#[test]
+fn e2e_segment_class_samples_retain_cold_faults_and_recover() {
+    assert!(RUNTIME_MATH_PRODUCTION_ENABLED);
+    let healthy = SegmentSizeClassMapping {
+        requested_size: 64,
+        mapped_class_size: 64,
+        class_membership_valid: true,
+    };
+    let invalid = SegmentSizeClassMapping {
+        mapped_class_size: 32,
+        ..healthy
+    };
+    for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+        let telemetry = SegmentSizeClassTelemetry::new();
+        for _ in 0..255 {
+            assert!(!telemetry.record(healthy));
+        }
+        assert!(!telemetry.has_pending());
+        assert!(telemetry.record(healthy));
+        assert!(telemetry.record(invalid));
+        // A later healthy sample may coalesce with a healthy sample, but must
+        // never overwrite the urgent mapping waiting for initialization.
+        for _ in 0..256 {
+            telemetry.record(healthy);
+        }
+        let queued = telemetry.snapshot();
+        assert_eq!(queued.selections, 513);
+        assert_eq!(queued.sampled_selections, 2);
+        assert_eq!(queued.urgent_selections, 1);
+        assert_eq!(queued.coalesced_samples, 1);
+        assert_eq!(queued.consumed_samples, 0);
+        assert_eq!(queued.pending_urgent, Some(invalid));
+
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 2);
+        assert!(!telemetry.has_pending());
+        assert_eq!(telemetry.snapshot().last_consumed, Some(invalid));
+        let violated = kernel.snapshot(mode);
+        assert!(violated.sos_barrier_size_class_value < 0);
+        assert_eq!(violated.sos_barrier_violations, 1);
+        let ctx = RuntimeContext::pointer_validation(0x1234, false);
+        let expected = match mode {
+            SafetyLevel::Strict => MembraneAction::Deny,
+            SafetyLevel::Hardened => MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            SafetyLevel::Off => unreachable!(),
+        };
+        assert_eq!(kernel.decide(mode, ctx).action, expected);
+
+        for _ in 0..256 {
+            telemetry.record(healthy);
+        }
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
+        let recovered = kernel.snapshot(mode);
+        assert!(recovered.sos_barrier_size_class_value > 0);
+        assert_eq!(recovered.sos_barrier_violations, 1);
+        assert_eq!(telemetry.snapshot().consumed_samples, 3);
+        assert!(!matches!(
+            kernel.decide(mode, ctx).action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+    }
+}
+
+#[test]
+fn e2e_segment_class_mailboxes_count_concurrent_producers_exactly() {
+    const THREADS: u64 = 8;
+    const SELECTIONS_PER_THREAD: u64 = 2048;
+    let telemetry = SegmentSizeClassTelemetry::new();
+    std::thread::scope(|scope| {
+        for index in 0..THREADS {
+            let telemetry = &telemetry;
+            scope.spawn(move || {
+                let mapping = SegmentSizeClassMapping {
+                    requested_size: 64 + index as u16,
+                    mapped_class_size: 80,
+                    class_membership_valid: true,
+                };
+                for _ in 0..SELECTIONS_PER_THREAD {
+                    telemetry.record(mapping);
+                }
+            });
+        }
+    });
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.selections, THREADS * SELECTIONS_PER_THREAD);
+    assert_eq!(snapshot.sampled_selections, snapshot.selections / 256);
+    assert_eq!(snapshot.urgent_selections, 0);
+    assert_eq!(snapshot.coalesced_samples, snapshot.sampled_selections - 1);
+    assert_eq!(snapshot.consumed_samples, 0);
+    let pending = snapshot.pending_healthy.expect("real healthy sample");
+    assert!((64..64 + THREADS as u16).contains(&pending.requested_size));
+    assert_eq!(pending.mapped_class_size, 80);
+    assert!(pending.class_membership_valid);
+    let kernel = RuntimeMathKernel::new();
+    assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
+    let consumed = telemetry.snapshot();
+    assert_eq!(consumed.last_consumed, Some(pending));
+    assert_eq!(consumed.consumed_samples, 1);
+    assert!(!telemetry.has_pending());
+}
+
+#[test]
+fn e2e_segment_class_concurrent_drain_never_replays_an_older_healthy_sample() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let telemetry = SegmentSizeClassTelemetry::new();
+    let kernel = RuntimeMathKernel::new();
+    let finished = AtomicBool::new(false);
+    let mut latest_applied_fault = 0;
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // One producer gives the published mappings an unambiguous order.
+            // Compete with the consumer specifically at the two mailbox swaps.
+            for iteration in 0..2048u16 {
+                let healthy_size = 32 + 2 * iteration;
+                for _ in 0..256 {
+                    telemetry.record(SegmentSizeClassMapping {
+                        requested_size: healthy_size,
+                        mapped_class_size: u32::from(healthy_size),
+                        class_membership_valid: true,
+                    });
+                }
+                telemetry.record(SegmentSizeClassMapping {
+                    requested_size: healthy_size + 1,
+                    mapped_class_size: 0,
+                    class_membership_valid: true,
+                });
+                std::thread::yield_now();
+            }
+            finished.store(true, Ordering::Release);
+        });
+        while !finished.load(Ordering::Acquire) || telemetry.has_pending() {
+            if kernel.observe_pending_allocator_size_classes(&telemetry) != 0 {
+                let applied = telemetry.snapshot().last_consumed.expect("applied sample");
+                if applied.mapped_class_size == 0 {
+                    latest_applied_fault = applied.requested_size;
+                } else {
+                    assert!(
+                        applied.requested_size > latest_applied_fault,
+                        "an older healthy sample cleared a newer mapping fault"
+                    );
+                }
+            }
+            std::hint::spin_loop();
+        }
+    });
+    assert_eq!(latest_applied_fault, 32 + 2 * 2047 + 1);
+    assert!(!telemetry.has_pending());
+}
+
+#[test]
+fn e2e_segment_class_negative_mappings_never_wait_for_sampling() {
+    use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
+    // Adjacent waste values straddle the actual artifact's negative boundary.
+    for (mapped_class_size, urgent) in [(2287, false), (2288, true)] {
+        let telemetry = SegmentSizeClassTelemetry::new();
+        assert_eq!(
+            telemetry.record(SegmentSizeClassMapping {
+                requested_size: 1000,
+                mapped_class_size,
+                class_membership_valid: true,
+            }),
+            urgent
+        );
+    }
+    let mut negative_mappings = 0;
+    for requested_size in [1u16, 16, 17, 64, 4097, 32768, u16::MAX] {
+        for mapped_class_size in [
+            0u32,
+            15,
+            16,
+            32,
+            64,
+            80,
+            1024,
+            8192,
+            65535,
+            65536,
+            65537,
+            u32::MAX,
+        ] {
+            for class_membership_valid in [true, false] {
+                let mapping = SegmentSizeClassMapping {
+                    requested_size,
+                    mapped_class_size,
+                    class_membership_valid,
+                };
+                let telemetry = SegmentSizeClassTelemetry::new();
+                let queued = telemetry.record(mapping);
+                if evaluate_size_class_barrier(
+                    usize::from(requested_size),
+                    mapped_class_size as usize,
+                    class_membership_valid,
+                ) < 0
+                {
+                    negative_mappings += 1;
+                    assert!(queued, "negative mapping was sampled away: {mapping:?}");
+                    assert_eq!(telemetry.snapshot().pending_urgent, Some(mapping));
+                }
+            }
+        }
+    }
+    assert!(negative_mappings > 0, "negative cases must execute");
 }
 
 #[test]
@@ -1289,4 +1574,204 @@ fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
         has_quarantine,
         "FRANKENLIBC_LOG must contain structured quarantine_depth_transition JSONL record; got:\n{log_text}"
     );
+}
+
+// These symbols are deliberate interposers in this test executable only. The
+// integration target links the ordinary (cfg(not(test))) membrane library, so
+// an accidental f64 intrinsic -> C libm call cannot hide behind a unit-test
+// implementation. Real Rust libm computes the result while the spy poisons
+// errno, reproducing the deployed self-interposition failure deterministically.
+#[cfg(target_os = "linux")]
+mod math_abi_isolation {
+    use super::*;
+    use std::cell::Cell;
+    use std::hint::black_box;
+
+    thread_local! {
+        static ACTIVE: Cell<bool> = const { Cell::new(false) };
+        static CALLS: Cell<usize> = const { Cell::new(0) };
+        static SEEN: Cell<u8> = const { Cell::new(0) };
+    }
+
+    fn record_call(symbol: u8) {
+        if ACTIVE.get() {
+            CALLS.set(CALLS.get() + 1);
+            SEEN.set(SEEN.get() | symbol);
+            // SAFETY: __errno_location returns this thread's live errno slot.
+            unsafe { *libc::__errno_location() = libc::EDOM };
+        }
+    }
+
+    macro_rules! unary_interposer {
+        ($name:ident, $symbol:literal, $bit:literal, $implementation:path) => {
+            #[unsafe(export_name = $symbol)]
+            pub extern "C" fn $name(value: f64) -> f64 {
+                let result = $implementation(value);
+                record_call($bit);
+                result
+            }
+        };
+    }
+
+    unary_interposer!(interposed_log, "log", 1, libm::log);
+    unary_interposer!(interposed_log1p, "log1p", 2, libm::log1p);
+    unary_interposer!(interposed_log2, "log2", 4, libm::log2);
+    unary_interposer!(interposed_exp, "exp", 8, libm::exp);
+    unary_interposer!(interposed_acos, "acos", 16, libm::acos);
+
+    #[unsafe(export_name = "pow")]
+    pub extern "C" fn interposed_pow(base: f64, exponent: f64) -> f64 {
+        let result = libm::pow(base, exponent);
+        record_call(32);
+        result
+    }
+
+    struct Spy {
+        saved_errno: libc::c_int,
+    }
+
+    impl Spy {
+        fn enter() -> Self {
+            assert!(!ACTIVE.replace(true), "math spies must not nest");
+            CALLS.set(0);
+            SEEN.set(0);
+            // SAFETY: the slot belongs to the current test thread.
+            let saved_errno = unsafe { *libc::__errno_location() };
+            Self { saved_errno }
+        }
+    }
+
+    impl Drop for Spy {
+        fn drop(&mut self) {
+            ACTIVE.set(false);
+            // SAFETY: restore the same thread's errno, including on panic.
+            unsafe { *libc::__errno_location() = self.saved_errno };
+        }
+    }
+
+    fn isolated<T>(caller_errno: libc::c_int, operation: impl FnOnce() -> T) -> T {
+        CALLS.set(0);
+        SEEN.set(0);
+        // SAFETY: seed and inspect only this thread's errno slot.
+        unsafe { *libc::__errno_location() = caller_errno };
+        let result = operation();
+        let observed_errno = unsafe { *libc::__errno_location() };
+        let calls = CALLS.get();
+        assert_eq!(
+            calls,
+            0,
+            "membrane computation called interposable C math (symbol mask={})",
+            SEEN.get()
+        );
+        assert_eq!(
+            observed_errno, caller_errno,
+            "membrane computation changed caller errno"
+        );
+        result
+    }
+
+    #[test]
+    fn e2e_math_spies_detect_every_real_c_abi_symbol() {
+        unsafe extern "C" {
+            #[link_name = "log"]
+            fn linked_log(value: f64) -> f64;
+            #[link_name = "log1p"]
+            fn linked_log1p(value: f64) -> f64;
+            #[link_name = "log2"]
+            fn linked_log2(value: f64) -> f64;
+            #[link_name = "exp"]
+            fn linked_exp(value: f64) -> f64;
+            #[link_name = "acos"]
+            fn linked_acos(value: f64) -> f64;
+            #[link_name = "pow"]
+            fn linked_pow(base: f64, exponent: f64) -> f64;
+        }
+        let _spy = Spy::enter();
+        let unary: [(unsafe extern "C" fn(f64) -> f64, u8); 5] = [
+            (linked_log, 1),
+            (linked_log1p, 2),
+            (linked_log2, 4),
+            (linked_exp, 8),
+            (linked_acos, 16),
+        ];
+        for (function, symbol) in unary {
+            CALLS.set(0);
+            SEEN.set(0);
+            // SAFETY: every linked function has the declared C signature.
+            // Opaque pointers keep these controls from being constant-folded;
+            // referencing each symbol also prevents linker garbage collection.
+            let value = unsafe { black_box(function)(black_box(0.5)) };
+            assert!(value.is_finite());
+            assert_eq!(
+                CALLS.get(),
+                1,
+                "the control must reach exactly one interposer"
+            );
+            assert_eq!(SEEN.get(), symbol);
+            assert_eq!(unsafe { *libc::__errno_location() }, libc::EDOM);
+        }
+        CALLS.set(0);
+        SEEN.set(0);
+        let power: unsafe extern "C" fn(f64, f64) -> f64 = linked_pow;
+        // SAFETY: pow is called through its declared two-argument C signature.
+        let value = unsafe { black_box(power)(black_box(2.0), black_box(3.0)) };
+        assert_eq!(value, 8.0);
+        assert_eq!(CALLS.get(), 1);
+        assert_eq!(SEEN.get(), 32);
+        assert_eq!(unsafe { *libc::__errno_location() }, libc::EDOM);
+    }
+
+    #[test]
+    fn e2e_runtime_math_avoids_c_abi_and_preserves_errno() {
+        use frankenlibc_membrane::runtime_math::kernel_mmd::KernelMmdMonitor;
+
+        let _spy = Spy::enter();
+        for caller_errno in [0, libc::EACCES] {
+            for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+                let kernel = isolated(caller_errno, || RuntimeMathKernel::new_for_mode(mode));
+                isolated(caller_errno, || {
+                    // Cross the design-plan and sampled-controller cadences
+                    // using the public API of the production library.
+                    for step in 0..8192 {
+                        let context = scripted_ctx(step);
+                        let decision = kernel.decide(mode, context);
+                        kernel.observe_validation_result(
+                            mode,
+                            context.family,
+                            decision.profile,
+                            25 + (step as u64 % 257),
+                            step % 17 == 0,
+                        );
+                    }
+                });
+                let snapshot = isolated(caller_errno, || kernel.snapshot(mode));
+                assert_eq!(snapshot.decisions, 8192);
+            }
+
+            // Force the RBF exponential below the normal and subnormal ranges.
+            // The old C exp path sets ERANGE on this legitimate internal input.
+            isolated(caller_errno, || {
+                let mut monitor = KernelMmdMonitor::new();
+                for _ in 0..64 {
+                    monitor.observe_and_update(&[0; 25]);
+                }
+                for _ in 0..256 {
+                    monitor.observe_and_update(&[u8::MAX; 25]);
+                }
+                black_box(monitor);
+            });
+
+            let pipeline = isolated(caller_errno, frankenlibc_membrane::ValidationPipeline::new);
+            let allocation = isolated(caller_errno, || pipeline.allocate(256))
+                .expect("small membrane allocation");
+            isolated(caller_errno, || {
+                for _ in 0..64 {
+                    for offset in [0, 64, 255] {
+                        black_box(pipeline.validate(allocation as usize + offset));
+                    }
+                }
+                black_box(pipeline.free(allocation));
+            });
+        }
+    }
 }

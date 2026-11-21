@@ -14,10 +14,16 @@
 //! 2. B(x) < 0 for all x ∈ X_u (negative in unsafe states)
 //! 3. dB/dt ≥ 0 along system dynamics (non-decreasing along trajectories)
 //!
-//! The SOS program: find B(x) = z(x)ᵀ Q z(x) (sum of squares) satisfying
-//! (1-3). This reduces to a semidefinite program (SDP) solvable offline.
-//! Once solved, the certificate is a set of polynomial coefficients that
-//! runtime evaluates in O(d²) time.
+//! A full SOS proof of these conditions needs independently specified initial
+//! and unsafe sets, system dynamics, and appropriate polynomial multipliers.
+//! Those proof obligations are not encoded in the current task artifacts.
+//!
+//! The shipped artifacts instead specify a quadratic admission score and an
+//! independent barrier polynomial. The build checks Q numerically for positive
+//! semidefiniteness and checks every coefficient of B(z) + zᵀ Q z = budget
+//! exactly. Quadratic terms use the common fixed-point score divisor at runtime.
+//! This establishes consistency of the score decomposition, not conditions
+//! (1-3) or a proof that an admitted process state is memory-safe.
 //!
 //! ## Runtime Design
 //!
@@ -184,8 +190,8 @@ impl<const D: usize> SosCertificate<D> {
 
     /// Evaluate the barrier value in milli-units.
     ///
-    /// Positive values are certified-safe headroom; negative values indicate
-    /// certificate violation.
+    /// Positive values are headroom under this admission policy; negative values
+    /// exceed its score budget. This value alone is not a dynamical safety proof.
     #[must_use]
     pub fn evaluate_barrier(&self, basis: &[i64; D], scale: i64) -> i64 {
         self.barrier_budget_milli
@@ -438,17 +444,17 @@ fn evaluate_fragmentation_barrier_from_basis(basis: &[i64; FRAGMENTATION_CERT_DI
     FRAGMENTATION_BARRIER_BUDGET_MILLI.saturating_sub(score)
 }
 
-/// Evaluate allocator-fragmentation barrier certificate.
+/// Evaluate the allocator-fragmentation resource-pressure polynomial.
 ///
 /// Inputs:
-/// - `allocation_count`: observed allocator alloc-like events.
-/// - `free_count`: observed allocator free-like events.
+/// - `allocation_count`: completed allocator allocations.
+/// - `free_count`: completed allocator frees.
 /// - `size_class_dispersion_ppm`: normalized size-class dispersion (0..1e6).
 /// - `arena_utilization_ppm`: normalized arena utilization (0..1e6).
 ///
 /// Output:
-/// - positive => certified-safe headroom,
-/// - negative => certificate violation.
+/// - positive => headroom under the configured resource-pressure budget,
+/// - negative => resource-pressure advisory, never a pointer-safety finding.
 #[must_use]
 pub fn evaluate_fragmentation_barrier(
     allocation_count: u32,
@@ -604,6 +610,39 @@ fn evaluate_size_class_barrier_from_basis(basis: &[i64; SIZE_CLASS_CERT_DIM]) ->
     let score = (acc / i128::from(SIZE_CLASS_SCORE_SCALE))
         .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
     SIZE_CLASS_BARRIER_BUDGET_MILLI.saturating_sub(score)
+}
+
+/// Cheap producer-side routing for a size-class observation.
+///
+/// Hard mapping failures are always urgent. With valid range, membership and
+/// capacity only the waste basis can be nonzero, so its single diagonal term
+/// determines whether sampling could hide a negative certificate value.
+/// This routes observations; the controller still evaluates the full artifact.
+pub(crate) fn size_class_mapping_requires_immediate_evaluation(
+    requested_size: usize,
+    mapped_class_size: usize,
+    class_membership_valid: bool,
+) -> bool {
+    let requested = requested_size.clamp(16, SIZE_CLASS_MAX_CERTIFIED_REQUEST);
+    if !class_membership_valid
+        || mapped_class_size == 0
+        || mapped_class_size > SIZE_CLASS_MAX_CERTIFIED_REQUEST
+        || mapped_class_size < requested
+    {
+        return true;
+    }
+    let scaled_waste = ((mapped_class_size - requested) as u64) * 1_000_000;
+    if scaled_waste <= (requested as u64) * u64::from(SIZE_CLASS_MAX_WASTE_RATIO_PPM) {
+        return false;
+    }
+    let waste_ppm = (scaled_waste / requested as u64) as u32;
+    let basis = i128::from(ppm_excess_to_score(
+        waste_ppm,
+        SIZE_CLASS_MAX_WASTE_RATIO_PPM,
+    ));
+    let score = i128::from(SIZE_CLASS_GRAM_MATRIX[0][0]) * basis * basis
+        / i128::from(SIZE_CLASS_SCORE_SCALE);
+    score > i128::from(SIZE_CLASS_BARRIER_BUDGET_MILLI)
 }
 
 /// Evaluate size-class admissibility barrier certificate.
@@ -988,7 +1027,9 @@ const fn fixed_power(base: i64, exp: u32) -> i128 {
 
 /// Barrier evaluation cadence for Invariant A.
 const CADENCE_A: u64 = 256;
-/// Barrier evaluation cadence for allocator-fragmentation certificate.
+/// Sampling stride of the synthetic controller test workload. Production
+/// cadence belongs to the allocator that supplies measured snapshots.
+#[cfg(test)]
 const CADENCE_FRAGMENTATION: u64 = 64;
 
 /// Warmup observations before evaluating barriers.
@@ -1000,7 +1041,9 @@ pub enum SosBarrierState {
     /// Insufficient observations.
     #[default]
     Calibrating = 0,
-    /// All active barriers certify safety.
+    /// All evaluated admission barriers have positive headroom. Resource
+    /// pressure is advisory; no statement is made about unobserved certificates
+    /// or overall process memory safety.
     Safe = 1,
     /// One barrier is near threshold (within 20% of violation).
     Warning = 2,
@@ -1016,10 +1059,13 @@ pub struct SosBarrierSummary {
     pub provenance_value: i64,
     /// Most recent Invariant A (quarantine) value in milli-units.
     pub quarantine_value: i64,
-    /// Most recent fragmentation barrier value in milli-units.
+    /// Most recent fragmentation score, meaningful only after an evaluation.
     pub fragmentation_value: i64,
-    /// Most recent thread-safety barrier value in milli-units.
+    /// Most recent thread-safety score, meaningful only after an evaluation.
     pub thread_safety_value: i64,
+    pub fragmentation_evaluations: u64,
+    pub thread_safety_evaluations: u64,
+    pub last_arena_fragmentation: Option<super::allocator_telemetry::ArenaFragmentationSnapshot>,
     /// Most recent size-class barrier value in milli-units.
     pub size_class_value: i64,
     /// Total observations.
@@ -1028,7 +1074,8 @@ pub struct SosBarrierSummary {
     pub provenance_violations: u64,
     /// Count of quarantine barrier violations.
     pub quarantine_violations: u64,
-    /// Count of fragmentation barrier violations.
+    /// Count of negative fragmentation scores (resource-pressure advisories,
+    /// not evidence that a pointer is unsafe).
     pub fragmentation_violations: u64,
     /// Count of thread-safety barrier violations.
     pub thread_safety_violations: u64,
@@ -1047,12 +1094,13 @@ pub struct SosBarrierSummary {
 /// Evaluates barrier certificates:
 /// - Invariant B (provenance): every observation, hot-path.
 /// - Invariant A (quarantine): every CADENCE_A observations, cadence-gated.
-/// - Thread-safety SOS certificate: on allocator/threading observations.
+/// - Fragmentation: sampled measured allocator snapshots.
+/// - Thread-safety: only when an explicit measured observation is provided.
 pub struct SosBarrierController {
     observations: u64,
-    allocator_observations: u64,
-    allocator_free_like_observations: u64,
-    last_allocator_depth: u32,
+    fragmentation_evaluations: u64,
+    thread_safety_evaluations: u64,
+    last_arena_fragmentation: Option<super::allocator_telemetry::ArenaFragmentationSnapshot>,
     last_provenance_value: i64,
     last_quarantine_value: i64,
     last_fragmentation_value: i64,
@@ -1079,9 +1127,9 @@ impl SosBarrierController {
     pub fn new() -> Self {
         Self {
             observations: 0,
-            allocator_observations: 0,
-            allocator_free_like_observations: 0,
-            last_allocator_depth: 64,
+            fragmentation_evaluations: 0,
+            thread_safety_evaluations: 0,
+            last_arena_fragmentation: None,
             last_provenance_value: PROVENANCE_RISK_BUDGET_PPM, // starts safe
             last_quarantine_value: 200,                        // starts at baseline safe
             last_fragmentation_value: FRAGMENTATION_BARRIER_BUDGET_MILLI,
@@ -1144,48 +1192,53 @@ impl SosBarrierController {
         }
     }
 
-    /// Track allocator-family observations to drive fragmentation checks.
-    ///
-    /// `adverse` events and decreasing quarantine depth are treated as
-    /// free-like pressure updates.
-    pub fn note_allocator_observation(&mut self, adverse: bool, depth: u32) {
-        self.allocator_observations = self.allocator_observations.saturating_add(1);
-        if adverse || depth <= self.last_allocator_depth {
-            self.allocator_free_like_observations =
-                self.allocator_free_like_observations.saturating_add(1);
+    /// Evaluate a coherent sample of actual arena accounting. The raw sample
+    /// remains available for inspection alongside the derived score.
+    pub fn evaluate_arena_fragmentation(
+        &mut self,
+        sample: super::allocator_telemetry::ArenaFragmentationSnapshot,
+    ) -> bool {
+        // Sampling drops arena locks before acquiring the controller. Another
+        // thread can therefore publish a newer coherent sample first.
+        if self.last_arena_fragmentation.is_some_and(|last| {
+            sample.successful_allocations < last.successful_allocations
+                || sample.successful_frees < last.successful_frees
+        }) {
+            return self.last_fragmentation_value >= 0;
         }
-        self.last_allocator_depth = depth;
-    }
-
-    /// Whether allocator-fragmentation barrier should run on this observation.
-    #[must_use]
-    pub fn is_fragmentation_cadence(&self) -> bool {
-        self.allocator_observations > 0
-            && self
-                .allocator_observations
-                .is_multiple_of(CADENCE_FRAGMENTATION)
+        let (allocations, frees) = sample.certificate_counts();
+        let result = self.evaluate_fragmentation(
+            allocations,
+            frees,
+            sample.size_class_dispersion_ppm,
+            sample.arena_utilization_ppm,
+        );
+        self.last_arena_fragmentation = Some(sample);
+        result
     }
 
     /// Evaluate allocator-fragmentation SOS certificate.
     ///
-    /// Returns true when the barrier certifies safety.
+    /// Returns true when the pressure score has nonnegative headroom. Ordinary
+    /// allocation-only workloads can exceed it, so it is never an admission
+    /// decision or a proof of unsafe pointers.
     pub fn evaluate_fragmentation(
         &mut self,
+        allocation_count: u32,
+        free_count: u32,
         size_class_dispersion_ppm: u32,
         arena_utilization_ppm: u32,
     ) -> bool {
+        self.last_arena_fragmentation = None;
+        self.fragmentation_evaluations = self.fragmentation_evaluations.saturating_add(1);
         if !self.fragmentation_hash_valid {
             self.last_fragmentation_value = -FRAGMENTATION_BARRIER_BUDGET_MILLI;
             self.fragmentation_violations = self.fragmentation_violations.saturating_add(1);
             return false;
         }
 
-        let alloc_count = self.allocator_observations.min(u64::from(u32::MAX)) as u32;
-        let free_count = self
-            .allocator_free_like_observations
-            .min(u64::from(u32::MAX)) as u32;
         let val = evaluate_fragmentation_barrier(
-            alloc_count,
+            allocation_count,
             free_count,
             size_class_dispersion_ppm,
             arena_utilization_ppm,
@@ -1210,6 +1263,7 @@ impl SosBarrierController {
         free_list_skew_ppm: u32,
         allocation_epoch_lag_ppm: u32,
     ) -> bool {
+        self.thread_safety_evaluations = self.thread_safety_evaluations.saturating_add(1);
         if !self.thread_safety_hash_valid {
             self.last_thread_safety_value = -THREAD_SAFETY_BARRIER_BUDGET_MILLI;
             self.thread_safety_violations = self.thread_safety_violations.saturating_add(1);
@@ -1267,10 +1321,6 @@ impl SosBarrierController {
     /// Current state.
     #[must_use]
     pub fn state(&self) -> SosBarrierState {
-        if self.observations < WARMUP {
-            return SosBarrierState::Calibrating;
-        }
-
         if !self.fragmentation_hash_valid
             || !self.thread_safety_hash_valid
             || !self.size_class_hash_valid
@@ -1278,30 +1328,39 @@ impl SosBarrierController {
             return SosBarrierState::Violated;
         }
 
-        // Violation: either barrier negative.
+        // Resource utilization and allocation/free imbalance describe workload
+        // pressure, not pointer validity. The fragmentation score can be
+        // negative for a perfectly valid allocation-only workload. Keep it
+        // observable without denying/repairing defined operations. Actual
+        // provenance, quarantine, thread ownership and mapping failures retain
+        // their existing admission behavior and thresholds.
         if self.last_provenance_value < 0
             || self.last_quarantine_value < 0
-            || self.last_fragmentation_value < 0
-            || self.last_thread_safety_value < 0
+            || (self.thread_safety_evaluations != 0 && self.last_thread_safety_value < 0)
             || self.last_size_class_value < 0
         {
             return SosBarrierState::Violated;
         }
 
+        // Calibration delays healthy/warning classification, not a known
+        // certificate failure. Non-provenance evaluators do not advance this
+        // counter, so checking it first could hide their violations forever.
+        if self.observations < WARMUP {
+            return SosBarrierState::Calibrating;
+        }
+
         // Warning: either barrier within 20% of threshold.
         let prov_headroom = self.last_provenance_value;
         let quar_headroom = self.last_quarantine_value;
-        let frag_headroom = self.last_fragmentation_value;
         let prov_warning = PROVENANCE_RISK_BUDGET_PPM / 5; // 20% of budget
         let quar_warning = 40; // 20% of baseline 200
-        let frag_warning = FRAGMENTATION_BARRIER_BUDGET_MILLI / 5;
         let thread_warning = THREAD_SAFETY_BARRIER_BUDGET_MILLI / 5;
         let size_class_warning = SIZE_CLASS_BARRIER_BUDGET_MILLI / 5;
 
         if prov_headroom < prov_warning
             || quar_headroom < quar_warning
-            || frag_headroom < frag_warning
-            || self.last_thread_safety_value < thread_warning
+            || (self.thread_safety_evaluations != 0
+                && self.last_thread_safety_value < thread_warning)
             || self.last_size_class_value < size_class_warning
         {
             return SosBarrierState::Warning;
@@ -1319,6 +1378,9 @@ impl SosBarrierController {
             quarantine_value: self.last_quarantine_value,
             fragmentation_value: self.last_fragmentation_value,
             thread_safety_value: self.last_thread_safety_value,
+            fragmentation_evaluations: self.fragmentation_evaluations,
+            thread_safety_evaluations: self.thread_safety_evaluations,
+            last_arena_fragmentation: self.last_arena_fragmentation,
             size_class_value: self.last_size_class_value,
             total_observations: self.observations,
             provenance_violations: self.provenance_violations,
@@ -1332,7 +1394,8 @@ impl SosBarrierController {
         }
     }
 
-    /// Total violation count across all barriers and hash-integrity checks.
+    /// Admission violations and certificate-integrity failures. Advisory
+    /// negative fragmentation scores are reported separately in the summary.
     #[must_use]
     pub fn total_violations(&self) -> u64 {
         let hash_invalid = (if self.fragmentation_hash_valid { 0 } else { 1 })
@@ -1340,7 +1403,6 @@ impl SosBarrierController {
             + (if self.size_class_hash_valid { 0 } else { 1 });
         self.provenance_violations
             .saturating_add(self.quarantine_violations)
-            .saturating_add(self.fragmentation_violations)
             .saturating_add(self.thread_safety_violations)
             .saturating_add(self.size_class_violations)
             .saturating_add(hash_invalid)
@@ -1914,12 +1976,11 @@ mod tests {
             } else {
                 4_096 - (i % 128)
             };
-            let free_like = i % 2 == 1;
-            ctrl.note_allocator_observation(free_like, depth);
-            if ctrl.is_fragmentation_cadence() {
+            if (u64::from(i) + 1).is_multiple_of(CADENCE_FRAGMENTATION) {
                 checks = checks.saturating_add(1);
                 let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth);
-                let safe = ctrl.evaluate_fragmentation(120_000, arena_utilization_ppm);
+                let safe =
+                    ctrl.evaluate_fragmentation(i / 2 + 1, i / 2, 120_000, arena_utilization_ppm);
                 assert!(safe, "sawtooth cycle triggered fragmentation violation");
             }
         }
@@ -2192,6 +2253,102 @@ mod tests {
     }
 
     #[test]
+    fn controller_cold_certificate_failures_bypass_calibration() {
+        type Evaluate = fn(&mut SosBarrierController) -> bool;
+        let cases: [(&str, Evaluate); 4] = [
+            ("provenance", |ctrl| {
+                ctrl.evaluate_provenance(500_000, 0, 400_000, 800_000)
+            }),
+            ("quarantine", |ctrl| {
+                ctrl.evaluate_quarantine(64, 100, 500_000, 50)
+            }),
+            ("thread safety", |ctrl| {
+                ctrl.evaluate_thread_safety(700, 4, true, 900_000, 900_000)
+            }),
+            ("size class", |ctrl| ctrl.evaluate_size_class(64, 32, true)),
+        ];
+        for (name, evaluate) in cases {
+            let mut ctrl = SosBarrierController::new();
+            assert!(!evaluate(&mut ctrl), "{name} must actually violate");
+            assert!(ctrl.summary().total_observations < WARMUP);
+            assert_eq!(ctrl.state(), SosBarrierState::Violated, "{name}");
+            assert_eq!(ctrl.total_violations(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn controller_cold_integrity_failures_bypass_calibration() {
+        for certificate in 0..3 {
+            let mut ctrl = SosBarrierController::new();
+            match certificate {
+                0 => ctrl.fragmentation_hash_valid = false,
+                1 => ctrl.thread_safety_hash_valid = false,
+                2 => ctrl.size_class_hash_valid = false,
+                _ => unreachable!(),
+            }
+            assert_eq!(ctrl.summary().total_observations, 0);
+            assert_eq!(ctrl.state(), SosBarrierState::Violated);
+            assert_eq!(ctrl.total_violations(), 1);
+        }
+    }
+
+    #[test]
+    fn allocation_only_pressure_is_advisory_not_an_admission_failure() {
+        let mut ctrl = SosBarrierController::new();
+        // 4096-byte payloads with 64-byte arena overhead have this measured
+        // utilization. No frees is an ordinary growing heap, not corruption.
+        let utilization = (4096u64 * 1_000_000 / 4160) as u32;
+        assert!(!ctrl.evaluate_fragmentation(4096, 0, 0, utilization));
+        assert!(ctrl.summary().fragmentation_value < 0);
+        assert_eq!(ctrl.summary().fragmentation_evaluations, 1);
+        assert_eq!(ctrl.summary().fragmentation_violations, 1);
+        assert_eq!(ctrl.summary().thread_safety_evaluations, 0);
+        assert_eq!(ctrl.total_violations(), 0);
+        assert_eq!(ctrl.state(), SosBarrierState::Calibrating);
+        for _ in 0..WARMUP {
+            ctrl.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000);
+        }
+        assert_eq!(ctrl.state(), SosBarrierState::Safe);
+        assert!(!ctrl.evaluate_size_class(64, 32, true));
+        assert_eq!(ctrl.state(), SosBarrierState::Violated);
+    }
+
+    #[test]
+    fn controller_healthy_and_warning_states_still_require_warmup() {
+        for (risk, warmed_state) in [
+            (10_000, SosBarrierState::Safe),
+            (90_000, SosBarrierState::Warning),
+        ] {
+            let mut ctrl = SosBarrierController::new();
+            for observation in 1..=WARMUP {
+                assert!(ctrl.evaluate_provenance(risk, 0, 0, 0));
+                let expected = if observation < WARMUP {
+                    SosBarrierState::Calibrating
+                } else {
+                    warmed_state
+                };
+                assert_eq!(ctrl.state(), expected, "observation {observation}");
+            }
+            assert_eq!(ctrl.total_violations(), 0);
+        }
+    }
+
+    #[test]
+    fn controller_cold_violation_recovers_without_losing_the_event_count() {
+        let mut ctrl = SosBarrierController::new();
+        assert!(!ctrl.evaluate_size_class(64, 32, true));
+        assert_eq!(ctrl.state(), SosBarrierState::Violated);
+
+        assert!(ctrl.evaluate_size_class(64, 64, true));
+        assert_eq!(ctrl.state(), SosBarrierState::Calibrating);
+        for _ in 0..WARMUP {
+            assert!(ctrl.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000));
+        }
+        assert_eq!(ctrl.state(), SosBarrierState::Safe);
+        assert_eq!(ctrl.total_violations(), 1);
+    }
+
+    #[test]
     fn controller_transitions_to_safe() {
         let mut ctrl = SosBarrierController::new();
         // Feed safe provenance observations.
@@ -2272,8 +2429,7 @@ mod tests {
             ctrl.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000);
         }
         ctrl.evaluate_quarantine(4096, 4, 1_000, 0);
-        ctrl.note_allocator_observation(false, 4096);
-        ctrl.evaluate_fragmentation(100_000, 400_000);
+        ctrl.evaluate_fragmentation(64, 63, 100_000, 400_000);
 
         let s = ctrl.summary();
         assert_eq!(s.state, ctrl.state());
@@ -2291,29 +2447,23 @@ mod tests {
     }
 
     #[test]
-    fn controller_fragmentation_cadence_and_violation_tracking() {
+    fn controller_fragmentation_measured_counts_and_violation_tracking() {
         let mut benign = SosBarrierController::new();
         for _ in 0..WARMUP {
             benign.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000);
         }
-        for _ in 0..CADENCE_FRAGMENTATION {
-            benign.note_allocator_observation(false, 4096);
-        }
-        assert!(benign.is_fragmentation_cadence());
-        assert!(benign.evaluate_fragmentation(100_000, 450_000));
+        assert_eq!(benign.summary().fragmentation_evaluations, 0);
+        assert!(benign.evaluate_fragmentation(64, 63, 100_000, 450_000));
+        assert_eq!(benign.summary().fragmentation_evaluations, 1);
 
-        // Build an alloc-heavy stream by strictly increasing depth with no
-        // adverse events so free-like observations stay near zero.
+        // Measured allocation/free imbalance must not be replaced with
+        // inferred events from quarantine-depth or risk-controller movement.
         let mut skewed = SosBarrierController::new();
         for _ in 0..WARMUP {
             skewed.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000);
         }
-        for i in 0..CADENCE_FRAGMENTATION {
-            skewed.note_allocator_observation(false, 1024 + i as u32);
-        }
-        assert!(skewed.is_fragmentation_cadence());
         let base_violations = skewed.fragmentation_violations;
-        assert!(!skewed.evaluate_fragmentation(900_000, 980_000));
+        assert!(!skewed.evaluate_fragmentation(64, 0, 900_000, 980_000));
         assert!(
             skewed.fragmentation_violations > base_violations,
             "fragmentation violation counter should increase"
@@ -3068,8 +3218,9 @@ mod tests {
             );
         }
         let snap = kernel.snapshot(mode);
-        assert!(snap.sos_barrier_fragmentation_value > 0);
-        assert!(snap.sos_barrier_thread_safety_value > 0);
+        assert_eq!(snap.sos_barrier_fragmentation_evaluations, 0);
+        assert_eq!(snap.sos_barrier_thread_safety_evaluations, 0);
+        assert_eq!(snap.sos_barrier_arena_fragmentation, None);
         assert!(snap.sos_barrier_size_class_value > 0);
     }
 }

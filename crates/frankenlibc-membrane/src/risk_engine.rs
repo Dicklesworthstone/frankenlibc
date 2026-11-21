@@ -178,12 +178,12 @@ impl FamilyTracker {
             return; // Not enough data
         }
 
-        // Sort a copy of the active scores
+        // The calibration window is bounded. Recalibration runs inside libc
+        // operations, including native clones that cannot use the host heap.
         let n = self.count;
-        let mut sorted = Vec::with_capacity(n);
-        for &score in &self.scores[..n] {
-            sorted.push(score);
-        }
+        let mut scratch = [0u32; SCORE_WINDOW];
+        let sorted = &mut scratch[..n];
+        sorted.copy_from_slice(&self.scores[..n]);
         sorted.sort_unstable();
 
         // Conformal quantiles with finite-sample correction

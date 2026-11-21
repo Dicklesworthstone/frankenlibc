@@ -131,10 +131,9 @@ struct GrpStorage {
 }
 
 #[cfg(feature = "owned-tls-cache")]
-// SAFETY: GrpStorage is accessed through OwnedTlsCache, which serializes access
-// and keeps each per-thread value boxed. The raw pointers stored in `gr` and
-// `mem_ptrs` only point into the same boxed GrpStorage buffers and are refreshed
-// before they are returned to callers.
+// SAFETY: OwnedTlsCache keeps each thread's GrpStorage at a stable address and
+// rejects overlapping mutable borrows. The pointers in `gr` and `mem_ptrs`
+// refer to that thread's buffers and are refreshed before returning to callers.
 unsafe impl Send for GrpStorage {}
 
 impl GrpStorage {

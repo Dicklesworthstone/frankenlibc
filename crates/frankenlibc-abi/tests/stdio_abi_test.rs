@@ -334,6 +334,304 @@ fn run_alone_in_child(test: &str) -> bool {
     true
 }
 
+struct StdioNativeThreadGuard(bool);
+
+impl Drop for StdioNativeThreadGuard {
+    fn drop(&mut self) {
+        frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+    }
+}
+
+fn run_native_stdio_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> usize {
+    let _guard = StdioNativeThreadGuard(
+        frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests(),
+    );
+    let mut thread = 0;
+    // SAFETY: callers keep the worker's input alive until the join below.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::pthread_abi::pthread_create(
+                &mut thread,
+                std::ptr::null(),
+                Some(worker),
+                argument,
+            )
+        },
+        0
+    );
+    let mut result = std::ptr::null_mut();
+    // SAFETY: this is the joinable native thread created above.
+    assert_eq!(
+        unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) },
+        0
+    );
+    result as usize
+}
+
+#[test]
+fn stdio_native_tls_preserves_the_creators_returned_buffers() {
+    if run_alone_in_child("stdio_native_tls_preserves_the_creators_returned_buffers") {
+        return;
+    }
+
+    unsafe extern "C" fn read_child_line(stream: *mut c_void) -> *mut c_void {
+        let mut length = 0;
+        // SAFETY: the creator owns this live memory stream until join returns.
+        let line = unsafe { fgetln(stream, &mut length) };
+        if line.is_null() || length != 6 {
+            return 1usize as *mut c_void;
+        }
+        // SAFETY: fgetln returned a buffer containing `length` readable bytes.
+        if unsafe { std::slice::from_raw_parts(line.cast::<u8>(), length) } != b"child\n" {
+            return 2usize as *mut c_void;
+        }
+        // SAFETY: a null argument selects the thread's persistent tmpnam buffer.
+        if unsafe { tmpnam(std::ptr::null_mut()) }.is_null() {
+            return 3usize as *mut c_void;
+        }
+        std::ptr::null_mut()
+    }
+
+    let mut creator_bytes = *b"creator-owned-line\n";
+    let mut child_bytes = *b"child\n";
+    // SAFETY: the stack buffers outlive both FILE objects and the native child.
+    unsafe {
+        let creator_stream = fmemopen(
+            creator_bytes.as_mut_ptr().cast(),
+            creator_bytes.len(),
+            c"r".as_ptr(),
+        );
+        let child_stream = fmemopen(
+            child_bytes.as_mut_ptr().cast(),
+            child_bytes.len(),
+            c"r".as_ptr(),
+        );
+        assert!(!creator_stream.is_null() && !child_stream.is_null());
+        assert!(!frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(creator_stream));
+        assert!(!frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(child_stream));
+        let mut length = 0;
+        let retained_line = fgetln(creator_stream, &mut length);
+        assert!(!retained_line.is_null());
+        assert_eq!(length, creator_bytes.len());
+        let retained_name = tmpnam(std::ptr::null_mut());
+        assert!(!retained_name.is_null());
+        let original_name = CStr::from_ptr(retained_name).to_bytes_with_nul().to_vec();
+
+        assert_eq!(run_native_stdio_worker(read_child_line, child_stream), 0);
+        assert_eq!(
+            std::slice::from_raw_parts(retained_line.cast::<u8>(), length),
+            b"creator-owned-line\n"
+        );
+        assert_eq!(
+            CStr::from_ptr(retained_name).to_bytes_with_nul(),
+            original_name
+        );
+
+        // The creator also switches to its own lifecycle-owned storage after
+        // admission; a later call still has the ordinary per-thread lifetime.
+        rewind(creator_stream);
+        let line = fgetln(creator_stream, &mut length);
+        assert!(!line.is_null());
+        assert_eq!(
+            std::slice::from_raw_parts(line.cast::<u8>(), length),
+            b"creator-owned-line\n"
+        );
+        assert_eq!(fclose(creator_stream), 0);
+        assert_eq!(fclose(child_stream), 0);
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn stdio_native_tls_reads_ignore_the_creators_borrowed_caches() {
+    if run_alone_in_child("stdio_native_tls_reads_ignore_the_creators_borrowed_caches") {
+        return;
+    }
+
+    struct Inputs {
+        memory: *mut c_void,
+        file: *mut c_void,
+    }
+    unsafe extern "C" fn read_inputs(argument: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator keeps the two streams and Inputs alive until join.
+        let inputs = unsafe { &*argument.cast::<Inputs>() };
+        unsafe {
+            if fgetc(inputs.memory) != b'm' as c_int {
+                return 1usize as *mut c_void;
+            }
+            let mut memory_tail = [0u8; 6];
+            if fread(memory_tail.as_mut_ptr().cast(), 1, 6, inputs.memory) != 6
+                || &memory_tail != b"emory\n"
+            {
+                return 2usize as *mut c_void;
+            }
+            // Rewind invalidates a fixed-memory cursor while the creator's
+            // cache remains borrowed; invalidation must also avoid that TLS.
+            rewind(inputs.memory);
+            if fgetc(inputs.memory) != b'm' as c_int {
+                return 6usize as *mut c_void;
+            }
+            let mut line = [0 as c_char; 32];
+            if fgets(line.as_mut_ptr(), line.len() as c_int, inputs.file).is_null()
+                || CStr::from_ptr(line.as_ptr()).to_bytes() != b"descriptor\n"
+            {
+                return 3usize as *mut c_void;
+            }
+            rewind(inputs.file);
+            let mut allocated = std::ptr::null_mut();
+            let mut capacity = 0;
+            let length = getline(&mut allocated, &mut capacity, inputs.file);
+            let valid = length == 11
+                && !allocated.is_null()
+                && CStr::from_ptr(allocated).to_bytes() == b"descriptor\n";
+            frankenlibc_abi::malloc_abi::free(allocated.cast());
+            if !valid {
+                return 4usize as *mut c_void;
+            }
+            let length = snprintf(
+                line.as_mut_ptr(),
+                line.len(),
+                c"[%s:%d]".as_ptr(),
+                c"native".as_ptr(),
+                42 as c_int,
+            );
+            if length != 11 || CStr::from_ptr(line.as_ptr()).to_bytes() != b"[native:42]" {
+                return 5usize as *mut c_void;
+            }
+        }
+        std::ptr::null_mut()
+    }
+
+    let mut memory_bytes = *b"memory\n";
+    // SAFETY: all FILE objects remain live until the native worker has joined.
+    unsafe {
+        let memory = fmemopen(
+            memory_bytes.as_mut_ptr().cast(),
+            memory_bytes.len(),
+            c"r".as_ptr(),
+        );
+        let file = tmpfile();
+        assert!(!memory.is_null() && !file.is_null());
+        assert!(!frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(memory));
+        assert!(!frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(file));
+        assert_eq!(fwrite(b"descriptor\n".as_ptr().cast(), 1, 11, file), 11);
+        rewind(file);
+        let mut inputs = Inputs { memory, file };
+        let result = frankenlibc_abi::stdio_abi::with_stdio_cache_borrows_for_tests(|| {
+            run_native_stdio_worker(read_inputs, std::ptr::addr_of_mut!(inputs).cast())
+        });
+        assert_eq!(result, 0);
+        assert_eq!(fclose(memory), 0);
+        assert_eq!(fclose(file), 0);
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn stdio_native_tls_wide_scope_isolated_across_first_clone_and_unwind() {
+    if run_alone_in_child("stdio_native_tls_wide_scope_isolated_across_first_clone_and_unwind") {
+        return;
+    }
+    use frankenlibc_abi::glibc_internal_abi::fwide;
+    use frankenlibc_abi::stdio_abi::with_stdio_wide_scope_for_tests;
+
+    struct ChildStreams {
+        byte: *mut c_void,
+        wide: *mut c_void,
+    }
+    unsafe extern "C" fn byte_writer(argument: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator retains this context and both FILEs until join.
+        let streams = unsafe { &*argument.cast::<ChildStreams>() };
+        unsafe {
+            if fputc(b'X' as c_int, streams.byte) != b'X' as c_int || fwide(streams.byte, 0) >= 0 {
+                return 1usize as *mut c_void;
+            }
+            // A native child must start outside its creator's bridge scope.
+            // This wide stream makes inherited depth observable: it would
+            // wrongly allow the byte write instead of rejecting it.
+            if fputc(b'Y' as c_int, streams.wide) != libc::EOF || fwide(streams.wide, 0) <= 0 {
+                return 2usize as *mut c_void;
+            }
+        }
+        std::ptr::null_mut()
+    }
+
+    // SAFETY: the child and creator use independent, live FILE objects.
+    unsafe {
+        let child_stream = tmpfile();
+        let child_wide_stream = tmpfile();
+        let bridge_stream = tmpfile();
+        let byte_stream = tmpfile();
+        assert!(
+            !child_stream.is_null()
+                && !child_wide_stream.is_null()
+                && !bridge_stream.is_null()
+                && !byte_stream.is_null()
+        );
+        assert_eq!(fwide(child_stream, 0), 0);
+        assert_eq!(fwide(byte_stream, 0), 0);
+        assert!(fwide(child_wide_stream, 1) > 0);
+        // Real wide operations select their orientation before entering the
+        // internal byte bridge. An unoriented stream would instead become
+        // effectively byte-oriented as soon as core buffering records I/O.
+        assert!(fwide(bridge_stream, 1) > 0);
+        let mut child_streams = ChildStreams {
+            byte: child_stream,
+            wide: child_wide_stream,
+        };
+
+        with_stdio_wide_scope_for_tests(|| {
+            with_stdio_wide_scope_for_tests(|| {
+                assert_eq!(
+                    run_native_stdio_worker(
+                        byte_writer,
+                        std::ptr::addr_of_mut!(child_streams).cast()
+                    ),
+                    0
+                );
+            });
+            // The creator's outer bridge scope survives both native admission
+            // and the inner guard dropping. Its internal byte writes remain
+            // permitted on behalf of the wide operation.
+            assert_eq!(fputc(b'A' as c_int, bridge_stream), b'A' as c_int);
+            assert!(fwide(bridge_stream, 0) > 0);
+            let unwind = std::panic::catch_unwind(|| {
+                with_stdio_wide_scope_for_tests(|| panic!("nested wide bridge unwind"));
+            });
+            assert!(unwind.is_err());
+            assert_eq!(fputc(b'B' as c_int, bridge_stream), b'B' as c_int);
+            assert!(fwide(bridge_stream, 0) > 0);
+        });
+
+        // After the final guard drops, an ordinary byte write must again be
+        // rejected on the wide stream and select byte mode on a fresh stream.
+        assert_eq!(fputc(b'C' as c_int, bridge_stream), libc::EOF);
+        assert!(fwide(bridge_stream, 0) > 0);
+        clearerr(bridge_stream);
+        assert_eq!(fflush(bridge_stream), 0);
+        let mut bytes = [0u8; 3];
+        let bridge_fd = fileno(bridge_stream);
+        assert!(bridge_fd >= 0);
+        assert_eq!(
+            libc::pread(bridge_fd, bytes.as_mut_ptr().cast(), bytes.len(), 0),
+            2
+        );
+        assert_eq!(&bytes[..2], b"AB");
+        assert_eq!(fputc(b'C' as c_int, byte_stream), b'C' as c_int);
+        assert!(fwide(byte_stream, 0) < 0);
+        rewind(byte_stream);
+        assert_eq!(fread(bytes.as_mut_ptr().cast(), 1, 1, byte_stream), 1);
+        assert_eq!(bytes[0], b'C');
+        assert_eq!(fclose(child_stream), 0);
+        assert_eq!(fclose(child_wide_stream), 0);
+        assert_eq!(fclose(bridge_stream), 0);
+        assert_eq!(fclose(byte_stream), 0);
+    }
+}
+
 fn temp_path(tag: &str) -> PathBuf {
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
@@ -1349,6 +1647,36 @@ fn snprintf_records_ffi_pcc_gate_when_runtime_ready() {
 
 #[test]
 fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
+    const CHILD: &str = "FRANKENLIBC_STRICT_STDIO_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // This contract is specific to strict mode. A fresh exec also keeps
+        // its stdout write and mode initialization isolated from other tests.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "strict_hot_stdio_writes_skip_runtime_policy_gate",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "strict")
+            .output()
+            .expect("run isolated strict stdio contract");
+        let child_stdout = String::from_utf8_lossy(&output.stdout);
+        let child_stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "strict stdio child failed:\nstdout={child_stdout}\nstderr={child_stderr}"
+        );
+        assert!(
+            child_stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;")),
+            "strict stdio child did not execute its exact test:\n{child_stdout}\n{child_stderr}"
+        );
+        return;
+    }
+
     signal_runtime_ready_for_tests();
 
     let stream = unsafe { tmpfile() };
@@ -1378,7 +1706,7 @@ fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
 }
 
 #[test]
-fn io_2_1_aliases_resolve_to_native_stdio_storage() {
+fn io_2_1_objects_resolve_to_native_stdio_storage() {
     init_host_stdio_streams_for_tests();
 
     assert_eq!(
@@ -1400,6 +1728,11 @@ fn io_2_1_aliases_resolve_to_native_stdio_storage() {
     let io_stdout = (&raw mut _IO_2_1_stdout_).cast::<std::ffi::c_void>();
     let io_stderr = (&raw mut _IO_2_1_stderr_).cast::<std::ffi::c_void>();
 
+    assert_eq!(
+        std::mem::size_of::<frankenlibc_abi::io_internal_abi::StandardFile>(),
+        224
+    );
+
     assert_eq!(stdin_global, stdin_vis);
     assert_eq!(stdout_global, stdout_vis);
     assert_eq!(stderr_global, stderr_vis);
@@ -1419,6 +1752,20 @@ fn io_2_1_aliases_resolve_to_native_stdio_storage() {
     assert_eq!(unsafe { fileno(io_stdin) }, libc::STDIN_FILENO);
     assert_eq!(unsafe { fileno(io_stdout) }, libc::STDOUT_FILENO);
     assert_eq!(unsafe { fileno(io_stderr) }, libc::STDERR_FILENO);
+
+    // C callers read FILE fields directly, including through the data object
+    // rather than its pointer cell. The same public header must be mutable
+    // through the registry's separately stored private NativeFile state.
+    let mut registry = frankenlibc_abi::io_internal_abi::native_stream_registry();
+    for (fd, object) in [io_stdin, io_stdout, io_stderr].into_iter().enumerate() {
+        let native = registry.get_mut(fd).expect("standard native state");
+        let original = native.offset();
+        native.set_offset(123 + fd as i64);
+        // SAFETY: each object is a live GNU FILE; its _offset is at byte144.
+        let visible = unsafe { object.cast::<u8>().add(144).cast::<i64>().read() };
+        assert_eq!(visible, 123 + fd as i64);
+        native.set_offset(original);
+    }
 }
 
 #[test]

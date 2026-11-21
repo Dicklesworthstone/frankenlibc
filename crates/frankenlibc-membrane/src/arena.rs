@@ -15,6 +15,9 @@ use std::collections::VecDeque;
 
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::lattice::SafetyState;
+use crate::runtime_math::allocator_telemetry::{
+    ArenaFragmentationCounters, ArenaFragmentationSnapshot,
+};
 use crate::tls_cache::bump_shard_epoch;
 
 /// Maximum quarantine size in bytes, across all shards.
@@ -312,6 +315,15 @@ pub struct ArenaSlot {
     pub state: SafetyState,
 }
 
+/// A bounded cache recheck against the authoritative live arena allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CachedAllocationIntegrity {
+    Valid,
+    Stale,
+    FingerprintCorruption,
+    CanaryCorruption,
+}
+
 /// Entry in the quarantine queue.
 #[derive(Debug, Clone, Copy)]
 pub struct QuarantineEntry {
@@ -337,6 +349,8 @@ struct ArenaShard {
     retire_pending: Vec<QuarantineEntry>,
     /// Total `total_size` of `retire_pending`.
     retire_pending_bytes: usize,
+    /// Actual successful transitions and live extents, protected by this shard.
+    fragmentation: ArenaFragmentationCounters,
 }
 
 /// Drained entries a batched free accumulates per shard before handing them
@@ -356,6 +370,7 @@ impl ArenaShard {
             quarantine_bytes: 0,
             retire_pending: Vec::with_capacity(8),
             retire_pending_bytes: 0,
+            fragmentation: ArenaFragmentationCounters::new(),
         }
     }
 }
@@ -406,6 +421,9 @@ pub struct AllocationArena {
     /// shards' own counts, maintained where frees enter and drains leave).
     quarantine_total_bytes: std::sync::atomic::AtomicUsize,
     quarantine_total_entries: std::sync::atomic::AtomicUsize,
+    /// Set once per 256 completed transitions in a shard. A contended sample
+    /// remains pending; ordinary allocations only read this flag.
+    fragmentation_pending: std::sync::atomic::AtomicBool,
 }
 
 /// Result of a successful allocation in the arena.
@@ -450,6 +468,7 @@ impl AllocationArena {
             next_generation: std::sync::atomic::AtomicU64::new(1),
             quarantine_total_bytes: std::sync::atomic::AtomicUsize::new(0),
             quarantine_total_entries: std::sync::atomic::AtomicUsize::new(0),
+            fragmentation_pending: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -571,6 +590,9 @@ impl AllocationArena {
             idx
         };
         shard.addr_to_slot.insert(user_base, slot_idx);
+        if shard.fragmentation.allocate(user_size, total_size) {
+            self.defer_fragmentation_observation();
+        }
         drop(shard);
         // The pointer is not returned yet, so no lookup can race this.
         if total_size > SMALL_EXTENT {
@@ -606,7 +628,7 @@ impl AllocationArena {
     }
 
     /// [`Self::free`] that also returns the user size of the block it freed
-    /// (0 unless the result is `Freed`/`FreedWithCanaryCorruption`), read from
+    /// (0 unless the result is a successful free, including corrupt metadata), read from
     /// the slot this call already locked -- callers that need the size for
     /// accounting otherwise paid a second locked index search to learn it.
     pub fn free_with_size(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
@@ -644,7 +666,7 @@ impl AllocationArena {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
 
-        let (canary_ok, user_size, drained) = {
+        let (integrity, user_size, drained) = {
             let mut shard = self.shards[shard_idx].lock();
 
             let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
@@ -664,8 +686,9 @@ impl AllocationArena {
             }
             let user_size = slot.user_size;
 
-            // Verify canary before freeing
-            let canary_ok = self.verify_canary_for_slot(slot);
+            // Both tag locations and expected values come from this locked
+            // arena slot, never from the potentially corrupted caller header.
+            let integrity = self.verify_integrity_for_slot(slot);
 
             // Move to quarantine. Mark state FIRST, then bump only THIS slot's
             // home shard epoch in the TLS cache so that any thread which
@@ -687,6 +710,10 @@ impl AllocationArena {
             let total_size = offset + slot.user_size + TRAILING_REDZONE_SIZE;
             let align = offset;
 
+            if shard.fragmentation.free(user_size, total_size) {
+                self.defer_fragmentation_observation();
+            }
+
             self.enqueue_quarantine(
                 &mut shard,
                 QuarantineEntry {
@@ -704,17 +731,83 @@ impl AllocationArena {
                 self.drain_quarantine(&mut shard)
             };
 
-            (canary_ok, user_size, drained)
+            (integrity, user_size, drained)
         }; // shard lock is released here!
 
-        let metrics = crate::metrics::global_metrics();
-        if canary_ok {
-            crate::metrics::MembraneMetrics::inc(&metrics.canary_passes);
-            (FreeResult::Freed, user_size, drained)
-        } else {
-            crate::metrics::MembraneMetrics::inc(&metrics.canary_failures);
-            (FreeResult::FreedWithCanaryCorruption, user_size, drained)
+        let result = match integrity {
+            CachedAllocationIntegrity::Valid => FreeResult::Freed,
+            CachedAllocationIntegrity::FingerprintCorruption => {
+                FreeResult::FreedWithFingerprintCorruption
+            }
+            CachedAllocationIntegrity::CanaryCorruption => FreeResult::FreedWithCanaryCorruption,
+            CachedAllocationIntegrity::Stale => unreachable!("locked live slot cannot be stale"),
+        };
+        (result, user_size, drained)
+    }
+
+    /// Read coherent accounting without waiting for a busy arena. At most the
+    /// fixed shard count is visited; no allocation list or heap walk is needed.
+    /// Guards are dropped before returning and no controller is called locked.
+    #[must_use]
+    pub fn try_fragmentation_snapshot(&self) -> Option<ArenaFragmentationSnapshot> {
+        let mut guards: [Option<MutexGuard<'_, ArenaShard>>; NUM_SHARDS] =
+            std::array::from_fn(|_| None);
+        for (guard, shard) in guards.iter_mut().zip(self.shards.iter()) {
+            *guard = Some(shard.try_lock()?);
         }
+        let mut counters = ArenaFragmentationCounters::new();
+        let mut retained = 0usize;
+        for guard in guards.iter().flatten() {
+            counters.add(&guard.fragmentation);
+            retained = retained
+                .saturating_add(guard.quarantine_bytes)
+                .saturating_add(guard.retire_pending_bytes);
+        }
+        drop(guards);
+        Some(counters.snapshot(retained))
+    }
+
+    /// Claim sampled feedback. Failure to acquire any shard preserves the
+    /// pending work for a later successful operation; it never blocks malloc.
+    pub(crate) fn take_fragmentation_observation(&self) -> Option<ArenaFragmentationSnapshot> {
+        use std::sync::atomic::Ordering;
+        if !self.fragmentation_pending.load(Ordering::Acquire)
+            || !self.fragmentation_pending.swap(false, Ordering::AcqRel)
+        {
+            return None;
+        }
+        let snapshot = self.try_fragmentation_snapshot();
+        if snapshot.is_none() {
+            self.defer_fragmentation_observation();
+        }
+        snapshot
+    }
+
+    pub(crate) fn defer_fragmentation_observation(&self) {
+        self.fragmentation_pending
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Recheck a cached allocation without dereferencing stale cached pointers.
+    ///
+    /// The shard lock prevents retirement of the allocation while its metadata
+    /// is read. A mismatched or dead slot returns before any caller memory read;
+    /// matching slots supply all pointer arithmetic and expected tag inputs.
+    pub(crate) fn verify_cached_allocation(
+        &self,
+        user_base: usize,
+        user_size: usize,
+        generation: u64,
+    ) -> CachedAllocationIntegrity {
+        let shard = self.shards[self.shard_for(user_base)].lock();
+        let Some(&index) = shard.addr_to_slot.get(&user_base) else {
+            return CachedAllocationIntegrity::Stale;
+        };
+        let slot = &shard.slots[index];
+        if !slot.state.is_live() || slot.user_size != user_size || slot.generation != generation {
+            return CachedAllocationIntegrity::Stale;
+        }
+        self.verify_integrity_for_slot(slot)
     }
 
     /// Look up an allocation by user pointer address.
@@ -830,22 +923,51 @@ impl AllocationArena {
         (addr >> 12) % NUM_SHARDS
     }
 
+    fn verify_integrity_for_slot(&self, slot: &ArenaSlot) -> CachedAllocationIntegrity {
+        let fp =
+            AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation);
+        let header = (slot.user_base - FINGERPRINT_SIZE) as *const u64;
+        // SAFETY: callers hold the slot's home-shard lock and have checked that
+        // it is live. Its trusted raw extent contains this complete header and
+        // cannot be retired until the lock is released.
+        let (hash, generation, size) = unsafe {
+            (
+                u64::from_le(header.read_unaligned()),
+                u64::from_le(header.add(1).read_unaligned()),
+                u64::from_le(header.add(2).read_unaligned()),
+            )
+        };
+        let metrics = crate::metrics::global_metrics();
+        // Scalar comparisons avoid an interposed memcmp/bcmp while holding the
+        // arena lock, which could recursively attempt the same validation.
+        if hash != fp.hash || generation != fp.generation || size != fp.size {
+            crate::metrics::MembraneMetrics::inc(&metrics.fingerprint_failures);
+            return CachedAllocationIntegrity::FingerprintCorruption;
+        }
+        crate::metrics::MembraneMetrics::inc(&metrics.fingerprint_passes);
+        if !Self::verify_tail_for_slot(slot, &fp) {
+            crate::metrics::MembraneMetrics::inc(&metrics.canary_failures);
+            return CachedAllocationIntegrity::CanaryCorruption;
+        }
+        crate::metrics::MembraneMetrics::inc(&metrics.canary_passes);
+        CachedAllocationIntegrity::Valid
+    }
+
+    #[cfg(test)]
     fn verify_canary_for_slot(&self, slot: &ArenaSlot) -> bool {
         let fp =
             AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation);
-        let expected_canary = fp.canary_for(slot.user_base);
+        Self::verify_tail_for_slot(slot, &fp)
+    }
+
+    fn verify_tail_for_slot(slot: &ArenaSlot, fp: &AllocationFingerprint) -> bool {
+        let expected = u64::from_le_bytes(fp.canary_for(slot.user_base).to_bytes());
         let canary_addr = slot.user_base + slot.user_size;
-        // Read the 8-byte trailing canary at user_base + user_size.
-        let mut actual = [0u8; CANARY_SIZE];
-        // SAFETY: canary_addr points to valid memory within the allocation's total size.
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                canary_addr as *const u8,
-                actual.as_mut_ptr(),
-                CANARY_SIZE,
-            );
-        }
-        expected_canary.verify(&actual)
+        // SAFETY: the trusted slot identifies a live backing block, pinned by
+        // the caller's shard lock (or exclusively owned by a unit test). The
+        // trailing 8-byte tag lies within that block and may be unaligned.
+        let actual = unsafe { u64::from_le((canary_addr as *const u64).read_unaligned()) };
+        actual == expected
     }
 
     /// Verify both the 24-byte `AllocationFingerprint` header and the 8-byte
@@ -1228,6 +1350,8 @@ pub enum FreeResult {
     Freed,
     /// Freed but trailing canary was corrupted (buffer overflow detected).
     FreedWithCanaryCorruption,
+    /// Freed and quarantined after detecting a corrupted allocation header.
+    FreedWithFingerprintCorruption,
     /// Pointer was already freed (double free).
     DoubleFree,
     /// Pointer is not known to the arena (foreign pointer).
@@ -1284,6 +1408,67 @@ mod tests {
         let local = 42u64;
         let (result, _) = arena.free(std::ptr::addr_of!(local) as *mut u8);
         assert_eq!(result, FreeResult::ForeignPointer);
+    }
+
+    #[test]
+    fn fragmentation_accounting_excludes_failed_operations_and_retains_quarantine() {
+        let arena = AllocationArena::new();
+        let small = arena.allocate(64).expect("small allocation");
+        let large = arena
+            .allocate_aligned(1024, 256)
+            .expect("aligned allocation");
+        let before = arena
+            .try_fragmentation_snapshot()
+            .expect("uncontended snapshot");
+        assert_eq!(before.successful_allocations, 2);
+        assert_eq!(before.successful_frees, 0);
+        assert_eq!(before.live_allocations, 2);
+        assert_eq!(before.live_requested_bytes, 1088);
+        assert_eq!(
+            before.retained_backing_bytes,
+            small.total_size + large.total_size
+        );
+        assert_eq!(before.size_class_dispersion_ppm, 500_000);
+
+        assert!(arena.allocate(usize::MAX).is_none());
+        assert!(arena.allocate_aligned(1024, 33).is_none());
+        let mut foreign = [0u8; 32];
+        assert_eq!(
+            arena.free(foreign.as_mut_ptr()).0,
+            FreeResult::ForeignPointer
+        );
+        assert_eq!(arena.try_fragmentation_snapshot(), Some(before));
+
+        assert_eq!(arena.free(small.ptr).0, FreeResult::Freed);
+        let freed = arena
+            .try_fragmentation_snapshot()
+            .expect("snapshot after free");
+        assert_eq!(freed.successful_frees, 1);
+        assert_eq!(freed.live_allocations, 1);
+        assert_eq!(freed.live_requested_bytes, 1024);
+        assert_eq!(freed.retained_backing_bytes, before.retained_backing_bytes);
+        assert!(freed.arena_utilization_ppm < before.arena_utilization_ppm);
+        assert_eq!(arena.free(small.ptr).0, FreeResult::DoubleFree);
+        assert_eq!(arena.try_fragmentation_snapshot(), Some(freed));
+    }
+
+    #[test]
+    fn fragmentation_sampling_retries_busy_shards_without_waiting() {
+        let arena = AllocationArena::new();
+        let _allocation = arena.allocate(64).expect("allocation");
+        arena.defer_fragmentation_observation();
+        let busy = arena.shards[NUM_SHARDS - 1].lock();
+        assert!(arena.take_fragmentation_observation().is_none());
+        assert!(
+            arena.shards[0].try_lock().is_some(),
+            "partial snapshot releases its guards"
+        );
+        drop(busy);
+        let sample = arena
+            .take_fragmentation_observation()
+            .expect("pending sample retained");
+        assert_eq!(sample.successful_allocations, 1);
+        assert!(arena.take_fragmentation_observation().is_none());
     }
 
     #[test]
@@ -2163,7 +2348,7 @@ mod tests {
     }
 
     #[test]
-    fn arena_layout_and_full_width_canary_derivation() {
+    fn arena_layout_and_independent_canary_derivation() {
         use crate::metrics::{MembraneMetrics, global_metrics};
 
         assert_eq!(FINGERPRINT_SIZE, 24);
@@ -2265,6 +2450,115 @@ mod tests {
         assert!(MembraneMetrics::get(&metrics.canary_failures) > failures_before);
     }
 
+    fn cached_integrity_uses_live_slot_geometry_and_generation() {
+        let arena = AllocationArena::new();
+        let alloc = arena.allocate(40).expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        assert_eq!(
+            arena.verify_cached_allocation(slot.user_base, slot.user_size, slot.generation),
+            CachedAllocationIntegrity::Valid,
+        );
+        // Cache metadata is only a lookup key, never a pointer-read authority.
+        for (base, size, generation) in [
+            (1, slot.user_size, slot.generation),
+            (slot.user_base + 1, slot.user_size, slot.generation),
+            (slot.user_base, usize::MAX, slot.generation),
+            (slot.user_base, slot.user_size, slot.generation + 1),
+        ] {
+            assert_eq!(
+                arena.verify_cached_allocation(base, size, generation),
+                CachedAllocationIntegrity::Stale,
+            );
+        }
+
+        let (result, drained) = arena.free(alloc.ptr);
+        assert_eq!(result, FreeResult::Freed);
+        // SAFETY: only entries returned by this free are retired, once.
+        unsafe { AllocationArena::deallocate_drained(&drained) };
+        assert_eq!(
+            arena.verify_cached_allocation(slot.user_base, slot.user_size, slot.generation),
+            CachedAllocationIntegrity::Stale,
+        );
+    }
+
+    #[test]
+    fn cached_integrity_and_free_detect_each_header_field() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        let arena = AllocationArena::new();
+        for field_offset in [0, 8, 16] {
+            let alloc = arena.allocate(40).expect("allocation should succeed");
+            let slot = arena.lookup(alloc.user_base).expect("live slot");
+            assert_eq!(
+                arena.verify_cached_allocation(slot.user_base, slot.user_size, slot.generation),
+                CachedAllocationIntegrity::Valid,
+            );
+            let failures_before = MembraneMetrics::get(&global_metrics().fingerprint_failures);
+            // SAFETY: this test exclusively owns the live backing block. Each
+            // modified byte is inside its 24-byte header, not foreign memory.
+            unsafe {
+                let field = (slot.user_base - FINGERPRINT_SIZE + field_offset) as *mut u8;
+                field.write(field.read() ^ 1);
+            }
+            assert_eq!(
+                arena.verify_cached_allocation(slot.user_base, slot.user_size, slot.generation),
+                CachedAllocationIntegrity::FingerprintCorruption,
+            );
+            assert!(MembraneMetrics::get(&global_metrics().fingerprint_failures) > failures_before,);
+            let (result, drained) = arena.free(alloc.ptr);
+            assert_eq!(result, FreeResult::FreedWithFingerprintCorruption);
+            assert_eq!(
+                arena
+                    .lookup(slot.user_base)
+                    .expect("quarantined slot")
+                    .state,
+                SafetyState::Quarantined,
+            );
+            // SAFETY: only entries returned by this free are retired, once.
+            unsafe { AllocationArena::deallocate_drained(&drained) };
+        }
+    }
+
+    #[test]
+    fn disclosed_header_cannot_restore_tail_with_legacy_xor() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        let arena = AllocationArena::new();
+        let alloc = arena.allocate(40).expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        let mut bytes = [0u8; FINGERPRINT_SIZE];
+        // SAFETY: the entire header is in this test's owned backing block.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (slot.user_base - FINGERPRINT_SIZE) as *const u8,
+                bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let disclosed = AllocationFingerprint::from_bytes(&bytes);
+        let forgery = (disclosed.hash ^ 0xDEAD_BEEF_CAFE_BABE).to_le_bytes();
+        // SAFETY: the tail address comes from trusted arena metadata and is
+        // inside the live backing allocation. This models an attacker who
+        // discloses all header bytes and repairs the tail with the old formula.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                forgery.as_ptr(),
+                (slot.user_base + slot.user_size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        let failures_before = MembraneMetrics::get(&global_metrics().canary_failures);
+        assert_eq!(
+            arena.verify_cached_allocation(slot.user_base, slot.user_size, slot.generation),
+            CachedAllocationIntegrity::CanaryCorruption,
+        );
+        assert!(MembraneMetrics::get(&global_metrics().canary_failures) > failures_before);
+        let (result, drained) = arena.free(alloc.ptr);
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+        // SAFETY: only entries returned by this free are retired, once.
+        unsafe { AllocationArena::deallocate_drained(&drained) };
+    }
+
     #[test]
     fn arena_rejects_legacy_rank32_folded_canary_and_records_failure_metric() {
         use crate::metrics::{MembraneMetrics, global_metrics};
@@ -2276,6 +2570,8 @@ mod tests {
         // Allocate until the fingerprint hash has non-zero 32-bit halves so the
         // legacy rank-32 fold `h ^ h.rotate_left(32) ^ C` is strictly distinct
         // from the domain-separated canary.
+        // Retain the old rank-32 derivation as an adversarial forgery. It must
+        // not authenticate the independently keyed tail.
         let mut target_alloc = None;
         let mut legacy_bytes = [0u8; CANARY_SIZE];
         let mut cleanup = Vec::new();

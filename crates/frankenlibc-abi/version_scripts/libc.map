@@ -2634,7 +2634,9 @@ GLIBC_2.2.5 {
         _IO_seekoff;
         _IO_seekpos;
         /* _IO_2_1_{stdin,stdout,stderr}_ are 224-byte _IO_FILE_plus objects
-           backed by FrankenLibC's native stdio stream table (bd-reality-202609-lx578q.6.4). */
+           backed by FrankenLibC's native stdio stream table (bd-reality-202609-lx578q.6.4).
+           Exact-size FILE-plus-vtable objects; private state stays in the
+           native registry so executable COPY relocations remain valid. */
         _IO_2_1_stdin_;
         _IO_2_1_stdout_;
         _IO_2_1_stderr_;
@@ -4747,6 +4749,7 @@ GCC_3.3 {
     global:
         _Unwind_GetCFA;
         _Unwind_Resume_or_Rethrow;
+        _Unwind_GetCFA;
 } GCC_3.0;
 
 GCC_4.2.0 {

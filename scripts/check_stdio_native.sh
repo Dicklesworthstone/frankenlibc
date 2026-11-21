@@ -116,7 +116,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${LOCKS_ONLY}" -eq 1 ]]; then
     error_kind=locks
     error_mode=locks
-    error_cases=183
+    error_cases=197
     error_option=--locks
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
@@ -203,11 +203,32 @@ check_file_object() {
       exit invalid
     }
   '
+  # Supported LP64 GNU targets have a 216-byte FILE plus an 8-byte vtable.
+  # Hybrid builds use unversioned interposition; the standalone version script
+  # assigns GLIBC_2.2.5. Both must export the exact 224-byte GLOBAL object.
+  readelf --dyn-syms --wide "${LIB}" | awk -v sym="${symbol}" '
+    {
+      name = $8
+      base = name
+      sub(/@.*/, "", base)
+      if (base == sym) {
+        found++
+        version_ok = name == sym || name == sym "@GLIBC_2.2.5" || name == sym "@@GLIBC_2.2.5"
+        if ($3 == 224 && $4 == "OBJECT" && $5 == "GLOBAL" && $7 != "UND" && version_ok) valid++
+      }
+    }
+    END {
+      if (found != 1 || valid != 1) {
+        print "FAIL: " sym " must be a GLOBAL 224-byte FILE object (GLIBC_2.2.5 when versioned)" > "/dev/stderr"
+        exit 1
+      }
+    }
+  '
 }
 
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
   # stdin/out/err are pointer cells; _IO_2_1_* are 224-byte _IO_FILE_plus
-  # data objects exported at GLIBC_2.2.5.
+  # data objects exported at GLIBC_2.2.5, and exact-size FILE objects.
   check_pointer_cell "stdin"
   check_pointer_cell "stdout"
   check_pointer_cell "stderr"
@@ -224,14 +245,22 @@ if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
     -o "${BIN_DIR}/fixture_callback_unwind.bin" -ldl -pthread
 fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  for style in copy got; do
+  for style in copy pie-copy got; do
     link_flags=(-fno-pic -no-pie)
     if [[ "${style}" == got ]]; then
       link_flags=(-fPIC -pie)
+    elif [[ "${style}" == pie-copy ]]; then
+      link_flags=(-fPIE -pie)
     fi
     cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
       "${link_flags[@]}" "${ROOT}/tests/integration/fixture_stdio_globals.c" \
       -o "${BIN_DIR}/fixture_stdio_globals.${style}.bin" -ldl
+    if [[ "${style}" != got ]]; then
+      for symbol in _IO_2_1_stdin_ _IO_2_1_stdout_ _IO_2_1_stderr_; do
+        readelf --relocs --wide "${BIN_DIR}/fixture_stdio_globals.${style}.bin" \
+          | awk -v sym="${symbol}" '$3 ~ /_COPY$/ && index($5, sym) == 1 { found = 1 } END { exit !found }'
+      done
+    fi
   done
 fi
 
@@ -263,7 +292,8 @@ run_case() {
   stdout_file="${OUT_DIR}/${name}.${mode}.stdout.log"
   stderr_file="${OUT_DIR}/${name}.${mode}.stderr.log"
   start_ns="$(date +%s%N)"
-  FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" \
+  timeout --kill-after=2s 30s env FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" \
+    FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" \
     "${bin}" >"${stdout_file}" 2>"${stderr_file}"
   end_ns="$(date +%s%N)"
   latency_ns="$((end_ns - start_ns))"
@@ -294,7 +324,7 @@ if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
   run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "hardened" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
 fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  for style in copy got; do
+  for style in copy pie-copy got; do
     name="fixture_stdio_globals.${style}"
     bin="${BIN_DIR}/${name}.bin"
     host_provider="$(env -u LD_PRELOAD ldd "${bin}" | awk '$1 == "libc.so.6" { print $3 }')"
@@ -312,12 +342,21 @@ if [[ "${GNU_ONLY}" -eq 0 ]]; then
         exit 1
       fi
     done
+    provider_status=0
+    env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" \
+      "${bin}" >"${OUT_DIR}/${name}.provider-negative.stdout.log" \
+      2>"${OUT_DIR}/${name}.provider-negative.stderr.log" || provider_status=$?
+    if [[ "${provider_status}" -ne 1 ]] ||
+       ! grep -q '^FAIL: wrong stdio provider for ' "${OUT_DIR}/${name}.provider-negative.stderr.log"; then
+      echo "FAIL: ${name} accepted an omitted-preload provider control" >&2
+      exit 1
+    fi
   done
 fi
 
 if [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"pointer_cell_symbols":"pass","link_styles":["copy","got"],"candidate_processes":4,"live_GNU_processes":2,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
+{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"pointer_cell_symbols":"pass","file_object_symbols":"pass","link_styles":["copy","pie-copy","got"],"candidate_processes":6,"live_GNU_processes":3,"provider_negative_controls":3,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
 JSON
   echo "check_stdio_native --globals-only: PASS (provider-bound FILE semantics in both modes; full stdio gate not run)"
   exit 0
@@ -325,7 +364,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds gnu-register-limits gnu-register-concurrent; do
+for scenario in gnu-register-query-bounds gnu-register-narrow-bounds gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds gnu-register-limits gnu-register-concurrent; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -349,6 +388,10 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
       completion=limits
     elif [[ "${scenario}" == gnu-register-concurrent ]]; then
       completion=concurrent
+    elif [[ "${scenario}" == gnu-register-query-bounds ]]; then
+      completion=query-bounds
+    elif [[ "${scenario}" == gnu-register-narrow-bounds ]]; then
+      completion=narrow-bounds
     fi
     if [[ "$(grep -xc "reg:complete:${completion}" "${oracle_stdout}")" -ne 1 ]]; then
       echo "FAIL: GNU registration oracle did not complete ${scenario}" >&2
@@ -365,9 +408,22 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: incomplete registration concurrency oracle" >&2
     exit 1
   fi
+  if [[ "${scenario}" == gnu-register-query-bounds ]] &&
+     { [[ "$(grep -Ec '^reg:query(-huge)?:' "${oracle_stdout}")" -ne 120 ]] ||
+       [[ "${rows}" -ne 121 ]]; }; then
+    echo "FAIL: incomplete registration type-query oracle" >&2
+    exit 1
+  fi
   if [[ "${scenario}" == gnu-register-wide-bounds ]] &&
      [[ "$(grep -c '^reg:wide-bounds:' "${oracle_stdout}")" -ne 80 ]]; then
     echo "FAIL: incomplete wide registration boundary oracle" >&2
+    exit 1
+  fi
+  if [[ "${scenario}" == gnu-register-narrow-bounds ]] &&
+     { [[ "$(grep -c '^reg:narrow-bounds:' "${oracle_stdout}")" -ne 112 ]] ||
+       [[ "$(grep -c '^reg:narrow-huge:' "${oracle_stdout}")" -ne 8 ]] ||
+       [[ "${rows}" -ne 121 ]]; }; then
+    echo "FAIL: incomplete narrow registration boundary oracle" >&2
     exit 1
   fi
   if [[ "${scenario}" == gnu-wide-bounds ]] &&
@@ -388,7 +444,7 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: incomplete precision input-span oracle" >&2
     exit 1
   fi
-  if [[ "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-register-limits || "${scenario}" == gnu-register-concurrent || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
+  if [[ "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-register-limits || "${scenario}" == gnu-register-concurrent || "${scenario}" == gnu-register-query-bounds || "${scenario}" == gnu-register-narrow-bounds || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
     negative_status=0
     env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="${LIB}" \
       "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" \
@@ -416,7 +472,7 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
       echo "FAIL: ${scenario} (${mode}) differs from live GNU oracle; see ${OUT_DIR}" >&2
       exit 1
     fi
-    echo "${scenario} (${mode}): ${rows} live differential rows passed" >>"${TEST_LOG}"
+    echo "${scenario} (${mode}): ${rows} live differential rows passed" | tee -a "${TEST_LOG}"
     emit_log_row "${scenario}" "${mode}" "stdio" "pass" "${latency_ns}" "${COMMON_REFS}"
   done
 done

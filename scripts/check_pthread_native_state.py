@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare native errno, cancellation and C/C++ cleanup with live GNU pthreads."""
+"""Compare native thread state, attributes and C/C++ cleanup with live GNU pthreads."""
 import argparse
 import hashlib
 import json
@@ -15,10 +15,26 @@ CASES = (
     "cancel-pending-reuse",
     "cleanup-exit", "cleanup-cancel", "cleanup-reentry", "cleanup-siblings",
     "cleanup-defer", "cleanup-cancel-reentry", "cleanup-initial", "cleanup-return-reentry",
+    "cleanup-return-testcancel", "cleanup-return-disabled",
     "legacy-exit", "legacy-cancel", "legacy-reentry", "legacy-cancel-reentry",
     "legacy-siblings", "legacy-defer",
 )
 CLEANUP_CASES = tuple(case for case in CASES if case.startswith(("cleanup-", "legacy-")))
+ATTR_CASES = (
+    "attributes-foreign-affinity", "attributes-foreign-affinity-expand",
+    "attributes-foreign-affinity-inherit", "attributes-foreign-affinity-empty",
+    "attributes-foreign-sigmask", "attributes-foreign-sigmask-empty",
+    "attributes-foreign-sigmask-inherit", "attributes-foreign-explicit",
+    "attributes-foreign-sched-inherit", "attributes-foreign-sched-permission",
+    "attributes-live-self", "attributes-live-worker", "attributes-affinity-short",
+    "attributes-priority-self", "attributes-priority-worker",
+)
+PUBLICATION_CASES = (
+    "publication-self-detach", "publication-self-detach-exit",
+    "publication-created-detached", "publication-created-detached-exit",
+    "publication-return", "publication-exit", "publication-await-creator",
+    "publication-signal-await-creator", "publication-startup-error",
+)
 CPP_CASES = (
     "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
     "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
@@ -52,6 +68,8 @@ WAIT_CASES = (
     "cond-wait", "cond-timed", "cond-clock-real", "cond-clock-mono",
     "sem-wait-disabled", "cond-wait-disabled", "sem-wait-enosys", "cond-wait-enosys",
     "cond-wait-peers", "cond-wait-peers-enosys",
+    "cond-timed-peers", "cond-clock-real-peers", "cond-clock-mono-peers",
+    "cond-wait-peers-robust", "cond-wait-peers-shared",
     "join", "join-alias", "join-timed", "join-clock-real", "join-clock-mono",
     "join-timed-null", "join-clock-null", "join-disabled", "join-clock-mono-disabled",
     "join-enosys", "join-disabled-enosys",
@@ -88,6 +106,12 @@ def main():
                         default=root / "target/conformance/pthread_native_state")
     parser.add_argument("--sigwait-only", action="store_true",
                         help="Run the signal-wait regression cases and provider/backend controls")
+    parser.add_argument("--condition-peers-only", action="store_true",
+                        help="Run canceled condition-waiter handoff and provider/backend controls")
+    parser.add_argument("--attributes-only", action="store_true",
+                        help="Run foreign creation attributes, live snapshots and scheduling priorities")
+    parser.add_argument("--publication-only", action="store_true",
+                        help="Run early self-detach, detached entry, exit and creator publication cases")
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     output = args.out_dir.resolve()
@@ -182,6 +206,8 @@ def main():
         failures.append("wait-backend-negative")
 
     variants = (("", CASES, binary, "pthread-native-state", ("0", "1")),
+                ("attributes-", ATTR_CASES, binary, "pthread-native-state", ("0", "1")),
+                ("publication-", PUBLICATION_CASES, binary, "pthread-native-state", ("0", "1")),
                 ("exceptions-", CLEANUP_CASES, exceptions_binary, "pthread-native-state", ("0", "1")),
                 ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind", ("0", "1")),
                  ("wait-", WAIT_CASES, wait_binary, "pthread-native-wait", ("0", "1")),
@@ -191,6 +217,13 @@ def main():
     if args.sigwait_only:
         variants = (("wait-", tuple(case for case in WAIT_CASES if case.startswith("sigwait")),
                      wait_binary, "pthread-native-wait", ("0", "1")),)
+    if args.condition_peers_only:
+        variants = (("wait-", tuple(case for case in WAIT_CASES if "-peers" in case),
+                     wait_binary, "pthread-native-wait", ("0", "1")),)
+    if args.attributes_only:
+        variants = (("attributes-", ATTR_CASES, binary, "pthread-native-state", ("0", "1")),)
+    if args.publication_only:
+        variants = (("publication-", PUBLICATION_CASES, binary, "pthread-native-state", ("0", "1")),)
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
@@ -221,7 +254,10 @@ def main():
     gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
     candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
-              "scope": "sigwait" if args.sigwait_only else "all",
+              "scope": ("publication" if args.publication_only else
+                        "attributes" if args.attributes_only else
+                        "condition-peers" if args.condition_peers_only else
+                        "sigwait" if args.sigwait_only else "all"),
               "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
               "cpp_fixture_sha256": sha256(cpp_source), "cpp_binary_sha256": sha256(cpp_binary),
               "wait_fixture_sha256": sha256(wait_source), "wait_binary_sha256": sha256(wait_binary),

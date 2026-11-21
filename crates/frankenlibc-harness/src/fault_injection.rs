@@ -831,6 +831,7 @@ fn free_result_label(result: FreeResult) -> &'static str {
     match result {
         FreeResult::Freed => "Freed",
         FreeResult::FreedWithCanaryCorruption => "FreedWithCanaryCorruption",
+        FreeResult::FreedWithFingerprintCorruption => "FreedWithFingerprintCorruption",
         FreeResult::DoubleFree => "DoubleFree",
         FreeResult::ForeignPointer => "ForeignPointer",
         FreeResult::InvalidPointer => "InvalidPointer",

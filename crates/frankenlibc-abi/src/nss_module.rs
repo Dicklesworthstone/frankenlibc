@@ -10,18 +10,22 @@
 //! source those users and groups did not exist under fl.
 //!
 //! This module owns the mechanics: reading nsswitch.conf (cached by file
-//! fingerprint), loading modules once per process through the host dynamic
-//! loader, and calling the reentrant entry points with a growing scratch
-//! buffer, converting each result into fl's owned entry types. The policy --
-//! source order, status actions, group merge, initgroups de-duplication --
-//! lives in `frankenlibc_core::nss`.
+//! fingerprint), loading modules once per process, and copying reentrant
+//! callback results into fl's owned entry types. Calls that own their scratch
+//! budget grow it on ERANGE. The policy -- source order, status actions, group
+//! merge, initgroups de-duplication -- lives in `frankenlibc_core::nss`.
 //! Hosts use the same module loader with `addrinfo::hosts_policy` for source
 //! order and actions. Forward/reverse hostent results, aliases, address lists,
 //! and the gethostbyname3_r canonical-name extension are copied before release.
 //! gethostbyname4_r tuples retain mixed address families and IPv6 scope IDs.
+//! Netgroups retain each selected module's set/get/end cursor, resolve nested
+//! names through the captured source policy, and preserve NULL wildcards.
+//! Public enumeration uses the caller's exact buffer budget; independent
+//! membership queries use GNU's fixed 1024-byte module buffer.
 //!
-//! Loading needs the host dynamic loader, so standalone builds report every
-//! module source as unavailable (the switch then continues per its actions).
+//! Interpose builds retain the host loader's module and allocator namespace.
+//! Standalone builds use the owned loader and its matching allocation exports;
+//! an unsupported object remains unavailable without falling back to the host.
 
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::mem::{MaybeUninit, size_of};
@@ -32,9 +36,9 @@ use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
 const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
 const NSSWITCH_PATH_ENV: &str = "FRANKENLIBC_NSSWITCH_CONF";
 
-/// Scratch buffer for a module call starts here and doubles on ERANGE.
+/// Initial capacity for module calls that own their scratch budget.
 const INITIAL_SCRATCH: usize = 1024;
-/// Give up growing (report TRYAGAIN/ERANGE as unavailable) past this size.
+/// Maximum growth for internally owned module scratch buffers.
 const MAX_SCRATCH: usize = 1 << 24;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -297,7 +301,7 @@ pub(crate) fn is_files_only(services: &[Service]) -> bool {
 
 struct LoadedModule {
     service: Vec<u8>,
-    /// Host dlopen handle; 0 when the module could not be loaded.
+    /// Selected loader's handle; 0 when the module could not be loaded.
     handle: usize,
     /// Resolved entry points (function name, address; 0 = absent).
     symbols: Vec<(&'static str, usize)>,
@@ -306,7 +310,7 @@ struct LoadedModule {
 static MODULES: Mutex<Vec<LoadedModule>> = Mutex::new(Vec::new());
 
 #[cfg(not(feature = "standalone"))]
-fn host_dlopen(path: &CStr) -> usize {
+fn module_dlopen(path: &CStr) -> usize {
     type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
         return 0;
@@ -318,12 +322,14 @@ fn host_dlopen(path: &CStr) -> usize {
 }
 
 #[cfg(feature = "standalone")]
-fn host_dlopen(_path: &CStr) -> usize {
-    0
+fn module_dlopen(path: &CStr) -> usize {
+    // SAFETY: path is a live C string. The standalone public loader owns
+    // both the mapping and its dependencies and never delegates to the host.
+    unsafe { crate::dlfcn_abi::dlopen(path.as_ptr(), libc::RTLD_LAZY) as usize }
 }
 
 #[cfg(not(feature = "standalone"))]
-fn nss_backend_dlsym(handle: usize, name: &CStr) -> usize {
+fn module_dlsym(handle: usize, name: &CStr) -> usize {
     type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
         return 0;
@@ -335,8 +341,9 @@ fn nss_backend_dlsym(handle: usize, name: &CStr) -> usize {
 }
 
 #[cfg(feature = "standalone")]
-fn nss_backend_dlsym(_handle: usize, _name: &CStr) -> usize {
-    0
+fn module_dlsym(handle: usize, name: &CStr) -> usize {
+    // SAFETY: handles come from the same owned loader and name is a C string.
+    unsafe { crate::dlfcn_abi::dlsym(handle as *mut c_void, name.as_ptr()) as usize }
 }
 
 fn valid_service_name(service: &[u8]) -> bool {
@@ -350,7 +357,7 @@ fn valid_service_name(service: &[u8]) -> bool {
 /// Address of `_nss_<service>_<function>`, loading the module on first use.
 /// `None` when the module or the entry point does not exist.
 ///
-/// The table lock is never held across the host `dlopen`/`dlsym`: a module's
+/// The table lock is never held across `dlopen`/`dlsym`: a module's
 /// constructor may itself use the name service.
 fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     if !valid_service_name(service) {
@@ -373,7 +380,7 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
         let mut path = b"libnss_".to_vec();
         path.extend_from_slice(service);
         path.extend_from_slice(b".so.2\0");
-        let opened = CStr::from_bytes_with_nul(&path).map_or(0, host_dlopen);
+        let opened = CStr::from_bytes_with_nul(&path).map_or(0, module_dlopen);
         let mut modules = MODULES.lock().unwrap_or_else(|e| e.into_inner());
         match modules.iter().find(|m| m.service == service) {
             // Another thread won the race; its handle names the same object.
@@ -396,7 +403,7 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     symbol.push(b'_');
     symbol.extend_from_slice(function.as_bytes());
     symbol.push(0);
-    let addr = CStr::from_bytes_with_nul(&symbol).map_or(0, |name| nss_backend_dlsym(handle, name));
+    let addr = CStr::from_bytes_with_nul(&symbol).map_or(0, |name| module_dlsym(handle, name));
     let mut modules = MODULES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(module) = modules.iter_mut().find(|m| m.service == service)
         && !module.symbols.iter().any(|(n, _)| *n == function)
@@ -477,6 +484,375 @@ unsafe fn owned(ptr: *const c_char) -> Vec<u8> {
     } else {
         // SAFETY: per the module ABI, result strings are NUL-terminated.
         unsafe { CStr::from_ptr(ptr) }.to_bytes().to_vec()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stateful netgroup modules
+// ---------------------------------------------------------------------------
+
+/// A module's NULL field is a wildcard. A non-NULL empty string is a literal
+/// empty value, so the files parser's empty-vector representation is not enough.
+pub(crate) struct NetgroupTriple {
+    pub host: Option<Vec<u8>>,
+    pub user: Option<Vec<u8>>,
+    pub domain: Option<Vec<u8>>,
+    // GNU's files parser reserves three field terminators even for wildcards.
+    // A module's NULL fields require no output bytes; non-NULL empty fields do.
+    buffer_nuls: usize,
+}
+
+impl NetgroupTriple {
+    pub(crate) fn required_buffer_size(&self) -> Option<usize> {
+        [&self.host, &self.user, &self.domain]
+            .into_iter()
+            .try_fold(self.buffer_nuls, |size, field| {
+                size.checked_add(field.as_ref().map_or(0, Vec::len))
+            })
+    }
+}
+
+enum NetgroupMember {
+    Triple(NetgroupTriple),
+    Group(Vec<u8>),
+}
+
+/// GNU's LP64 __netgrent module ABI, as declared by nss/netgroup.h.
+/// The three callback declarations are provided by the installed <nss.h>.
+/// The opaque pointers belong to the module; only its end callback frees them.
+#[repr(C)]
+struct NetgroupModuleState {
+    kind: c_int,
+    value: [*const c_char; 3],
+    data: *mut c_char,
+    data_size: usize,
+    position: usize,
+    first: c_int,
+    known_groups: *mut c_void,
+    needed_groups: *mut c_void,
+    service: *mut c_void,
+}
+
+const _: () = {
+    assert!(size_of::<NetgroupModuleState>() == 88);
+    assert!(std::mem::offset_of!(NetgroupModuleState, value) == 8);
+    assert!(std::mem::offset_of!(NetgroupModuleState, data) == 32);
+    assert!(std::mem::offset_of!(NetgroupModuleState, position) == 48);
+    assert!(std::mem::offset_of!(NetgroupModuleState, first) == 56);
+    assert!(std::mem::offset_of!(NetgroupModuleState, service) == 80);
+};
+
+type SetNetgroupFn = unsafe extern "C" fn(*const c_char, *mut NetgroupModuleState) -> c_int;
+type GetNetgroupFn =
+    unsafe extern "C" fn(*mut NetgroupModuleState, *mut c_char, usize, *mut c_int) -> c_int;
+type EndNetgroupFn = unsafe extern "C" fn(*mut NetgroupModuleState) -> c_int;
+
+struct NetgroupModuleCursor {
+    // Pin the callback state at one address from set through end, even when the
+    // owning session moves into TLS or is temporarily leased out for a callback.
+    state: Box<NetgroupModuleState>,
+    get: GetNetgroupFn,
+    end: EndNetgroupFn,
+    scratch: Vec<u8>,
+}
+
+// SAFETY: GNU's reentrant netgroup module API stores per-enumeration state in
+// the caller's __netgrent. This cursor uniquely owns that state and buffer;
+// no callback can run concurrently, and no borrowed result escapes next().
+unsafe impl Send for NetgroupModuleCursor {}
+
+impl Drop for NetgroupModuleCursor {
+    fn drop(&mut self) {
+        // SAFETY: the matching end callback receives the same live state as
+        // set/get. Cleanup must not overwrite the result's observable errno.
+        unsafe {
+            let error = libc::__errno_location();
+            let saved = *error;
+            (self.end)(&mut *self.state);
+            *error = saved;
+        }
+    }
+}
+
+impl NetgroupModuleCursor {
+    fn open(service: &[u8], group: &[u8]) -> (c_int, Option<Self>, c_int) {
+        let Some(set) = module_function(service, "setnetgrent") else {
+            return (-1, None, libc::ENOENT);
+        };
+        let Some(get) = module_function(service, "getnetgrent_r") else {
+            return (-1, None, libc::ENOSYS);
+        };
+        let Some(end) = module_function(service, "endnetgrent") else {
+            return (-1, None, libc::ENOSYS);
+        };
+        let Ok(group) = std::ffi::CString::new(group) else {
+            return (-1, None, libc::EINVAL);
+        };
+        // SAFETY: symbols have the signatures in <nss.h>. All-zero pointer,
+        // integer and union storage is the initial GNU module state.
+        let (set, get, end, state) = unsafe {
+            (
+                core::mem::transmute::<usize, SetNetgroupFn>(set),
+                core::mem::transmute::<usize, GetNetgroupFn>(get),
+                core::mem::transmute::<usize, EndNetgroupFn>(end),
+                Box::new(std::mem::zeroed::<NetgroupModuleState>()),
+            )
+        };
+        let mut cursor = Self {
+            state,
+            get,
+            end,
+            scratch: vec![0; INITIAL_SCRATCH],
+        };
+        // setnetgrent has no errnop argument: preserve the caller's errno while
+        // retaining any failure written by the module itself.
+        let (status, error) = unsafe {
+            let error = libc::__errno_location();
+            let saved = *error;
+            *error = 0;
+            let status = set(group.as_ptr(), &mut *cursor.state);
+            let result = *error;
+            *error = saved;
+            (status, result)
+        };
+        if status == 1 {
+            (status, Some(cursor), error)
+        } else {
+            // Drop also runs after failed setup, allowing a module to release
+            // a partial allocation. It never changes the captured failure.
+            (status, None, error)
+        }
+    }
+
+    fn resize_scratch(&mut self, capacity: usize) -> Result<(), c_int> {
+        if capacity > self.scratch.len() {
+            self.scratch
+                .try_reserve_exact(capacity - self.scratch.len())
+                .map_err(|_| libc::ENOMEM)?;
+        }
+        self.scratch.resize(capacity, 0);
+        Ok(())
+    }
+
+    fn next(&mut self, capacity: usize) -> Result<Option<NetgroupMember>, c_int> {
+        // Both enumeration and membership expose this budget to the module,
+        // including for group references and private scratch. Growing here
+        // would hide an observable ERANGE or incorrectly grant membership.
+        self.resize_scratch(capacity)?;
+        // GNU passes its errno slot directly. Preserve untouched errnop and
+        // errors from NOTFOUND even when a pending child later yields a tuple.
+        let error = unsafe { crate::errno_abi::__errno_location() };
+        // SAFETY: state and scratch are unique writable module storage; error
+        // names this thread's canonical errno cell. No Rust reference spans
+        // the callback, which may itself call other libc functions.
+        let status = unsafe {
+            (self.get)(
+                &mut *self.state,
+                self.scratch.as_mut_ptr().cast(),
+                self.scratch.len(),
+                error,
+            )
+        };
+        match status {
+            1 => match self.state.kind {
+                0 => {
+                    // SAFETY: a successful NSS result supplies live
+                    // NUL-terminated strings or NULL wildcards. Copy
+                    // before another callback can invalidate them.
+                    let field = |pointer: *const c_char| {
+                        (!pointer.is_null()).then(|| unsafe { owned(pointer) })
+                    };
+                    Ok(Some(NetgroupMember::Triple(NetgroupTriple {
+                        host: field(self.state.value[0]),
+                        user: field(self.state.value[1]),
+                        domain: field(self.state.value[2]),
+                        buffer_nuls: self
+                            .state
+                            .value
+                            .iter()
+                            .filter(|pointer| !pointer.is_null())
+                            .count(),
+                    })))
+                }
+                1 if !self.state.value[0].is_null() => {
+                    // SAFETY: kind=group supplies a live group name.
+                    Ok(Some(NetgroupMember::Group(unsafe {
+                        owned(self.state.value[0])
+                    })))
+                }
+                _ => Err(libc::EINVAL),
+            },
+            // Both statuses finish this group and permit queued children.
+            0 | 2 => Ok(None),
+            -2 | -1 => Err(unsafe { *error }),
+            _ => Err(libc::EINVAL),
+        }
+    }
+}
+
+enum NetgroupSource {
+    Files {
+        triples: std::vec::IntoIter<frankenlibc_core::netgroup::NetgroupTriple>,
+        groups: std::vec::IntoIter<Vec<u8>>,
+    },
+    Module(NetgroupModuleCursor),
+}
+
+impl NetgroupSource {
+    fn next(&mut self, capacity: usize) -> Result<Option<NetgroupMember>, c_int> {
+        match self {
+            Self::Module(cursor) => cursor.next(capacity),
+            Self::Files { triples, groups } => {
+                if let Some(triple) = triples.as_slice().first() {
+                    let needed = [&triple.host, &triple.user, &triple.domain]
+                        .into_iter()
+                        .try_fold(3usize, |size, field| size.checked_add(field.len()));
+                    if needed.is_none_or(|needed| needed > capacity) {
+                        return Err(libc::ERANGE);
+                    }
+                }
+                if let Some(triple) = triples.next() {
+                    let field = |value: Vec<u8>| (!value.is_empty()).then_some(value);
+                    Ok(Some(NetgroupMember::Triple(NetgroupTriple {
+                        host: field(triple.host),
+                        user: field(triple.user),
+                        domain: field(triple.domain),
+                        buffer_nuls: 3,
+                    })))
+                } else {
+                    Ok(groups.next().map(NetgroupMember::Group))
+                }
+            }
+        }
+    }
+}
+
+/// One independent traversal. Source selection follows setnetgrent statuses;
+/// read failures never authorize falling through to a different source.
+/// Nested names share one configuration image and are expanded without Rust
+/// recursion, so cycles cannot exhaust the stack.
+pub(crate) struct NetgroupSession {
+    services: Arc<Vec<Service>>,
+    membership: bool,
+    files: Option<Result<Vec<u8>, c_int>>,
+    source: Option<NetgroupSource>,
+    visited: std::collections::HashSet<Vec<u8>>,
+    pending: Vec<Vec<u8>>,
+}
+
+impl NetgroupSession {
+    pub(crate) fn open(group: &[u8], membership: bool) -> Result<Option<Self>, c_int> {
+        let mut session = Self {
+            services: services(Database::Netgroup),
+            membership,
+            files: None,
+            source: None,
+            visited: std::collections::HashSet::new(),
+            pending: Vec::new(),
+        };
+        let Some(source) = session.select_source(group)? else {
+            return Ok(None);
+        };
+        session.visited.insert(group.to_vec());
+        session.source = Some(source);
+        Ok(Some(session))
+    }
+
+    fn select_source(&mut self, group: &[u8]) -> Result<Option<NetgroupSource>, c_int> {
+        use frankenlibc_core::nss::Action;
+
+        for (index, service) in self.services.iter().enumerate() {
+            let (raw_status, source, error) = if service.name() == b"files" {
+                let content = self.files.get_or_insert_with(|| {
+                    std::fs::read(crate::unistd_abi::NETGROUP_PATH)
+                        .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))
+                });
+                match content {
+                    Ok(bytes) => match frankenlibc_core::netgroup::netgroup_record(bytes, group) {
+                        Some(record) => (
+                            1,
+                            Some(NetgroupSource::Files {
+                                triples: record.triples.into_iter(),
+                                groups: record.groups.into_iter(),
+                            }),
+                            0,
+                        ),
+                        None => (0, None, 0),
+                    },
+                    Err(error) if matches!(*error, libc::ENOMEM | libc::EAGAIN) => {
+                        (-2, None, *error)
+                    }
+                    Err(error) => (-1, None, *error),
+                }
+            } else {
+                let (status, cursor, error) = NetgroupModuleCursor::open(service.name(), group);
+                (status, cursor.map(NetgroupSource::Module), error)
+            };
+            // RETURN stops by default. Negated status clauses can change its
+            // action independently of the four ordinary status actions.
+            if raw_status == 2 {
+                if service.return_action() != Action::Continue {
+                    return Ok(None);
+                }
+                continue;
+            }
+            let status = Status::from_raw(raw_status);
+            let stop = index + 1 == self.services.len()
+                || service.action(status) != Action::Continue
+                || (self.membership && status == Status::Success);
+            if stop {
+                return match source {
+                    Some(source) => Ok(Some(source)),
+                    None if error != 0 => Err(error),
+                    None => Ok(None),
+                };
+            }
+            // A SUCCESS=continue cursor is dropped here before opening the
+            // next source. A module never shares another module's private data.
+        }
+        Ok(None)
+    }
+
+    /// GNU membership uses a fixed 1024-byte module buffer. A provider's
+    /// ERANGE must deny this lookup, even when its final fields would fit.
+    pub(crate) fn next(&mut self) -> Result<Option<NetgroupTriple>, c_int> {
+        self.next_with_capacity(INITIAL_SCRATCH)
+    }
+
+    /// Public enumeration must preserve the caller's exact module buffer
+    /// contract. An ERANGE leaves this cursor positioned for the next call.
+    pub(crate) fn next_for_buffer(
+        &mut self,
+        capacity: usize,
+    ) -> Result<Option<NetgroupTriple>, c_int> {
+        self.next_with_capacity(capacity)
+    }
+
+    fn next_with_capacity(&mut self, capacity: usize) -> Result<Option<NetgroupTriple>, c_int> {
+        loop {
+            if let Some(source) = self.source.as_mut() {
+                match source.next(capacity)? {
+                    Some(NetgroupMember::Triple(triple)) => return Ok(Some(triple)),
+                    Some(NetgroupMember::Group(group)) => {
+                        // GNU suppresses references already awaiting lookup,
+                        // not just groups already visited. Deduplicating only
+                        // when popping would reorder A B A into A B.
+                        if !self.visited.contains(&group) && !self.pending.contains(&group) {
+                            self.pending.push(group);
+                        }
+                        continue;
+                    }
+                    None => self.source = None,
+                }
+            }
+            let Some(group) = self.pending.pop() else {
+                return Ok(None);
+            };
+            if !self.visited.insert(group.clone()) {
+                continue;
+            }
+            self.source = self.select_source(&group)?;
+        }
     }
 }
 
@@ -1568,22 +1944,31 @@ type InitgroupsDynFn = unsafe extern "C" fn(
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 
-/// The allocator a module's `realloc` of the group array binds to: the
-/// process's global `malloc`/`realloc`/`free` (fl's own when preloaded).
+/// The allocator a module's `realloc` of the group array binds to: the host
+/// process's global exports in interpose builds, or the owned loader's runtime
+/// exports in standalone builds. Never mix the two allocation namespaces.
+#[cfg(not(feature = "standalone"))]
 fn global_allocator() -> Option<(MallocFn, FreeFn)> {
     let default = libc::RTLD_DEFAULT as usize;
-    let malloc = nss_backend_dlsym(default, c"malloc");
-    let free = nss_backend_dlsym(default, c"free");
+    let malloc = module_dlsym(default, c"malloc");
+    let free = module_dlsym(default, c"free");
     if malloc == 0 || free == 0 {
         return None;
     }
-    // SAFETY: these are the process's malloc and free.
+    // SAFETY: these exports have the malloc and free ABIs in the same loader
+    // namespace used to bind the module's realloc.
     unsafe {
         Some((
             core::mem::transmute::<usize, MallocFn>(malloc),
             core::mem::transmute::<usize, FreeFn>(free),
         ))
     }
+}
+
+#[cfg(feature = "standalone")]
+fn global_allocator() -> Option<(MallocFn, FreeFn)> {
+    // These exact frontends also bind native DSO malloc/realloc/free imports.
+    Some((crate::malloc_abi::malloc, crate::malloc_abi::free))
 }
 
 /// One module's contribution to a user's supplementary groups: its gids

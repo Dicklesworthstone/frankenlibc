@@ -22,9 +22,9 @@ use frankenlibc_core::elf::Elf64Header;
 use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
 use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
 use frankenlibc_core::pthread::thread::{
-    CancellationWait, ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
-    current_cancellation_wait as core_current_cancellation_wait,
+    CancellationWait, ThreadStartup, current_cancellation_wait as core_current_cancellation_wait,
     current_thread_handle as core_current_thread_handle, maybe_exit_process_as_last_native_thread,
+    prepare_thread_with_startup as core_prepare_thread_with_startup,
     request_cancellation_with_info as core_request_cancellation_with_info,
     set_last_thread_exit_hook, take_current_cancellation as core_take_current_cancellation,
 };
@@ -564,6 +564,11 @@ fn force_native_threading_enabled() -> bool {
 
 #[inline]
 fn current_threading_backend() -> u8 {
+    // A native clone can inherit a hosted backend cached in compiler TLS.
+    // Its live registration is authoritative and must not mutate that cache.
+    if core_current_thread_handle().is_some() {
+        return THREAD_BACKEND_MANAGED;
+    }
     if force_native_threading_enabled() {
         return THREAD_BACKEND_MANAGED;
     }
@@ -1486,6 +1491,12 @@ fn adopt_static_condvar(condvar: &CondvarData) -> bool {
 
 #[inline(always)]
 pub(crate) fn native_pthread_self() -> libc::pthread_t {
+    // Native clone workers can inherit the creator's compiler TLS. Consult
+    // the registered owner before either pthread_self cache, even when only
+    // the creator selected native threading through a scoped override.
+    if let Some(handle) = core_current_thread_handle() {
+        return handle as usize as libc::pthread_t;
+    }
     // Per-thread cache: pthread_self() is constant for the life of a thread, so
     // the first computed value is cached in pthread TLS and every later call
     // returns it directly — skipping `core_self_tid()`, which issues a `gettid()`
@@ -2383,49 +2394,47 @@ unsafe fn native_pthread_create(
             }
             #[cfg(not(feature = "standalone"))]
             {
-                let Some(getstacksize) = (unsafe { resolved_pthread_attr_getstacksize_fn() })
-                else {
-                    return libc::ENOSYS;
-                };
-                let rc = unsafe { getstacksize(attr, &mut stack_size) };
-                if rc != 0 {
-                    return rc;
-                }
-                let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
-                    return libc::ENOSYS;
-                };
-                let mut address = std::ptr::null_mut();
-                let mut size = 0;
-                let rc = unsafe { getstack(attr, &mut address, &mut size) };
-                if rc != 0 {
-                    return rc;
-                }
-                // GNU attributes with only a stack size set expose an unset stack
-                // top as base == 0 - size. It is not caller-provided memory. Keep
-                // getstacksize's effective default when that representation appears.
-                if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
-                    stack_addr = address as usize;
-                    stack_size = size;
-                    caller_stack = true;
-                }
-                let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() })
-                else {
-                    return libc::ENOSYS;
-                };
-                let rc = unsafe { getguardsize(attr, &mut guard_size) };
-                if rc != 0 {
-                    return rc;
-                }
-                let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
-                else {
-                    return libc::ENOSYS;
-                };
-                let rc = unsafe { getdetachstate(attr, &mut detach_state) };
-                if rc != 0 {
-                    return rc;
-                }
+            // Foreign attributes are opaque: use the host's public getters,
+            // including execution constraints, before starting any user code.
+            // Share the standard-field import with notification attributes.
+            let mut imported: PthreadAttrData = unsafe { std::mem::zeroed() };
+            if let Err(error) =
+                unsafe { NotificationThreadAttributes::copy_host_fields(attr, &mut imported) }
+            {
+                return error;
+            }
+            stack_size = imported.stack_size;
+            stack_addr = imported.stack_addr;
+            caller_stack = imported.has_stack_address();
+            guard_size = imported.guard_size;
+            if imported.inherit_sched == libc::PTHREAD_EXPLICIT_SCHED {
+                scheduling = Some((imported.sched_policy, imported.sched_priority));
+            }
+            affinity = match unsafe { host_attr_affinity(attr) } {
+                Ok(affinity) => affinity.map(|(_, bytes)| bytes),
+                Err(error) => return error,
+            };
+            signal_mask = match unsafe { host_attr_signal_mask(attr) } {
+                Ok(mask) => mask,
+                Err(error) => return error,
+            };
+            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
+            else {
+                return libc::ENOSYS;
+            };
+            let rc = unsafe { getdetachstate(attr, &mut detach_state) };
+            if rc != 0 {
+                return rc;
+            }
             }
         }
+    }
+
+    // Complete cold policy construction and bounded evidence storage while
+    // the creator still owns usable host TLS. A native worker must not be the
+    // first allocator user merely because its destructor changes a signal mask.
+    if let Err(error) = runtime_policy::prepare_native_thread_runtime() {
+        return error;
     }
 
     // These threads share this thread's TCB self pointer; stop keying allocator
@@ -2444,8 +2453,8 @@ unsafe fn native_pthread_create(
         }
     };
     crate::util::note_native_thread_created();
-    let handle_ptr = match unsafe {
-        core_create_thread_with_startup(
+    let prepared = match unsafe {
+        core_prepare_thread_with_startup(
             start_routine as usize,
             arg as usize,
             stack,
@@ -2456,17 +2465,18 @@ unsafe fn native_pthread_create(
             },
         )
     } {
-        Ok(ptr) => ptr,
+        Ok(prepared) => prepared,
         Err(errno) => return errno,
     };
-
+    let handle_ptr = prepared.handle();
     let thread_key = handle_ptr as usize;
 
     let mut registry = THREAD_HANDLE_REGISTRY
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     if registry.contains_key(&thread_key) {
-        let _ = unsafe { core_detach_thread(handle_ptr) };
+        // The prepared guard aborts and reaps the unpublished child without
+        // allowing a callback or leaving a running unregistered thread.
         return libc::EAGAIN;
     }
     MANAGED_THREAD_TOMBSTONES
@@ -2489,9 +2499,8 @@ unsafe fn native_pthread_create(
     // SAFETY: thread_out validated non-null above.
     unsafe { *thread_out = thread_key as libc::pthread_t };
 
-    // If created with PTHREAD_CREATE_DETACHED, detach immediately.
-    // Must remove from registry first (same as native_pthread_detach) to
-    // prevent a dangling pointer after the thread self-cleans on exit.
+    // Prepare detached ownership before application entry, while the creator
+    // still exclusively owns the parked child's handle and stack mappings.
     if detach_state == libc::PTHREAD_CREATE_DETACHED {
         {
             let mut registry = THREAD_HANDLE_REGISTRY
@@ -2513,8 +2522,12 @@ unsafe fn native_pthread_create(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(thread_key);
-        let _ = unsafe { core_detach_thread(handle_ptr) };
     }
+
+    // This is the final handle access by the creator. The guard is disarmed
+    // before its release-store, so even an immediate detached exit is safe.
+    // Registry records, tombstones and the caller's pthread_t are complete.
+    unsafe { prepared.start(detach_state == libc::PTHREAD_CREATE_DETACHED) };
 
     0
 }
@@ -4151,24 +4164,51 @@ fn futex_rwlock_timed_wrlock(
 //
 // once_control layout (inside libc::pthread_once_t, which is at least 4 bytes):
 //   0 = INIT (never started)
-//   1 = IN_PROGRESS (init_routine is running)
+//   low bits 1 = IN_PROGRESS; upper bits identify the owning fork generation
 //   2 = DONE (init_routine completed)
 const ONCE_INIT: i32 = 0;
 const ONCE_IN_PROGRESS: i32 = 1;
 const ONCE_DONE: i32 = 2;
+const ONCE_STATE_MASK: i32 = 3;
+const ONCE_GENERATION_STEP: i32 = 4;
+static ONCE_FORK_GENERATION: AtomicI32 = AtomicI32::new(0);
+
+/// Called only in a regular fork child's single surviving thread, before
+/// runtime cleanup and child handlers can invoke application initializers.
+/// The parent keeps its generation, so its active initializer and waiters
+/// remain connected. `_Fork` deliberately retains its no-handler contract.
+pub(crate) fn note_once_fork_child() {
+    ONCE_FORK_GENERATION.fetch_add(ONCE_GENERATION_STEP, Ordering::Relaxed);
+}
 
 /// Returns the once word to INIT and wakes waiters if `init_routine` unwinds
 /// (a C++ exception, or a forced unwind from thread cancellation). As in
 /// glibc, the unwind keeps propagating to the caller and the next
 /// `pthread_once` on the same control runs the routine again.
-struct OnceResetOnUnwind<'a>(&'a AtomicI32);
+struct OnceResetOnUnwind<'a> {
+    state: &'a AtomicI32,
+    in_progress: i32,
+}
 
 impl Drop for OnceResetOnUnwind<'_> {
     fn drop(&mut self) {
-        self.0.store(ONCE_INIT, Ordering::Release);
-        #[cfg(target_os = "linux")]
+        // A child can acquire an inherited once under its new generation.
+        // Unwinding the older initializer must not reset that newer owner or
+        // discard initialization it has already completed in the child.
+        if self
+            .state
+            .compare_exchange(
+                self.in_progress,
+                ONCE_INIT,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+            .is_ok()
         {
-            let _ = futex_wake_private(self.0, i32::MAX);
+            #[cfg(target_os = "linux")]
+            {
+                let _ = futex_wake_private(self.state, i32::MAX);
+            }
         }
     }
 }
@@ -4436,6 +4476,9 @@ pub unsafe extern "C" fn pthread_create(
     };
     #[cfg(not(feature = "standalone"))]
     let result = if !force_native && let Some(host_create) = resolved_thread_create_raw() {
+        // Constructors may start workers before the startup prewarm runs.
+        // Initialize the real host heap before its first concurrent users.
+        crate::malloc_abi::ensure_host_allocator_initialized();
         ensure_strict_host_thread_tls_gap();
         unsafe {
             dispatch_host_thread_create_with_managed_attr(host_create, thread_out, attr, start, arg)
@@ -4993,11 +5036,20 @@ struct CondWaitGuard {
     saved_count: u32,
     /// `condvar_wait_prepare` succeeded, so the mutex was released.
     prepared: bool,
+    /// Only an ordinary wait return may consume its selected condition signal.
+    completed: bool,
 }
 
 impl Drop for CondWaitGuard {
     fn drop(&mut self) {
         if self.prepared {
+            if !self.completed {
+                // A hosted asynchronous cancellation can arrive after the
+                // kernel selected this waiter for a signal. The native futex
+                // adapter's replacement wake does not cover that path.
+                // SAFETY: prepare registered this still-live condition wait.
+                replace_cancelled_condvar_wake(unsafe { &*self.cond });
+            }
             // SAFETY: pairs the successful prepare on the same pointers.
             unsafe { core_condvar_wait_finish(self.cond, self.word) };
         }
@@ -5016,6 +5068,26 @@ impl Drop for CondWaitGuard {
             }
         }
     }
+}
+
+/// POSIX condition cancellation must not consume a concurrent signal while
+/// another waiter remains blocked. Wake a replacement before deregistering or
+/// reacquiring the mutex, even when cancellation raced a successful futex wake.
+/// An unnecessary wake is an allowed spurious return; incrementing the sequence
+/// here would instead invent a new condition signal.
+fn replace_cancelled_condvar_wake(cv: &CondvarData) {
+    // SAFETY: a registered wait keeps the aligned sequence word live. The
+    // condition's private/shared setting must match the original futex wait.
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            std::ptr::from_ref(&cv.seq).cast_mut().cast(),
+            libc::FUTEX_WAKE | cv.futex_private_flag(),
+            1,
+            0,
+            0,
+            0,
+        )
+    };
 }
 
 /// Block on a condvar's sequence word until it moves past `expected_seq`
@@ -5108,6 +5180,7 @@ impl ExtCondWaitGuard<'_> {
 impl Drop for ExtCondWaitGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
+            replace_cancelled_condvar_wake(self.cv);
             let _ = self.finish();
         }
     }
@@ -5223,6 +5296,7 @@ unsafe fn cond_wait_common(
         mtype,
         saved_count,
         prepared: false,
+        completed: false,
     };
     // SAFETY: condvar pointer and mutex futex word pointer are validated/aligned and caller-owned.
     let expected_seq = match unsafe { core_condvar_wait_prepare(cond_ptr, word_u32) } {
@@ -5233,6 +5307,7 @@ unsafe fn cond_wait_common(
 
     // SAFETY: `cond_ptr` was validated above.
     let rc = cond_futex_wait(unsafe { &*cond_ptr }, expected_seq, abstime, clock);
+    guard.completed = true;
     drop(guard);
     rc
 }
@@ -5677,6 +5752,13 @@ pub unsafe extern "C" fn pthread_setspecific(
     rc
 }
 
+const HOST_KEY_TEARDOWN_UNCHECKED: u8 = 0;
+const HOST_KEY_TEARDOWN_DECIDED: u8 = 1;
+const HOST_KEY_TEARDOWN_REARM: u8 = 2;
+thread_local! {
+    static HOST_KEY_TEARDOWN_STATE: Cell<u8> = const { Cell::new(HOST_KEY_TEARDOWN_UNCHECKED) };
+}
+
 /// Key destructors of host-created threads (bd-v6cz9v).
 ///
 /// Threads made by the host's pthread_create exit through the host's
@@ -5687,32 +5769,54 @@ pub unsafe extern "C" fn pthread_setspecific(
 /// registers one thread-exit callback (the host runs __cxa_thread_atexit_impl
 /// callbacks from start_thread) that runs fl's destructors. The main thread is
 /// skipped: glibc does not run key destructors at process exit.
-fn ensure_host_thread_key_teardown() {
-    if crate::malloc_abi::native_thread_backend_active() || global_force_native_threading_enabled()
-    {
+/// The owned-cache lane uses a real host POSIX key instead, so internal scratch
+/// mappings remain available until all host C++ TLS callbacks have finished.
+pub(crate) fn ensure_host_thread_key_teardown() {
+    // Native teardown owns its key callbacks. Do not read or set the creator's
+    // inherited compiler-TLS DECIDED flag on behalf of a native clone.
+    if core_current_thread_handle().is_some() {
         return;
     }
-    thread_local! {
-        static DECIDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    }
-    // Once per thread: the backend and main-thread checks cannot change for
+    // Once per drain: the backend and main-thread checks cannot change for
     // its lifetime, and they cost a gettid and a getpid syscall on every
     // non-null pthread_setspecific when they ran first.
-    if DECIDED.try_with(|d| d.replace(true)).unwrap_or(true) {
+    let previous = HOST_KEY_TEARDOWN_STATE
+        .try_with(|state| state.replace(HOST_KEY_TEARDOWN_DECIDED))
+        .unwrap_or(HOST_KEY_TEARDOWN_DECIDED);
+    if previous == HOST_KEY_TEARDOWN_DECIDED {
         return;
     }
-    if current_threading_backend() != THREAD_BACKEND_HOST {
-        return;
+    if previous != HOST_KEY_TEARDOWN_REARM {
+        if current_threading_backend() != THREAD_BACKEND_HOST {
+            return;
+        }
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        if tid == frankenlibc_core::syscall::sys_getpid() {
+            return;
+        }
     }
-    let tid = frankenlibc_core::syscall::sys_gettid();
-    if tid == frankenlibc_core::syscall::sys_getpid() {
-        return;
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let (key, set) = host_key_teardown_bridge();
+        // SAFETY: the host key and function belong to the same loaded libc.
+        // Its opaque non-null value merely requests the thread-exit callback.
+        if unsafe { set(key, 1usize as *const c_void) } != 0 {
+            std::process::abort();
+        }
     }
     crate::util::mark_thread_has_pending_key_destructors();
-    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.
+    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle
+    // pins this callback's code until the host has finished invoking it.
+    #[cfg(not(feature = "owned-tls-cache"))]
     unsafe {
+        // C/C-unwind share the callback ABI. The actual callback must permit
+        // cancellation or pthread_exit from an application key destructor.
+        let callback = std::mem::transmute::<
+            unsafe extern "C-unwind" fn(*mut c_void),
+            unsafe extern "C" fn(*mut c_void),
+        >(run_host_thread_key_destructors);
         crate::startup_abi::__cxa_thread_atexit_impl(
-            run_host_thread_key_destructors,
+            callback,
             std::ptr::null_mut(),
             (&raw const crate::unistd_abi::__dso_handle)
                 .cast_mut()
@@ -5721,11 +5825,174 @@ fn ensure_host_thread_key_teardown() {
     }
 }
 
-unsafe extern "C" fn run_host_thread_key_destructors(_: *mut c_void) {
+#[cfg(feature = "owned-tls-cache")]
+type HostKeySetFn = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
+
+#[cfg(feature = "owned-tls-cache")]
+static HOST_TEARDOWN_KEY: AtomicU64 = AtomicU64::new(0); // host key + 1
+#[cfg(feature = "owned-tls-cache")]
+static HOST_TEARDOWN_KEY_OWNER: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "owned-tls-cache")]
+static HOST_TEARDOWN_SET: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+struct HostKeyInitializationGuard;
+
+#[cfg(feature = "owned-tls-cache")]
+impl Drop for HostKeyInitializationGuard {
+    fn drop(&mut self) {
+        HOST_TEARDOWN_KEY_OWNER.store(0, Ordering::Release);
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn host_key_teardown_bridge() -> (libc::pthread_key_t, HostKeySetFn) {
+    let mut encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
+    if encoded == 0 {
+        let pid = raw_syscall::sys_getpid() as u32 as u64;
+        let identity = (pid << 32) | raw_syscall::sys_gettid() as u32 as u64;
+        loop {
+            let owner = HOST_TEARDOWN_KEY_OWNER.load(Ordering::Acquire);
+            if (owner == 0 || owner >> 32 != pid)
+                && HOST_TEARDOWN_KEY_OWNER
+                    .compare_exchange(owner, identity, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            {
+                let _guard = HostKeyInitializationGuard;
+                encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
+                if encoded == 0 {
+                    type Create = unsafe extern "C" fn(
+                        *mut libc::pthread_key_t,
+                        Option<unsafe extern "C" fn(*mut c_void)>,
+                    ) -> c_int;
+                    // Direct ELF lookup avoids interposed dlsym and its own
+                    // TLS. DECIDED was set before this call, so loader/string
+                    // reentry cannot recursively initialize the bridge.
+                    let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")
+                        .unwrap_or_else(|| std::process::abort());
+                    let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")
+                        .unwrap_or_else(|| std::process::abort());
+                    // SAFETY: both symbols have their POSIX signatures. The
+                    // actual callback permits unwinding through this bridge.
+                    let (create, callback) = unsafe {
+                        (
+                            std::mem::transmute::<usize, Create>(create),
+                            std::mem::transmute::<
+                                unsafe extern "C-unwind" fn(*mut c_void),
+                                unsafe extern "C" fn(*mut c_void),
+                            >(run_host_thread_key_destructors),
+                        )
+                    };
+                    let mut key = 0;
+                    // SAFETY: key is writable and callback has a stable address.
+                    if unsafe { create(&mut key, Some(callback)) } != 0 {
+                        std::process::abort();
+                    }
+                    HOST_TEARDOWN_SET.store(set, Ordering::Relaxed);
+                    encoded = u64::from(key) + 1;
+                    HOST_TEARDOWN_KEY.store(encoded, Ordering::Release);
+                }
+                break;
+            }
+            encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
+            if encoded != 0 {
+                break;
+            }
+            raw_syscall::sys_sched_yield();
+        }
+    }
+    // SAFETY: acquiring the published key also acquires its matching function.
+    let set = unsafe {
+        std::mem::transmute::<usize, HostKeySetFn>(HOST_TEARDOWN_SET.load(Ordering::Relaxed))
+    };
+    ((encoded - 1) as libc::pthread_key_t, set)
+}
+
+unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
+    #[cfg(feature = "owned-tls-cache")]
+    let (key, set) = {
+        let (key, set) = host_key_teardown_bridge();
+        // The host cleared this key before calling us. Re-arm it until core
+        // teardown completes: cancellation or pthread_exit in a user callback
+        // can unwind this frame and restart the host's destructor protocol.
+        // SAFETY: this thread already owns the valid host key's storage.
+        if unsafe { set(key, 1usize as *const c_void) } != 0 {
+            std::process::abort();
+        }
+        (key, set)
+    };
     frankenlibc_core::pthread::run_exiting_thread_key_destructors(
         frankenlibc_core::syscall::sys_gettid(),
     );
     crate::util::finish_thread_key_destructors_and_reclaim_tls_heap();
+    #[cfg(feature = "owned-tls-cache")]
+    // SAFETY: successful teardown no longer needs another host destructor pass.
+    if unsafe { set(key, std::ptr::null()) } != 0 {
+        std::process::abort();
+    }
+    // A remaining host C++ TLS callback may create another private cache or
+    // public key value after this drain. Let it register a fresh DSO-pinned
+    // callback, keeping the marker set throughout the drain itself so cache
+    // destructors cannot recursively register an endless chain of callbacks.
+    // Preserve the established host/non-main eligibility: Rust's PTHREAD_TLS
+    // may already be destroyed when a later C++ callback needs this rearm.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let _ = HOST_KEY_TEARDOWN_STATE.try_with(|state| state.set(HOST_KEY_TEARDOWN_REARM));
+}
+
+/// Run once in an isolated integration-test process. Returns the cache value
+/// seen by a late host C++ TLS callback and the number of payload destructions.
+/// Integration coverage is required: lib unit tests omit the ABI modules and
+/// disable OwnedTlsCache's automatic host-teardown registration.
+#[cfg(all(debug_assertions, not(feature = "standalone")))]
+#[doc(hidden)]
+pub fn pthread_host_cache_late_callback_counts_for_tests() -> (usize, usize) {
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    static OBSERVED: AtomicUsize = AtomicUsize::new(0);
+    struct State(usize);
+    impl Drop for State {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    static CACHE: crate::owned_tls_cache::OwnedTlsCache<State> =
+        crate::owned_tls_cache::OwnedTlsCache::new(|| State(5));
+    unsafe extern "C" fn late_callback(_: *mut c_void) {
+        // This uses production automatic bridge registration, including rearm
+        // after a completed default drain and destroyed pthread compiler TLS.
+        CACHE.with(|state| {
+            OBSERVED.store(state.0, Ordering::SeqCst);
+            state.0 = 91;
+        });
+    }
+    std::thread::spawn(|| {
+        // Register before first backend-TLS/cache access. Default drains are
+        // LIFO, so this callback follows the first cache drain and Rust's
+        // backend-TLS destructor; the owned POSIX bridge instead follows it.
+        // SAFETY: stable C callback and a DSO handle in this loaded library.
+        assert_eq!(
+            unsafe {
+                crate::startup_abi::__cxa_thread_atexit_impl(
+                    late_callback,
+                    core::ptr::null_mut(),
+                    (&raw const crate::unistd_abi::__dso_handle)
+                        .cast_mut()
+                        .cast(),
+                )
+            },
+            0
+        );
+        // This real host worker must not inherit another test's global native
+        // override. Set its local override before initializing the probe cache.
+        pthread_threading_restore_for_tests(false);
+        CACHE.with(|state| state.0 = 55);
+    })
+    .join()
+    .expect("host cache worker panicked");
+    (
+        OBSERVED.load(Ordering::SeqCst),
+        DROPS.load(Ordering::SeqCst),
+    )
 }
 
 // ===========================================================================
@@ -5758,17 +6025,14 @@ pub unsafe extern "C-unwind" fn pthread_once(
             return 0;
         }
 
-        if s == ONCE_INIT {
-            match state.compare_exchange(
-                ONCE_INIT,
-                ONCE_IN_PROGRESS,
-                Ordering::Acquire,
-                Ordering::Acquire,
-            ) {
+        let in_progress = ONCE_FORK_GENERATION.load(Ordering::Relaxed) | ONCE_IN_PROGRESS;
+        let orphaned = s & ONCE_STATE_MASK == ONCE_IN_PROGRESS && s != in_progress;
+        if s == ONCE_INIT || orphaned {
+            match state.compare_exchange(s, in_progress, Ordering::Acquire, Ordering::Acquire) {
                 Ok(_) => {
                     // We won; run the init routine. If it unwinds, the guard
                     // resets the word so another caller can retry.
-                    let reset = OnceResetOnUnwind(state);
+                    let reset = OnceResetOnUnwind { state, in_progress };
                     unsafe { routine() };
                     core::mem::forget(reset);
                     state.store(ONCE_DONE, Ordering::Release);
@@ -5784,7 +6048,9 @@ pub unsafe extern "C-unwind" fn pthread_once(
                 }
             }
         } else {
-            // Another thread is running init_routine; wait until done or failed.
+            // Another thread in this process owns this generation. Wait for
+            // its exact word so completion, unwind or a fork takeover cannot
+            // leave a waiter asleep after the state has already changed.
             #[cfg(target_os = "linux")]
             {
                 let _ = futex_wait_private(state, s);
@@ -5995,6 +6261,68 @@ fn managed_attr_data_ptr_const(
     is_managed.then_some(data)
 }
 
+/// Import a foreign attribute's public CPU-set representation. An unset GNU
+/// affinity fills even the bytes beyond the kernel mask with ones; an explicit
+/// all-CPU mask instead has a zero tail and must still override inheritance.
+unsafe fn host_attr_affinity(
+    source: *const libc::pthread_attr_t,
+) -> Result<Option<(usize, Vec<u8>)>, c_int> {
+    let symbol = unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"]) };
+    if symbol.is_null() {
+        return Err(libc::ENOSYS);
+    }
+    type GetAffinity =
+        unsafe extern "C" fn(*const libc::pthread_attr_t, usize, *mut libc::cpu_set_t) -> c_int;
+    let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
+    let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
+    loop {
+        let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
+        if rc == 0 {
+            return Ok(if bytes.iter().all(|byte| *byte == u8::MAX) {
+                None
+            } else {
+                Some((bytes.len(), bytes))
+            });
+        }
+        if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
+            return Err(rc);
+        }
+        let next = bytes.len() * 2;
+        bytes
+            .try_reserve_exact(next - bytes.len())
+            .map_err(|_| libc::ENOMEM)?;
+        bytes.resize(next, 0);
+    }
+}
+
+unsafe fn host_attr_signal_mask(source: *const libc::pthread_attr_t) -> Result<Option<u64>, c_int> {
+    let symbol = unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getsigmask_np\0"]) };
+    // Hosts predating this GNU extension cannot have set it in their attrs.
+    if symbol.is_null() {
+        return Ok(None);
+    }
+    type GetMask = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sigset_t) -> c_int;
+    let getter = unsafe { std::mem::transmute::<*mut c_void, GetMask>(symbol) };
+    let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    match unsafe { getter(source, &mut mask) } {
+        -1 => Ok(None), // PTHREAD_ATTR_NO_SIGMASK_NP
+        0 => {
+            let mut kernel_mask = [0u8; 8];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    std::ptr::from_ref(&mask).cast::<u8>(),
+                    kernel_mask.as_mut_ptr(),
+                    8,
+                );
+            }
+            Ok(Some(
+                u64::from_ne_bytes(kernel_mask) & !((1 << 31) | (1 << 32)),
+            ))
+        }
+        error => Err(error),
+    }
+}
+
 /// An immutable, address-stable copy of SIGEV_THREAD attributes. Timers copy
 /// standard stack/guard/scheduling fields; message queues also copy affinity.
 /// No caller-owned attribute or extension pointer survives registration.
@@ -6074,38 +6402,7 @@ impl NotificationThreadAttributes {
             }
             #[cfg(not(feature = "standalone"))]
             {
-                // Query the public host interface rather than copying private
-                // pointers from a foreign pthread_attr_t. Grow for large CPU sets.
-                let symbol = unsafe {
-                    resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"])
-                };
-                if symbol.is_null() {
-                    return Err(libc::ENOSYS);
-                }
-                type GetAffinity = unsafe extern "C" fn(
-                    *const libc::pthread_attr_t,
-                    usize,
-                    *mut libc::cpu_set_t,
-                ) -> c_int;
-                // SAFETY: the resolved public getter has this exact signature.
-                let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
-                let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
-                loop {
-                    let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
-                    if rc == 0 {
-                        // GNU reports an unset affinity as all ones, including
-                        // bytes beyond the kernel CPU set. Preserve inheritance.
-                        break if bytes.iter().all(|byte| *byte == u8::MAX) {
-                            None
-                        } else {
-                            Some((bytes.len(), bytes))
-                        };
-                    }
-                    if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
-                        return Err(rc);
-                    }
-                    bytes.resize(bytes.len() * 2, 0);
-                }
+                unsafe { host_attr_affinity(source) }?
             }
         };
         if let Some((size, bytes)) = affinity {
@@ -7163,84 +7460,6 @@ pub unsafe extern "C-unwind" fn __pthread_setcanceltype(typ: c_int, oldtype: *mu
 // the same reason. The window opens only when the exported entry point's
 // return address lies outside fl's loaded image.
 
-/// Issue one blocking syscall as a POSIX cancellation point. Returns the
-/// syscall result, or -1 with errno set.
-///
-/// Always inlined: [`at_cancellation_point`] reads the return address of the
-/// function it ends up in, which must be the exported entry point.
-#[inline(always)]
-pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 6]) -> isize {
-    let ret = unsafe { cancellation_point_syscall_raw(nr, args) };
-    if (-4095..0).contains(&ret) {
-        unsafe { set_abi_errno(-ret as c_int) };
-        return -1;
-    }
-    ret
-}
-
-/// A cancellation point whose public entry captured its caller before entering
-/// shared, out-of-line I/O machinery. `caller == 0` explicitly requests internal
-/// non-cancelling I/O; a nonzero address still goes through the normal host-thread
-/// and own-image checks. This must surround only the raw syscall, never stream
-/// mutation, allocation, or a callback.
-///
-/// # Safety
-/// The caller supplies valid syscall arguments and keeps its surrounding state
-/// unwind-safe. `caller` must be the actual public entry's return address, or zero
-/// for internal work; inventing an external address would bypass its admission.
-pub(crate) unsafe fn cancellation_point_syscall_for_caller(
-    caller: usize,
-    nr: libc::c_long,
-    args: [usize; 6],
-) -> isize {
-    let syscall = || {
-        // SAFETY: forwarded from this function's caller without alteration.
-        unsafe {
-            raw_syscall::syscall6(
-                nr as usize,
-                args[0],
-                args[1],
-                args[2],
-                args[3],
-                args[4],
-                args[5],
-            ) as isize
-        }
-    };
-    let ret = if caller == 0 {
-        syscall()
-    } else {
-        // SAFETY: the closure captures only the syscall number and arguments;
-        // cancellation_window opens asynchronous cancellation for that syscall.
-        unsafe { cancellation_window(caller, syscall) }
-    };
-    if (-4095..0).contains(&ret) {
-        unsafe { set_abi_errno(-ret as c_int) };
-        return -1;
-    }
-    ret
-}
-
-/// [`cancellation_point_syscall`] returning the raw kernel result (a negated
-/// errno on failure). Always inlined, for the reason given there.
-#[inline(always)]
-pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usize; 6]) -> isize {
-    // SAFETY: the caller supplies a valid syscall number and arguments.
-    unsafe {
-        at_cancellation_point(|| {
-            raw_syscall::syscall6(
-                nr as usize,
-                args[0],
-                args[1],
-                args[2],
-                args[3],
-                args[4],
-                args[5],
-            ) as isize
-        })
-    }
-}
-
 /// Run `blocking_syscall` (one blocking system call) as a POSIX cancellation
 /// point of the exported function this is inlined into.
 ///
@@ -7437,10 +7656,9 @@ pub(crate) unsafe extern "C-unwind" fn cancellation_point_nanosleep(
     }
 }
 
-/// Clock-selected sleep with native cancellation for the relative monotonic
-/// clocks and absolute CLOCK_MONOTONIC deadlines. Other clock/flag contracts
-/// retain the original syscall, including CPU clocks and settable deadlines.
-/// Returns `0` on success or a positive `errno` on failure.
+/// Clock-selected sleep with bounded native cancellation. Absolute REALTIME
+/// and BOOTTIME deadlines use kernel timers when no caught signal is deliverable;
+/// unsupported clocks, flags and handler dispositions retain the original syscall.
 #[inline(always)]
 pub(crate) unsafe extern "C-unwind" fn cancellation_point_clock_nanosleep(
     clock: c_int,
@@ -7463,7 +7681,11 @@ unsafe extern "C-unwind" fn native_cancellation_sleep_window(
 ) -> c_int {
     let absolute = flags == libc::TIMER_ABSTIME;
     let supported = (flags == 0 && matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC))
-        || (absolute && clock == libc::CLOCK_MONOTONIC);
+        || (absolute
+            && matches!(
+                clock,
+                libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC | libc::CLOCK_BOOTTIME
+            ));
     if supported
         && caller != 0
         && let Some(cancel) = current_native_cancellation_wait()
@@ -7483,11 +7705,28 @@ unsafe extern "C-unwind" fn native_cancellation_sleep_window(
                 std::mem::size_of::<raw_syscall::Timespec>(),
             )
         };
-        let result = imported.and_then(|()| {
+        let result = match imported {
             // SAFETY: owned is initialized and aligned, and cancel belongs to
             // this live native thread for the entire bounded sleep.
-            unsafe { cancel_poll::wait_sleep(&owned, absolute, !remaining.is_null(), cancel) }
-        });
+            Ok(()) => unsafe {
+                cancel_poll::wait_sleep(
+                    &owned,
+                    clock,
+                    absolute,
+                    !remaining.is_null(),
+                    cancel,
+                    crate::signal_abi::supports_native_child_wait,
+                )
+            },
+            // Preserve known allocation bounds and genuine copy faults. Other
+            // errors belong to the snapshot transport (for example, seccomp
+            // denial or pipe descriptor exhaustion), not to the sleep request.
+            Err(libc::EFAULT) => Err(libc::EFAULT),
+            // The original syscall safely imports the original timespec. This
+            // retains pending-only native cancellation when the bounded adapter
+            // cannot acquire a snapshot; it must not invent a new sleep error.
+            Err(_) => Ok(cancel_poll::SleepResult::Unsupported),
+        };
         if cancel.pending() {
             unsafe { pthread_testcancel() };
         }
@@ -8112,6 +8351,57 @@ unsafe fn cancellation_epoll2_window(
     }
 }
 
+/// Socket reads share receive's native cancellation wait. Other descriptors
+/// and unsupported socket contracts retain the original read
+/// syscall. Capture the public caller through read's aliases and fortify entry.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_read(
+    fd: c_int,
+    buffer: *mut u8,
+    length: usize,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_point_read_for_caller(caller, fd, buffer, length) }
+}
+
+/// Preserve a public stdio entry's caller through shared buffer/refill helpers.
+/// Socket-backed FILE reads use the same native cancellation adapter as read;
+/// hosted and unsupported descriptors retain the original syscall window.
+/// `caller == 0` suppresses cancellation for internal I/O and GNU fopen `c` mode.
+///
+/// # Safety
+/// `buffer` must satisfy read's writable-span contract. `caller` is the actual
+/// public entry's captured return address, or zero for non-cancelling work.
+/// Stream state and locks must be owned by surrounding unwind-safe guards.
+#[inline]
+pub(crate) unsafe fn cancellation_point_read_for_caller(
+    caller: usize,
+    fd: c_int,
+    buffer: *mut u8,
+    length: usize,
+) -> Result<isize, c_int> {
+    unsafe {
+        cancellation_receive_window(caller, cancel_poll::Receive::Read { fd, buffer, length })
+    }
+}
+
+/// Scatter reads retain readv's original syscall outside admitted native socket
+/// waits. Keep caller capture in the exported readv or reserved alias frame.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_readv(
+    fd: c_int,
+    vectors: *const libc::iovec,
+    count: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(
+            caller,
+            cancel_poll::Receive::ReadVector { fd, vectors, count },
+        )
+    }
+}
+
 /// Socket receive cancellation, including requests arriving after a native
 /// thread has parked. Capture the public caller through recv/from aliases and
 /// fortified entrypoints before entering the shared, out-of-line window.
@@ -8128,7 +8418,7 @@ pub(crate) unsafe fn cancellation_point_recvfrom(
     unsafe {
         cancellation_receive_window(
             caller,
-            cancel_poll::ReceiveFrom {
+            cancel_poll::Receive::From {
                 fd,
                 buffer,
                 length,
@@ -8140,13 +8430,53 @@ pub(crate) unsafe fn cancellation_point_recvfrom(
     }
 }
 
+/// Message receives share the same bounded native wait while the kernel owns
+/// iovec, source-address and ancillary publication. Capture the external caller
+/// before entering the shared window, including the reserved-namespace alias.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_recvmsg(
+    fd: c_int,
+    message: *mut u8,
+    flags: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(caller, cancel_poll::Receive::Message { fd, message, flags })
+    }
+}
+
+/// Receive one record or a WAITFORONE batch with bounded native cancellation.
+/// The kernel owns the complete batch and its deferred error publication.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_recvmmsg(
+    fd: c_int,
+    messages: *mut u8,
+    count: u32,
+    flags: c_int,
+    timeout: *mut libc::timespec,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(
+            caller,
+            cancel_poll::Receive::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+                timeout,
+            },
+        )
+    }
+}
+
 /// Own no drop state across the unchanged hosted asynchronous window. Native
 /// cancellation happens only after the adapter restores the entry signal mask;
-/// a completed receive always returns its bytes and source-address publication.
+/// a completed receive always returns its committed result and publication.
 #[inline(never)]
 unsafe fn cancellation_receive_window(
     caller: usize,
-    operation: cancel_poll::ReceiveFrom,
+    operation: cancel_poll::Receive,
 ) -> Result<isize, c_int> {
     if caller != 0
         && let Some(cancel) = current_native_cancellation_wait()
@@ -8171,18 +8501,151 @@ unsafe fn cancellation_receive_window(
     // Disabled, internal, hosted and unsupported socket contracts retain the
     // original syscall. A returning testcancel also follows this path if a
     // signal handler disabled cancellation while the entry mask was restored.
+    unsafe { cancellation_window(caller, || operation.blocking()) }
+}
+
+/// Socket writes share the native send engine's record and accepted-prefix
+/// handling, with the original write syscall for all unsupported contracts.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_write(
+    fd: c_int,
+    buffer: *const u8,
+    length: usize,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_point_write_for_caller(caller, fd, buffer, length) }
+}
+
+/// Preserve a public stdio entry's caller through shared output/flush helpers.
+/// A successful native send publishes its accepted prefix before cancellation
+/// can act at a later write. Zero retains non-cancelling internal descriptor I/O.
+///
+/// # Safety
+/// `buffer` must satisfy write's readable-span contract. `caller` is the actual
+/// public entry's captured return address, or zero. Surrounding stream state
+/// must remain consistent across a forced unwind before any bytes are accepted.
+#[inline]
+pub(crate) unsafe fn cancellation_point_write_for_caller(
+    caller: usize,
+    fd: c_int,
+    buffer: *const u8,
+    length: usize,
+) -> Result<isize, c_int> {
+    unsafe { cancellation_send_window(caller, cancel_poll::Send::Write { fd, buffer, length }) }
+}
+
+/// Gather writes own their native descriptor snapshot while preserving the
+/// original writev syscall for hosted, internal, disabled and unsupported calls.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_writev(
+    fd: c_int,
+    vectors: *const libc::iovec,
+    count: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
     unsafe {
-        cancellation_window(caller, || {
-            raw_syscall::sys_recvfrom(
-                operation.fd,
-                operation.buffer,
-                operation.length,
-                operation.flags,
-                operation.address,
-                operation.address_length,
-            )
-        })
+        cancellation_send_window(
+            caller,
+            cancel_poll::Send::WriteVector { fd, vectors, count },
+        )
     }
+}
+
+/// Socket send cancellation, including requests arriving while the send buffer
+/// is full. Preserve the external caller through send/sendto and their aliases.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sendto(
+    fd: c_int,
+    buffer: *const u8,
+    length: usize,
+    flags: c_int,
+    address: *const u8,
+    address_length: usize,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_send_window(
+            caller,
+            cancel_poll::Send::To(cancel_poll::SendTo {
+                fd,
+                buffer,
+                length,
+                flags,
+                address,
+                address_length,
+            }),
+        )
+    }
+}
+
+/// Vectored sends preserve their imported descriptor graph and transmit
+/// ancillary data only once, even when a stream needs several native slices.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sendmsg(
+    fd: c_int,
+    message: *const u8,
+    flags: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_send_window(caller, cancel_poll::Send::Message { fd, message, flags }) }
+}
+
+/// Batched message sends share record-counted native cancellation. Stream
+/// batches and unsupported socket contracts retain the original syscall.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sendmmsg(
+    fd: c_int,
+    messages: *mut u8,
+    count: u32,
+    flags: c_int,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_send_window(
+            caller,
+            cancel_poll::Send::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+            },
+        )
+    }
+    .map(|sent| sent as c_int)
+}
+
+/// This frame owns no drop state across hosted asynchronous cancellation.
+/// Partial sends remain successful; a pending request then belongs to the next
+/// cancellation point, exactly as for an interrupted raw send with progress.
+#[inline(never)]
+unsafe fn cancellation_send_window(
+    caller: usize,
+    operation: cancel_poll::Send,
+) -> Result<isize, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            // SAFETY: no payload has been transmitted yet.
+            unsafe { pthread_testcancel() };
+        }
+        match unsafe {
+            cancel_poll::wait_send(
+                operation,
+                cancel,
+                crate::signal_abi::supports_native_child_wait,
+            )
+        }? {
+            cancel_poll::SendResult::Ready(sent) => return Ok(sent),
+            cancel_poll::SendResult::Cancel => unsafe { pthread_testcancel() },
+            cancel_poll::SendResult::Unsupported => {}
+        }
+    }
+    // No bytes were accepted by an unsupported adapter, so the unchanged raw
+    // operation cannot replay a prefix. Disabled/internal/hosted calls also use
+    // this path without changing socket flags or timeout/handler semantics.
+    unsafe { cancellation_window(caller, || operation.blocking()) }
 }
 
 /// A cancellation point that can wake an already-parked native thread. Keep
@@ -8543,12 +9006,17 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = (*handle_ptr).stack_size;
             (*data).guard_size = (*handle_ptr).guard_size;
             (*data).stack_addr = (*handle_ptr).stack_addr;
+            (*data).inherit_sched = i32::from((*handle_ptr).explicit_scheduling);
         }
-        return 0;
+        let tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
+        drop(registry);
+        return unsafe { finish_thread_attr_snapshot(attr, tid) };
     }
     drop(registry);
 
-    if is_managed_thread_handle(thread) && resolve_thread_tid(thread).is_some() {
+    if is_managed_thread_handle(thread)
+        && let Some(tid) = resolve_thread_tid(thread)
+    {
         let handle_ptr = thread as *mut ThreadHandle;
         // SAFETY: a managed detached thread keeps its handle alive until it
         // exits and self-cleans. `resolve_thread_tid(thread).is_some()` above
@@ -8565,8 +9033,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = (*handle_ptr).stack_size;
             (*data).guard_size = (*handle_ptr).guard_size;
             (*data).stack_addr = (*handle_ptr).stack_addr;
+            (*data).inherit_sched = i32::from((*handle_ptr).explicit_scheduling);
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, tid) };
     }
 
     if let Some(self_handle) = core_handle_for_tid(core_self_tid())
@@ -8586,8 +9055,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = (*handle_ptr).stack_size;
             (*data).guard_size = (*handle_ptr).guard_size;
             (*data).stack_addr = (*handle_ptr).stack_addr;
+            (*data).inherit_sched = i32::from((*handle_ptr).explicit_scheduling);
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, core_self_tid()) };
     }
 
     // A thread the host glibc created: ask the host, which knows its stack
@@ -8595,7 +9065,7 @@ pub unsafe extern "C" fn pthread_getattr_np(
     // MADV_GUARD_INSTALL, invisible in /proc/self/maps).
     if !force_native_threading_enabled()
         && host_thread_is_registered(thread_key)
-        && let Some((stack_addr, stack_size, guard_size, detach_state)) =
+        && let Some((stack_addr, stack_size, guard_size, detach_state, inherit_sched)) =
             crate::host_resolve::host_thread_stack(thread)
     {
         unsafe {
@@ -8603,8 +9073,11 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = stack_size;
             (*data).guard_size = guard_size;
             (*data).stack_addr = stack_addr;
+            (*data).inherit_sched = inherit_sched;
         }
-        return 0;
+        return unsafe {
+            finish_thread_attr_snapshot(attr, resolve_thread_tid(thread).unwrap_or(0))
+        };
     }
 
     // Fallback: /proc/self/maps, for the main thread (not created by
@@ -8631,10 +9104,65 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).guard_size = guard_size;
             (*data).stack_addr = stack_start;
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, probe_tid) };
     }
 
     libc::ESRCH
+}
+
+/// Complete a stack/lifecycle snapshot with the running thread's kernel
+/// attributes. Never hold a handle registry lock while querying or allocating
+/// the CPU mask. Exited joinable threads still expose their retained stack.
+unsafe fn finish_thread_attr_snapshot(attr: *mut libc::pthread_attr_t, tid: c_int) -> c_int {
+    if tid <= 0 {
+        return 0;
+    }
+    let policy = match raw_syscall::sys_sched_getscheduler(tid) {
+        Ok(policy) => policy,
+        Err(error) => return error,
+    };
+    let mut parameter = libc::sched_param { sched_priority: 0 };
+    if let Err(error) =
+        unsafe { raw_syscall::sys_sched_getparam(tid, std::ptr::from_mut(&mut parameter).cast()) }
+    {
+        return error;
+    }
+    let mut bytes = Vec::new();
+    let mut size = std::mem::size_of::<libc::cpu_set_t>();
+    loop {
+        if bytes.try_reserve_exact(size - bytes.len()).is_err() {
+            return libc::ENOMEM;
+        }
+        bytes.resize(size, 0);
+        match unsafe { raw_syscall::sys_sched_getaffinity(tid, size, bytes.as_mut_ptr()) } {
+            Ok(filled) => {
+                bytes.truncate(filled as usize);
+                break;
+            }
+            Err(libc::EINVAL) if size < 1024 * 1024 => size *= 2,
+            Err(error) => return error,
+        }
+    }
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    let mut registry = EXTENDED_ATTR_REGISTRY
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    registry.insert(
+        attr as usize,
+        ExtendedAttrData {
+            affinity: Some((bytes.len(), bytes)),
+            // GNU getattr does not manufacture a creation sigmask from live state.
+            sigmask: None,
+        },
+    );
+    unsafe {
+        (*data).sched_policy = policy;
+        (*data).sched_priority = parameter.sched_priority;
+        (*data).flags |= 1;
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -9670,6 +10198,11 @@ pub unsafe extern "C" fn pthread_attr_getaffinity_np(
     if let Some(ext) = reg.get(&key)
         && let Some((stored_size, ref mask_bytes)) = ext.affinity
     {
+        // GNU permits a shorter output only when no selected CPU is lost.
+        // Check before touching caller storage so an error is non-destructive.
+        if mask_bytes.iter().skip(cpusetsize).any(|byte| *byte != 0) {
+            return libc::EINVAL;
+        }
         let copy_len = cpusetsize.min(stored_size).min(mask_bytes.len());
         // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
         unsafe {
@@ -11722,6 +12255,11 @@ unsafe fn finish_native_thread_exit() -> ! {
 // Itanium unwinder (`libgcc_s.so.1` / `libunwind`) is already resident in an
 // interposed process, we pair its `_Unwind_ForcedUnwind` and `_Unwind_GetCFA`
 // so personalities bound to that unwinder receive its opaque `_Unwind_Context`.
+// Native lifecycle owns the exception object and cleanup destination. The
+// normal hybrid artifact already links the platform unwind runtime, whose
+// public Itanium ABI supplies stack walking and language landing pads. The
+// opt-in owned artifact uses the same stop protocol with its own unwinder;
+// neither backend may skip language destructors and report successful exit.
 #[repr(C, align(16))]
 struct NativeUnwindException {
     exception_class: u64,
@@ -11778,7 +12316,7 @@ unsafe extern "C-unwind" fn owned_forced_unwind_bridge(
     // SAFETY: NativeUnwindException and owned_unwind_abi::UnwindException share
     // identical #[repr(C, align(16))] Itanium _Unwind_Exception layout, and
     // UnwindContext is passed opaquely as *mut c_void to `stop`.
-    let stop_typed: crate::owned_unwind_abi::UnwindStopFn =
+    let stop_typed: Option<crate::owned_unwind_abi::UnwindStopFn> =
         Some(unsafe { core::mem::transmute::<ForcedUnwindStopRawFn, OwnedStopFnPtr>(stop) });
     unsafe {
         crate::owned_unwind_abi::owned_forced_unwind_entry(
@@ -11914,6 +12452,29 @@ unsafe extern "C-unwind" fn native_unwind_stop(
         unsafe { finish_native_thread_exit() };
     }
     0 // _URC_NO_REASON: allow this frame's language cleanup to run.
+}
+
+#[cfg(all(not(test), feature = "standalone", feature = "owned-unwind-stub"))]
+unsafe extern "C-unwind" fn native_owned_unwind_stop(
+    version: c_int,
+    actions: c_int,
+    exception_class: u64,
+    exception: *mut crate::owned_unwind_abi::UnwindException,
+    context: *mut crate::owned_unwind_abi::UnwindContext,
+    argument: *mut c_void,
+) -> c_int {
+    // SAFETY: the common stop protocol treats both exception and cursor as
+    // opaque; the backend-specific GetCFA above uses the matching layout.
+    unsafe {
+        native_unwind_stop(
+            version,
+            actions,
+            exception_class,
+            exception.cast(),
+            context.cast(),
+            argument,
+        )
+    }
 }
 
 /// Start (or restart after a plain C cleanup callback) a native forced unwind.

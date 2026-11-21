@@ -1011,6 +1011,13 @@ fn iter_traversal_after_unregister() {
 // _chain linked list tests (bd-9chy.50)
 // ===========================================================================
 
+unsafe fn public_file_chain(file: *const c_void) -> *mut c_void {
+    // SAFETY: callers walk live registry-owned FILE headers while retaining
+    // the registry lock. Standard objects have only the GNU prefix, so reading
+    // them as a larger NativeFile would cross their allocation boundary.
+    unsafe { (*file.cast::<IoFileProjection>())._chain.cast() }
+}
+
 #[test]
 fn chain_stdio_streams_are_linked() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1054,10 +1061,10 @@ fn chain_new_file_becomes_head() {
 
     // Verify we can walk the chain without crashing
     let mut count = 0;
-    let mut curr = new_file as *const NativeFile as *mut NativeFile;
+    let mut curr = new_file.handle_ptr();
     while !curr.is_null() {
         count += 1;
-        curr = unsafe { (*curr).chain() };
+        curr = unsafe { public_file_chain(curr) };
         assert!(count <= 100, "infinite loop guard");
     }
     // Should have at least 4 items: new file + stderr + stdout + stdin
@@ -1084,10 +1091,10 @@ fn chain_unregister_unlinks_from_list() {
     let count_before = {
         let f2 = reg.get(s2).expect("f2");
         let mut count = 0;
-        let mut curr = f2 as *const NativeFile as *mut NativeFile;
+        let mut curr = f2.handle_ptr();
         while !curr.is_null() {
             count += 1;
-            curr = unsafe { (*curr).chain() };
+            curr = unsafe { public_file_chain(curr) };
             if count > 100 {
                 break;
             }
@@ -1106,10 +1113,10 @@ fn chain_unregister_unlinks_from_list() {
     // Should be count_before - 1 (f2 was removed)
     let count_after = {
         let mut count = 0;
-        let mut curr = f1 as *const NativeFile as *mut NativeFile;
+        let mut curr = f1.handle_ptr();
         while !curr.is_null() {
             count += 1;
-            curr = unsafe { (*curr).chain() };
+            curr = unsafe { public_file_chain(curr) };
             if count > 100 {
                 break;
             }
@@ -1139,14 +1146,14 @@ fn chain_walk_visits_all_streams() {
 
     // Walk the chain manually via _chain pointers starting from newest
     let newest_slot = *slots.last().unwrap();
-    let head: *mut NativeFile = reg.get_mut(newest_slot).expect("head") as *mut NativeFile;
+    let head = reg.get(newest_slot).expect("head").handle_ptr();
 
     let mut count = 0;
     let mut curr = head;
     while !curr.is_null() {
         count += 1;
-        // SAFETY: we're walking NativeFile pointers within the registry
-        curr = unsafe { (*curr).chain() };
+        // SAFETY: every link is a live GNU header under the registry lock.
+        curr = unsafe { public_file_chain(curr) };
         assert!(count <= 100, "infinite loop guard");
     }
 

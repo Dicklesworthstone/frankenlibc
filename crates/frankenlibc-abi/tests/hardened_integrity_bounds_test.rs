@@ -8,6 +8,7 @@ use frankenlibc_abi::malloc_abi::{
 };
 use frankenlibc_abi::string_abi::memcpy;
 use frankenlibc_membrane::fingerprint::FINGERPRINT_SIZE;
+use frankenlibc_membrane::ptr_validator::{ValidationPipeline, in_validation_context};
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -80,6 +81,73 @@ fn run_child(case: &str) {
         assert_eq!(result, end.cast());
         assert_eq!(remaining, Some(0));
         assert_eq!(observed, saved, "out-of-bounds write reached the canary");
+        return;
+    }
+
+    if matches!(
+        case,
+        "parallel-validation-tail" | "parallel-validation-one-past-end"
+    ) {
+        let partial = case == "parallel-validation-tail";
+        // SAFETY: the live hardened allocation includes eight canary bytes.
+        // As in the one-past-end probe, restore them even if memcpy overflows.
+        let end = unsafe { ptr.add(SIZE) };
+        let saved = read_bytes(end, 8);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            // Its locks are independent of the ABI's global pipeline. Only
+            // this worker's recursion ownership may bypass validation.
+            let pipeline = ValidationPipeline::with_runtime_math(false);
+            let guard = pipeline.atfork_prepare();
+            let owns_context = in_validation_context();
+            if ready_tx.send(owns_context).is_ok() {
+                let _ = release_rx.recv();
+            }
+            drop(guard);
+            in_validation_context()
+        });
+
+        let ready_result = ready_rx.recv();
+        let caller_context = in_validation_context();
+        let offset = if partial { SIZE - 4 } else { SIZE };
+        // SAFETY: destination is in the live user/canary backing allocation.
+        // This deliberate overflow must be clamped to four or zero bytes.
+        let dst = unsafe { ptr.add(offset) };
+        let source = [0xA5u8; 8];
+        let result = unsafe { memcpy(dst.cast(), source.as_ptr().cast(), source.len()) };
+        let returned_destination = result == dst.cast();
+        // SAFETY: these are the final four bytes of the live user allocation.
+        let observed_tail = read_bytes(unsafe { ptr.add(SIZE - 4) }, 4);
+        let observed_canary = read_bytes(end, 8);
+
+        // Always let the guard owner finish before restoring/freeing or
+        // asserting, including when it failed to publish its ready signal.
+        let release_result = release_tx.send(());
+        let join_result = worker.join();
+        for (i, value) in saved.iter().enumerate() {
+            // SAFETY: restore the same live metadata range read above.
+            unsafe { end.add(i).write_volatile(*value) };
+        }
+        // SAFETY: the worker has joined and the live metadata is restored.
+        unsafe { free(ptr.cast()) };
+
+        let worker_context_after_drop = join_result.expect("validation guard worker");
+        let worker_context_while_held = ready_result.expect("validation guard ready");
+        assert!(release_result.is_ok(), "guard owner waited for release");
+        assert!(worker_context_while_held, "worker owns its validation context");
+        assert!(!worker_context_after_drop, "worker released its validation context");
+        assert!(returned_destination);
+        if partial {
+            assert_eq!(observed_tail, [0xA5; 4], "in-bounds prefix was not copied");
+        } else {
+            assert_eq!(observed_tail, [0x35; 4], "zero-bound copy changed user bytes");
+        }
+        assert_eq!(
+            observed_canary, saved,
+            "another thread's validation guard allowed an out-of-bounds write"
+        );
+        assert!(!caller_context, "another thread's guard grants no bypass");
         return;
     }
 
@@ -168,6 +236,10 @@ fn integrity_bounds_matrix() {
         ("canary-dst", "hardened", "off"),
         ("canary-src", "hardened", "off"),
         ("one-past-end", "hardened", "on"),
+        ("parallel-validation-tail", "hardened", "on"),
+        ("parallel-validation-tail", "hardened", "off"),
+        ("parallel-validation-one-past-end", "hardened", "on"),
+        ("parallel-validation-one-past-end", "hardened", "off"),
         ("quarantine", "hardened", "on"),
     ];
     let mut failures = Vec::new();

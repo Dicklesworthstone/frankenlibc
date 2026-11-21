@@ -17,12 +17,16 @@ const CHOLESKY_TOLERANCE: f64 = 1e-9;
 const MIN_BARRIER_MAP_SITES: usize = 20;
 const OPERATION_LOOKBACK_LINES: usize = 6;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SosTask {
     pub dimension: usize,
     pub monomial_degree: u32,
     pub barrier_budget_milli: i64,
     pub gram_matrix: Vec<Vec<i64>>,
+    /// Independently specified barrier polynomial. Quadratic coefficients use
+    /// the same score units as Q; the runtime applies its common fixed-point
+    /// divisor to either representation. Never derive this witness from Q.
+    pub barrier_polynomial: QuadraticPolynomial,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -155,6 +159,12 @@ fn generate_certificate_artifact(
             )
         });
     assert_sos_verifier_negative_controls();
+    verify_polynomial_identity(&task).unwrap_or_else(|err| {
+        panic!(
+            "SOS task artifact {} failed symbolic identity verification: {err}",
+            task_path.display()
+        )
+    });
 
     let proof_hash = compute_proof_hash(
         task.dimension,
@@ -197,11 +207,19 @@ fn generate_certificate_artifact(
 pub fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("unable to read {}: {err}", path.display()))?;
+    parse_sos_task_text(&text)
+}
+
+fn parse_sos_task_text(text: &str) -> Result<SosTask, String> {
+    let mut schema_version: Option<u32> = None;
     let mut dimension: Option<usize> = None;
     let mut monomial_degree: Option<u32> = None;
     let mut barrier_budget_milli: Option<i64> = None;
+    let mut barrier_constant_milli: Option<i64> = None;
+    let mut barrier_coefficients: Vec<Vec<i128>> = Vec::new();
     let mut gram_matrix: Vec<Vec<i64>> = Vec::new();
-    let mut reading_matrix = false;
+    let mut matrix_section = None;
+    let mut seen_keys = std::collections::BTreeSet::new();
 
     for (line_no, raw_line) in text.lines().enumerate() {
         let line_no = line_no + 1;
@@ -209,23 +227,36 @@ pub fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if reading_matrix {
-            if line.contains(':') {
-                return Err(format!(
-                    "line {line_no}: encountered key/value while parsing gram_matrix rows"
-                ));
+        let Some((key, value)) = line.split_once(':') else {
+            match matrix_section {
+                Some("gram_matrix") => gram_matrix.push(parse_matrix_row(line, line_no)?),
+                Some("barrier_coefficients") => {
+                    barrier_coefficients.push(parse_matrix_row(line, line_no)?);
+                }
+                _ => {
+                    return Err(format!(
+                        "line {line_no}: expected `key: value` or a declared matrix row"
+                    ));
+                }
             }
-            let row = parse_matrix_row(line, line_no)?;
-            gram_matrix.push(row);
             continue;
-        }
+        };
 
-        let (key, value) = line
-            .split_once(':')
-            .ok_or_else(|| format!("line {line_no}: expected `key: value` format, got `{line}`"))?;
         let key = key.trim();
         let value = value.trim();
+        if !seen_keys.insert(key) {
+            return Err(format!("line {line_no}: duplicate `{key}` field"));
+        }
+        matrix_section = None;
         match key {
+            "schema_version" => {
+                schema_version = Some(parse_u64_like_u32(value, line_no, key)?);
+            }
+            "solver_family" | "certificate" => {
+                if value.is_empty() {
+                    return Err(format!("line {line_no}: `{key}` must not be empty"));
+                }
+            }
             "dimension" => {
                 dimension = Some(parse_u64_like_usize(value, line_no, key)?);
             }
@@ -235,28 +266,52 @@ pub fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
             "barrier_budget_milli" => {
                 barrier_budget_milli = Some(parse_i64_like(value, line_no, key)?);
             }
-            "gram_matrix" => {
+            "barrier_constant_milli" => {
+                barrier_constant_milli = Some(parse_i64_like(value, line_no, key)?);
+            }
+            "gram_matrix" | "barrier_coefficients" => {
                 if !value.is_empty() {
                     return Err(format!(
-                        "line {line_no}: `gram_matrix` key must not include inline values"
+                        "line {line_no}: `{key}` key must not include inline values"
                     ));
                 }
-                reading_matrix = true;
+                matrix_section = Some(key);
             }
-            _ => {}
+            _ => {
+                return Err(format!("line {line_no}: unknown `{key}` field"));
+            }
         }
     }
 
+    if schema_version != Some(2) {
+        return Err(
+            "schema_version must be 2 (independent barrier polynomial required)".to_string(),
+        );
+    }
+    if !seen_keys.contains("barrier_coefficients") {
+        return Err("missing `barrier_coefficients`".to_string());
+    }
     Ok(SosTask {
         dimension: dimension.ok_or_else(|| "missing `dimension`".to_string())?,
         monomial_degree: monomial_degree.ok_or_else(|| "missing `monomial_degree`".to_string())?,
         barrier_budget_milli: barrier_budget_milli
             .ok_or_else(|| "missing `barrier_budget_milli`".to_string())?,
         gram_matrix,
+        barrier_polynomial: QuadraticPolynomial {
+            constant: i128::from(
+                barrier_constant_milli
+                    .ok_or_else(|| "missing `barrier_constant_milli`".to_string())?,
+            ),
+            coefficients: barrier_coefficients,
+        },
     })
 }
 
-fn parse_matrix_row(line: &str, line_no: usize) -> Result<Vec<i64>, String> {
+fn parse_matrix_row<T>(line: &str, line_no: usize) -> Result<Vec<T>, String>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
     let mut row = Vec::new();
     for (idx, part) in line.split(',').enumerate() {
         let trimmed = part.trim();
@@ -266,9 +321,9 @@ fn parse_matrix_row(line: &str, line_no: usize) -> Result<Vec<i64>, String> {
                 idx + 1
             ));
         }
-        let value = trimmed
-            .parse::<i64>()
-            .map_err(|err| format!("line {line_no}: invalid i64 matrix cell `{trimmed}`: {err}"))?;
+        let value = trimmed.parse::<T>().map_err(|err| {
+            format!("line {line_no}: invalid integer matrix cell `{trimmed}`: {err}")
+        })?;
         row.push(value);
     }
     Ok(row)
@@ -299,6 +354,12 @@ fn validate_task(task: &SosTask) -> Result<(), String> {
     if task.dimension > 16 {
         return Err("dimension must be <= 16".to_string());
     }
+    if task.monomial_degree != 2 {
+        return Err("only degree-2 barrier polynomials are supported".to_string());
+    }
+    if task.barrier_budget_milli <= 0 {
+        return Err("barrier_budget_milli must be positive".to_string());
+    }
     if task.gram_matrix.len() != task.dimension {
         return Err(format!(
             "gram_matrix row count {} does not match dimension {}",
@@ -324,6 +385,27 @@ fn validate_task(task: &SosTask) -> Result<(), String> {
                     task.gram_matrix[i][j], task.gram_matrix[j][i]
                 ));
             }
+        }
+    }
+    if task.barrier_polynomial.coefficients.len() != task.dimension {
+        return Err(format!(
+            "barrier_coefficients row count {} does not match dimension {}",
+            task.barrier_polynomial.coefficients.len(),
+            task.dimension
+        ));
+    }
+    for (i, row) in task.barrier_polynomial.coefficients.iter().enumerate() {
+        if row.len() != task.dimension {
+            return Err(format!(
+                "barrier_coefficients row {i} has {} entries; expected {}",
+                row.len(),
+                task.dimension
+            ));
+        }
+        if row[..i].iter().any(|&coefficient| coefficient != 0) {
+            return Err(format!(
+                "barrier_coefficients row {i} must be canonical upper-triangular"
+            ));
         }
     }
     Ok(())
@@ -394,6 +476,51 @@ fn verify_psd_cholesky(gram_matrix: &[Vec<i64>]) -> Result<PsdVerification, Stri
         max_abs_reconstruction_error,
         frobenius_residual: frobenius_sq.sqrt(),
     })
+}
+
+/// Check an independently supplied polynomial against the Gram witness.
+///
+/// The task specifies B(z) separately from Q. We check every coefficient of
+/// B(z) + z^T Q z - budget, including the constant, using exact integer
+/// arithmetic. The quadratic numerators share the runtime fixed-point scale,
+/// so their cancellation is exact before or after that common scaling.
+///
+/// Together with PSD checking this establishes a quadratic decomposition. It
+/// does NOT establish initial/unsafe-set separation or invariance under system
+/// dynamics: those would require independently specified sets and dynamics.
+fn verify_polynomial_identity(task: &SosTask) -> Result<(), String> {
+    validate_task(task)?;
+    let constant_residual = task
+        .barrier_polynomial
+        .constant
+        .checked_sub(i128::from(task.barrier_budget_milli))
+        .ok_or_else(|| "constant residual overflow".to_string())?;
+    if constant_residual != 0 {
+        return Err(format!(
+            "constant residual must be zero, got {constant_residual}"
+        ));
+    }
+    for i in 0..task.dimension {
+        for j in i..task.dimension {
+            // Off-diagonal entries contribute twice in the full matrix
+            // evaluation. Convert before addition so even i64 extremes are
+            // handled exactly rather than wrapping or saturating.
+            let mut gram_coefficient = i128::from(task.gram_matrix[i][j]);
+            if i != j {
+                gram_coefficient += i128::from(task.gram_matrix[j][i]);
+            }
+            let residual = task.barrier_polynomial.coefficients[i][j]
+                .checked_add(gram_coefficient)
+                .ok_or_else(|| format!("quadratic residual overflow at ({i}, {j})"))?;
+            if residual != 0 {
+                return Err(format!(
+                    "quadratic residual at ({i}, {j}) must be zero, got {residual}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -698,12 +825,159 @@ fn canonical_degree_two_coefficients(gram_matrix: &[Vec<i64>]) -> Vec<Vec<i128>>
     coeffs
 }
 
+#[cfg(test)]
+mod polynomial_witness_tests {
+    use super::*;
+
+    const ARTIFACTS: [&str; 3] = [
+        include_str!("artifacts/sos/fragmentation_certificate.task"),
+        include_str!("artifacts/sos/thread_safety_certificate.task"),
+        include_str!("artifacts/sos/size_class_certificate.task"),
+    ];
+
+    const SMALL_TASK: &str = "schema_version: 2\n\
+dimension: 2\n\
+monomial_degree: 2\n\
+barrier_budget_milli: 10\n\
+barrier_constant_milli: 10\n\
+barrier_coefficients:\n\
+-4,-2\n\
+0,-3\n\
+gram_matrix:\n\
+4,1\n\
+1,3\n";
+
+    #[test]
+    fn shipped_polynomials_match_their_psd_witnesses() {
+        for text in ARTIFACTS {
+            let task = parse_sos_task_text(text).expect("checked-in task parses");
+            validate_task(&task).expect("checked-in task has supported shape");
+            verify_psd_cholesky(&task.gram_matrix).expect("checked-in Q is PSD");
+            verify_polynomial_identity(&task).expect("independent polynomial matches Q");
+        }
+    }
+
+    #[test]
+    fn changed_psd_gram_witness_cannot_certify_unchanged_polynomial() {
+        for text in ARTIFACTS {
+            let original = parse_sos_task_text(text).unwrap();
+            for i in 0..original.dimension {
+                for j in i..original.dimension {
+                    let mut changed = original.clone();
+                    changed.gram_matrix[i][j] += 1;
+                    if i != j {
+                        changed.gram_matrix[j][i] += 1;
+                    }
+                    // Positive definiteness alone is insufficient: all these
+                    // witnesses are still PSD but certify a different target.
+                    verify_psd_cholesky(&changed.gram_matrix)
+                        .expect("small symmetric mutation remains PSD");
+                    let error = verify_polynomial_identity(&changed).unwrap_err();
+                    assert!(error.contains(&format!("quadratic residual at ({i}, {j})")));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn independently_changed_polynomial_and_budget_are_rejected() {
+        for text in ARTIFACTS {
+            let original = parse_sos_task_text(text).unwrap();
+            let mut changed = original.clone();
+            changed.barrier_polynomial.constant += 1;
+            assert!(
+                verify_polynomial_identity(&changed)
+                    .unwrap_err()
+                    .contains("constant residual")
+            );
+            let mut changed = original.clone();
+            changed.barrier_budget_milli += 1;
+            assert!(
+                verify_polynomial_identity(&changed)
+                    .unwrap_err()
+                    .contains("constant residual")
+            );
+            for i in 0..original.dimension {
+                for j in i..original.dimension {
+                    let mut changed = original.clone();
+                    changed.barrier_polynomial.coefficients[i][j] += 1;
+                    assert!(verify_polynomial_identity(&changed).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_or_missing_independent_witness_fails_closed() {
+        let invalid = [
+            SMALL_TASK.replace("schema_version: 2", "schema_version: 1"),
+            SMALL_TASK.replace("schema_version: 2\n", ""),
+            SMALL_TASK.replace("barrier_constant_milli: 10\n", ""),
+            SMALL_TASK.replace("barrier_coefficients:\n-4,-2\n0,-3\n", ""),
+            SMALL_TASK.replace("dimension: 2", "dimension: 2\ndimension: 2"),
+            SMALL_TASK.replace("gram_matrix:", "gram_matrix:\ngram_matrix:"),
+            SMALL_TASK.replace("barrier_constant_milli:", "barrier_constant_typo:"),
+            SMALL_TASK.replace("-4,-2", "-4,"),
+            SMALL_TASK.replace("-4,-2", "-4,NaN"),
+        ];
+        for text in invalid {
+            assert!(
+                parse_sos_task_text(&text).is_err(),
+                "accepted malformed task: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_polynomial_shapes_and_degree_are_rejected() {
+        for text in [
+            SMALL_TASK.replace("monomial_degree: 2", "monomial_degree: 3"),
+            SMALL_TASK.replace("0,-3", "1,-3"),
+            SMALL_TASK.replace("0,-3\n", ""),
+            SMALL_TASK.replace("-4,-2", "-4,-2,0"),
+            SMALL_TASK.replace("barrier_budget_milli: 10", "barrier_budget_milli: 0"),
+        ] {
+            let task = parse_sos_task_text(&text).expect("syntactically valid task");
+            assert!(
+                verify_polynomial_identity(&task).is_err(),
+                "accepted unsupported task: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn coefficient_residuals_use_exact_checked_arithmetic() {
+        let mut task = parse_sos_task_text(SMALL_TASK).unwrap();
+        let max = i64::MAX;
+        task.gram_matrix = vec![vec![max, max], vec![max, max]];
+        task.barrier_polynomial.coefficients = vec![
+            vec![-i128::from(max), -2 * i128::from(max)],
+            vec![0, -i128::from(max)],
+        ];
+        verify_polynomial_identity(&task).expect("off-diagonal sum exceeds i64 but fits i128");
+        task.barrier_polynomial.coefficients[0][1] += 1;
+        assert!(
+            verify_polynomial_identity(&task)
+                .unwrap_err()
+                .ends_with("got 1")
+        );
+        task.barrier_polynomial.coefficients[0][1] = i128::MAX;
+        assert!(
+            verify_polynomial_identity(&task)
+                .unwrap_err()
+                .contains("overflow")
+        );
+    }
+}
+
 fn write_soundness_report(out_dir: &Path, entries: &[SoundnessReportEntry]) -> Result<(), String> {
     let report_path = out_dir.join(SOUNDNESS_REPORT_FILE_NAME);
     let mut out = String::new();
     out.push_str("{\n");
     out.push_str("  \"schema_version\": 1,\n");
     out.push_str("  \"verification\": \"sos_soundness\",\n");
+    out.push_str("  \"verification_scope\": \"numerical_psd_and_exact_polynomial_identity\",\n");
+    out.push_str("  \"dynamical_safety_verified\": false,\n");
     out.push_str("  \"entries\": [\n");
     for (idx, entry) in entries.iter().enumerate() {
         if idx > 0 {
@@ -879,24 +1153,14 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/ptr_validator.rs",
         domain: "tsm",
-        // 10 -> 13 (bd-rc0923-epic-eeuy4f.9): ACTIVE_VALIDATION_CONTEXTS tracks
-        // threads with non-zero VALIDATION_DEPTH (fetch_add Release on 0->1,
-        // fetch_sub Release on 1->0, load Acquire short-circuit in
-        // in_validation_context).
-        // 13 -> 26: NATIVE_VALIDATION_ENTRIES (packed `(tid, depth)` AtomicU64) +
-        // NATIVE_VALIDATION_OVERFLOW_ACTIVE track per-TID validation recursion
-        // atomically without two-word signal-TOCTOU races when compiler TLS is
-        // disabled, pairing Acquire loads with AcqRel/Acquire CAS/RMWs and
-        // Release fork-reset stores.
-        // 26 -> 45 (Wave 16.1 + Pass-2 audit): `dec_active_validation_contexts`
-        // saturating CAS prevents u32 underflow; `ACTIVE_VALIDATION_CONTEXTS` is
-        // incremented before publishing `0 -> 1` (with saturating undo on CAS
-        // loss) so `in_validation_context()` has no zero-window race; retired
-        // slots remain `NATIVE_VALIDATION_TOMBSTONE` (never breaking concurrent
-        // probe chains while `enter_native_validation_tid` reuses tombstones);
-        // and `adopt_in_fork_child` / `reset_validation_context_in_fork_child`
-        // preserve surviving child depth.
-        expected_sites: 45,
+        // Merged ptr_validator.rs: per-tid native validation table plus the
+        // probe-table tests. Ordering:: sites were counted on the resolved
+        // file (production ContextTable, test setup, native/fallback entry,
+        // and logging). Slot/alias publication uses AcqRel CAS and Acquire
+        // readers; activity credits are reserved before publication and
+        // released after the slot. Child repair's Relaxed slot load runs
+        // only in the sole fork survivor with signals blocked.
+        expected_sites: 118,
         stop_at_cfg_test: false,
         optional: false,
     },
@@ -907,7 +1171,11 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // in the drain bound, 2 fetch_add on free, 2 fetch_sub on drain, 1 test
         // load). The totals are Relaxed: they only bound how much the shards
         // (each updated under its own lock) hold, and publish no other memory.
-        expected_sites: 9,
+        // 3 fragmentation sampling sites: Release marks pending work (including
+        // retries), Acquire checks the hint, and AcqRel swap claims it. A later
+        // producer's Release remains pending after that claim. This flag only
+        // coalesces sampling work; shard locks protect the measured counters.
+        expected_sites: 12,
         stop_at_cfg_test: false,
         optional: false,
     },
@@ -931,7 +1199,10 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // 13 -> 15 (bd-rc0923-epic-eeuy4f.24): NATIVE_THREAD_COMPILER_TLS_DISABLED
         // adds 1 Release store (before clone) + 1 Relaxed load so native threads
         // sharing a TCB bypass compiler-TLS validation-cache borrows.
-        expected_sites: 15,
+        // The native-thread TLS-sharing flag adds a SeqCst publish
+        // before thread admission and an Acquire read before compiler-TLS use.
+        // Merged tls_cache.rs Ordering:: sites: 17.
+        expected_sites: 17,
         stop_at_cfg_test: false,
         optional: false,
     },
@@ -968,6 +1239,71 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     },
 ];
 
+fn verify_atomic_site_count(
+    source: &MemoryModelSource,
+    observed_sites: usize,
+) -> Result<(), String> {
+    if observed_sites != source.expected_sites {
+        return Err(format!(
+            "BarrierMap drift in {}: expected {} sites, observed {}. \
+Update MEMORY_MODEL_SOURCES after reviewing barrier requirements.",
+            source.relative_path, source.expected_sites, observed_sites
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod memory_model_inventory_tests {
+    use super::*;
+
+    const REVIEWED_SOURCES: [(&str, &str); 3] = [
+        ("src/ptr_validator.rs", include_str!("src/ptr_validator.rs")),
+        ("src/tls_cache.rs", include_str!("src/tls_cache.rs")),
+        ("src/arena.rs", include_str!("src/arena.rs")),
+    ];
+
+    fn source_for(path: &str) -> &'static MemoryModelSource {
+        MEMORY_MODEL_SOURCES
+            .iter()
+            .find(|source| source.relative_path == path)
+            .expect("reviewed source must remain in the build-time audit")
+    }
+
+    #[test]
+    fn reviewed_context_and_tls_sources_pass_inventory() {
+        for (path, text) in REVIEWED_SOURCES {
+            let source = source_for(path);
+            let observed = extract_atomic_sites(source, text).len();
+            verify_atomic_site_count(source, observed).unwrap_or_else(|error| panic!("{error}"));
+        }
+    }
+
+    #[test]
+    fn added_or_removed_ordering_requires_inventory_review() {
+        for (path, text) in REVIEWED_SOURCES {
+            let source = source_for(path);
+            let added = format!("{text}\nflag.load(Ordering::Acquire);\n");
+            let removed = text.replacen("Ordering::Acquire", "ordering", 1);
+
+            for (mutated, delta) in [(&added, 1isize), (&removed, -1isize)] {
+                let observed = extract_atomic_sites(source, mutated).len();
+                assert_eq!(
+                    observed as isize,
+                    source.expected_sites as isize + delta,
+                    "mutation must change exactly one audited ordering in {path}"
+                );
+                let error = verify_atomic_site_count(source, observed)
+                    .expect_err("unreviewed ordering changes must fail closed");
+                assert!(
+                    error.starts_with(&format!("BarrierMap drift in {path}:")),
+                    "gate must identify the changed source: {error}"
+                );
+            }
+        }
+    }
+}
+
 fn write_memory_model_audit(manifest_dir: &Path, out_dir: &Path) -> Result<(), String> {
     let mut source_summaries = Vec::new();
     let mut sites = Vec::new();
@@ -991,13 +1327,7 @@ fn write_memory_model_audit(manifest_dir: &Path, out_dir: &Path) -> Result<(), S
         let source_hash = compute_file_sha256_hex(&source_path)?;
         let source_sites = extract_atomic_sites(source, &source_text);
         let observed_sites = source_sites.len();
-        if observed_sites != source.expected_sites {
-            return Err(format!(
-                "BarrierMap drift in {}: expected {} sites, observed {}. \
-Update MEMORY_MODEL_SOURCES after reviewing barrier requirements.",
-                source.relative_path, source.expected_sites, observed_sites
-            ));
-        }
+        verify_atomic_site_count(source, observed_sites)?;
 
         source_summaries.push(MemoryModelSourceSummary {
             relative_path: source.relative_path,

@@ -30,6 +30,13 @@ jobs:
         with:
           shared-key: ebr-lifetime
           cache-on-failure: true
+      - name: Verify reviewed atomic inventory rejects drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ebr
+          cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test build_verifier::memory_model_inventory_tests:: -- --nocapture 2>&1 | tee artifacts/ebr/atomic-inventory.log
+          grep -Eq 'test result: ok\. 2 passed;' artifacts/ebr/atomic-inventory.log
       - name: Execute actual collector and mutex regressions
         shell: bash
         run: |

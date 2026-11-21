@@ -8,12 +8,13 @@ use frankenlibc_abi::owned_unwind_abi::{
     OwnedLandingPadInstall, OwnedLandingPadInstallInput, OwnedPhase1SearchOutcome,
     OwnedPhase2CleanupOutcome, OwnedProgramHeaderForTests, OwnedUnwindDecodeError, UnwindContext,
     UnwindException, owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
-    owned_evaluate_cfi_row_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    owned_evaluate_cfi_row_for_tests, owned_evaluate_dwarf_expression_for_tests,
+    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
     owned_loaded_eh_frame_ranges_for_tests, owned_loaded_eh_frame_ranges_from_phdrs_for_tests,
     owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
-    owned_prepare_landing_pad_install_for_tests, owned_summarize_eh_frame_for_tests,
-    owned_validate_cfi_program_for_tests,
+    owned_prepare_landing_pad_install_for_tests, owned_recover_cfi_registers_for_tests,
+    owned_summarize_eh_frame_for_tests, owned_validate_cfi_program_for_tests,
 };
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -242,6 +243,136 @@ fn leb128_decoders_cover_signed_and_unsigned_boundaries() {
 }
 
 #[test]
+fn leb128_decoders_preserve_word_extrema_and_padded_encodings() {
+    for value in [0, 1, 127, 128, usize::MAX >> 1, usize::MAX] {
+        let mut encoded = vec![0x55];
+        encode_uleb(value, &mut encoded);
+        let end = encoded.len();
+        encoded.push(0xaa);
+        assert_eq!(
+            owned_decode_uleb128_for_tests(&encoded, 1),
+            Ok((value, end))
+        );
+    }
+    for value in [
+        isize::MIN,
+        isize::MIN + 1,
+        -129,
+        -128,
+        -65,
+        -64,
+        -1,
+        0,
+        63,
+        64,
+        isize::MAX,
+    ] {
+        let mut encoded = vec![0x55];
+        encode_sleb(value, &mut encoded);
+        let end = encoded.len();
+        encoded.push(0xaa);
+        assert_eq!(
+            owned_decode_sleb128_for_tests(&encoded, 1),
+            Ok((value, end))
+        );
+    }
+    // DWARF permits redundant zero/sign extension, provided the integer fits.
+    assert_eq!(owned_decode_uleb128_for_tests(&[0x81, 0x00], 0), Ok((1, 2)));
+    assert_eq!(owned_decode_sleb128_for_tests(&[0x81, 0x00], 0), Ok((1, 2)));
+    assert_eq!(
+        owned_decode_sleb128_for_tests(&[0xff, 0x7f], 0),
+        Ok((-1, 2))
+    );
+}
+
+#[test]
+fn leb128_decoders_reject_out_of_word_terminal_payloads() {
+    let last_shift = (usize::BITS - 1) / 7 * 7;
+    let groups = (last_shift / 7) as usize;
+    // Interpret all terminal payloads in a wider integer, independently of
+    // the word decoder. checked_shl alone only checks the shift COUNT: it
+    // silently discards high bits at the last group of a 64-bit integer.
+    for prefix in [0x80u8, 0xff] {
+        for terminal in 0..=0x7fu8 {
+            let mut encoded = vec![prefix; groups];
+            encoded.push(terminal);
+            let low = if prefix == 0xff {
+                (1u128 << last_shift) - 1
+            } else {
+                0
+            };
+            let unsigned = low | (u128::from(terminal) << last_shift);
+            let signed = if terminal & 0x40 != 0 {
+                unsigned as i128 - (1i128 << (last_shift + 7))
+            } else {
+                unsigned as i128
+            };
+            assert_eq!(
+                owned_decode_uleb128_for_tests(&encoded, 0),
+                usize::try_from(unsigned)
+                    .map(|value| (value, encoded.len()))
+                    .map_err(|_| OwnedUnwindDecodeError::Overflow),
+                "unsigned prefix={prefix:#x}, terminal={terminal:#x}"
+            );
+            assert_eq!(
+                owned_decode_sleb128_for_tests(&encoded, 0),
+                isize::try_from(signed)
+                    .map(|value| (value, encoded.len()))
+                    .map_err(|_| OwnedUnwindDecodeError::Overflow),
+                "signed prefix={prefix:#x}, terminal={terminal:#x}"
+            );
+        }
+    }
+    let unterminated = vec![0x80; groups + 1];
+    assert_eq!(
+        owned_decode_uleb128_for_tests(&unterminated, 0),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+    assert_eq!(
+        owned_decode_sleb128_for_tests(&unterminated, 0),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+}
+
+#[test]
+fn overflowing_leb128_cannot_become_a_valid_frame_offset_or_expression() {
+    let groups = ((usize::BITS - 1) / 7) as usize;
+    let mut overflowing = vec![0x80; groups];
+    // This is exactly 2^word_bits; the old shift check decoded it as zero.
+    overflowing.push(1u8 << (usize::BITS - groups as u32 * 7));
+    let mut cfi = vec![0x0e]; // DW_CFA_def_cfa_offset (ULEB128).
+    cfi.extend_from_slice(&overflowing);
+    assert_eq!(
+        owned_validate_cfi_program_for_tests(&cfi),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+    let frame = synthetic_eh_frame(0x423000, 0x424000, 0x20, &cfi);
+    assert_eq!(
+        owned_evaluate_cfi_row_for_tests(&frame, 0x423000, 0x424000),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+
+    for opcode in [0x10, 0x11] {
+        // DW_OP_constu / DW_OP_consts.
+        let mut program = vec![opcode];
+        program.extend_from_slice(&overflowing);
+        assert_eq!(
+            owned_evaluate_dwarf_expression_for_tests(&program, [0; 32], &[0usize], None),
+            Err(OwnedUnwindDecodeError::Overflow)
+        );
+    }
+    // +2^(word_bits-1) also fits unsigned but cannot be a signed CFA factor.
+    let mut signed_cfi = vec![0x13]; // DW_CFA_def_cfa_offset_sf (SLEB128).
+    let mut encoded = Vec::new();
+    encode_uleb(1usize << (usize::BITS - 1), &mut encoded);
+    signed_cfi.extend_from_slice(&encoded);
+    assert_eq!(
+        owned_validate_cfi_program_for_tests(&signed_cfi),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+}
+
+#[test]
 fn synthetic_eh_frame_fde_lookup_fails_closed_on_bad_cfi() {
     let section_addr = 0x400000usize;
     let pc_begin = 0x401234usize;
@@ -303,6 +434,126 @@ fn synthetic_x86_64_cfi_row_advances_frame_pointer_cursor() {
     assert_eq!(after_frame_pointer.cfa_offset, 16);
     assert_eq!(after_frame_pointer.saved_rip_offset, Some(-8));
     assert_eq!(after_frame_pointer.saved_rbp_offset, Some(-16));
+}
+
+#[test]
+fn undefined_return_address_overrides_and_restores_the_cie_rule() {
+    let section_addr = 0x425000usize;
+    let pc_begin = 0x426000usize;
+    // The CIE initially saves RIP at CFA-8. Remember that row, explicitly
+    // undefine RIP, then restore first the saved row and later the CIE rule.
+    let cfi = [0x0a, 0x07, 0x10, 0x41, 0x0b, 0x41, 0x07, 0x10, 0x41, 0xd0];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, 0x20, &cfi);
+    for (offset, expected) in [(0, None), (1, Some(-8)), (2, None), (3, Some(-8))] {
+        let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin + offset)
+            .expect("defined/undefined return-address row should decode")
+            .expect("defined/undefined return-address row should resolve");
+        assert_eq!(
+            row.saved_rip_offset, expected,
+            "unexpected RIP rule at +{offset}"
+        );
+    }
+}
+
+#[test]
+fn signal_cie_does_not_poison_ordinary_fde_lookup() {
+    let section_addr = 0x428000usize;
+    let signal_pc = 0x429000usize;
+    let ordinary_pc = 0x42a000usize;
+    let mut eh_frame =
+        synthetic_eh_frame_with_signal_marker(section_addr, signal_pc, 0x20, &[], true);
+    eh_frame.truncate(eh_frame.len() - 4); // Append before the zero terminator.
+    let ordinary = synthetic_eh_frame(section_addr + eh_frame.len(), ordinary_pc, 0x20, &[]);
+    eh_frame.extend_from_slice(&ordinary);
+
+    let signal = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, signal_pc)
+        .expect("signal CIE metadata should decode without consuming a payload byte")
+        .expect("signal FDE should remain identifiable");
+    assert!(signal.signal_frame);
+    assert_eq!(signal.pc_begin, signal_pc);
+
+    let ordinary = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, ordinary_pc)
+        .expect("an unrelated signal CIE must not prevent ordinary FDE lookup")
+        .expect("ordinary FDE should remain reachable after signal metadata");
+    assert!(!ordinary.signal_frame);
+    assert_eq!(ordinary.pc_begin, ordinary_pc);
+}
+
+#[test]
+fn dwarf_expressions_recover_cfa_addresses_and_register_values() {
+    let words = [0x11usize, 0x1234, 0x5678, 0x22, 0x33, 0x44];
+    let base = words.as_ptr() as usize;
+    let mut registers = [0; 32];
+    registers[7] = base;
+    assert_eq!(
+        owned_evaluate_dwarf_expression_for_tests(&[0x77, 0x08, 0x06], registers, &words, None),
+        Ok(words[1]),
+        "DW_OP_breg7 + deref must read the saved word from the current stack"
+    );
+    assert_eq!(
+        owned_evaluate_dwarf_expression_for_tests(&[0x23, 0x08], registers, &words, Some(base)),
+        Ok(base + 8),
+        "register expressions begin with the current CFA on their evaluation stack"
+    );
+    let cfi = [
+        0x0f, 0x02, 0x77, 0x18, // CFA = RSP + 24.
+        0x10, 0x03, 0x02, 0x77, 0x08, // RBX is stored at RSP + 8.
+        0x16, 0x0c, 0x02, 0x23, 0x08, // R12's value is CFA + 8.
+    ];
+    let eh_frame = synthetic_eh_frame(0x42b000, 0x42c000, 0x20, &cfi);
+    let (caller, interrupted) =
+        owned_recover_cfi_registers_for_tests(&eh_frame, 0x42b000, 0x42c000, registers, &words)
+            .expect("all three expression CFI rules should recover a live bounded frame");
+    assert_eq!(caller[3], words[1]);
+    assert_eq!(caller[7], base + 24);
+    assert_eq!(caller[12], base + 32);
+    assert_eq!(caller[16], words[2]);
+    assert!(!interrupted);
+}
+
+#[test]
+fn dwarf_expression_evaluation_fails_closed_on_bad_programs_and_memory() {
+    let words = [0x1234usize, 0x5678];
+    let mut registers = [0; 32];
+    registers[7] = words.as_ptr() as usize;
+    for (program, expected) in [
+        (&[0x22][..], OwnedUnwindDecodeError::MalformedExpression),
+        (&[0x77][..], OwnedUnwindDecodeError::Truncated),
+        (
+            &[0x92, 0x20, 0x00][..],
+            OwnedUnwindDecodeError::MalformedExpression,
+        ),
+        (
+            &[0x2f, 0x00, 0x00][..],
+            OwnedUnwindDecodeError::UnsupportedDwarfOpcode(0x2f),
+        ),
+        (
+            &[0x77, 0x10, 0x06][..],
+            OwnedUnwindDecodeError::InvalidStackAddress,
+        ),
+        (
+            &[0x77, 0x78, 0x06][..],
+            OwnedUnwindDecodeError::InvalidStackAddress,
+        ),
+        (&[0x30; 33][..], OwnedUnwindDecodeError::ExpressionLimit),
+        (&[0x96; 129][..], OwnedUnwindDecodeError::ExpressionLimit),
+        (&[0x96; 257][..], OwnedUnwindDecodeError::ExpressionLimit),
+    ] {
+        assert_eq!(
+            owned_evaluate_dwarf_expression_for_tests(program, registers, &words, None),
+            Err(expected)
+        );
+    }
+    assert_eq!(
+        owned_evaluate_dwarf_expression_for_tests(
+            &[0x11, 0x78, 0x10, 0x10, 0x22],
+            registers,
+            &words,
+            None
+        ),
+        Ok(8),
+        "signed constants use the target word's arithmetic representation"
+    );
 }
 
 #[test]
@@ -655,9 +906,20 @@ fn compiled_test_binary_eh_frame_has_lookupable_fde() {
     assert_eq!(found, first);
     assert!(found.pc_end > found.pc_begin);
 
-    let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, first.pc_begin)
+    // The first FDE may describe _start, whose explicit undefined RIP rule
+    // correctly terminates unwinding. Test the ordinary saved-RIP contract
+    // against an actual Rust caller instead of assuming ELF record order.
+    let function_address = walk_from_inner as *const () as usize;
+    let loaded_object = owned_loaded_eh_frame_ranges_for_tests()
+        .into_iter()
+        .find(|range| function_address >= range.load_start && function_address < range.load_end)
+        .expect("known caller should belong to the real loaded-object catalog");
+    let function_ip = function_address
+        .checked_sub(loaded_object.object_base)
+        .expect("loaded caller address should be above its ELF load bias");
+    let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, function_ip)
         .expect("compiled FDE CFI should evaluate")
-        .expect("first FDE start should produce a row");
+        .expect("known caller's FDE should produce a row");
     assert_eq!(row.return_address_register, 16);
     assert_eq!(row.saved_rip_offset, Some(-8));
     assert!(
@@ -684,12 +946,26 @@ fn synthetic_eh_frame(
     pc_range: usize,
     cfi: &[u8],
 ) -> Vec<u8> {
+    synthetic_eh_frame_with_signal_marker(section_addr, pc_begin, pc_range, cfi, false)
+}
+
+fn synthetic_eh_frame_with_signal_marker(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    cfi: &[u8],
+    signal_frame: bool,
+) -> Vec<u8> {
     let mut bytes = Vec::new();
     let cie_offset = bytes.len();
     let mut cie_body = Vec::new();
     cie_body.extend_from_slice(&0u32.to_le_bytes());
     cie_body.push(1);
-    cie_body.extend_from_slice(b"zR\0");
+    if signal_frame {
+        cie_body.extend_from_slice(b"zRS\0");
+    } else {
+        cie_body.extend_from_slice(b"zR\0");
+    }
     encode_uleb(1, &mut cie_body);
     encode_sleb(-8, &mut cie_body);
     cie_body.push(16);

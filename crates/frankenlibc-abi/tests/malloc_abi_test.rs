@@ -34,6 +34,116 @@ fn test_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_allocator_fallbacks_keep_owned_mapping_provenance() {
+    const NAME: &str = "native_allocator_fallbacks_keep_owned_mapping_provenance";
+    const CHILD: &str = "FRANKENLIBC_NATIVE_ALLOCATION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_THREAD_NATIVE", "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "native allocator child failed: {:?}\n{}\n{}",
+            output.status, String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+    let _guard = test_lock().lock().unwrap();
+    // Debug integration binaries use the host startup entrypoint, so the
+    // environment switch alone does not select the native pthread backend.
+    // Keep the worker's handle check below to reject accidental delegation.
+    frankenlibc_abi::pthread_abi::pthread_threading_force_native_for_tests();
+    // SAFETY: this isolated test process owns its watchdog disposition.
+    unsafe { libc::alarm(15) };
+    struct Probe { retained: usize }
+    unsafe extern "C" fn worker(argument: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        // Exercise the same raw backends reached by nested allocator work and
+        // arena block allocation, without any Rust allocation on this worker.
+        let previous = malloc_swap_reentry_depth_for_tests(1);
+        let allocation = unsafe { malloc(41) };
+        if allocation.is_null() || !unsafe { malloc_bump_overflow_header_valid_for_tests(allocation) } {
+            return 2usize as *mut c_void;
+        }
+        if fallback_size_for_bench(allocation) != Some(41) {
+            return 10usize as *mut c_void;
+        }
+        unsafe { allocation.cast::<u8>().write_bytes(0xa7, 41) };
+        let zeroed = unsafe { calloc(17, 7) };
+        if zeroed.is_null() || !unsafe { malloc_bump_overflow_header_valid_for_tests(zeroed) } {
+            return 3usize as *mut c_void;
+        }
+        for index in 0..119 {
+            if unsafe { *zeroed.cast::<u8>().add(index) } != 0 {
+                return 4usize as *mut c_void;
+            }
+        }
+        let resized = unsafe { realloc(allocation, 9001) };
+        if resized.is_null() || !unsafe { malloc_bump_overflow_header_valid_for_tests(resized) } {
+            return 5usize as *mut c_void;
+        }
+        if fallback_size_for_bench(allocation).is_some() {
+            return 9usize as *mut c_void;
+        }
+        if fallback_size_for_bench(resized) != Some(9001) {
+            return 11usize as *mut c_void;
+        }
+        for index in 0..41 {
+            if unsafe { *resized.cast::<u8>().add(index) } != 0xa7 {
+                return 6usize as *mut c_void;
+            }
+        }
+        let mut aligned = ptr::null_mut();
+        if unsafe { posix_memalign(&mut aligned, 8192, 4097) } != 0
+            || (aligned as usize) % 8192 != 0
+            || !unsafe { malloc_bump_overflow_header_valid_for_tests(aligned) }
+        {
+            return 7usize as *mut c_void;
+        }
+        if !unsafe { calloc(usize::MAX, 2) }.is_null() {
+            return 8usize as *mut c_void;
+        }
+        unsafe { free(zeroed); free(resized); }
+        malloc_restore_reentry_depth_for_tests(previous);
+        // SAFETY: the parent keeps this writable probe alive through join.
+        unsafe { (*argument.cast::<Probe>()).retained = aligned as usize };
+        ptr::null_mut()
+    }
+    let before = malloc_bump_overflow_stats();
+    let mut probe = Probe { retained: 0 };
+    let mut thread = 0;
+    // SAFETY: valid output, C entry point and argument retained through join.
+    assert_eq!(unsafe {
+        frankenlibc_abi::pthread_abi::pthread_create(
+            &mut thread, ptr::null(), Some(worker), (&raw mut probe).cast(),
+        )
+    }, 0);
+    let mut result = ptr::null_mut();
+    assert_eq!(unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) }, 0);
+    assert!(result.is_null(), "native allocation failure stage {}", result as usize);
+    let retained = probe.retained as *mut c_void;
+    assert!(!retained.is_null());
+    assert!(unsafe { malloc_bump_overflow_header_valid_for_tests(retained) });
+    assert_eq!(unsafe { malloc_bump_allocation_size_for_tests(retained) }, Some(4097));
+    let live = malloc_bump_overflow_stats();
+    assert_eq!(live.mappings_created - before.mappings_created, 4);
+    assert_eq!(live.live_mappings, before.live_mappings + 1);
+    // The creator must recognize and retire a mapping allocated by its worker.
+    unsafe { free(retained) };
+    let after = malloc_bump_overflow_stats();
+    assert_eq!(after.live_mappings, before.live_mappings);
+    assert_eq!(after.mappings_released - before.mappings_released, 4);
+    assert_eq!(after.static_bytes_used, before.static_bytes_used);
+    unsafe { libc::alarm(0) };
+}
+
 // ---------------------------------------------------------------------------
 // malloc — basic allocation
 // ---------------------------------------------------------------------------
@@ -1708,12 +1818,14 @@ fn bump_overflow_realloc_preserves_payload_and_releases_old_mapping() {
 /// More cumulative allocations than the fixed record-table capacity must
 /// succeed when the simultaneous live set is small. This is the regression
 /// contract the immortal-chunk design could not provide: exhaustion depends on
-/// live demand, never on historical churn.
+/// live demand, never on historical churn. Tracked native fallbacks must also
+/// retain their own size row when another thread frees a reused address.
 #[test]
 fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     const THREADS: usize = 8;
-    const ROUNDS: usize = 640;
+    const ROUNDS: usize = 4096;
+    signal_runtime_ready_for_tests();
     let before = malloc_bump_overflow_stats();
     let barrier = Arc::new(Barrier::new(THREADS));
     let mut handles = Vec::with_capacity(THREADS);
@@ -1721,6 +1833,7 @@ fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
     for thread_index in 0..THREADS {
         let barrier = Arc::clone(&barrier);
         handles.push(std::thread::spawn(move || {
+            assert!(malloc_current_reentry_slot_index_for_tests().is_some());
             barrier.wait();
             for round in 0..ROUNDS {
                 let request = 2048 + ((thread_index + round) & 63);
@@ -1729,6 +1842,16 @@ fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
                 assert!(
                     !p.is_null(),
                     "overflow churn returned NULL at thread={thread_index} round={round}"
+                );
+                // Native raw fallbacks publish this exact size row before the
+                // allocation escapes. Reusing an unmapped address must never
+                // let its previous owner's free retire this new row.
+                fallback_insert_sized_for_bench(p, request);
+                std::thread::yield_now();
+                assert_eq!(
+                    fallback_size_for_bench(p),
+                    Some(request),
+                    "live overflow allocation lost its fallback row at thread={thread_index} round={round}"
                 );
                 // Touch both ends so a publication or premature-unmap defect faults
                 // at the point it is introduced.
@@ -2284,6 +2407,36 @@ fn swing2_large_alloc_path_attribution() {
 }
 
 #[test]
+fn segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible() {
+    const CHILD: &str = "FRANKENLIBC_SIDECAR_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        frankenlibc_abi::malloc_abi::segment_mapping_tests::failed_sidecar_batch_keeps_unused_padding_inaccessible();
+        return;
+    }
+
+    // A fresh exec isolates both allocator state and the process-wide limit.
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated sidecar regression");
+    let stdout = String::from_utf8_lossy(&child.stdout);
+    let stderr = String::from_utf8_lossy(&child.stderr);
+    assert!(
+        child.status.success(),
+        "sidecar child failed: {}\n{stdout}\n{stderr}",
+        child.status
+    );
+    assert!(
+        stdout.contains("test result: ok. 1 passed; 0 failed;"),
+        "sidecar regression did not execute: {stdout}\n{stderr}"
+    );
+}
+
+#[test]
 fn segment_mapping_range_rounding_and_last_bit_are_exact() {
     frankenlibc_abi::malloc_abi::segment_mapping_tests::range_rounding_and_last_bit_are_exact();
 }
@@ -2329,4 +2482,469 @@ fn segment_mapping_growing_an_entire_segment_preserves_earlier_payload() {
 fn segment_mapping_concurrent_real_chunk_claims_are_disjoint_and_writable() {
     let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
     frankenlibc_abi::malloc_abi::segment_mapping_tests::concurrent_real_chunk_claims_are_disjoint_and_writable();
+}
+
+#[test]
+fn demand_storage_read_only_misses_reserve_nothing() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::read_only_misses_reserve_nothing();
+}
+
+#[test]
+fn demand_storage_only_requested_granules_are_writable() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::only_requested_granules_are_writable();
+}
+
+#[test]
+fn demand_storage_segment_refill_geometry_bounds_new_writable_pages() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::segment_refill_geometry_bounds_new_writable_pages();
+}
+
+#[test]
+fn demand_storage_large_segment_refills_leave_unused_payload_inaccessible() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::demand_storage_tests::large_segment_refills_leave_unused_payload_inaccessible();
+}
+
+#[test]
+fn demand_storage_concurrent_first_touch_preserves_published_values() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::concurrent_first_touch_preserves_published_values();
+}
+
+#[test]
+fn fallback_metadata_failure_does_not_publish_untracked_allocation() {
+    const NAME: &str = "fallback_metadata_failure_does_not_publish_untracked_allocation";
+    const CHILD: &str = "FRANKENLIBC_FALLBACK_METADATA_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        for operation in [
+            "malloc",
+            "calloc",
+            "memalign",
+            "aligned_alloc",
+            "posix_memalign",
+        ] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD, operation)
+                .env("FRANKENLIBC_MODE", "hardened")
+                .output()
+                .expect("run isolated fallback metadata regression");
+            assert!(
+                output.status.success(),
+                "{operation} metadata child failed: {:?}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        }
+        return;
+    }
+
+    let operation = std::env::var(CHILD).unwrap();
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    // Debug integration binaries retain host malloc for ordinary Rust/C
+    // allocation. Prime a host tcache entry before denying *new* writable
+    // mappings: host malloc can still succeed while the provenance table's
+    // first demand-zero permission upgrade must fail.
+    let mut original = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let mut aligned_output = 0x1234usize as *mut c_void;
+    let mut aligned_status = 0;
+    // SAFETY: all pointers below name owned live allocations or rlimit cells.
+    let (host_succeeded, candidate, candidate_errno, permission_result, permission_errno) = unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_DATA, &mut original), 0);
+        const PROBE_LEN: usize = 64 * 1024;
+        let permission_probe = libc::mmap(
+            ptr::null_mut(),
+            PROBE_LEN,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        );
+        assert_ne!(permission_probe, libc::MAP_FAILED);
+        let cached = libc::malloc(80);
+        assert!(!cached.is_null());
+        libc::free(cached);
+        let limited = libc::rlimit {
+            // Linux permits growth up to the hard limit when the soft limit is
+            // zero. One byte avoids that exception and admits no data pages.
+            rlim_cur: 1,
+            rlim_max: original.rlim_max,
+        };
+        assert_eq!(libc::setrlimit(libc::RLIMIT_DATA, &limited), 0);
+        *libc::__errno_location() = 0;
+        let permission_result = libc::mprotect(
+            permission_probe,
+            PROBE_LEN,
+            libc::PROT_READ | libc::PROT_WRITE,
+        );
+        let permission_errno = *libc::__errno_location();
+        let host = match operation.as_str() {
+            "calloc" => libc::calloc(1, 80),
+            "memalign" | "aligned_alloc" | "posix_memalign" => libc::memalign(16, 80),
+            _ => libc::malloc(80),
+        };
+        let host_succeeded = !host.is_null();
+        libc::free(host);
+        *libc::__errno_location() = libc::EINTR;
+        let candidate = match operation.as_str() {
+            "calloc" => calloc(1, 80),
+            "memalign" => memalign(16, 80),
+            "aligned_alloc" => aligned_alloc(16, 80),
+            "posix_memalign" => {
+                aligned_status = posix_memalign(&mut aligned_output, 16, 80);
+                if aligned_status == 0 {
+                    aligned_output
+                } else {
+                    ptr::null_mut()
+                }
+            }
+            _ => malloc(80),
+        };
+        let candidate_errno = *libc::__errno_location();
+        let restored = libc::setrlimit(libc::RLIMIT_DATA, &original);
+        let unmapped = libc::munmap(permission_probe, PROBE_LEN);
+        assert_eq!(restored, 0);
+        assert_eq!(unmapped, 0);
+        (
+            host_succeeded,
+            candidate,
+            candidate_errno,
+            permission_result,
+            permission_errno,
+        )
+    };
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    let tracked = fallback_size_for_bench(candidate);
+    if !candidate.is_null() {
+        // The negative control returns an untracked host allocation. Reclaim
+        // it directly instead of asking hardened free to accept foreign data.
+        fallback_remove_sized_for_bench(candidate);
+        unsafe { libc::free(candidate) };
+    }
+    assert_eq!(
+        (permission_result, permission_errno),
+        (-1, libc::ENOMEM),
+        "kernel control must deny a new writable mapping before testing metadata failure"
+    );
+    assert!(
+        host_succeeded,
+        "host tcache control must allocate under the limit"
+    );
+    assert!(
+        candidate.is_null(),
+        "allocator returned a host pointer after provenance publication failed: tracked={tracked:?}"
+    );
+    if operation == "posix_memalign" {
+        assert_eq!(aligned_status, libc::ENOMEM);
+        assert_eq!(candidate_errno, libc::EINTR);
+        assert_eq!(
+            aligned_output, 0x1234usize as *mut c_void,
+            "posix_memalign must not change the output pointer on failure"
+        );
+    } else {
+        assert_eq!(candidate_errno, libc::ENOMEM);
+    }
+}
+
+#[test]
+fn fallback_realloc_metadata_failure_preserves_old_block() {
+    const NAME: &str = "fallback_realloc_metadata_failure_preserves_old_block";
+    const CHILD: &str = "FRANKENLIBC_REALLOC_METADATA_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "hardened")
+            .output()
+            .expect("run isolated realloc metadata regression");
+        assert!(
+            output.status.success(),
+            "realloc metadata child failed: {:?}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        return;
+    }
+
+    // Keep allocation-integrity keys cold: a tracked host fallback must not
+    // attempt arena authentication when the mapping limit is in force. The
+    // replacement's provenance publication is the failure under test.
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    let mut original = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: this fresh subprocess owns these blocks and its resource limit.
+    let (
+        old,
+        padding,
+        fence,
+        replacement,
+        host_succeeded,
+        saved_errno,
+        permission_result,
+        permission_errno,
+    ) = unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_DATA, &mut original), 0);
+        const PROBE_LEN: usize = 64 * 1024;
+        let permission_probe = libc::mmap(
+            ptr::null_mut(),
+            PROBE_LEN,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        );
+        assert_ne!(permission_probe, libc::MAP_FAILED);
+        // Keep these allocations in the host arena, and retain a fence after
+        // the replacement so freeing it cannot trim away its writable pages.
+        assert_ne!(libc::mallopt(libc::M_MMAP_THRESHOLD, 4 * 1024 * 1024), 0);
+        let old = malloc(80);
+        assert!(!old.is_null());
+        assert_eq!(fallback_size_for_bench(old), Some(80));
+        old.cast::<u8>().write_bytes(0xa7, 80);
+        let padding = libc::malloc(256 * 1024);
+        assert!(!padding.is_null());
+        let spare = libc::malloc(4096);
+        let fence = libc::malloc(80);
+        assert!(!spare.is_null() && !fence.is_null());
+        // A table granule covers 128 KiB of address keys. The replacement must
+        // need a different metadata granule from the already indexed old block.
+        let granule = |p: *mut c_void| ((p as usize >> 4) % 262_144) / 8192;
+        assert_ne!(
+            granule(old),
+            granule(spare),
+            "host fixture did not separate metadata pages"
+        );
+        libc::free(spare);
+        let limited = libc::rlimit {
+            // Linux permits growth up to the hard limit when the soft limit is
+            // zero. One byte avoids that exception and admits no data pages.
+            rlim_cur: 1,
+            rlim_max: original.rlim_max,
+        };
+        assert_eq!(libc::setrlimit(libc::RLIMIT_DATA, &limited), 0);
+        *libc::__errno_location() = 0;
+        let permission_result = libc::mprotect(
+            permission_probe,
+            PROBE_LEN,
+            libc::PROT_READ | libc::PROT_WRITE,
+        );
+        let permission_errno = *libc::__errno_location();
+        let host = libc::malloc(4096);
+        let host_succeeded = !host.is_null() && granule(host) == granule(spare);
+        libc::free(host);
+        *libc::__errno_location() = 0;
+        let replacement = realloc(old, 4096);
+        let saved_errno = *libc::__errno_location();
+        let restored = libc::setrlimit(libc::RLIMIT_DATA, &original);
+        let unmapped = libc::munmap(permission_probe, PROBE_LEN);
+        assert_eq!(restored, 0);
+        assert_eq!(unmapped, 0);
+        (
+            old,
+            padding,
+            fence,
+            replacement,
+            host_succeeded,
+            saved_errno,
+            permission_result,
+            permission_errno,
+        )
+    };
+    let old_tracked = fallback_size_for_bench(old);
+    let preserved = replacement.is_null() && old_tracked == Some(80)
+        // SAFETY: failed realloc must leave the old allocation live.
+        && unsafe { std::slice::from_raw_parts(old.cast::<u8>(), 80) }.iter().all(|b| *b == 0xa7);
+    // SAFETY: after success only replacement is live; after failure old remains
+    // live. Direct host cleanup makes the pre-fix negative control safe too.
+    unsafe {
+        let live = if replacement.is_null() {
+            old
+        } else {
+            replacement
+        };
+        fallback_remove_sized_for_bench(live);
+        libc::free(live);
+        libc::free(padding);
+        libc::free(fence);
+    }
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    assert_eq!(
+        (permission_result, permission_errno),
+        (-1, libc::ENOMEM),
+        "kernel control must deny a new writable mapping before testing metadata failure"
+    );
+    assert!(
+        host_succeeded,
+        "host control must reuse the retained replacement block"
+    );
+    assert!(
+        replacement.is_null(),
+        "metadata failure must not commit a moved realloc"
+    );
+    assert_eq!(saved_errno, libc::ENOMEM);
+    assert!(
+        preserved,
+        "failed realloc must preserve both the old contents and provenance"
+    );
+}
+
+#[test]
+fn fallback_realloc_retains_contents_and_provenance_through_resize() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    struct ReentryDepthGuard(u32);
+    impl Drop for ReentryDepthGuard {
+        fn drop(&mut self) {
+            malloc_restore_reentry_depth_for_tests(self.0);
+        }
+    }
+    let _depth_guard = ReentryDepthGuard(malloc_swap_reentry_depth_for_tests(1));
+    // SAFETY: forced allocator reentry selects the host fallback; each resize
+    // retains ownership until the final zero-size realloc releases the block.
+    unsafe {
+        let initial = realloc(ptr::null_mut(), 80);
+        assert!(!initial.is_null());
+        assert_eq!(fallback_size_for_bench(initial), Some(80));
+        initial.cast::<u8>().write_bytes(0x5b, 80);
+
+        assert_eq!(realloc(initial, 80), initial);
+        assert_eq!(realloc(initial, 16), initial);
+        assert_eq!(fallback_size_for_bench(initial), Some(16));
+
+        let grown = realloc(initial, 8192);
+        assert!(!grown.is_null());
+        assert!(
+            std::slice::from_raw_parts(grown.cast::<u8>(), 16)
+                .iter()
+                .all(|byte| *byte == 0x5b)
+        );
+        assert_eq!(fallback_size_for_bench(grown), Some(8192));
+        assert_eq!(fallback_size_for_bench(initial), None);
+
+        assert!(realloc(grown, usize::MAX).is_null());
+        assert_eq!(fallback_size_for_bench(grown), Some(8192));
+        assert!(
+            std::slice::from_raw_parts(grown.cast::<u8>(), 16)
+                .iter()
+                .all(|byte| *byte == 0x5b)
+        );
+
+        assert!(realloc(grown, 0).is_null());
+        assert_eq!(fallback_size_for_bench(grown), None);
+    }
+}
+
+#[test]
+fn segment_class_feedback_reaches_the_runtime_without_initializing_from_malloc() {
+    const CHILD: &str = "FRANKENLIBC_SEGMENT_CLASS_FEEDBACK_CHILD";
+    const TEST: &str =
+        "segment_class_feedback_reaches_the_runtime_without_initializing_from_malloc";
+    if std::env::var_os(CHILD).is_none() {
+        // Isolate the strict allocator from earlier tests that explicitly
+        // initialize controllers, and prove this production target executes.
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "strict")
+            .env("FRANKENLIBC_RUNTIME_MATH", "on")
+            .output()
+            .expect("run isolated segment class feedback regression");
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(
+            child.status.success(),
+            "{}\n{stdout}\n{stderr}",
+            child.status
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "no regression executed: {stdout}"
+        );
+        return;
+    }
+
+    use frankenlibc_abi::malloc_abi::{
+        malloc_runtime_kernel_ready_for_tests, malloc_size_class_telemetry_snapshot,
+    };
+    signal_runtime_ready_for_tests();
+    assert!(!malloc_runtime_kernel_ready_for_tests());
+    let before = malloc_size_class_telemetry_snapshot(false);
+    assert_eq!(before.consumed_samples, 0, "strict startup built a kernel");
+    for _ in 0..256 {
+        let pointer = unsafe { malloc(17) };
+        assert!(!pointer.is_null());
+        assert!(malloc_segment_owned_for_tests(pointer));
+        unsafe { free(pointer) };
+    }
+    let pending = malloc_size_class_telemetry_snapshot(false);
+    assert!(!malloc_runtime_kernel_ready_for_tests());
+    assert!(pending.selections >= before.selections + 256);
+    assert!(pending.sampled_selections > before.sampled_selections);
+    assert_eq!(pending.consumed_samples, 0, "malloc initialized the kernel");
+    assert!(pending.pending_healthy.is_some());
+    assert_eq!(pending.urgent_selections, before.urgent_selections);
+
+    // This explicit diagnostic request, not malloc, pays for initialization.
+    let initialized = malloc_size_class_telemetry_snapshot(true);
+    assert!(malloc_runtime_kernel_ready_for_tests());
+    assert!(initialized.consumed_samples > 0);
+    assert!(initialized.pending_healthy.is_none());
+    assert!(initialized.pending_urgent.is_none());
+    for _ in 0..256 {
+        let pointer = unsafe { calloc(1, 17) };
+        assert!(!pointer.is_null());
+        assert!(malloc_segment_owned_for_tests(pointer));
+        assert_eq!(unsafe { pointer.cast::<u8>().read() }, 0);
+        unsafe { free(pointer) };
+    }
+    let live = malloc_size_class_telemetry_snapshot(false);
+    assert!(live.consumed_samples > initialized.consumed_samples);
+    let mapping = live
+        .last_consumed
+        .expect("actual calloc mapping reached SOS");
+    assert_eq!(mapping.requested_size, 17);
+    assert_eq!(mapping.mapped_class_size, 32);
+    assert!(mapping.class_membership_valid);
+
+    // Shrinking an existing 8 KiB slot to one byte retains capacity. It is not
+    // a new class selection and must not be misreported as extreme waste.
+    let pointer = unsafe { malloc(8192) };
+    assert!(!pointer.is_null());
+    let before_shrink = malloc_size_class_telemetry_snapshot(false);
+    let shrunk = unsafe { realloc(pointer, 1) };
+    assert_eq!(shrunk, pointer);
+    let after_shrink = malloc_size_class_telemetry_snapshot(false);
+    assert_eq!(after_shrink.selections, before_shrink.selections);
+    assert_eq!(
+        after_shrink.urgent_selections,
+        before_shrink.urgent_selections
+    );
+    unsafe { free(shrunk) };
+
+    // The host-backed large path supplies no known slot class.
+    let large = unsafe { malloc(128 * 1024) };
+    assert!(!large.is_null());
+    unsafe { free(large) };
+    let before_large = malloc_size_class_telemetry_snapshot(false);
+    let large = unsafe { malloc(128 * 1024) };
+    assert!(!large.is_null());
+    assert!(!malloc_segment_owned_for_tests(large));
+    let after_large = malloc_size_class_telemetry_snapshot(false);
+    assert_eq!(after_large.selections, before_large.selections);
+    unsafe { free(large) };
+}
+
+#[test]
+fn demand_storage_fork_child_extends_inherited_mapping_without_locks() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::fork_child_extends_inherited_mapping_without_locks();
 }

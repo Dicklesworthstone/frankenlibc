@@ -289,9 +289,13 @@ def validate_snapshot_contract(manifest: dict[str, Any], artifacts: dict[str, st
     struct_fields = snapshot_struct_fields(mod_text)
     minimum = int(contract.get("minimum_snapshot_fields", -1))
     expected_current = int(contract.get("current_snapshot_fields", -1))
+    # The pinned golden is schema 2. Preserve its original shape and digest;
+    # new runtime fields do not rewrite historical observations as schema 3.
+    expected_golden = int(contract.get("golden_snapshot_fields", -1))
     require(minimum >= 154, "minimum_snapshot_fields must preserve the 154-field baseline")
     require(len(struct_fields) >= minimum, "RuntimeKernelSnapshot field count is below contract minimum")
     require(len(struct_fields) == expected_current, "current_snapshot_fields must match RuntimeKernelSnapshot field count")
+    require(expected_golden >= minimum, "golden_snapshot_fields must preserve the snapshot baseline")
 
     snapshot_summary: dict[str, Any] = {
         "struct_field_count": len(struct_fields),
@@ -327,7 +331,7 @@ def validate_snapshot_contract(manifest: dict[str, Any], artifacts: dict[str, st
             field_count = len(snapshot)
             snapshot_summary[f"{mode}_field_count"] = field_count
             require(field_count >= minimum, f"golden {mode} snapshot field count below minimum")
-            require(field_count == expected_current, f"golden {mode} snapshot field count mismatch")
+            require(field_count == expected_golden, f"golden {mode} snapshot field count mismatch")
             require(
                 snapshot.get("schema_version") == contract.get("snapshot_schema_version"),
                 f"golden {mode} schema_version mismatch",

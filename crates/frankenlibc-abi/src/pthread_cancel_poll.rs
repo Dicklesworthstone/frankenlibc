@@ -319,11 +319,11 @@ pub(super) enum SleepResult {
     Unsupported,
 }
 
-/// Sleep against one monotonic deadline, checking native cancellation between
-/// bounded kernel waits. This supports relative nanosleep and the relative
-/// CLOCK_REALTIME/CLOCK_MONOTONIC clock_nanosleep forms, plus absolute
-/// CLOCK_MONOTONIC. The ABI must leave other clocks and flags on their original
-/// path: CPU clocks and clocks that advance through suspend are not equivalent.
+/// Sleep against the requested clock, checking native cancellation between
+/// bounded kernel waits. Relative REALTIME/MONOTONIC sleeps and absolute
+/// MONOTONIC use the existing monotonic deadline. Absolute REALTIME/BOOTTIME
+/// use a kernel timer, preserving clock adjustments and time spent suspended.
+/// CPU clocks, alarm clocks and other flag contracts retain the original syscall.
 ///
 /// ppoll atomically installs the entry mask for each slice. Signals remain
 /// blocked between slices, so a handler cannot run in an internal gap and lose
@@ -332,11 +332,11 @@ pub(super) enum SleepResult {
 /// handler takes longer than the requested sleep. A deadline read after the
 /// handler would incorrectly deduct that time.
 ///
-/// STICKY_TIMEOUTS suppresses ppoll's remainder update. When a relative caller
-/// needs a remainder, query the current personality while signals are blocked,
-/// then retain the original syscall if the flag is set or the query is denied.
-/// Never change the thread's personality or manufacture an estimated remainder.
-/// Such fallback calls keep the existing pending-only cancellation behavior.
+/// STICKY_TIMEOUTS suppresses ppoll's remainder update and changes restart after
+/// stop/continue into EINTR, including absolute sleeps and null remainders.
+/// Query the personality while signals are blocked, then retain the original
+/// syscall if the flag is set or the query is denied. Never change personality
+/// or manufacture a remainder. Fallback keeps pending-only cancellation.
 ///
 /// # Safety
 /// The ABI supplies a valid owned timespec and selects one of the clock forms
@@ -345,9 +345,11 @@ pub(super) enum SleepResult {
 /// cancellation before publishing an Interrupted remainder to caller memory.
 pub(super) unsafe fn wait_sleep(
     request: &Timespec,
+    clock: c_int,
     absolute: bool,
     need_remainder: bool,
     cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
 ) -> Result<SleepResult, c_int> {
     if request.tv_sec < 0
         || !(0..1_000_000_000).contains(&request.tv_nsec)
@@ -355,23 +357,146 @@ pub(super) unsafe fn wait_sleep(
     {
         return Ok(SleepResult::Unsupported);
     }
+    if absolute && clock != libc::CLOCK_MONOTONIC {
+        // SAFETY: request is owned and validated; the ABI admitted only the
+        // absolute REALTIME/BOOTTIME contracts. No relative remainder is used.
+        return unsafe { wait_absolute_clock(request, clock, cancel, supports_handlers) };
+    }
 
     let mut guard = SignalMaskGuard::block_all()?;
-    if !absolute && need_remainder {
-        // SAFETY: this is a read-only personality query, with no pointers. It
-        // changes neither the persona nor errno. Blocking handlers keeps this
-        // per-task setting stable until ppoll has written the interruption
-        // remainder; a handler can change it only after that kernel copy.
-        let persona =
-            unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
-        if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
-            return guard.restore().map(|()| SleepResult::Unsupported);
-        }
+    // SAFETY: this read-only query changes neither personality nor errno.
+    // Blocking handlers keeps the setting stable until ppoll has copied any
+    // remainder. Check every sleep: STICKY_TIMEOUTS also changes restart
+    // behavior for absolute deadlines and callers that need no remainder.
+    let persona =
+        unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+    if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
+        return guard.restore().map(|()| SleepResult::Unsupported);
     }
     // SAFETY: the original mask and request are owned, stationary values. The
     // wait uses no application descriptors or pointers and owns no resources.
     let result = unsafe { sleep_slices(request, absolute, need_remainder, &mut guard, cancel) };
     guard.restore().and(result)
+}
+
+/// The timer is acquired only after ruling out deliverable caught handlers.
+/// Close before restoring the entry mask or delivering native cancellation.
+struct AbsoluteSleepTimer(c_int);
+
+impl Drop for AbsoluteSleepTimer {
+    fn drop(&mut self) {
+        // Linux releases the descriptor even when close reports EINTR. A retry
+        // could close an unrelated descriptor opened concurrently by a peer.
+        let _ = syscall::sys_close(self.0);
+    }
+}
+
+unsafe fn wait_absolute_clock(
+    request: &Timespec,
+    clock: c_int,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SleepResult, c_int> {
+    if !matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_BOOTTIME) {
+        return Ok(SleepResult::Unsupported);
+    }
+    let Ok(mut mask) = SignalMaskGuard::block_all() else {
+        return Ok(SleepResult::Unsupported);
+    };
+    // A caught handler can siglongjmp across Rust destructors. Do not acquire
+    // a descriptor in that case; the original clock_nanosleep owns no fd.
+    if !supports_handlers(mask.original) {
+        return mask.restore().map(|()| SleepResult::Unsupported);
+    }
+    // SAFETY: this read-only query changes neither personality nor errno.
+    // STICKY_TIMEOUTS makes ppoll expose EINTR after stop/continue, whereas
+    // absolute clock_nanosleep restarts. Preserve that contract on the raw path.
+    let persona =
+        unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+    if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
+        return mask.restore().map(|()| SleepResult::Unsupported);
+    }
+    let timer = match syscall::sys_timerfd_create(clock, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK) {
+        Ok(fd) => AbsoluteSleepTimer(fd),
+        Err(_) => return mask.restore().map(|()| SleepResult::Unsupported),
+    };
+    let settings = syscall::ItimerSpec {
+        it_interval: Timespec::default(),
+        it_value: *request,
+    };
+    // SAFETY: settings is a complete owned kernel-layout object. The timer is
+    // private and one-shot. Deliberately omit CANCEL_ON_SET: a wall-clock step
+    // must adjust the deadline, not turn a sleep into an ECANCELED error.
+    let armed = unsafe {
+        syscall::sys_timerfd_settime_spec(
+            timer.0,
+            libc::TFD_TIMER_ABSTIME,
+            core::ptr::from_ref(&settings),
+            core::ptr::null_mut(),
+        )
+    };
+    let result = if armed.is_ok() {
+        // SAFETY: the timer and original mask remain live through each bounded
+        // kernel wait. Cancellation is delivered only after this helper returns.
+        unsafe { absolute_sleep_slices(timer.0, cancel, supports_handlers, &mut mask) }
+    } else {
+        // Adapter denial/exhaustion must not add new errors to clock_nanosleep.
+        // Falling back with the original absolute deadline cannot repeat time.
+        Ok(SleepResult::Unsupported)
+    };
+    drop(timer);
+    mask.restore().and(result)
+}
+
+// This raw-wait frame owns no Drop state. A concurrently installed handler can
+// unwind with its active mask. As in the native socket adapters, dispositions
+// are rechecked before each slice, but installation racing that final check can
+// still race a nonlocal jump. An observed change falls back before unblocking.
+#[inline(never)]
+unsafe fn absolute_sleep_slices(
+    timer: c_int,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+    mask: &mut SignalMaskGuard,
+) -> Result<SleepResult, c_int> {
+    loop {
+        if cancel.pending() {
+            return Ok(SleepResult::Interrupted(Timespec::default()));
+        }
+        if !supports_handlers(mask.original) {
+            return Ok(SleepResult::Unsupported);
+        }
+        let mut interest = libc::pollfd {
+            fd: timer,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let mut slice = Timespec {
+            tv_sec: 0,
+            tv_nsec: SLICE_NS,
+        };
+        mask.armed = false;
+        // SAFETY: all poll, timeout and signal-set storage is initialized and
+        // owned. Readiness comes from the kernel timer, never a sampled clock.
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::from_mut(&mut interest).cast(),
+                1,
+                core::ptr::from_mut(&mut slice).cast(),
+                core::ptr::from_ref(&mask.original).cast(),
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        mask.armed = true;
+        match result {
+            Ok(0) => {}
+            Ok(_) if interest.revents == libc::POLLIN => return Ok(SleepResult::Complete),
+            Err(libc::EINTR) => return Ok(SleepResult::Interrupted(Timespec::default())),
+            // No caller memory or relative timeout was changed. Release the
+            // timer and retry the original absolute sleep on adapter failure.
+            _ => return Ok(SleepResult::Unsupported),
+        }
+    }
 }
 
 /// Convert a nonnegative remaining duration, bounded by the caller's valid
@@ -563,75 +688,380 @@ pub(super) enum ChildWaitResult {
 /// Never follow readiness with a blocking receive: another receiver may consume
 /// the data first. MSG_DONTWAIT makes that race an ordinary retry instead.
 #[derive(Clone, Copy)]
-pub(super) struct ReceiveFrom {
-    pub fd: c_int,
-    pub buffer: *mut u8,
-    pub length: usize,
-    pub flags: c_int,
-    pub address: *mut u8,
-    pub address_length: *mut u32,
+pub(super) enum Receive {
+    Read {
+        fd: c_int,
+        buffer: *mut u8,
+        length: usize,
+    },
+    ReadVector {
+        fd: c_int,
+        vectors: *const libc::iovec,
+        count: c_int,
+    },
+    From {
+        fd: c_int,
+        buffer: *mut u8,
+        length: usize,
+        flags: c_int,
+        address: *mut u8,
+        address_length: *mut u32,
+    },
+    Message {
+        fd: c_int,
+        message: *mut u8,
+        flags: c_int,
+    },
+    Messages {
+        fd: c_int,
+        messages: *mut u8,
+        count: u32,
+        flags: c_int,
+        timeout: *mut libc::timespec,
+    },
 }
 
-impl ReceiveFrom {
+impl Receive {
+    fn fd(self) -> c_int {
+        match self {
+            Self::Read { fd, .. }
+            | Self::ReadVector { fd, .. }
+            | Self::From { fd, .. }
+            | Self::Message { fd, .. }
+            | Self::Messages { fd, .. } => fd,
+        }
+    }
+
+    fn with_fd(mut self, pinned: c_int) -> Self {
+        match &mut self {
+            Self::Read { fd, .. }
+            | Self::ReadVector { fd, .. }
+            | Self::From { fd, .. }
+            | Self::Message { fd, .. }
+            | Self::Messages { fd, .. } => *fd = pinned,
+        }
+        self
+    }
+
+    fn with_timeout(mut self, replacement: *mut libc::timespec) -> Self {
+        if let Self::Messages { timeout, .. } = &mut self {
+            *timeout = replacement;
+        }
+        self
+    }
+
+    fn can_pin(self) -> bool {
+        let (messages, count, stride) = match self {
+            Self::Message { message, .. } => (message, 1, 0),
+            Self::Messages {
+                messages, count, ..
+            } => {
+                if !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count) {
+                    return false;
+                }
+                (
+                    messages,
+                    count as usize,
+                    core::mem::size_of::<libc::mmsghdr>(),
+                )
+            }
+            _ => return true,
+        };
+        // A private descriptor must not consume a slot that any message could
+        // use to publish SCM_RIGHTS. Inspect the complete admitted batch before
+        // pinning; control receives retain the established unpinned wait path.
+        for index in 0..count {
+            // SAFETY: all-zero is valid for every scalar and pointer in msghdr.
+            let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+            // SAFETY: the destination is initialized owned storage. The kernel
+            // copier validates each caller header, including unaligned pointers.
+            if unsafe {
+                copy_user_bytes(
+                    messages.wrapping_add(index * stride).cast_const(),
+                    core::ptr::from_mut(&mut header).cast(),
+                    core::mem::size_of::<libc::msghdr>(),
+                )
+            }
+            .is_err()
+                || header.msg_controllen != 0
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn flags(self) -> c_int {
+        match self {
+            Self::Read { .. } | Self::ReadVector { .. } => 0,
+            Self::From { flags, .. }
+            | Self::Message { flags, .. }
+            | Self::Messages { flags, .. } => flags,
+        }
+    }
+
     fn supports_slices(self) -> bool {
-        // WAITALL, urgent/error-queue data, caller-requested nonblocking I/O,
-        // and unfamiliar protocol flags keep the original kernel operation.
-        if self.flags & !(libc::MSG_PEEK | libc::MSG_TRUNC) != 0 {
+        // A zero-length read keeps the original syscall, including descriptor
+        // validation and datagram behavior: unlike recv, it must not consume a
+        // queued record. Nonempty socket reads use per-call receive probes.
+        if matches!(self, Self::Read { length: 0, .. }) {
             return false;
         }
+        if let Self::ReadVector { count, .. } = self
+            && !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as c_int).contains(&count)
+        {
+            return false;
+        }
+        if let Self::Messages { count, flags, .. } = self {
+            // A complete nonblocking batch has the blocking call's completion
+            // contract only for one entry or WAITFORONE. Full blocking batches
+            // retain the original kernel operation.
+            if !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count)
+                || (count != 1 && flags & libc::MSG_WAITFORONE == 0)
+            {
+                return false;
+            }
+        }
+        // WAITALL, urgent/error-queue data, caller-requested nonblocking I/O,
+        // and unfamiliar protocol flags keep the original kernel operation.
+        // recvmsg's CLOEXEC changes only acquired descriptor flags, not waiting
+        // behavior. Keep it on every probe so SCM_RIGHTS publication stays atomic.
+        let supported_flags = libc::MSG_PEEK
+            | libc::MSG_TRUNC
+            | if matches!(self, Self::Message { .. } | Self::Messages { .. }) {
+                libc::MSG_CMSG_CLOEXEC
+            } else {
+                0
+            }
+            | if matches!(self, Self::Messages { .. }) {
+                libc::MSG_WAITFORONE
+            } else {
+                0
+            };
+        if self.flags() & !supported_flags != 0 {
+            return false;
+        }
+        let fd = self.fd();
         // SAFETY: F_GETFL has no pointer argument and does not mutate the open
         // file description. A failed query must not replace recv's own error.
-        let Ok(status) = (unsafe { syscall::sys_fcntl(self.fd, libc::F_GETFL, 0) }) else {
+        let Ok(status) = (unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) }) else {
             return false;
         };
         if status & libc::O_NONBLOCK != 0 {
             return false;
         }
-        if !matches!(
-            socket_integer_option(self.fd, libc::SO_TYPE),
-            Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
-        ) || !matches!(
-            socket_integer_option(self.fd, libc::SO_DOMAIN),
-            Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
-        ) || socket_integer_option(self.fd, libc::SO_RCVLOWAT) != Some(1)
+        let socket_type = socket_integer_option(fd, libc::SO_TYPE);
+        if matches!(self, Self::Messages { .. })
+            && !matches!(socket_type, Some(libc::SOCK_DGRAM | libc::SOCK_SEQPACKET))
         {
             return false;
         }
-        let mut timeout = libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        };
-        let mut size = core::mem::size_of::<libc::timeval>() as u32;
-        // SAFETY: both outputs are owned, aligned kernel ABI storage. Only a
-        // socket with no receive timeout is interchangeable with indefinite
-        // readiness waits; finite timeouts retain their exact kernel contract.
-        unsafe {
-            syscall::sys_getsockopt(
-                self.fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVTIMEO,
-                core::ptr::from_mut(&mut timeout).cast(),
-                &mut size,
-            )
+        if !matches!(
+            socket_type,
+            Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
+        ) || !matches!(
+            socket_integer_option(fd, libc::SO_DOMAIN),
+            Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
+        ) || socket_integer_option(fd, libc::SO_RCVLOWAT) != Some(1)
+        {
+            return false;
         }
-        .is_ok()
-            && size as usize == core::mem::size_of::<libc::timeval>()
-            && timeout.tv_sec == 0
-            && timeout.tv_usec == 0
+        true
     }
 
     unsafe fn probe(self) -> Result<isize, c_int> {
+        // SAFETY: retain the original buffer/header graph through the kernel
+        // call; no payload, address or control metadata is copied in Rust.
+        unsafe { self.call(libc::MSG_DONTWAIT) }
+    }
+
+    pub(super) unsafe fn blocking(self) -> Result<isize, c_int> {
+        // SAFETY: the originating entry keeps all caller or prepared storage live.
+        unsafe { self.call(0) }
+    }
+
+    unsafe fn call(self, additional_flags: c_int) -> Result<isize, c_int> {
         // SAFETY: the public entry retains all original pointer arguments.
-        // The kernel validates them and owns all payload/address publication.
+        // The kernel validates them and owns payload/address/control publication.
+        // A successful recvmsg may transfer SCM_RIGHTS ownership, so the caller
+        // must publish its result without retrying or acting on a racing cancel.
+        match self {
+            Self::Read { fd, buffer, length } if additional_flags == 0 => {
+                // Keep read itself for disabled, hosted, internal and unsupported
+                // callers; recvfrom is only the admitted native socket probe.
+                unsafe { syscall::sys_read(fd, buffer, length) }.map(|read| read as isize)
+            }
+            Self::Read { fd, buffer, length } => unsafe {
+                syscall::sys_recvfrom(
+                    fd,
+                    buffer,
+                    length,
+                    additional_flags,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            },
+            Self::ReadVector { fd, vectors, count } if additional_flags == 0 => unsafe {
+                syscall::sys_readv(fd, vectors.cast(), count)
+            },
+            Self::ReadVector { fd, vectors, count } => {
+                // The native adapter has imported the complete descriptor graph.
+                // recvmsg writes only this private header and the caller's bytes;
+                // readv never publishes address/control/message-flag outputs.
+                let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+                header.msg_iov = vectors.cast_mut();
+                header.msg_iovlen = count as usize;
+                unsafe {
+                    syscall::sys_recvmsg(
+                        fd,
+                        core::ptr::from_mut(&mut header).cast(),
+                        additional_flags,
+                    )
+                }
+            }
+            Self::From {
+                fd,
+                buffer,
+                length,
+                flags,
+                address,
+                address_length,
+            } => unsafe {
+                syscall::sys_recvfrom(
+                    fd,
+                    buffer,
+                    length,
+                    flags | additional_flags,
+                    address,
+                    address_length,
+                )
+            },
+            Self::Message { fd, message, flags } => unsafe {
+                syscall::sys_recvmsg(fd, message, flags | additional_flags)
+            },
+            Self::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+                timeout,
+            } => {
+                // Use the full kernel batch so a fault or receive error after
+                // a completed prefix retains recvmmsg's deferred socket error.
+                // Every successful probe is final, including a zero result;
+                // only a zero-progress EAGAIN may enter another wait slice.
+                unsafe {
+                    syscall::sys_recvmmsg(
+                        fd,
+                        messages,
+                        count,
+                        flags | additional_flags,
+                        timeout as usize,
+                    )
+                }
+                .map(|received| received as isize)
+            }
+        }
+    }
+}
+
+/// recvmmsg's explicit timeout differs from SO_RCVTIMEO: Linux checks it
+/// only after receiving a record. Expiry therefore limits a successful batch,
+/// but must not end an empty first receive. Preserve that behavior while the
+/// socket timeout and cancellation word independently bound actual waiting.
+struct BatchTimeout {
+    user: *mut libc::timespec,
+    deadline: i128,
+}
+
+impl BatchTimeout {
+    unsafe fn capture(operation: Receive) -> Result<Option<Self>, c_int> {
+        let Receive::Messages { timeout, .. } = operation else {
+            return Ok(None);
+        };
+        if timeout.is_null() {
+            return Ok(None);
+        }
+        let address = timeout as usize;
+        let bytes = core::mem::size_of::<Timespec>();
+        if address.checked_add(bytes).is_none()
+            || crate::malloc_abi::known_remaining(address)
+                .is_some_and(|available| bytes > available)
+        {
+            return Err(libc::EFAULT);
+        }
+        let mut value = Timespec::default();
+        // SAFETY: the kernel copier validates the original, possibly unaligned
+        // timeout without creating a Rust reference to caller memory.
         unsafe {
-            syscall::sys_recvfrom(
-                self.fd,
-                self.buffer,
-                self.length,
-                self.flags | libc::MSG_DONTWAIT,
-                self.address,
-                self.address_length,
+            Self::copy_timeout(timeout.cast(), core::ptr::from_mut(&mut value).cast())?;
+        }
+        if value.tv_sec < 0 || !(0..1_000_000_000).contains(&value.tv_nsec) {
+            return Err(libc::EINVAL);
+        }
+        Ok(Some(Self {
+            user: timeout,
+            deadline: monotonic_nanoseconds()?
+                + i128::from(value.tv_sec) * NANOS_PER_SECOND
+                + i128::from(value.tv_nsec),
+        }))
+    }
+
+    fn remaining(&self) -> Result<Timespec, c_int> {
+        Ok(sleep_remainder(self.deadline - monotonic_nanoseconds()?))
+    }
+
+    unsafe fn publish(&self, remaining: &Timespec) -> Result<(), c_int> {
+        // Linux writes the remaining timeout only after a positive result,
+        // after publishing message data and lengths. An unwritable timeout
+        // reports EFAULT without undoing those already consumed records.
+        // SAFETY: the source is owned initialized storage; the kernel checks
+        // the caller's output extent, including an unaligned timespec.
+        unsafe { Self::copy_timeout(core::ptr::from_ref(remaining).cast(), self.user.cast()) }
+    }
+
+    unsafe fn copy_timeout(source: *const u8, destination: *mut u8) -> Result<(), c_int> {
+        let bytes = core::mem::size_of::<Timespec>();
+        // Caller bounds were checked during capture; the other extent is
+        // owned storage. Publication performs only fault-checked raw copies,
+        // without reacquiring allocator metadata after consuming records.
+        // Do not allocate a fallback pipe after receiving SCM_RIGHTS: those
+        // records may have consumed the last available descriptor slots.
+        // Requiring this direct copier during capture leaves unavailable
+        // mechanisms on the original syscall before any record is consumed.
+        // SAFETY: getpid has no pointer arguments; do not cache it across fork.
+        let pid = unsafe { syscall::syscall0(libc::SYS_getpid as usize) } as isize;
+        if pid < 0 {
+            return Err((-pid) as c_int);
+        }
+        let local = libc::iovec {
+            iov_base: destination.cast(),
+            iov_len: bytes,
+        };
+        let remote = libc::iovec {
+            iov_base: source.cast_mut().cast(),
+            iov_len: bytes,
+        };
+        // SAFETY: both descriptors are initialized owned storage. Linux checks
+        // the source read extent and destination write extent without Rust
+        // dereferencing either caller address or acquiring descriptor slots.
+        let copied = unsafe {
+            syscall::syscall6(
+                libc::SYS_process_vm_readv as usize,
+                pid as usize,
+                core::ptr::from_ref(&local) as usize,
+                1,
+                core::ptr::from_ref(&remote) as usize,
+                1,
+                0,
             )
+        } as isize;
+        if copied == bytes as isize {
+            Ok(())
+        } else if (-4095..0).contains(&copied) {
+            Err((-copied) as c_int)
+        } else {
+            Err(libc::EFAULT)
         }
     }
 }
@@ -653,25 +1083,904 @@ fn socket_integer_option(fd: c_int, option: c_int) -> Option<c_int> {
     (size as usize == core::mem::size_of::<c_int>()).then_some(value)
 }
 
+/// Socket timeouts are relative wait budgets. Read the value back from Linux:
+/// setsockopt rounds microseconds to its scheduler ticks, and reproducing that
+/// rounding from the application's original timeval would depend on kernel HZ.
+/// Zero means an infinite wait, not an immediately expired operation. Capture
+/// once per message, just as the kernel does; a peer's later setsockopt must not
+/// restart a partially completed stream send or an already blocked receive.
+#[derive(Clone, Copy)]
+struct SocketTimeout {
+    nanoseconds: Option<i128>,
+}
+
+impl SocketTimeout {
+    fn read(fd: c_int, option: c_int) -> Option<Self> {
+        let mut value = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
+        let mut size = core::mem::size_of::<libc::timeval>() as u32;
+        // SAFETY: the query writes only into aligned, initialized owned storage.
+        unsafe {
+            syscall::sys_getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                option,
+                core::ptr::from_mut(&mut value).cast(),
+                &mut size,
+            )
+        }
+        .ok()?;
+        if size as usize != core::mem::size_of::<libc::timeval>() {
+            return None;
+        }
+        Self::from_timeval(value)
+    }
+
+    fn from_timeval(value: libc::timeval) -> Option<Self> {
+        if value.tv_sec < 0 || !(0..1_000_000).contains(&value.tv_usec) {
+            return None;
+        }
+        let nanoseconds =
+            i128::from(value.tv_sec) * NANOS_PER_SECOND + i128::from(value.tv_usec) * 1_000;
+        Some(Self {
+            nanoseconds: (nanoseconds != 0).then_some(nanoseconds),
+        })
+    }
+
+    fn deadline(self) -> Result<Option<i128>, c_int> {
+        self.nanoseconds
+            .map(|duration| monotonic_nanoseconds().map(|now| now + duration))
+            .transpose()
+    }
+}
+
+fn socket_wait_slice(deadline: Option<i128>) -> Result<(Timespec, bool), c_int> {
+    let now = if deadline.is_some() {
+        monotonic_nanoseconds()?
+    } else {
+        0
+    };
+    let (slice, _) = next_slice(deadline, now);
+    Ok((slice, deadline.is_some_and(|end| now >= end)))
+}
+
+/// A blocked kernel operation retains its open file description even when
+/// another thread closes or replaces the application's descriptor. All probes
+/// and waits must retain that same identity, including an eventual raw fallback.
+/// This private descriptor never changes the shared file status flags and is
+/// closed before the ABI can deliver cancellation. Duplication failure admits
+/// no probe and leaves the original single-syscall path available. Ancillary
+/// messages keep their existing unpinned path: creating a descriptor can change
+/// SCM_RIGHTS validation or exhaust a slot needed for received descriptors.
+struct PinnedSocket(c_int);
+
+impl PinnedSocket {
+    fn new(fd: c_int) -> Option<Self> {
+        // SAFETY: F_DUPFD_CLOEXEC has an integer argument and atomically marks
+        // the owned duplicate close-on-exec. Keep the standard slots untouched.
+        unsafe { syscall::sys_fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) }
+            .ok()
+            .map(Self)
+    }
+}
+
+impl Drop for PinnedSocket {
+    fn drop(&mut self) {
+        // Linux releases the descriptor even if close reports EINTR. Retrying
+        // could close an unrelated file that another thread has just opened.
+        let _ = syscall::sys_close(self.0);
+    }
+}
+
 pub(super) enum ReceiveResult {
     Ready(isize),
     Cancel,
     Unsupported,
 }
 
+/// A send uses per-call nonblocking probes, never F_SETFL: changing the open
+/// file description would also change another thread's socket operations.
+#[derive(Clone, Copy)]
+pub(super) struct SendTo {
+    pub fd: c_int,
+    pub buffer: *const u8,
+    pub length: usize,
+    pub flags: c_int,
+    pub address: *const u8,
+    pub address_length: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Send {
+    Write {
+        fd: c_int,
+        buffer: *const u8,
+        length: usize,
+    },
+    WriteVector {
+        fd: c_int,
+        vectors: *const libc::iovec,
+        count: c_int,
+    },
+    To(SendTo),
+    Message {
+        fd: c_int,
+        message: *const u8,
+        flags: c_int,
+    },
+    Messages {
+        fd: c_int,
+        messages: *mut u8,
+        count: u32,
+        flags: c_int,
+    },
+}
+
+impl Send {
+    fn with_fd(mut self, pinned: c_int) -> Self {
+        match &mut self {
+            Self::Write { fd, .. }
+            | Self::WriteVector { fd, .. }
+            | Self::Message { fd, .. }
+            | Self::Messages { fd, .. } => *fd = pinned,
+            Self::To(operation) => operation.fd = pinned,
+        }
+        self
+    }
+
+    pub(super) unsafe fn blocking(self) -> Result<isize, c_int> {
+        // SAFETY: the public ABI keeps its caller/prepared pointer graph live;
+        // the kernel imports every descriptor and validates all payload bytes.
+        match self {
+            Self::Write { fd, buffer, length } => {
+                unsafe { syscall::sys_write(fd, buffer, length) }.map(|written| written as isize)
+            }
+            Self::WriteVector { fd, vectors, count } => unsafe {
+                syscall::sys_writev(fd, vectors.cast(), count)
+            },
+            Self::To(operation) => unsafe {
+                syscall::sys_sendto(
+                    operation.fd,
+                    operation.buffer,
+                    operation.length,
+                    operation.flags,
+                    operation.address,
+                    operation.address_length,
+                )
+            },
+            Self::Message { fd, message, flags } => unsafe {
+                syscall::sys_sendmsg(fd, message, flags)
+            },
+            Self::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+            } => unsafe {
+                syscall::sys_sendmmsg(fd, messages, count, flags).map(|sent| sent as isize)
+            },
+        }
+    }
+}
+
+/// Both forms own their descriptor geometry while the native wait is sliced.
+/// Payload pointers still belong to the caller and are checked only by Linux.
+trait SendOperation {
+    fn fd(&self) -> c_int;
+    fn set_fd(&mut self, fd: c_int);
+    fn flags(&self) -> c_int;
+    fn length(&self) -> usize;
+
+    /// Batch progress counts whole records, never bytes of a stream message.
+    fn record_batch(&self) -> bool {
+        false
+    }
+
+    fn can_pin(&self) -> bool {
+        true
+    }
+
+    // Descriptor writes retain their original syscall if a sandbox allows
+    // write/writev but denies the per-call nonblocking send probe.
+    fn descriptor_io(&self) -> bool {
+        false
+    }
+
+    fn supports_slices(&self) -> bool {
+        // Preserve record/cork/urgent/fast-open semantics and Linux's clipping
+        // of enormous iov lengths in the original single syscall. The limit
+        // below is no larger than MAX_RW_COUNT on either 4 KiB or 64 KiB pages.
+        if self.flags() & !libc::MSG_NOSIGNAL != 0 || self.length() > 0x7fff_0000 {
+            return false;
+        }
+        let fd = self.fd();
+        // SAFETY: F_GETFL has no pointer argument and does not mutate the fd.
+        let Ok(status) = (unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) }) else {
+            return false;
+        };
+        if status & libc::O_NONBLOCK != 0 {
+            return false;
+        }
+        let socket_type = socket_integer_option(fd, libc::SO_TYPE);
+        if self.record_batch()
+            && (self.length() == 0
+                || !matches!(socket_type, Some(libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)))
+        {
+            return false;
+        }
+        // Scalar write of zero bytes emits an empty datagram/SEQPACKET record
+        // and can block on a full queue. Empty stream writes keep their raw
+        // no-op/error ordering. Empty writev is rejected during its import:
+        // Linux never sends a record when the vector's total length is zero.
+        if self.descriptor_io() && self.length() == 0 && socket_type == Some(libc::SOCK_STREAM) {
+            return false;
+        }
+        let domain = socket_integer_option(fd, libc::SO_DOMAIN);
+        let protocol = socket_integer_option(fd, libc::SO_PROTOCOL);
+        if !matches!(
+            (domain, socket_type, protocol),
+            (
+                Some(libc::AF_UNIX),
+                Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET),
+                Some(0)
+            ) | (
+                Some(libc::AF_INET | libc::AF_INET6),
+                Some(libc::SOCK_STREAM),
+                Some(libc::IPPROTO_TCP)
+            ) | (
+                Some(libc::AF_INET | libc::AF_INET6),
+                Some(libc::SOCK_DGRAM),
+                Some(libc::IPPROTO_UDP)
+            )
+        ) {
+            return false;
+        }
+        if self.record_batch() && matches!(domain, Some(libc::AF_INET | libc::AF_INET6)) {
+            let mut address = [0u8; 128];
+            let mut size = address.len() as u32;
+            // SAFETY: getsockname writes only into these owned sockaddr/length
+            // buffers. Both admitted Internet sockaddr layouts put their
+            // network-order port in bytes 2..4; testing zero is endian-neutral.
+            if unsafe { syscall::sys_getsockname(fd, address.as_mut_ptr(), &mut size) }.is_err()
+                || size < 4
+                || (address[2] == 0 && address[3] == 0)
+            {
+                // On an unbound UDP socket EAGAIN can mean ephemeral-port
+                // exhaustion, not backpressure. Preserve its immediate raw
+                // sendmmsg result instead of entering an endless readiness wait.
+                return false;
+            }
+        }
+        true
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int>;
+}
+
+impl SendOperation for SendTo {
+    fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    fn set_fd(&mut self, fd: c_int) {
+        self.fd = fd;
+    }
+
+    fn flags(&self) -> c_int {
+        self.flags
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
+        // A blocking stream send returns its accepted prefix on a later error,
+        // without raising SIGPIPE for that error. Subsequent probes must not
+        // manufacture SIGPIPE merely because that prefix used a separate call.
+        let flags =
+            self.flags | libc::MSG_DONTWAIT | if sent == 0 { 0 } else { libc::MSG_NOSIGNAL };
+        // SAFETY: sent is bounded by length and counts bytes accepted by prior
+        // kernel calls. wrapping_add keeps inaccessible caller pointers under
+        // kernel validation rather than forming a Rust slice/reference to them.
+        unsafe {
+            syscall::sys_sendto(
+                self.fd,
+                self.buffer.wrapping_add(sent),
+                self.length - sent,
+                flags,
+                self.address,
+                self.address_length,
+            )
+        }
+    }
+}
+
+/// Native sendmmsg keeps each message's kernel-validated output publication.
+/// Probing the whole vector nonblockingly would hide the error following a
+/// successful prefix: retrying that suffix could erase an asynchronous error
+/// or retransmit a record whose msg_len write faulted. A one-message syscall
+/// makes each committed record and each error distinguishable instead.
+struct SendMessages {
+    fd: c_int,
+    messages: *mut u8,
+    count: u32,
+    flags: c_int,
+}
+
+impl SendOperation for SendMessages {
+    fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    fn set_fd(&mut self, fd: c_int) {
+        self.fd = fd;
+    }
+
+    fn flags(&self) -> c_int {
+        self.flags
+    }
+
+    fn length(&self) -> usize {
+        // Linux clips sendmmsg's vector to UIO_MAXIOV before importing it.
+        (self.count as usize).min(crate::io_abi::iov_snapshot::MAX_IOVECS)
+    }
+
+    fn record_batch(&self) -> bool {
+        true
+    }
+
+    fn can_pin(&self) -> bool {
+        for index in 0..self.length() {
+            // SAFETY: all-zero is valid for msghdr's integer and pointer fields.
+            let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+            let source = self
+                .messages
+                .wrapping_add(index * core::mem::size_of::<libc::mmsghdr>());
+            // SAFETY: the destination is initialized owned storage. Faulting
+            // or unaligned caller headers remain checked by the kernel copier.
+            if unsafe {
+                copy_user_bytes(
+                    source.cast_const(),
+                    core::ptr::from_mut(&mut header).cast(),
+                    core::mem::size_of::<libc::msghdr>(),
+                )
+            }
+            .is_err()
+                || header.msg_controllen != 0
+            {
+                // A private fd could turn an invalid SCM_RIGHTS source into
+                // a valid socket. Preserve the established unpinned path for
+                // any ancillary or inaccessible header in the batch.
+                return false;
+            }
+        }
+        true
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
+        let message = self
+            .messages
+            .wrapping_add(sent * core::mem::size_of::<libc::mmsghdr>());
+        // SAFETY: sent counts only entries whose complete record and msg_len
+        // were published by previous syscalls. The caller's current header,
+        // payload, address and control graph remain entirely kernel-validated.
+        // Preserve SIGPIPE behavior for a later message: unlike a byte prefix
+        // of one stream send, it is a distinct message in the original batch.
+        unsafe {
+            syscall::sys_sendmmsg(self.fd, message, 1, self.flags | libc::MSG_DONTWAIT)
+                .map(|count| count as isize)
+        }
+    }
+}
+
+struct DescriptorWrite(SendTo);
+
+impl SendOperation for DescriptorWrite {
+    fn fd(&self) -> c_int {
+        self.0.fd
+    }
+
+    fn set_fd(&mut self, fd: c_int) {
+        self.0.fd = fd;
+    }
+
+    fn flags(&self) -> c_int {
+        0
+    }
+
+    fn length(&self) -> usize {
+        self.0.length
+    }
+
+    fn descriptor_io(&self) -> bool {
+        true
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
+        // SAFETY: the adapter retains the original write payload through every
+        // retry; SendTo preserves record atomicity, prefixes and SIGPIPE behavior.
+        unsafe { self.0.probe(sent) }
+    }
+}
+
+/// A complete descriptor import with eight inline entries and raw mmap storage
+/// for larger vectors, avoiding large native-thread stack frames, shared TLS
+/// scratch and allocator reentry. Neither the caller's header nor its iovec
+/// array is modified while consuming an accepted stream prefix.
+struct SendMessage {
+    fd: c_int,
+    flags: c_int,
+    header: libc::msghdr,
+    vectors: crate::io_abi::iov_snapshot::PreparedIovecs,
+    count: usize,
+    first: usize,
+    advanced: usize,
+    length: usize,
+    descriptor_io: bool,
+}
+
+impl SendMessage {
+    fn import(fd: c_int, message: *const u8, flags: c_int) -> Option<Self> {
+        // SAFETY: all-zero is valid for the scalar and raw-pointer fields of
+        // msghdr. It is initialized before the kernel copies caller bytes.
+        let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+        // SAFETY: the destination is exclusively owned initialized storage.
+        // The caller source is fault-checked, including unaligned headers.
+        unsafe {
+            copy_user_bytes(
+                message,
+                core::ptr::from_mut(&mut header).cast(),
+                core::mem::size_of::<libc::msghdr>(),
+            )
+        }
+        .ok()?;
+        Self::from_header(fd, header, flags, false)
+    }
+
+    fn import_writev(fd: c_int, vectors: *const libc::iovec, count: c_int) -> Option<Self> {
+        if !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as c_int).contains(&count) {
+            return None;
+        }
+        // All-zero is valid for the pointer/scalar fields. Only the private
+        // header is created here; importing the caller's array remains checked.
+        let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+        header.msg_iov = vectors.cast_mut();
+        header.msg_iovlen = count as usize;
+        // vfs_writev returns immediately for an empty imported vector, even on
+        // message sockets where sendmsg would enqueue an empty record instead.
+        Self::from_header(fd, header, 0, true).filter(|operation| operation.length != 0)
+    }
+
+    fn from_header(
+        fd: c_int,
+        header: libc::msghdr,
+        flags: c_int,
+        descriptor_io: bool,
+    ) -> Option<Self> {
+        if header.msg_iovlen > crate::io_abi::iov_snapshot::MAX_IOVECS {
+            return None;
+        }
+        // The established importer uses inline or privately mapped storage,
+        // never malloc. Rejecting an unsupported/invalid graph here retains the
+        // original syscall's error ordering; no payload has been transmitted.
+        let vectors = crate::io_abi::iov_snapshot::PreparedIovecs::prepare_unsigned(
+            header.msg_iov,
+            header.msg_iovlen,
+            true,
+        )
+        .ok()?;
+        if vectors.entries().len() != header.msg_iovlen {
+            return None;
+        }
+        let mut operation = Self {
+            fd,
+            flags,
+            header,
+            vectors,
+            count: header.msg_iovlen,
+            first: 0,
+            advanced: 0,
+            length: 0,
+            descriptor_io,
+        };
+        for entry in operation.vectors.entries() {
+            operation.length = operation.length.checked_add(entry.iov_len)?;
+        }
+        Some(operation)
+    }
+}
+
+impl SendOperation for SendMessage {
+    fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    fn set_fd(&mut self, fd: c_int) {
+        self.fd = fd;
+    }
+
+    fn flags(&self) -> c_int {
+        self.flags
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    fn can_pin(&self) -> bool {
+        // An invalid SCM_RIGHTS fd could otherwise become valid merely because
+        // this operation's private duplicate occupied that vacant number.
+        self.header.msg_controllen == 0
+    }
+
+    fn descriptor_io(&self) -> bool {
+        self.descriptor_io
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
+        let mut advance = sent - self.advanced;
+        let vectors = self.vectors.entries_mut();
+        if advance != 0 {
+            // Submit the complete imported graph before the first byte is
+            // accepted, including zero-length entries: their kernel address
+            // validation must not be elided by a premature cursor advance.
+            while self.first < self.count && advance >= vectors[self.first].iov_len {
+                advance -= vectors[self.first].iov_len;
+                self.first += 1;
+            }
+            if advance != 0 {
+                let first = &mut vectors[self.first];
+                first.iov_base = first.iov_base.cast::<u8>().wrapping_add(advance).cast();
+                first.iov_len -= advance;
+            }
+        }
+        self.advanced = sent;
+        self.header.msg_iov = self.vectors.as_ptr().cast_mut().wrapping_add(self.first);
+        self.header.msg_iovlen = self.count - self.first;
+        if sent != 0 {
+            // Ancillary data belongs to the first accepted message fragment.
+            // Replaying SCM_RIGHTS on a stream continuation would install a
+            // second set of descriptors at the receiver, even with exact bytes.
+            self.header.msg_control = core::ptr::null_mut();
+            self.header.msg_controllen = 0;
+        }
+        let flags =
+            self.flags | libc::MSG_DONTWAIT | if sent == 0 { 0 } else { libc::MSG_NOSIGNAL };
+        // SAFETY: this header and imported vector remain stationary across the
+        // syscall. All payload/name/control pointers are still kernel-validated;
+        // only the privately owned iovec geometry is adjusted in Rust.
+        unsafe { syscall::sys_sendmsg(self.fd, core::ptr::from_ref(&self.header).cast(), flags) }
+    }
+}
+
+pub(super) enum SendResult {
+    Ready(isize),
+    Cancel,
+    Unsupported,
+}
+
+/// Send ordinary stream or atomic-message data with bounded cancellation.
+/// Stream prefixes are accumulated until the original request completes. A
+/// later cancellation/error returns the already accepted prefix, as a single
+/// interrupted blocking send does; it must never replay or hide those bytes.
+/// Caught signals and nondefault flags retain their kernel contracts. A finite
+/// socket timeout uses one monotonic budget across a stream's accepted prefixes.
+/// As with receives, concurrent installation and delivery of a new handler
+/// inside a slice is outside this cooperative path's supported scope.
+///
+/// # Safety
+/// The ABI supplies its original send arguments and the enabled descriptor for
+/// this native thread. The signal check inspects actual kernel dispositions.
+pub(super) unsafe fn wait_send(
+    operation: Send,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SendResult, c_int> {
+    // SAFETY: both arms retain the original pointers for the complete native
+    // operation. Any owned message mapping is dropped before this returns.
+    match operation {
+        Send::Write { fd, buffer, length } => unsafe {
+            wait_send_operation(
+                DescriptorWrite(SendTo {
+                    fd,
+                    buffer,
+                    length,
+                    flags: 0,
+                    address: core::ptr::null(),
+                    address_length: 0,
+                }),
+                operation,
+                cancel,
+                supports_handlers,
+            )
+        },
+        Send::WriteVector { fd, vectors, count } => {
+            let Some(imported) = SendMessage::import_writev(fd, vectors, count) else {
+                return Ok(SendResult::Unsupported);
+            };
+            // SAFETY: the complete owned vector is retained until every probe
+            // finishes, and dropped before the caller can deliver cancellation.
+            unsafe { wait_send_operation(imported, operation, cancel, supports_handlers) }
+        }
+        Send::To(send) => unsafe {
+            wait_send_operation(send, operation, cancel, supports_handlers)
+        },
+        Send::Message { fd, message, flags } => unsafe {
+            wait_send_message(fd, message, flags, cancel, supports_handlers)
+        },
+        Send::Messages {
+            fd,
+            messages,
+            count,
+            flags,
+        } => unsafe {
+            wait_send_operation(
+                SendMessages {
+                    fd,
+                    messages,
+                    count,
+                    flags,
+                },
+                operation,
+                cancel,
+                supports_handlers,
+            )
+        },
+    }
+}
+
+#[inline(never)]
+unsafe fn wait_send_message(
+    fd: c_int,
+    message: *const u8,
+    flags: c_int,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SendResult, c_int> {
+    let Some(operation) = SendMessage::import(fd, message, flags) else {
+        return Ok(SendResult::Unsupported);
+    };
+    // SAFETY: the imported descriptor graph remains owned by this native path;
+    // on an unsupported contract no bytes or ancillary data were transmitted.
+    unsafe {
+        wait_send_operation(
+            operation,
+            Send::Message { fd, message, flags },
+            cancel,
+            supports_handlers,
+        )
+    }
+}
+
+unsafe fn wait_send_operation(
+    mut operation: impl SendOperation,
+    original: Send,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SendResult, c_int> {
+    if !operation.supports_slices() {
+        return Ok(SendResult::Unsupported);
+    }
+    let Ok(mut mask) = SignalMaskGuard::block_all() else {
+        return Ok(SendResult::Unsupported);
+    };
+    if !supports_handlers(mask.original) {
+        return mask.restore().map(|()| SendResult::Unsupported);
+    }
+    let pinned = if operation.can_pin() {
+        let Some(pinned) = PinnedSocket::new(operation.fd()) else {
+            return mask.restore().map(|()| SendResult::Unsupported);
+        };
+        operation.set_fd(pinned.0);
+        Some(pinned)
+    } else {
+        None
+    };
+    let original = pinned
+        .as_ref()
+        .map_or(original, |socket| original.with_fd(socket.0));
+    // The loop repeats admission against the pinned description: the public
+    // descriptor may have changed between the initial filter and duplication.
+    // SAFETY: the original arguments and mask remain live across every probe;
+    // cancellation unwinds only after this helper restores the entry mask.
+    let result = unsafe { send_slices(&mut operation, cancel, supports_handlers, &mut mask) };
+    let restored = mask.restore();
+    match result {
+        // Even an adapter-only restoration error cannot erase a committed
+        // send: reporting failure would invite the caller to duplicate bytes
+        // (or an accepted zero-length datagram) by retrying the operation.
+        Ok(SendResult::Ready(sent)) => Ok(SendResult::Ready(sent)),
+        Ok(SendResult::Unsupported) if pinned.is_some() => {
+            restored?;
+            if cancel.pending() {
+                return Ok(SendResult::Cancel);
+            }
+            // No bytes were accepted. Preserve the captured socket even when
+            // a changed contract or denied adapter requires the raw operation.
+            unsafe { original.blocking() }.map(SendResult::Ready)
+        }
+        other => restored.and(other),
+    }
+}
+
+#[inline(never)]
+unsafe fn send_slices(
+    operation: &mut impl SendOperation,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+    mask: &mut SignalMaskGuard,
+) -> Result<SendResult, c_int> {
+    let Some(timeout) = SocketTimeout::read(operation.fd(), libc::SO_SNDTIMEO) else {
+        return Ok(SendResult::Unsupported);
+    };
+    let Ok(mut deadline) = timeout.deadline() else {
+        return Ok(SendResult::Unsupported);
+    };
+    let mut sent = 0;
+    let mut recheck_handlers = false;
+    loop {
+        if cancel.pending() {
+            return Ok(if sent == 0 {
+                SendResult::Cancel
+            } else {
+                SendResult::Ready(sent as isize)
+            });
+        }
+        // The caller checked dispositions before pinning, with signals already
+        // blocked. Later slices must observe dispositions changed by a peer.
+        if (recheck_handlers && !supports_handlers(mask.original)) || !operation.supports_slices() {
+            return Ok(if sent == 0 {
+                SendResult::Unsupported
+            } else {
+                SendResult::Ready(sent as isize)
+            });
+        }
+        recheck_handlers = true;
+        // Atomic-message probes preserve complete records. A batch probe
+        // commits one record and its msg_len at a time; only a single-message
+        // stream probe can accept a byte prefix. Backpressure is never a
+        // fabricated short success while cancellation remains enabled.
+        match unsafe { operation.probe(sent) } {
+            Ok(written) => {
+                sent += written as usize;
+                if written == 0 || sent == operation.length() {
+                    return Ok(SendResult::Ready(sent as isize));
+                }
+                if operation.record_batch() {
+                    // sendmmsg applies the socket's timeout to each distinct
+                    // message, rather than to the whole vector. A completed
+                    // record commits its msg_len before the next budget starts.
+                    let Some(timeout) = SocketTimeout::read(operation.fd(), libc::SO_SNDTIMEO)
+                    else {
+                        return Ok(SendResult::Ready(sent as isize));
+                    };
+                    let Ok(next) = timeout.deadline() else {
+                        return Ok(SendResult::Ready(sent as isize));
+                    };
+                    deadline = next;
+                }
+                continue;
+            }
+            Err(libc::EAGAIN) => {}
+            Err(_) if sent != 0 => return Ok(SendResult::Ready(sent as isize)),
+            // A sandbox can allow write/writev but deny sendto/sendmsg. Preserve
+            // the original syscall only while no prefix can be duplicated.
+            Err(libc::ENOSYS | libc::EPERM | libc::EACCES) if operation.descriptor_io() => {
+                return Ok(SendResult::Unsupported);
+            }
+            Err(error) => return Err(error),
+        }
+        let mut interest = libc::pollfd {
+            fd: operation.fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let (mut slice, expired) = match socket_wait_slice(deadline) {
+            Ok(slice) => slice,
+            Err(_) => {
+                return Ok(if sent == 0 {
+                    SendResult::Unsupported
+                } else {
+                    SendResult::Ready(sent as isize)
+                });
+            }
+        };
+        if expired {
+            return if sent == 0 {
+                Err(libc::EAGAIN)
+            } else {
+                Ok(SendResult::Ready(sent as isize))
+            };
+        }
+        // A concurrently installed handler may unwind; do not restore its
+        // handler mask during that unwind. Ordinary return reblocks signals.
+        mask.armed = false;
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::from_mut(&mut interest).cast(),
+                1,
+                core::ptr::from_mut(&mut slice).cast(),
+                core::ptr::from_ref(&mask.original).cast(),
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        mask.armed = true;
+        if let Err(error) = result {
+            if sent != 0 {
+                return Ok(SendResult::Ready(sent as isize));
+            }
+            if cancel.pending() {
+                return Ok(SendResult::Cancel);
+            }
+            if error == libc::EINTR {
+                return Err(error);
+            }
+            // A missing/blocked adapter syscall must not replace sendto's own
+            // behavior. Only a zero-progress operation may use the raw fallback.
+            return Ok(SendResult::Unsupported);
+        }
+    }
+}
+
 /// Receive ordinary socket data with bounded native cancellation, leaving every
 /// successful receive committed even if a cancellation request races completion.
-/// Nondefault timeout/low-water/flag contracts and deliverable caught signals
+/// Nondefault low-water/flag contracts and deliverable caught signals
 /// keep the raw receive. In particular, ppoll must not replace recv's SA_RESTART
 /// behavior. As for child waits, concurrent installation and delivery of a new
 /// handler inside a slice is outside this cooperative path's supported scope.
+/// A finite socket timeout is captured once and cannot be extended by empty
+/// readiness wakes or by another receiver winning the race to consume data.
 ///
 /// # Safety
 /// The ABI supplies its original receive arguments and an enabled cancellation
 /// descriptor belonging to the calling native thread. `supports_handlers`
 /// inspects actual kernel dispositions while the original mask is blocked.
 pub(super) unsafe fn wait_receive(
-    operation: ReceiveFrom,
+    operation: Receive,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<ReceiveResult, c_int> {
+    if let Receive::ReadVector { fd, vectors, count } = operation {
+        if !operation.supports_slices() {
+            return Ok(ReceiveResult::Unsupported);
+        }
+        let Ok(imported) =
+            crate::io_abi::iov_snapshot::PreparedIovecs::prepare(vectors, count, true)
+        else {
+            return Ok(ReceiveResult::Unsupported);
+        };
+        let length = imported
+            .entries()
+            .iter()
+            .try_fold(0usize, |length, entry| length.checked_add(entry.iov_len));
+        // Empty vectors and Linux's large-transfer clipping keep readv's own
+        // syscall contract, as do incomplete/invalid descriptor imports.
+        if imported.entries().len() != count as usize || !matches!(length, Some(1..=0x7fff_0000)) {
+            return Ok(ReceiveResult::Unsupported);
+        }
+        // SAFETY: the complete imported graph stays alive across every probe.
+        // Its private mapping is released before cancellation can unwind.
+        return unsafe {
+            wait_receive_operation(
+                Receive::ReadVector {
+                    fd,
+                    vectors: imported.as_ptr(),
+                    count,
+                },
+                cancel,
+                supports_handlers,
+            )
+        };
+    }
+    // SAFETY: the original receive entry retains all caller/prepared storage.
+    unsafe { wait_receive_operation(operation, cancel, supports_handlers) }
+}
+
+unsafe fn wait_receive_operation(
+    operation: Receive,
     cancel: CancellationWait,
     supports_handlers: fn(u64) -> bool,
 ) -> Result<ReceiveResult, c_int> {
@@ -683,42 +1992,115 @@ pub(super) unsafe fn wait_receive(
         // with a new error, and no caller output or descriptor has changed.
         return Ok(ReceiveResult::Unsupported);
     };
+    if !supports_handlers(mask.original) {
+        return mask.restore().map(|()| ReceiveResult::Unsupported);
+    }
+    let pinned = if operation.can_pin() {
+        let Some(pinned) = PinnedSocket::new(operation.fd()) else {
+            return mask.restore().map(|()| ReceiveResult::Unsupported);
+        };
+        Some(pinned)
+    } else {
+        None
+    };
+    let operation = pinned
+        .as_ref()
+        .map_or(operation, |socket| operation.with_fd(socket.0));
+    // Recheck all admission properties on this description inside the loop;
+    // a concurrent close/reuse must never redirect a later probe or fallback.
     // SAFETY: operation's pointers and the owned mask remain live across every
     // nonblocking probe and bounded wait; no cancellation unwinds in this helper.
     let result = unsafe { receive_slices(operation, cancel, supports_handlers, &mut mask) };
-    mask.restore().and(result)
+    let restored = mask.restore();
+    match result {
+        // A successful receive has already consumed bytes and may have installed
+        // descriptors. An adapter-only error must not hide that ownership transfer.
+        Ok(ReceiveResult::Ready(received)) => Ok(ReceiveResult::Ready(received)),
+        Ok(ReceiveResult::Unsupported) if pinned.is_some() => {
+            restored?;
+            if cancel.pending() {
+                return Ok(ReceiveResult::Cancel);
+            }
+            // Keep ownership until the original syscall completes. Returning
+            // Unsupported here would drop the pin and re-resolve the public fd.
+            unsafe { operation.blocking() }.map(ReceiveResult::Ready)
+        }
+        other => restored.and(other),
+    }
 }
 
 #[inline(never)]
 unsafe fn receive_slices(
-    operation: ReceiveFrom,
+    operation: Receive,
     cancel: CancellationWait,
     supports_handlers: fn(u64) -> bool,
     mask: &mut SignalMaskGuard,
 ) -> Result<ReceiveResult, c_int> {
+    let Some(timeout) = SocketTimeout::read(operation.fd(), libc::SO_RCVTIMEO) else {
+        return Ok(ReceiveResult::Unsupported);
+    };
+    let Ok(deadline) = timeout.deadline() else {
+        return Ok(ReceiveResult::Unsupported);
+    };
+    // Invalid input and unavailable snapshot/clock mechanisms retain the
+    // original syscall's validation order, without consuming any message.
+    let Ok(batch_timeout) = (unsafe { BatchTimeout::capture(operation) }) else {
+        return Ok(ReceiveResult::Unsupported);
+    };
+    let mut recheck_handlers = false;
     loop {
         if cancel.pending() {
             return Ok(ReceiveResult::Cancel);
         }
-        if !supports_handlers(mask.original) || !operation.supports_slices() {
+        if (recheck_handlers && !supports_handlers(mask.original)) || !operation.supports_slices() {
             return Ok(ReceiveResult::Unsupported);
         }
-        // A successful probe may consume a datagram or stream bytes. Never
-        // discard it for a request racing the kernel's completed operation.
-        match unsafe { operation.probe() } {
-            Ok(received) => return Ok(ReceiveResult::Ready(received)),
+        recheck_handlers = true;
+        let mut remaining = match batch_timeout.as_ref().map(BatchTimeout::remaining).transpose() {
+            Ok(remaining) => remaining,
+            Err(_) => return Ok(ReceiveResult::Unsupported),
+        };
+        let submitted = match remaining.as_mut() {
+            Some(remaining) => operation.with_timeout(core::ptr::from_mut(remaining).cast()),
+            None => operation,
+        };
+        // Keep the complete kernel batch and its deferred socket errors. A zero
+        // remaining timeout still permits its first record, then stops further
+        // consumption. Empty probes never publish an intermediate remainder.
+        match unsafe { submitted.probe() } {
+            Ok(received) => {
+                if received > 0
+                    && let (Some(timeout), Some(remaining)) = (&batch_timeout, &remaining)
+                {
+                    // SAFETY: publication occurs once, after the final kernel
+                    // result; a copy fault must not replay consumed messages.
+                    unsafe { timeout.publish(remaining)? };
+                }
+                // Never discard completed I/O for a racing cancellation.
+                return Ok(ReceiveResult::Ready(received));
+            }
             Err(libc::EAGAIN) => {}
+            // A sandbox may permit read/readv but deny recvfrom/recvmsg. No
+            // bytes were acquired; preserve the caller's original operation.
+            Err(libc::ENOSYS | libc::EPERM | libc::EACCES)
+                if matches!(operation, Receive::Read { .. } | Receive::ReadVector { .. }) =>
+            {
+                return Ok(ReceiveResult::Unsupported);
+            }
             Err(error) => return Err(error),
         }
         let mut interest = libc::pollfd {
-            fd: operation.fd,
+            fd: operation.fd(),
             events: libc::POLLIN,
             revents: 0,
         };
-        let mut slice = Timespec {
-            tv_sec: 0,
-            tv_nsec: SLICE_NS,
+        let (mut slice, expired) = match socket_wait_slice(deadline) {
+            Ok(slice) => slice,
+            Err(_) => return Ok(ReceiveResult::Unsupported),
         };
+        if expired {
+            return Err(libc::EAGAIN);
+        }
         // A newly installed application handler may unwind. As in child_slices,
         // do not restore its signal mask during that unwind. Ordinary return
         // reinstates the blocked mask before inspecting cancellation or data.
@@ -1280,6 +2662,40 @@ unsafe fn wait_slices(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socket_timeouts_preserve_kernel_timeval_precision_and_infinite_zero() {
+        for (seconds, microseconds, expected) in [
+            (0, 0, None),
+            (0, 1, Some(1_000)),
+            (0, 150_001, Some(150_001_000)),
+            (1, 999_999, Some(1_999_999_000)),
+            (
+                i64::MAX,
+                999_999,
+                Some(i128::from(i64::MAX) * NANOS_PER_SECOND + 999_999_000),
+            ),
+        ] {
+            let timeout = SocketTimeout::from_timeval(libc::timeval {
+                tv_sec: seconds,
+                tv_usec: microseconds,
+            })
+            .expect("valid kernel timeout");
+            assert_eq!(timeout.nanoseconds, expected);
+        }
+        for (seconds, microseconds) in [(-1, 0), (0, -1), (0, 1_000_000)] {
+            assert!(
+                SocketTimeout::from_timeval(libc::timeval {
+                    tv_sec: seconds,
+                    tv_usec: microseconds,
+                })
+                .is_none()
+            );
+        }
+        let (slice, expired) = socket_wait_slice(None).expect("infinite slice needs no clock");
+        assert_eq!(slice.tv_nsec, SLICE_NS);
+        assert!(!expired);
+    }
 
     #[test]
     fn sleep_remainders_keep_subsecond_precision_and_full_time_t_range() {

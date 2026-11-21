@@ -532,11 +532,14 @@ pub(crate) unsafe fn read_cp(fd: c_int, buf: *mut c_void, count: usize) -> libc:
     let (effective_count, clamped) =
         maybe_clamp_io_len("read", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for read(2); read is a cancellation point.
-    let rc = unsafe {
-        crate::pthread_abi::cancellation_point_syscall(
-            libc::SYS_read,
-            [fd as usize, buf as usize, effective_count, 0, 0, 0],
-        )
+    let rc = match unsafe {
+        crate::pthread_abi::cancellation_point_read(fd, buf.cast(), effective_count)
+    } {
+        Ok(read) => read,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -604,11 +607,14 @@ pub(crate) unsafe fn write_cp(fd: c_int, buf: *const c_void, count: usize) -> li
     let (effective_count, clamped) =
         maybe_clamp_io_len("write", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for write(2); write is a cancellation point.
-    let rc = unsafe {
-        crate::pthread_abi::cancellation_point_syscall(
-            libc::SYS_write,
-            [fd as usize, buf as usize, effective_count, 0, 0, 0],
-        )
+    let rc = match unsafe {
+        crate::pthread_abi::cancellation_point_write(fd, buf.cast(), effective_count)
+    } {
+        Ok(written) => written,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -3160,7 +3166,7 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_DELAYTIMER_MAX => libc::c_int::MAX as libc::c_long,
         libc::_SC_MQ_PRIO_MAX => 32768,
         libc::_SC_RTSIG_MAX => 32,
-        libc::_SC_AIO_PRIO_DELTA_MAX => 20,
+        libc::_SC_AIO_PRIO_DELTA_MAX => AIO_PRIO_DELTA_MAX as c_long,
         // `libc` does not expose every Linux/glibc _SC selector on every
         // supported Rust target. Keep the selector numbers here rather than
         // silently treating these documented glibc facilities as unknown.
@@ -5493,14 +5499,28 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
     let host_fork = crate::process_abi::host_fork_fn();
     let atfork = crate::pthread_abi::run_atfork_prepare();
+    // Loader callbacks can acquire the remaining runtime locks.
+    let loader_guard = crate::dlfcn_abi::native_fork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     // ENVIRON_LOCK before the pipeline, as in fork(): setenv holds it while
     // its hardened memcpy takes pipeline locks.
     let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
-    let mut _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let mut _pipeline_guard = match crate::membrane_state::ready_pipeline() {
+        Some(pipeline) => match pipeline.try_atfork_prepare() {
+            Some(guard) => Some(guard),
+            None => {
+                drop(_environ_guard);
+                stdio_guard.release_in_parent();
+                loader_guard.release_in_parent();
+                crate::pthread_abi::run_atfork_parent(&atfork);
+                unsafe { set_abi_errno(libc::EAGAIN) };
+                return -1;
+            }
+        },
+        None => None,
+    };
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -5516,18 +5536,20 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(error) };
             return -1;
         }
     };
 
-    // SAFETY: fork via raw syscall
     let pid = crate::process_abi::clone_for_fork(host_fork);
     if pid == Ok(0) {
         policy_tls_guard.adopt_and_unlock_in_fork_child();
         // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
         unsafe { malloc_guard.adopt_in_fork_child() };
+        // SAFETY: freshly forked, single-threaded child with signals blocked.
+        unsafe { loader_guard.adopt_in_child() };
     }
     drop(malloc_guard);
     drop(policy_tls_guard);
@@ -5542,6 +5564,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             drop(signal_guard);
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(error) };
@@ -5567,8 +5590,10 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
+        loader_guard.release_in_child();
     } else {
         stdio_guard.release_in_parent();
+        loader_guard.release_in_parent();
     }
 
     if pid > 0 {
@@ -9385,16 +9410,33 @@ pub unsafe extern "C" fn forkpty(
 
     let host_fork = crate::process_abi::host_fork_fn();
     let atfork = crate::pthread_abi::run_atfork_prepare();
+    // Match fork/daemon: loader, stdio, environment, pipeline, allocator.
+    let loader_guard = crate::dlfcn_abi::native_fork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     // Mirror fork()'s ENVIRON_LOCK acquisition BEFORE pipeline_guard: the
     // forkpty child does not exec, so any held environ lock from another parent
-    // thread becomes a stuck lock in the child address space, and setenv holds
-    // ENVIRON_LOCK while its hardened memcpy takes pipeline locks.
+    // thread becomes a stuck lock in the child address space. Acquiring here
+    // forces serialization with any in-flight setenv before the clone, and
+    // setenv holds ENVIRON_LOCK while its hardened memcpy takes pipeline locks.
     let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
-    let mut _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let mut _pipeline_guard = match crate::membrane_state::ready_pipeline() {
+        Some(pipeline) => match pipeline.try_atfork_prepare() {
+            Some(guard) => Some(guard),
+            None => {
+                drop(_environ_guard);
+                stdio_guard.release_in_parent();
+                loader_guard.release_in_parent();
+                crate::pthread_abi::run_atfork_parent(&atfork);
+                let _ = syscall::sys_close(master);
+                let _ = syscall::sys_close(slave);
+                unsafe { set_abi_errno(libc::EAGAIN) };
+                return -1;
+            }
+        },
+        None => None,
+    };
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -9410,6 +9452,7 @@ pub unsafe extern "C" fn forkpty(
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             crate::pthread_abi::run_atfork_parent(&atfork);
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
@@ -9423,6 +9466,8 @@ pub unsafe extern "C" fn forkpty(
         policy_tls_guard.adopt_and_unlock_in_fork_child();
         // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
         unsafe { malloc_guard.adopt_in_fork_child() };
+        // SAFETY: freshly forked, single-threaded child with signals blocked.
+        unsafe { loader_guard.adopt_in_child() };
     }
     drop(malloc_guard);
     drop(policy_tls_guard);
@@ -9437,6 +9482,7 @@ pub unsafe extern "C" fn forkpty(
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
             drop(signal_guard);
@@ -9464,8 +9510,10 @@ pub unsafe extern "C" fn forkpty(
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
+        loader_guard.release_in_child();
     } else {
         stdio_guard.release_in_parent();
+        loader_guard.release_in_parent();
     }
 
     if pid == 0 {
@@ -16718,6 +16766,9 @@ const AIO_CANCELED: c_int = 0;
 const AIO_NOTCANCELED: c_int = 1;
 const AIO_ALLDONE: c_int = 2;
 
+/// GNU/Linux's accepted asynchronous priority reduction, shared with sysconf.
+const AIO_PRIO_DELTA_MAX: c_int = 20;
+
 /// O_SYNC / O_DSYNC flags for aio_fsync.
 #[allow(dead_code)]
 const O_SYNC_FLAG: c_int = 0x101000; // O_SYNC on Linux x86_64
@@ -16729,6 +16780,8 @@ mod aiocb_off {
     pub const FILDES: usize = 0;
     /// `int aio_lio_opcode` at offset 4
     pub const LIO_OPCODE: usize = 4;
+    /// `int aio_reqprio` at offset 8
+    pub const REQPRIO: usize = 8;
     /// `volatile void *aio_buf` at offset 16
     pub const BUF: usize = 16;
     /// `size_t aio_nbytes` at offset 24
@@ -17514,10 +17567,19 @@ pub unsafe extern "C-unwind" fn sendmmsg(
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
+    unsafe { sendmmsg_cp(sockfd, msgvec, vlen, flags) }
+}
+
+/// Keep caller capture at the public or reserved-alias boundary.
+#[inline(always)]
+pub(crate) unsafe fn sendmmsg_cp(
+    sockfd: c_int,
+    msgvec: *mut c_void,
+    vlen: c_uint,
+    flags: c_int,
+) -> c_int {
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
-        })
+        crate::pthread_abi::cancellation_point_sendmmsg(sockfd, msgvec.cast(), vlen, flags)
     } {
         Ok(n) => n,
         Err(e) => {
@@ -17538,11 +17600,15 @@ pub unsafe extern "C-unwind" fn recvmmsg(
     timeout: *mut libc::timespec,
 ) -> c_int {
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize)
-        })
+        crate::pthread_abi::cancellation_point_recvmmsg(
+            sockfd,
+            msgvec as *mut u8,
+            vlen,
+            flags,
+            timeout,
+        )
     } {
-        Ok(n) => n,
+        Ok(n) => n as c_int,
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -26071,73 +26137,37 @@ pub unsafe extern "C" fn endfsent() {
 
 pub(crate) const NETGROUP_PATH: &str = "/etc/netgroup";
 
-use frankenlibc_core::netgroup::NetgroupTriple;
+use crate::nss_module::{NetgroupSession, NetgroupTriple};
 
-#[derive(Clone, Copy)]
-pub(crate) enum NetgroupLookup {
-    Membership,
-    Enumeration,
+struct NetgroupIteration {
+    session: Option<NetgroupSession>,
+    // Keep an already-read record until the caller supplies enough storage.
+    pending: Option<NetgroupTriple>,
 }
 
-/// Apply the configured netgroup sources before opening the native files backend.
-///
-/// A preceding unavailable service can terminate lookup; the mere presence of
-/// `files` later in the line is not permission to read it. Netgroup module ABIs
-/// are not implemented here, so those sources explicitly report UNAVAIL and
-/// follow their actions. `compat` is not a files alias for this database.
-pub(crate) fn netgroup_entries(
-    group: &[u8],
-    operation: NetgroupLookup,
-) -> Option<Vec<NetgroupTriple>> {
-    use frankenlibc_core::nss::{self, Answer, Database, Service};
-
-    let services = crate::nss_module::services(Database::Netgroup);
-    let mut content: Option<Result<Vec<u8>, i32>> = None;
-    let query = |service: &Service| {
-        if service.name() != b"files" {
-            return Answer::Unavailable(libc::ENOSYS);
+impl NetgroupIteration {
+    const fn new() -> Self {
+        Self {
+            session: None,
+            pending: None,
         }
-        let content = content.get_or_insert_with(|| {
-            std::fs::read(NETGROUP_PATH).map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))
-        });
-        let bytes = match content {
-            Ok(bytes) => bytes,
-            Err(error) if matches!(*error, libc::ENOMEM | libc::EAGAIN) => {
-                return Answer::TryAgain(*error);
-            }
-            Err(error) => return Answer::Unavailable(*error),
-        };
-        if frankenlibc_core::netgroup::contains_netgroup(bytes, group) {
-            Answer::Found(frankenlibc_core::netgroup::expand_netgroup(bytes, group))
-        } else {
-            Answer::NotFound
-        }
-    };
-    let answer = match operation {
-        NetgroupLookup::Membership => nss::lookup_netgroup_membership(&services, query),
-        NetgroupLookup::Enumeration => nss::lookup(&services, query, None),
-    };
-    match answer {
-        Answer::Found(triples) => Some(triples),
-        _ => None,
     }
 }
 
 struct NetgroupIterState {
-    /// Pre-parsed triples for the current group.
-    triples: Vec<NetgroupTriple>,
-    /// Current position in the triples vector.
-    pos: usize,
-    /// Thread-local string buffer for non-reentrant getnetgrent.
+    busy: bool,
+    iteration: NetgroupIteration,
+    // Keep returned strings at a stable TLS address when the cursor is leased
+    // onto the stack. GNU's non-reentrant output budget is fixed at 1024 bytes.
     str_buf: [u8; 1024],
 }
 
 impl NetgroupIterState {
     const fn new() -> Self {
         Self {
-            triples: Vec::new(),
-            pos: 0,
-            str_buf: [0u8; 1024],
+            busy: false,
+            iteration: NetgroupIteration::new(),
+            str_buf: [0; 1024],
         }
     }
 }
@@ -26168,7 +26198,9 @@ fn with_netgroup_iter_state<R>(callback: impl FnOnce(&mut NetgroupIterState) -> 
                 || std::cell::UnsafeCell::new(NetgroupIterState::new()),
                 |cell| {
                     // SAFETY: NETGROUP_ITER is per-thread storage and this callback keeps
-                    // the mutable reference scoped to the thread-local access.
+                    // the mutable reference scoped to the thread-local access. This short
+                    // access never invokes a module callback or drops a live module
+                    // session. No reference escapes the closure.
                     callback(unsafe { &mut *cell.get() })
                 },
             )
@@ -26176,45 +26208,132 @@ fn with_netgroup_iter_state<R>(callback: impl FnOnce(&mut NetgroupIterState) -> 
     }
 }
 
-/// `endnetgrent` — end netgroup iteration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endnetgrent() {
-    with_netgroup_iter_state(|state| {
-        state.triples.clear();
-        state.pos = 0;
-    });
+/// Take the iterator out of TLS before invoking foreign NSS code. In
+/// particular, a module's constructor/get/end callback must never run with a
+/// live mutable reference into the TLS UnsafeCell. Recursive use of public
+/// enumeration fails explicitly; independent innetgr sessions remain usable.
+struct NetgroupIterationLease {
+    iteration: NetgroupIteration,
 }
 
-/// `setnetgrent` — start netgroup iteration for the named group.
-///
-/// Native implementation: reads /etc/netgroup and pre-parses all triples
-/// for the specified group.
+impl NetgroupIterationLease {
+    fn acquire() -> Option<Self> {
+        with_netgroup_iter_state(|state| {
+            if state.busy {
+                return None;
+            }
+            state.busy = true;
+            Some(Self {
+                iteration: std::mem::replace(&mut state.iteration, NetgroupIteration::new()),
+            })
+        })
+    }
+}
+
+impl Drop for NetgroupIterationLease {
+    fn drop(&mut self) {
+        let iteration = std::mem::replace(&mut self.iteration, NetgroupIteration::new());
+        with_netgroup_iter_state(|state| {
+            // The placeholder has no session and cannot run foreign cleanup.
+            state.iteration = iteration;
+            state.busy = false;
+        });
+    }
+}
+
+/// End enumeration and release the selected module's private cursor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endnetgrent() {
+    if let Some(mut lease) = NetgroupIterationLease::acquire() {
+        lease.iteration.session = None;
+        lease.iteration.pending = None;
+    }
+}
+
+/// Select a netgroup through the configured NSS sources. Successful selection
+/// does not eagerly consume the provider: read errors belong to getnetgrent.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
     if netgroup.is_null() {
         return 0;
     }
-    let Some(group) = (unsafe { read_c_string_bytes(netgroup) }) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        with_netgroup_iter_state(|state| {
-            state.triples.clear();
-            state.pos = 0;
-        });
+    let Some(mut lease) = NetgroupIterationLease::acquire() else {
+        // SAFETY: the errno accessor names this thread's writable cell.
+        unsafe { set_abi_errno(libc::EDEADLK) };
         return 0;
     };
-    let triples = netgroup_entries(&group, NetgroupLookup::Enumeration);
-    let found = triples.is_some();
-    with_netgroup_iter_state(|state| {
-        state.triples = triples.unwrap_or_default();
-        state.pos = 0;
-    });
-    c_int::from(found)
+    lease.iteration.session = None;
+    lease.iteration.pending = None;
+    let Some(group) = (unsafe { read_c_string_bytes(netgroup) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    };
+    match NetgroupSession::open(&group, false) {
+        Ok(session) => {
+            let found = session.is_some();
+            lease.iteration.session = session;
+            c_int::from(found)
+        }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
+        }
+    }
 }
 
-/// `getnetgrent` — get next netgroup entry (host, user, domain triple).
-///
-/// Native implementation using thread-local pre-parsed triples.
-/// Returns 1 on success, 0 when exhausted.
+/// Retain a record until it fits, then transfer its owned fields to the caller.
+/// Foreign callbacks run only while the public iterator is leased out of TLS.
+fn netgroup_next_record(
+    iteration: &mut NetgroupIteration,
+    capacity: usize,
+) -> Result<Option<NetgroupTriple>, c_int> {
+    if iteration.pending.is_none() {
+        let Some(session) = iteration.session.as_mut() else {
+            return Ok(None);
+        };
+        iteration.pending = session.next_for_buffer(capacity)?;
+    }
+    let Some(triple) = iteration.pending.as_ref() else {
+        return Ok(None);
+    };
+    if triple
+        .required_buffer_size()
+        .is_none_or(|needed| needed > capacity)
+    {
+        return Err(libc::ERANGE);
+    }
+    Ok(iteration.pending.take())
+}
+
+/// Copy a validated record. This invokes no provider and takes no iterator
+/// borrow, so non-reentrant storage can be borrowed after restoring its lease.
+unsafe fn netgroup_copy_record(
+    triple: &NetgroupTriple,
+    hostp: *mut *mut c_char,
+    userp: *mut *mut c_char,
+    domainp: *mut *mut c_char,
+    buffer: *mut u8,
+) {
+    let fields = [&triple.host, &triple.user, &triple.domain];
+    let mut offset = 0;
+    for (field, output) in fields.into_iter().zip([hostp, userp, domainp]) {
+        // SAFETY: the caller validated every output slot and the complete
+        // footprint. Owned source fields are disjoint from writable storage.
+        unsafe {
+            if let Some(bytes) = field {
+                let destination = buffer.add(offset);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination, bytes.len());
+                *destination.add(bytes.len()) = 0;
+                *output = destination.cast();
+                offset += bytes.len() + 1;
+            } else {
+                *output = std::ptr::null_mut();
+            }
+        }
+    }
+}
+
+/// Read the next entry using GNU's fixed non-reentrant output buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetgrent(
     hostp: *mut *mut c_char,
@@ -26224,53 +26343,32 @@ pub unsafe extern "C" fn getnetgrent(
     if hostp.is_null() || userp.is_null() || domainp.is_null() {
         return 0;
     }
-    with_netgroup_iter_state(|state| {
-        if state.pos >= state.triples.len() {
-            return 0;
+    let Some(mut lease) = NetgroupIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return 0;
+    };
+    let record = netgroup_next_record(&mut lease.iteration, 1024);
+    // Restore the cursor before borrowing the stable output array. No later
+    // iterator move or TLS borrow may invalidate the returned field pointers.
+    drop(lease);
+    match record {
+        Ok(Some(triple)) => with_netgroup_iter_state(|state| {
+            // SAFETY: the output slots and 1024-byte footprint were checked.
+            // Copying owned fields invokes no foreign NSS callback.
+            unsafe {
+                netgroup_copy_record(&triple, hostp, userp, domainp, state.str_buf.as_mut_ptr());
+            }
+            1
+        }),
+        Ok(None) => 0,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
         }
-        let triple = &state.triples[state.pos];
-        // Do not turn a concrete field that does not fit into a NULL wildcard,
-        // or consume the record: the caller can retry with getnetgrent_r.
-        let needed = triple.host.len() + triple.user.len() + triple.domain.len() + 3;
-        if needed > state.str_buf.len() {
-            // SAFETY: errno is this thread's ABI errno slot.
-            unsafe { set_abi_errno(libc::ERANGE) };
-            return 0;
-        }
-        state.pos += 1;
-
-        // Pack strings into thread-local buffer
-        let buf = state.str_buf.as_mut_ptr();
-        let mut off = 0usize;
-
-        macro_rules! pack_or_null {
-            ($field:expr, $ptr:expr) => {
-                if $field.is_empty() {
-                    unsafe { *$ptr = std::ptr::null_mut() };
-                } else {
-                    let p = unsafe { buf.add(off) } as *mut c_char;
-                    unsafe {
-                        std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
-                        *buf.add(off + $field.len()) = 0;
-                        *$ptr = p;
-                    }
-                    off += $field.len() + 1;
-                }
-            };
-        }
-
-        pack_or_null!(triple.host, hostp);
-        pack_or_null!(triple.user, userp);
-        pack_or_null!(triple.domain, domainp);
-        let _ = off;
-        1
-    })
+    }
 }
 
-/// `getnetgrent_r` — reentrant netgroup entry.
-///
-/// Native implementation using thread-local pre-parsed triples,
-/// packing strings into caller-supplied buffer.
+/// Read into caller storage, retaining a short-buffer record for retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetgrent_r(
     hostp: *mut *mut c_char,
@@ -26282,47 +26380,23 @@ pub unsafe extern "C" fn getnetgrent_r(
     if hostp.is_null() || userp.is_null() || domainp.is_null() || buffer.is_null() {
         return 0;
     }
-    with_netgroup_iter_state(|state| {
-        if state.pos >= state.triples.len() {
-            return 0;
+    let Some(mut lease) = NetgroupIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return 0;
+    };
+    match netgroup_next_record(&mut lease.iteration, buflen) {
+        Ok(Some(triple)) => {
+            // SAFETY: the C contract provides the checked writable slots and
+            // buflen bytes, and next_record verified the complete footprint.
+            unsafe { netgroup_copy_record(&triple, hostp, userp, domainp, buffer.cast()) };
+            1
         }
-        let triple = &state.triples[state.pos];
-
-        // Check buffer space
-        let needed = triple.host.len() + 1 + triple.user.len() + 1 + triple.domain.len() + 1;
-        if needed > buflen {
-            // SAFETY: errno is this thread's ABI errno slot. The cursor stays
-            // on the same record so a larger-buffer retry can read it.
-            unsafe { set_abi_errno(libc::ERANGE) };
-            return 0;
+        Ok(None) => 0,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
         }
-        state.pos += 1;
-
-        let buf = buffer as *mut u8;
-        let mut off = 0usize;
-
-        macro_rules! pack_r {
-            ($field:expr, $ptr:expr) => {
-                if $field.is_empty() {
-                    unsafe { *$ptr = std::ptr::null_mut() };
-                } else {
-                    let p = unsafe { buf.add(off) } as *mut c_char;
-                    unsafe {
-                        std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
-                        *buf.add(off + $field.len()) = 0;
-                        *$ptr = p;
-                    }
-                    off += $field.len() + 1;
-                }
-            };
-        }
-
-        pack_r!(triple.host, hostp);
-        pack_r!(triple.user, userp);
-        pack_r!(triple.domain, domainp);
-        let _ = off;
-        1
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -31354,13 +31428,41 @@ pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn _Fork() -> c_int {
-    // `_Fork` exists specifically for async-signal-safe fork-without-handlers.
-    // Do not route through sys_clone_fork: that wrapper repairs the core's
-    // thread-local tid cache. Do not take the membrane pipeline, resolve host
-    // pthread state, reopen the log, or run atfork callbacks either. POSIX
-    // permits only async-signal-safe operations in the child before exec; the
-    // inherited log descriptor remains usable, and its raw-getpid keyed
-    // limiter distinguishes the new process without a child-side hook.
+    // Keep this path async-signal-safe: no host pthread resolution, compiler
+    // TLS repair, allocation, pipeline locks, runtime logs, or atfork handlers.
+    // Mask before reading the parent TID: a signal-side _Fork between that
+    // read and clone would otherwise leave an ancestor's identity here.
+    let all_signals = u64::MAX;
+    let mut old_signals = 0u64;
+    if let Err(error) = unsafe {
+        syscall::sys_rt_sigprocmask(
+            libc::SIG_BLOCK,
+            (&all_signals as *const u64).cast(),
+            (&mut old_signals as *mut u64).cast(),
+            std::mem::size_of::<u64>(),
+        )
+    } {
+        unsafe { crate::errno_abi::set_abi_errno_local(error) };
+        return -1;
+    }
+
+    let parent_tid = syscall::sys_gettid();
+    if parent_tid <= 0 {
+        let _ = unsafe {
+            syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                (&old_signals as *const u64).cast(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        };
+        unsafe { crate::errno_abi::set_abi_errno_local(libc::EAGAIN) };
+        return -1;
+    }
+
+    // Do not route through sys_clone_fork: _Fork deliberately omits the core's
+    // full TLS lifecycle. Only raw atomics used by membrane lock recursion need
+    // ownership repair before signals or inherited guarded code can resume.
     let raw = unsafe {
         syscall::syscall2(
             syscall::SYS_CLONE,
@@ -31370,17 +31472,30 @@ pub unsafe extern "C" fn _Fork() -> c_int {
     };
     let ret = syscall::syscall_result(raw).map(|pid| pid as c_int);
     if matches!(ret, Ok(0)) {
-        // One atomic generation increment lets later membrane lock users take
-        // over locks orphaned by vanished parent threads. It allocates nothing,
-        // touches no TLS, invokes no libc symbol, and cannot block.
+        // SAFETY: sole fork survivor, blockable signals still masked, parent
+        // identity captured after masking. This hook uses only raw gettid and
+        // fixed atomics, before any potentially interposed memory operation.
+        unsafe {
+            frankenlibc_membrane::ptr_validator::note_validation_fork_child(parent_tid)
+        };
         frankenlibc_membrane::util::note_fork_child();
     }
+
+    // Both sides restore exactly the caller's mask. Keep the clone result:
+    // after a successful clone an error return would hide an existing child.
+    // A policy which newly denies the matching restore syscall is unsupported.
+    let _ = unsafe {
+        syscall::sys_rt_sigprocmask(
+            libc::SIG_SETMASK,
+            (&old_signals as *const u64).cast(),
+            std::ptr::null_mut(),
+            std::mem::size_of::<u64>(),
+        )
+    };
 
     match ret {
         Ok(pid) => pid,
         Err(e) => {
-            // Use the hidden initial-exec TLS leaf explicitly so this error
-            // branch stays auditable as signal-safe at the ABI boundary.
             unsafe { crate::errno_abi::set_abi_errno_local(e) };
             -1
         }

@@ -28,6 +28,7 @@ static HOST_PTHREAD_GETATTR_NP: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_ATTR_GETSTACK: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_ATTR_GETGUARDSIZE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_ATTR_GETDETACHSTATE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_ATTR_GETINHERITSCHED: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_ATTR_DESTROY: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EXIT: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
@@ -1142,10 +1143,10 @@ pub(crate) fn host_pthread_detach_raw() -> Option<unsafe extern "C" fn(libc::pth
 }
 
 /// The stack and detach state host glibc reports for a thread it created:
-/// `(lowest usable address, size, guard size, detach state)`, read through
+/// `(lowest usable address, size, guard size, detach state, scheduler inheritance)`, read through
 /// the host's own `pthread_getattr_np` and attribute accessors (its
 /// `pthread_attr_t` layout is not fl's).
-pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize, usize, c_int)> {
+pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize, usize, c_int, c_int)> {
     type GetAttr = unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
     type GetStack =
         unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
@@ -1154,7 +1155,7 @@ pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize
     type Destroy = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
     // SAFETY: each cache holds the address of the host function of that name,
     // whose C signature is the one transmuted to.
-    let (getattr, getstack, getguard, getdetach, destroy) = unsafe {
+    let (getattr, getstack, getguard, getdetach, getinherit, destroy) = unsafe {
         (
             core::mem::transmute::<usize, GetAttr>(load_host_symbol(
                 &HOST_PTHREAD_GETATTR_NP,
@@ -1172,6 +1173,10 @@ pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize
                 &HOST_PTHREAD_ATTR_GETDETACHSTATE,
                 "pthread_attr_getdetachstate",
             )?),
+            core::mem::transmute::<usize, GetInt>(load_host_symbol(
+                &HOST_PTHREAD_ATTR_GETINHERITSCHED,
+                "pthread_attr_getinheritsched",
+            )?),
             core::mem::transmute::<usize, Destroy>(load_host_symbol(
                 &HOST_PTHREAD_ATTR_DESTROY,
                 "pthread_attr_destroy",
@@ -1184,15 +1189,16 @@ pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize
     if unsafe { getattr(thread, attr.as_mut_ptr()) } != 0 {
         return None;
     }
-    let (mut addr, mut size, mut guard, mut detach) = (core::ptr::null_mut(), 0, 0, 0);
+    let (mut addr, mut size, mut guard, mut detach, mut inherit) = (core::ptr::null_mut(), 0, 0, 0, 0);
     // SAFETY: `attr` was initialized by the host's pthread_getattr_np.
     unsafe {
         getstack(attr.as_ptr(), &mut addr, &mut size);
         getguard(attr.as_ptr(), &mut guard);
         getdetach(attr.as_ptr(), &mut detach);
+        getinherit(attr.as_ptr(), &mut inherit);
         destroy(attr.as_mut_ptr());
     }
-    Some((addr as usize, size, guard, detach))
+    Some((addr as usize, size, guard, detach, inherit))
 }
 
 pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void) -> !> {

@@ -12,10 +12,11 @@ enum Version {
     Baseline,
     Merged,
     Condition,
+    SignalMask,
 }
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
-    use Version::{Baseline, Condition, Merged};
+    use Version::{Baseline, Condition, Merged, SignalMask};
     // Keep the version contract beside the actual implementation pointer.
     // In particular, GLIBC_2.34 is NOT an alias for every pthread function.
     let (function, contract) = match name {
@@ -30,6 +31,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pthread_key_delete" => (pthread::pthread_key_delete as *const (), Merged),
         "pthread_getspecific" => (pthread::pthread_getspecific as *const (), Merged),
         "pthread_setspecific" => (pthread::pthread_setspecific as *const (), Merged),
+        "pthread_sigmask" => (crate::signal_abi::pthread_sigmask as *const (), SignalMask),
         "pthread_mutex_init" => (pthread::pthread_mutex_init as *const (), Baseline),
         "pthread_mutex_destroy" => (pthread::pthread_mutex_destroy as *const (), Baseline),
         "pthread_mutex_lock" => (pthread::pthread_mutex_lock as *const (), Baseline),
@@ -63,7 +65,9 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         _ => baseline,
     };
     if version.is_some_and(|requested| {
-        requested != original && !(matches!(contract, Merged) && requested == "GLIBC_2.34")
+        requested != original
+            && !(matches!(contract, Merged) && requested == "GLIBC_2.34")
+            && !(matches!(contract, SignalMask) && requested == "GLIBC_2.32")
     }) {
         return None;
     }

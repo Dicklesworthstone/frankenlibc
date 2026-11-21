@@ -388,9 +388,19 @@ pub unsafe extern "C" fn pthread_rwlockattr_setkind_np(attr: *mut c_void, kind: 
 // pthread_setschedprio: native — set thread scheduling priority
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_setschedprio(thread: c_ulong, prio: c_int) -> c_int {
+    let Some(tid) = crate::pthread_abi::resolve_thread_tid(thread) else {
+        return libc::ESRCH;
+    };
     let mut param: libc::sched_param = unsafe { std::mem::zeroed() };
     param.sched_priority = prio;
-    unsafe { crate::unistd_abi::pthread_setschedparam(thread, libc::SCHED_OTHER, &param) }
+    // sched_setparam updates priority without changing the current policy.
+    // A get-policy/set-scheduler pair would race another scheduler update.
+    match unsafe {
+        frankenlibc_core::syscall::sys_sched_setparam(tid, std::ptr::from_ref(&param).cast())
+    } {
+        Ok(()) => 0,
+        Err(error) => error,
+    }
 }
 
 // ==========================================================================
@@ -6680,51 +6690,28 @@ pub unsafe extern "C" fn init_module(
         }
     }
 }
-// innetgr: check if (host,user,domain) is in netgroup — returns 0 (not found)
-// Netgroups are an NIS/NIS+ feature rarely used on modern systems.
-// A real implementation would parse /etc/netgroup or use NSS, but returning 0
-// is safe and matches behavior when NIS is not configured.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-/// One `(host,user,domain)` position of a netgroup triple.
-///
-/// Two independent wildcards meet here and it is easy to collapse them into
-/// one: a NULL ARGUMENT means the caller does not care about this position,
-/// and an EMPTY FIELD in the file means the entry matches anything there.
-/// Either one alone is sufficient.
-fn netgroup_field_matches(entry: &[u8], query: Option<&[u8]>, case_insensitive: bool) -> bool {
-    match query {
-        // Caller passed NULL for this position.
-        None => true,
-        // An empty field in /etc/netgroup is the file's own wildcard.
-        Some(wanted) => {
-            entry.is_empty()
-                || if case_insensitive {
-                    entry.eq_ignore_ascii_case(wanted)
-                } else {
-                    entry == wanted
-                }
-        }
+// Netgroup membership shares the configured source and nested-group traversal
+// with enumeration, but owns an independent cursor and stops at the first
+// matching triple.
+
+/// Match a concrete field or a NULL wildcard without conflating empty strings.
+fn netgroup_field_matches(
+    entry: Option<&[u8]>,
+    query: Option<&[u8]>,
+    case_insensitive: bool,
+) -> bool {
+    match (entry, query) {
+        // A NULL caller argument or provider field is a wildcard. A provider's
+        // non-NULL empty string remains a concrete empty value.
+        (None, _) | (_, None) => true,
+        (Some(entry), Some(wanted)) if case_insensitive => entry.eq_ignore_ascii_case(wanted),
+        (Some(entry), Some(wanted)) => entry == wanted,
     }
 }
 
-/// `innetgr` — is `(host,user,domain)` a member of `netgroup`?
-///
-/// WAS `0`. Unconditionally, with all four arguments discarded, while this same
-/// tree already carried a working /etc/netgroup parser and a functioning
-/// setnetgrent/getnetgrent iterator. So the membership test — the function that
-/// actually decides netgroup-based access — always answered "no" no matter what
-/// the file said, and the support matrix recorded it as Implemented.
-///
-/// Semantics are pinned by the fixture-isolated live-glibc differential gate in
-/// `conformance_diff_innetgr`; it binds a synthetic `/etc/netgroup` over the
-/// host path and checks NULL arguments, empty-field wildcards, nested groups,
-/// and case sensitivity.
-///
-/// The risk has a direction worth stating: the old stub failed CLOSED (always
-/// "not a member"), and a wrong wildcard rule here could fail OPEN. Matching is
-/// therefore host/domain ASCII case-insensitive compare with no prefix logic —
-/// the rule observed from the live glibc gate — so an error is far likelier to
-/// deny a legitimate member than to admit a stranger.
+/// Test membership through the configured NSS source. GNU stops at the first
+/// source that knows the group, even with SUCCESS=continue. Host and domain
+/// matching is ASCII case-insensitive; the user field is case-sensitive.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn innetgr(
     netgroup: *const c_char,
@@ -6759,23 +6746,32 @@ pub unsafe extern "C" fn innetgr(
         return 0;
     };
 
-    // A configured UNAVAIL=return must prevent a later files backend from
-    // granting membership. The first source that knows the group answers the
-    // membership query, even when its triples do not match.
-    let Some(triples) =
-        crate::unistd_abi::netgroup_entries(&group, crate::unistd_abi::NetgroupLookup::Membership)
-    else {
-        return 0;
+    let mut session = match crate::nss_module::NetgroupSession::open(&group, true) {
+        Ok(Some(session)) => session,
+        Ok(None) => return 0,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return 0;
+        }
     };
-    for triple in triples {
-        if netgroup_field_matches(&triple.host, wanted_host.as_deref(), true)
-            && netgroup_field_matches(&triple.user, wanted_user.as_deref(), false)
-            && netgroup_field_matches(&triple.domain, wanted_domain.as_deref(), true)
+    // A matching prefix is decisive even if a later provider read would fail.
+    // A read failure never selects a different source or grants membership.
+    loop {
+        let triple = match session.next() {
+            Ok(Some(triple)) => triple,
+            Ok(None) => return 0,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return 0;
+            }
+        };
+        if netgroup_field_matches(triple.host.as_deref(), wanted_host.as_deref(), true)
+            && netgroup_field_matches(triple.user.as_deref(), wanted_user.as_deref(), false)
+            && netgroup_field_matches(triple.domain.as_deref(), wanted_domain.as_deref(), true)
         {
             return 1;
         }
     }
-    0
 }
 // ioperm: x86_64 only
 #[cfg(target_arch = "x86_64")]
@@ -9339,17 +9335,7 @@ pub unsafe extern "C-unwind" fn __sendmmsg(
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
-        })
-    } {
-        Ok(v) => v,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::unistd_abi::sendmmsg_cp(sockfd, msgvec, vlen, flags) }
 }
 
 // ---------------------------------------------------------------------------
@@ -10315,20 +10301,16 @@ pub static mut __resp: *mut c_void = std::ptr::null_mut();
 // IDNA internals — GLIBC_PRIVATE (native Punycode/IDNA implementation)
 // ---------------------------------------------------------------------------
 
-// RFC 3492 Punycode constants + helpers + encode + decode all moved
-// to frankenlibc_core::idna::punycode. Local punycode_encode /
-// punycode_decode aliases below keep the call sites in
-// __idna_to_dns_encoding / __idna_from_dns_encoding byte-identical.
-use frankenlibc_core::idna::punycode::{decode as punycode_decode, encode as punycode_encode};
+use frankenlibc_core::idna::punycode::decode as punycode_decode;
 
 /// `__idna_to_dns_encoding` — encode hostname to DNS-safe ASCII (native).
 ///
-/// Converts an internationalized hostname to its ACE (ASCII-Compatible
-/// Encoding) form using Punycode (RFC 3492). Each non-ASCII label is
-/// encoded with an `xn--` prefix. The result is malloc'd and must be
-/// freed by the caller.
+/// Decode the active LC_CTYPE, apply native UTS #46/IDNA2008 processing, and
+/// return the ASCII DNS form. Pure ASCII input is copied unchanged. The result
+/// is malloc'd and must be freed by the caller through the matching allocator.
 ///
-/// Returns 0 on success, EAI_FAIL on error.
+/// Returns 0 on success, EAI_IDN_ENCODE for conversion errors, EAI_MEMORY for
+/// allocation failure, or EAI_FAIL for invalid pointers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __idna_to_dns_encoding(
     name: *const c_char,
@@ -10342,57 +10324,22 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
         Some(bytes) => bytes,
         None => return libc::EAI_FAIL,
     };
-    let name_str = match std::str::from_utf8(&name_bytes) {
-        Ok(s) => s,
-        Err(_) => return libc::EAI_FAIL,
+    let output = match crate::resolv_abi::idn_name_to_dns(&name_bytes) {
+        Ok(output) => output,
+        Err(error) => return error,
     };
-
-    if name_str.is_empty() {
-        return libc::EAI_FAIL;
-    }
-
-    let mut encoded_parts: Vec<Vec<u8>> = Vec::new();
-    for label in name_str.split('.') {
-        if label.is_empty() {
-            encoded_parts.push(Vec::new());
-            continue;
-        }
-
-        // Check if label is all ASCII.
-        if label.is_ascii() {
-            encoded_parts.push(label.as_bytes().to_vec());
-        } else {
-            // Convert to Unicode code points and Punycode-encode.
-            let codepoints: Vec<u32> = label.chars().map(|c| c as u32).collect();
-            match punycode_encode(&codepoints) {
-                Some(encoded) => {
-                    let mut ace = b"xn--".to_vec();
-                    ace.extend_from_slice(&encoded);
-                    encoded_parts.push(ace);
-                }
-                None => return libc::EAI_FAIL,
-            }
-        }
-    }
-
-    // Join with dots.
-    let mut output = Vec::new();
-    for (i, part) in encoded_parts.iter().enumerate() {
-        if i > 0 {
-            output.push(b'.');
-        }
-        output.extend_from_slice(part);
-    }
-    output.push(0); // NUL terminator.
 
     // glibc IDNA contract: caller frees `*result` via free. Route through the
     // FrankenLibC allocator entrypoint so replacement mode has no direct host
     // call-through while keeping the public alloc/free pair matched.
-    let buf = unsafe { crate::malloc_abi::malloc(output.len()) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::malloc(output.len() + 1) } as *mut u8;
     if buf.is_null() {
-        return libc::EAI_FAIL;
+        return libc::EAI_MEMORY;
     }
+    // SAFETY: malloc reserved the complete output plus its terminating byte;
+    // the source slice is separate and the caller supplied a valid result slot.
     unsafe { std::ptr::copy_nonoverlapping(output.as_ptr(), buf, output.len()) };
+    unsafe { *buf.add(output.len()) = 0 };
     unsafe { *result = buf as *mut c_char };
     0
 }
@@ -10951,9 +10898,9 @@ impl DtvStorage {
     }
 }
 
-// SAFETY: DtvStorage is only accessed through OwnedTlsCache which serializes
-// all access behind a Mutex. The pointers are per-thread TLS block addresses
-// that are only accessed by the owning thread after lookup.
+// SAFETY: OwnedTlsCache isolates DtvStorage to its owning thread and rejects
+// overlapping mutable borrows. These TLS block addresses are only accessed
+// by that thread after lookup.
 #[cfg(feature = "owned-tls-cache")]
 unsafe impl Send for DtvStorage {}
 
@@ -11384,29 +11331,41 @@ pub unsafe extern "C" fn _IO_enable_locks() {
 #[thread_local]
 pub static mut errno: c_int = 0;
 
-// xprt_register: SVC transport registration — no-op (RPC transport handled by rpc_abi)
+/// Register an existing RPC transport for service readiness dispatch.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xprt_register(_xprt: *mut c_void) {}
-// xprt_unregister: SVC transport unregistration — no-op
+pub unsafe extern "C" fn xprt_register(xprt: *mut c_void) {
+    // SAFETY: the caller retains the live service transport.
+    unsafe { crate::rpc_abi::register_transport(xprt) };
+}
+/// Stop service dispatch without closing or destroying the RPC transport.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xprt_unregister(_xprt: *mut c_void) {}
+pub unsafe extern "C" fn xprt_unregister(xprt: *mut c_void) {
+    // SAFETY: the caller retains the live service transport.
+    unsafe { crate::rpc_abi::unregister_transport(xprt) };
+}
 
-// RPC data symbols — these are global variables in glibc.
-// svc_fdset is fd_set (128 bytes on Linux), svc_pollfd is *pollfd, etc.
-// Using static mut with zeroed data — programs that actually use RPC
-// will resolve these from glibc's data segment via the dynamic linker.
+// RPC service data objects back the first RPC-state owner's accessors. Other
+// threads use independent TLS slots; the first owner's poll backing storage
+// has process lifetime even when that owner is a short-lived worker. Keep
+// these exported data addresses preemptible for executable copy relocations.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut svc_fdset: [u8; 128] = [0u8; 128]; // fd_set
+// SAFETY: fd_set contains only integer masks. Its ABI type also supplies the
+// word alignment needed by FD_SET and by the native readiness publisher.
+pub static mut svc_fdset: libc::fd_set = unsafe { std::mem::zeroed() };
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut svc_max_pollfd: c_int = 0;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut svc_pollfd: *mut c_void = std::ptr::null_mut();
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut svcauthdes_stats: [c_int; 3] = [0; 3]; // accept/reject/misc counters
+pub static mut svcauthdes_stats: [libc::c_ulong; 3] = [0; 3]; // three LP64 counters
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _null_auth: [u8; 16] = [0u8; 16]; // opaque_auth struct (flavor=0, body={0,0})
+// LP64 opaque_auth is 24 bytes, including the pointer and trailing padding.
+// Word storage preserves its eight-byte alignment and all-zero AUTH_NONE value.
+pub static mut _null_auth: [u64; 3] = [0u64; 3];
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut rpc_createerr: [u8; 16] = [0u8; 16]; // struct rpc_createerr
+// glibc LP64 rpc_createerr is 32 bytes and contains pointer-width-aligned
+// rpc_err union members; a 16-byte byte array cannot back the public accessor.
+pub static mut rpc_createerr: [u64; 4] = [0u64; 4];
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut h_errlist: [*mut c_char; 5] = [
     std::ptr::null_mut(),

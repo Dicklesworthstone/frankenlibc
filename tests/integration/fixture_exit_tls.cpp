@@ -1,6 +1,8 @@
 // Exercise the real C++ TLS ABI in separate, bounded processes. No runtime shim.
 #include <atomic>
+#include <arpa/inet.h>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
@@ -101,6 +103,79 @@ static void require_provider(void *symbol) {
     }
 }
 
+static pthread_key_t cache_key;
+static std::atomic<int> cache_phase{0};
+static char cache_tokens[] = "alpha,beta,gamma";
+static char *cache_address;
+static std::uintptr_t cache_creator_tp;
+
+static void check_cache_payload(const char *expected) {
+    CHECK(cache_address != nullptr && std::strcmp(cache_address, "203.0.113.7") == 0);
+    char *token = std::strtok(nullptr, ",");
+    CHECK(token != nullptr && std::strcmp(token, expected) == 0);
+}
+
+struct CacheWitness {
+    ~CacheWitness() {
+        CHECK(cache_phase.load(std::memory_order_acquire) == 0);
+        check_cache_payload("beta");
+        cache_phase.store(1, std::memory_order_release);
+    }
+};
+
+static void touch_cache_witness() {
+    thread_local CacheWitness witness;
+    (void)witness;
+}
+
+static void cache_key_destructor(void *) {
+    CHECK(cache_phase.load(std::memory_order_acquire) == 1);
+    check_cache_payload("gamma");
+    cache_phase.store(2, std::memory_order_release);
+}
+
+static void *cache_worker(void *explicit_exit) {
+    CHECK(reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer()) != cache_creator_tp);
+    // Register the C++ destructor before the user key and scratch buffers.
+    // A late __cxa callback used as a key bridge would run in the wrong phase.
+    touch_cache_witness();
+    char *first = std::strtok(cache_tokens, ",");
+    CHECK(first != nullptr && std::strcmp(first, "alpha") == 0);
+    in_addr address{htonl(0xcb007107U)};
+    cache_address = inet_ntoa(address);
+    CHECK(cache_address != nullptr && std::strcmp(cache_address, "203.0.113.7") == 0);
+    CHECK(pthread_key_create(&cache_key, cache_key_destructor) == 0);
+    CHECK(pthread_setspecific(cache_key, reinterpret_cast<void *>(1)) == 0);
+    if (explicit_exit != nullptr) pthread_exit(reinterpret_cast<void *>(0x45));
+    return reinterpret_cast<void *>(0x45);
+}
+
+static int cache_worker_fixture(const char *kind) {
+    require_provider(reinterpret_cast<void *>(pthread_create));
+    require_provider(reinterpret_cast<void *>(pthread_join));
+    require_provider(reinterpret_cast<void *>(pthread_key_create));
+    require_provider(reinterpret_cast<void *>(pthread_setspecific));
+    require_provider(reinterpret_cast<void *>(std::strtok));
+    require_provider(reinterpret_cast<void *>(inet_ntoa));
+    alarm(15);
+    cache_creator_tp = reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer());
+    // Give internal caches an earlier global identity than the user key.
+    char parent_tokens[] = "parent,remaining";
+    CHECK(std::strtok(parent_tokens, ",") != nullptr);
+    in_addr parent_address{htonl(INADDR_LOOPBACK)};
+    CHECK(inet_ntoa(parent_address) != nullptr);
+    bool explicit_exit = !std::strcmp(kind, "cache-worker-exit");
+    pthread_t thread;
+    CHECK(pthread_create(&thread, nullptr, cache_worker,
+                         explicit_exit ? reinterpret_cast<void *>(1) : nullptr) == 0);
+    void *result = nullptr;
+    CHECK(pthread_join(thread, &result) == 0 && result == reinterpret_cast<void *>(0x45));
+    CHECK(cache_phase.load(std::memory_order_acquire) == 2);
+    CHECK(pthread_key_delete(cache_key) == 0);
+    std::printf("cache-lifecycle %s PASS\n", kind);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2);
     require_provider(reinterpret_cast<void *>(std::exit));
@@ -113,6 +188,8 @@ int main(int argc, char **argv) {
         CHECK(terminate_process != nullptr);
     }
     const char *kind = argv[1];
+    if (!std::strcmp(kind, "cache-worker-return") || !std::strcmp(kind, "cache-worker-exit"))
+        return cache_worker_fixture(kind);
     if (!std::strcmp(kind, "empty")) {
         expected_destroyed = 0;
         CHECK(std::atexit(process_callback) == 0);

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Execute real foreign exceptions against host glibc and an already-built
-# FrankenLibC shared library. A missing library or wrong symbol binding fails.
+# Execute foreign exceptions, cancellation and fork recovery against host
+# glibc and an already-built FrankenLibC shared library. A missing library or
+# wrong symbol binding fails.
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -50,4 +51,28 @@ for mode in strict hardened; do
     cmp -- "$output/glibc.stdout" "$output/$mode.stdout"
     echo "PASS $mode: five groups, including 16 contended retries with 8 waiters"
 done
-echo "PASS pthread_once foreign-unwind parity: strict, hardened"
+
+# These cases use provider-checked pthread entrypoints directly. The inherited
+# once owner and its waiter are observed sleeping on their exact futex words;
+# neither a scheduler delay nor merely entering a callback counts as evidence.
+for test_name in fork-orphan fork-child-handler fork-retry fork-survivor \
+    fork-survivor-retry fork-completed canceled-retry; do
+    env -u LD_PRELOAD -u FRANKENLIBC_THREAD_NATIVE -u FRANKENLIBC_THREAD_DELEGATE \
+        timeout --kill-after=2s 25s "$output/fixture" "--$test_name" \
+        > "$output/glibc-$test_name.stdout" 2> "$output/glibc-$test_name.stderr"
+    grep -Fx -- "PASS $test_name" "$output/glibc-$test_name.stdout" > /dev/null
+    [[ $(grep -c '^PASS ' "$output/glibc-$test_name.stdout") -eq 1 ]]
+    for mode in strict hardened; do
+        for native in 0 1; do
+            label="$mode-native$native-$test_name"
+            env -u LD_PRELOAD timeout --kill-after=2s 25s \
+                env -u FRANKENLIBC_THREAD_DELEGATE FRANKENLIBC_MODE="$mode" \
+                FRANKENLIBC_THREAD_NATIVE="$native" FRANKENLIBC_RUNTIME_MATH=off \
+                LD_PRELOAD="$library" "$output/fixture" "$library" "--$test_name" \
+                > "$output/$label.stdout" 2> "$output/$label.stderr"
+            cmp -- "$output/glibc-$test_name.stdout" "$output/$label.stdout"
+        done
+    done
+    echo "PASS $test_name: strict/hardened, hosted/native threads"
+done
+echo "PASS pthread_once foreign-unwind, cancellation and fork parity: strict, hardened"

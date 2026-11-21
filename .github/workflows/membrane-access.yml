@@ -5,11 +5,19 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-membrane/**'
+      - 'crates/frankenlibc-core/src/pthread/tls.rs'
+      - 'crates/frankenlibc-core/src/pthread/thread.rs'
+      - 'crates/frankenlibc-core/tests/native_membrane_tls_test.rs'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/src/segment_mapping.rs'
+      - 'crates/frankenlibc-abi/src/rpc_svc.rs'
       - 'crates/frankenlibc-abi/src/string_abi.rs'
       - 'crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs'
+      - 'crates/frankenlibc-abi/tests/malloc_abi_test.rs'
       - 'scripts/check_membrane_access.py'
+      - 'scripts/check_allocation_integrity.py'
       - 'tests/integration/fixture_membrane_access.c'
+      - 'tests/integration/fixture_malloc.c'
       - '.github/workflows/membrane-access.yml'
   workflow_dispatch:
 
@@ -19,7 +27,7 @@ permissions:
 jobs:
   access:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: never
@@ -43,11 +51,79 @@ jobs:
           git rev-parse HEAD | tee artifacts/access/source-commit.txt
           sha256sum crates/frankenlibc-membrane/src/ptr_validator.rs crates/frankenlibc-abi/src/malloc_abi.rs crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs | tee artifacts/access/source-sha256.txt
           git diff --exit-code
+      - name: Execute all membrane controller and policy math regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-membrane --lib -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/membrane-lib.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/membrane-lib.log
+      - name: Preserve validation-context isolation with owned TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-membrane --lib --features owned-tls-cache \
+            ptr_validator::tests::validation_context_ -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/access/validation-context-owned.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/validation-context-owned.log
+      - name: Preserve membrane storage isolation across native thread creation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --test native_membrane_tls_test \
+            -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/native-membrane-default.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/native-membrane-default.log
+          cargo test -p frankenlibc-core --features owned-tls-cache,frankenlibc-membrane/owned-tls-cache \
+            --test native_membrane_tls_test -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/access/native-membrane-owned.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/native-membrane-owned.log
+      - name: Prepare production-library integration targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/access/runtime-integration
+          # These targets use the ordinary library. Their small caller manifest
+          # avoids compiling unrelated conformance/UI dev dependencies twice,
+          # including an optimized copy for the release interposition checks.
+          cat > artifacts/access/runtime-integration/Cargo.toml <<EOF
+          [package]
+          name = "frankenlibc-runtime-integration"
+          version = "0.0.0"
+          edition = "2024"
+          [workspace]
+          [dependencies]
+          frankenlibc-membrane = { path = "$PWD/crates/frankenlibc-membrane" }
+          serde_json = "1"
+          libc = "0.2"
+          libm = "0.2.16"
+          [[test]]
+          name = "runtime_math_dual_mode_e2e_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs"
+          [[test]]
+          name = "allocator_quarantine_feedback_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/allocator_quarantine_feedback_test.rs"
+          [[test]]
+          name = "bloom_paged_storage_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/bloom_paged_storage_test.rs"
+          [[test]]
+          name = "runtime_evidence_allocation_failure_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/runtime_evidence_allocation_failure_test.rs"
+          EOF
+          cp Cargo.lock artifacts/access/runtime-integration/Cargo.lock
+      - name: Execute runtime math, quarantine, and allocation failure regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test --test bloom_paged_storage_test --test runtime_evidence_allocation_failure_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e.log
+          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e.log)" -eq 4
       - name: Execute access verdict and lifetime regressions in both modes
         shell: bash
         run: |
           set -euo pipefail
           rustc --version --verbose | tee artifacts/access/rustc.txt
+          cargo test -p frankenlibc-membrane --lib fingerprint::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/fingerprints.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/fingerprints.log
+          cargo test -p frankenlibc-membrane --lib arena::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/arena.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/arena.log
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ptr_validator::access_tests:: -- --test-threads=1 2>&1 | tee "artifacts/access/slots-$mode.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/access/slots-$mode.log"
@@ -60,6 +136,13 @@ jobs:
           set -euo pipefail
           cargo test -p frankenlibc-abi --test hardened_integrity_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/abi.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/abi.log
+      - name: Preserve actual ABI bounds during another thread's owned validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --features owned-tls-cache --test hardened_integrity_bounds_test \
+            -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/abi-owned.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/abi-owned.log
       - name: Reject a lost-verdict mutation on an actual ABI write
         shell: bash
         run: |
@@ -94,13 +177,133 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/malloc.log
           cargo test -p frankenlibc-membrane --lib ptr_validator::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/pipeline.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/pipeline.log
+      - name: Reject repeated sidecar batch promotion after a real kernel failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess
+
+          source = Path('crates/frankenlibc-abi/src/malloc_abi.rs')
+          original = source.read_bytes()
+          good = b'if attempt_batch\n            && unsafe {'
+          bad = b'if true\n            && unsafe {'
+          assert original.count(good) == 1, 'sidecar batch guard must have one mutation site'
+          command = [
+              'cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'malloc_abi_test',
+              'segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible',
+              '--', '--exact', '--nocapture', '--test-threads=1',
+          ]
+          try:
+              source.write_bytes(original.replace(good, bad, 1))
+              result = subprocess.run(
+                  command, env=dict(os.environ, FRANKENLIBC_MODE='strict'),
+                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600,
+              )
+              Path('artifacts/access/sidecar-batch-mutation.log').write_bytes(result.stdout)
+              print(result.stdout.decode(errors='replace'))
+              assert result.returncode != 0, 'repeated batch promotion mutation incorrectly passed'
+              assert b'test result: FAILED. 0 passed; 1 failed;' in result.stdout, 'mutation must compile and execute one failed test'
+              assert b'failed batch retry made unused sidecar padding writable' in result.stdout, 'failure must identify the writable-padding regression'
+          finally:
+              source.write_bytes(original)
+          PY
+          FRANKENLIBC_MODE=strict cargo test -p frankenlibc-abi --test malloc_abi_test \
+            segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible \
+            -- --exact --nocapture --test-threads=1 2>&1 | tee artifacts/access/sidecar-batch-restored.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' artifacts/access/sidecar-batch-restored.log
       - name: Execute deployed memory and string access matrix
         shell: bash
         run: |
           set -euo pipefail
           cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/access/release-build.log
           python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --output artifacts/access/preload 2>&1 | tee artifacts/access/preload.log
+          python3 scripts/check_allocation_integrity.py target/release/libfrankenlibc_abi.so --output artifacts/access/allocation-integrity 2>&1 | tee artifacts/access/allocation-integrity.log
           git diff --exit-code
+      - name: Verify release runtime math and emitted-code isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --release --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test --test bloom_paged_storage_test --test runtime_evidence_allocation_failure_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e-release.log
+          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e-release.log)" -eq 4
+          cargo build -p frankenlibc-membrane --release --lib --message-format=json > artifacts/access/membrane-build.jsonl
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+
+          output = Path('artifacts/access')
+          archives = set()
+          for line in (output / 'membrane-build.jsonl').read_text().splitlines():
+              event = json.loads(line)
+              if event.get('reason') == 'compiler-artifact' and event.get('target', {}).get('name') == 'frankenlibc_membrane':
+                  archives.update(path for path in event['filenames'] if path.endswith('.rlib'))
+          assert len(archives) == 1, f'expected one freshly selected membrane archive: {archives}'
+          archive = next(iter(archives))
+          members = subprocess.run(['ar', 't', archive], check=True, capture_output=True, text=True).stdout
+          (output / 'membrane-archive-members.txt').write_text(members)
+          objects = [name for name in members.splitlines() if name.endswith('.o')]
+          assert objects, 'membrane archive contains no compiled objects'
+          result = subprocess.run(['nm', '--undefined-only', '--extern-only', archive],
+                                  check=True, capture_output=True, text=True)
+          (output / 'membrane-undefined-symbols.txt').write_text(result.stdout)
+          forbidden = {'log', 'log1p', 'log2', 'exp', 'acos', 'pow'}
+          references = {line.split()[-1].split('@')[0] for line in result.stdout.splitlines()
+                        if len(line.split()) >= 2 and line.split()[-2] == 'U'}
+          assert not (references & forbidden), f'interposable math references: {references & forbidden}'
+          print(f'PASS: {len(objects)} objects in {archive} have no undefined C transcendental references')
+          PY
+      - name: Check deployed startup under a 10 MiB data limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          mkdir -p artifacts/access/startup-memory
+          sha256sum "$library" | tee artifacts/access/startup-memory/library-sha256.txt
+          size -A -d "$library" | tee artifacts/access/startup-memory/sections.txt
+          readelf -lW "$library" | tee artifacts/access/startup-memory/segments.txt
+          python3 - "$library" <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          from scripts.check_allocation_integrity import validate_contract
+
+          library = Path(sys.argv[1]).resolve(strict=True)
+          fixture = Path('artifacts/access/allocation-integrity/fixture_malloc').resolve(strict=True)
+          output = Path('artifacts/access/startup-memory')
+          env = dict(os.environ, LC_ALL='C')
+          for name in ('LD_PRELOAD', 'LD_AUDIT', 'LD_DEBUG', 'FRANKENLIBC_MODE',
+                       'FRANKENLIBC_LOG', 'FRANKENLIBC_HEAL_LOG'):
+              env.pop(name, None)
+          # The launcher bash and its env wrapper are unpreloaded. The limit
+          # applies before exec loads the target and candidate shared library.
+          launch = 'set -eu; ulimit -d 10240; exec env FRANKENLIBC_MODE="$1" LD_PRELOAD="$2" "${@:3}"'
+          cases = (
+              ('echo', ['/bin/echo', 'startup-ready'], '', 'startup-ready\n'),
+              ('env', ['/usr/bin/env', '-i', 'STARTUP_PROBE=ready'], '', 'STARTUP_PROBE=ready\n'),
+              ('grep', ['/usr/bin/grep', '-x', 'startup-ready'], 'skip\nstartup-ready\n', 'startup-ready\n'),
+              ('malloc', [str(fixture), '--canary-case', 'intact', str(library)], '', None),
+          )
+          for mode in ('strict', 'hardened'):
+              for name, command, stdin, expected in cases:
+                  label = f'{mode}-{name}'
+                  result = subprocess.run(
+                      ['/bin/bash', '-c', launch, 'startup-memory', mode, str(library), *command],
+                      env=env, input=stdin, capture_output=True, text=True, timeout=20,
+                  )
+                  (output / f'{label}.stdout').write_text(result.stdout)
+                  (output / f'{label}.stderr').write_text(result.stderr)
+                  assert result.returncode == 0, f'{label}: exit {result.returncode}: {result.stderr}'
+                  checks = 0
+                  if expected is not None:
+                      assert result.stdout == expected, f'{label}: unexpected output {result.stdout!r}'
+                      assert not result.stderr, f'{label}: unexpected stderr {result.stderr!r}'
+                  else:
+                      data = json.loads(result.stdout)
+                      validate_contract(data, 'intact', mode)
+                      checks = data['executed']
+                      assert checks > 0, f'{label}: no C checks executed'
+                  print(f'startup_memory {label}: pass (C checks={checks})', flush=True)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

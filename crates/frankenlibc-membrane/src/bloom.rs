@@ -3,7 +3,10 @@
 //! Optimal sizing: m = -n*ln(p)/(ln2)^2, k = (m/n)*ln2
 //!
 //! Guarantees: zero false negatives within a generation (if we inserted it, we
-//! will find it). False positive rate is bounded and configurable.
+//! will find it). If the bit storage cannot be allocated, every query stays
+//! positive so a missing table cannot hide an owned pointer. False positive
+//! rate is configurable; past the design capacity it climbs until a quiesced
+//! `rebuild_from`.
 //!
 //! ## Saturation and rebuilds
 //!
@@ -21,12 +24,11 @@
 //! - The data structure exposes diagnostic and rebuild primitives
 //!   (`insert_count`, `saturation_ratio`, `is_saturated`, `clear`,
 //!   `rebuild_from`) so callers holding the authoritative live set can
-//!   atomically rebuild the filter from truth without ever observing a
-//!   false negative for a still-live pointer. `rebuild_from` is the safe
-//!   pattern: callers enumerate the current live set, hand it to the bloom,
-//!   and the bloom replaces its bit pattern in place.
+//!   rebuild the filter from truth while insertions and queries are quiesced.
+//!   Callers enumerate the current live set, hand it to `rebuild_from`, and
+//!   resume queries after the bloom replaces its bit pattern in place.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Default expected number of insertions: 262,144 items at 0.1% false-positive
 /// rate (`65,536` `AtomicU64` words = `512 KiB` = `4,194,304` bits).
@@ -40,6 +42,11 @@ const DEFAULT_EXPECTED_ITEMS: usize = 262_144;
 /// Bits per block of the blocked layout: one 64-byte cache line.
 const BLOOM_BLOCK_BITS: usize = 512;
 
+/// Commit bit storage in 4 KiB pages, keeping every block within one page.
+const BLOOM_PAGE_WORDS: usize = 512;
+const BLOOM_PAGE_BITS: usize = BLOOM_PAGE_WORDS * u64::BITS as usize;
+const _: () = assert!(BLOOM_PAGE_BITS.is_multiple_of(BLOOM_BLOCK_BITS));
+
 /// Default false positive rate target.
 const DEFAULT_FP_RATE: f64 = 0.001; // 0.1%
 
@@ -47,22 +54,30 @@ struct BloomSlab {
     bits: Box<[AtomicU64]>,
     num_bits: usize,
     num_hashes: u32,
+    /// Set when the dense slab could not be allocated. Queries then stay
+    /// positive: a missing table must not report "definitely not ours."
+    conservative: AtomicBool,
 }
 
 #[allow(unsafe_code)]
-fn alloc_zeroed_atomic_u64_slice(num_words: usize) -> Box<[AtomicU64]> {
+fn alloc_zeroed_atomic_u64_slice(num_words: usize) -> Option<Box<[AtomicU64]>> {
     const _: () = {
         assert!(std::mem::size_of::<AtomicU64>() == std::mem::size_of::<u64>());
         assert!(std::mem::align_of::<AtomicU64>() == std::mem::align_of::<u64>());
     };
-    // `vec![0u64; num_words]` uses `alloc_zeroed` (`calloc`), keeping large
-    // `MAP_ANONYMOUS` pages demand-zeroed instead of faulting every page during
-    // `ValidationPipeline` initialization.
-    let zeroed: Box<[u64]> = vec![0u64; num_words].into_boxed_slice();
-    let raw = Box::into_raw(zeroed) as *mut [AtomicU64];
+    // `try_reserve_exact` plus `resize` still ends in `alloc_zeroed` (`calloc`),
+    // so large `MAP_ANONYMOUS` pages stay demand-zeroed instead of faulting
+    // during `ValidationPipeline` initialization. Failure is `None`: the caller
+    // keeps queries conservative rather than panicking inside malloc.
+    let mut zeroed = Vec::<u64>::new();
+    if zeroed.try_reserve_exact(num_words).is_err() {
+        return None;
+    }
+    zeroed.resize(num_words, 0);
+    let raw = Box::into_raw(zeroed.into_boxed_slice()) as *mut [AtomicU64];
     // SAFETY: `AtomicU64` has the exact same size, alignment, and all-zero bit
     // validity as `u64`, and slice fat-pointer metadata is element count.
-    unsafe { Box::from_raw(raw) }
+    Some(unsafe { Box::from_raw(raw) })
 }
 
 impl BloomSlab {
@@ -84,15 +99,21 @@ impl BloomSlab {
         let num_words = m.div_ceil(64).next_power_of_two();
         let num_bits = num_words * 64;
 
+        let bits = alloc_zeroed_atomic_u64_slice(num_words);
+        let conservative = bits.is_none();
         Self {
-            bits: alloc_zeroed_atomic_u64_slice(num_words),
+            bits: bits.unwrap_or_else(|| Box::<[AtomicU64]>::from([])),
             num_bits,
             num_hashes: k,
+            conservative: AtomicBool::new(conservative),
         }
     }
 
     #[inline]
     fn insert_hashes(&self, h1: usize, h2: usize) {
+        if self.conservative.load(Ordering::Acquire) {
+            return;
+        }
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
             let word = &self.bits[bit_idx / 64];
@@ -108,6 +129,10 @@ impl BloomSlab {
 
     #[inline]
     fn might_contain_hashes(&self, h1: usize, h2: usize) -> bool {
+        // A filter that could not store bits must not answer "definitely not ours."
+        if self.conservative.load(Ordering::Acquire) {
+            return true;
+        }
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
             let word_idx = bit_idx / 64;
@@ -120,6 +145,9 @@ impl BloomSlab {
     }
 
     fn clear(&self) {
+        if self.conservative.load(Ordering::Acquire) {
+            return;
+        }
         for word in self.bits.iter() {
             word.store(0, Ordering::Relaxed);
         }
@@ -213,7 +241,7 @@ impl PointerBloomFilter {
         self.expected_items
     }
 
-    /// Number of successful `insert` calls since the last `clear` /
+    /// Number of `insert` calls since the last `clear` /
     /// `rebuild_from`.
     #[must_use]
     pub fn insert_count(&self) -> u64 {
@@ -240,14 +268,14 @@ impl PointerBloomFilter {
 
     /// Clear every bit and reset the insert counter.
     ///
-    /// **WARNING:** this is destructive. After `clear`, `might_contain`
-    /// returns `false` for every pointer until inserts resume. Callers MUST
-    /// guarantee no concurrent `might_contain` query can observe the partial
-    /// clear and conclude "not ours" for a still-live pointer (which would
-    /// be a false negative breaking the membrane's structural invariant).
-    /// The safe pattern is `rebuild_from`: it clears, refills atomically
-    /// from the caller's live truth set, and bumps the insert counter so
-    /// observers never see an empty filter.
+    /// **WARNING:** this is destructive. Callers MUST quiesce insertions and
+    /// queries until the authoritative live set has been reinserted, normally
+    /// through `rebuild_from`. Otherwise a query could observe a partially
+    /// cleared filter and incorrectly reject a still-live pointer.
+    ///
+    /// The dense slab stays allocated. If that slab could not be created, the
+    /// filter stays conservative and every query returns `true`. Otherwise,
+    /// every query returns `false` until insertions resume.
     pub fn clear(&self) {
         self.slab.clear();
         self.insert_count.store(0, Ordering::Relaxed);
@@ -257,9 +285,10 @@ impl PointerBloomFilter {
     ///
     /// This is the saturation-recovery primitive: the caller (typically the
     /// allocation arena) enumerates its current live pointer set, hands it
-    /// in here, and the bloom is atomically refilled from truth. Items that
+    /// in here, and the bloom is refilled from truth. Items that
     /// were inserted but have since been freed drop out of the filter; the
-    /// false-positive rate is restored to the design `fp_rate`.
+    /// false-positive rate is restored to the design `fp_rate` when the slab
+    /// exists. A filter that failed to allocate its slab stays conservative.
     ///
     /// `items` is iterated once. Each pointer's hash bits are set with the
     /// same procedure as `insert`. The insert counter is set to the count
@@ -268,8 +297,8 @@ impl PointerBloomFilter {
     /// **Synchronization:** during a rebuild a concurrent `might_contain`
     /// query *may* transiently observe an intermediate state in which some
     /// of the truth-set's bits are not yet set. Callers MUST hold a
-    /// suitable barrier (e.g. quiesce queries during the rebuild) when
-    /// false negatives would be unsafe. For the ownership-precheck use
+    /// suitable barrier (quiescing both insertions and queries during the
+    /// rebuild) when false negatives would be unsafe. For the ownership-precheck use
     /// case this is normally arranged by the arena's existing EBR /
     /// quarantine machinery.
     pub fn rebuild_from<I>(&self, items: I)
@@ -320,6 +349,37 @@ impl Default for PointerBloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paged_words_match_the_dense_layout_across_block_and_page_boundaries() {
+        for (capacity, fp_rate) in [
+            (1, 0.5),
+            (20, 0.01),
+            (64, 0.01),
+            (1000, 0.01),
+            (10_000, 0.001),
+        ] {
+            let filter = PointerBloomFilter::with_capacity(capacity, fp_rate);
+            let mut dense = vec![0u64; filter.num_bits() / 64];
+            for i in 0..512usize {
+                let ptr = (i + 1).wrapping_mul(0x9e37);
+                let (h1, h2) = (PointerBloomFilter::hash1(ptr), PointerBloomFilter::hash2(ptr));
+                let page_index = filter.slab.bit_index(h1, h2, 0) / BLOOM_PAGE_BITS;
+                for hash in 0..filter.num_hashes() {
+                    let bit = filter.slab.bit_index(h1, h2, hash);
+                    assert_eq!(bit / BLOOM_PAGE_BITS, page_index, "one page per key");
+                    dense[bit / 64] |= 1u64 << (bit % 64);
+                }
+                filter.insert(ptr);
+            }
+
+            for (index, expected) in dense.into_iter().enumerate() {
+                let actual = filter.slab.bits[index].load(Ordering::Relaxed);
+                assert_eq!(actual, expected, "capacity {capacity}, word {index}");
+            }
+            assert_eq!(filter.insert_count(), 512);
+        }
+    }
 
     #[test]
     fn no_false_negatives() {

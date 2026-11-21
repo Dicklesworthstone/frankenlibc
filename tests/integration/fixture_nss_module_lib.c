@@ -124,6 +124,7 @@ enum nss_status FN(getservbyname_r)(const char *name, const char *proto,
     *errnop = ENOENT;
     return NSS_STATUS_NOTFOUND;
   }
+#ifndef FLTEST_NATIVE_MODULE
   if (getenv("FLTEST_SERVICE_REENTER")) {
     struct passwd scratch, *found;
     char storage[1024];
@@ -132,6 +133,7 @@ enum nss_status FN(getservbyname_r)(const char *name, const char *proto,
       return NSS_STATUS_UNAVAIL;
     }
   }
+#endif
   return fill_service(http ? "module-http" : "fltest-service", proto,
                       http ? 42480 : large ? 4345 : !strcmp(proto, "tcp") ? 4343 : 4344,
                       large, out, buf, len, errnop);
@@ -208,6 +210,7 @@ static enum nss_status fill_host(int family, int large, struct hostent *host,
   return NSS_STATUS_SUCCESS;
 }
 
+#if !defined(NO_HOST1) || !defined(NO_HOST2) || !defined(NO_HOST3)
 static enum nss_status host_by_name(const char *name, int family, struct hostent *host,
                                     char *buf, size_t len, int *errnop, int *h_errnop) {
   enum nss_status status;
@@ -221,6 +224,7 @@ static enum nss_status host_by_name(const char *name, int family, struct hostent
     return host_failure(NSS_STATUS_NOTFOUND, ENOENT, errnop, h_errnop);
   return fill_host(family, large, host, buf, len, errnop, h_errnop);
 }
+#endif
 
 #ifdef WITH_HOST4
 enum nss_status FN(gethostbyname4_r)(const char *name, struct gaih_addrtuple **pat,
@@ -630,11 +634,31 @@ enum nss_status FN(getspent_r)(struct spwd *sp, char *buf, size_t len, int *errn
 }
 
 #ifndef NO_INITGROUPS
+#ifdef FLTEST_NATIVE_MODULE
+/* Force the loader-selected realloc to consume and resize the caller's
+   initial group array, even when the fixture contributes only three gids. */
+static unsigned initgroups_reallocations;
+unsigned FN(initgroups_reallocations)(void) { return initgroups_reallocations; }
+uintptr_t FN(allocator_address)(unsigned which) {
+  return which == 0 ? (uintptr_t)malloc : which == 1 ? (uintptr_t)realloc : (uintptr_t)free;
+}
+#endif
 enum nss_status FN(initgroups_dyn)(const char *user, gid_t group, long int *start, long int *size,
                                    gid_t **groupsp, long int limit, int *errnop) {
   enum nss_status st;
   trace("initgroups_dyn", user);
   if (forced(&st, errnop)) return st;
+#ifdef FLTEST_NATIVE_MODULE
+  long int grown = *size + 64;
+  gid_t *resized = realloc(*groupsp, (size_t)grown * sizeof(gid_t));
+  if (resized == NULL) {
+    *errnop = ENOMEM;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  *groupsp = resized;
+  *size = grown;
+  ++initgroups_reallocations;
+#endif
   int found = 0;
   for (size_t i = 0; i < COUNT(groups); i++) {
     if (groups[i].gid == group) continue;
@@ -664,3 +688,181 @@ enum nss_status FN(initgroups_dyn)(const char *user, gid_t group, long int *star
   return NSS_STATUS_SUCCESS;
 }
 #endif
+
+
+/* GNU's netgroup module ABI. <nss.h> intentionally only forward-declares
+ * this cursor; keep the layout here independent of libc implementation code.
+ * Each SET owns its data until END, and GET must not consume on ERANGE. */
+struct __netgrent {
+  enum { flnet_triple, flnet_group } type;
+  union {
+    struct { const char *host, *user, *domain; } triple;
+    const char *group;
+  } val;
+  char *data;
+  size_t data_size;
+  union { char *cursor; unsigned long position; };
+  int first;
+  void *known_groups, *needed_groups, *nip;
+};
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(struct __netgrent) == 88, "GNU netgroup cursor size");
+#endif
+
+struct flnet_cursor {
+  char name[64];
+  size_t position;
+  int retried;
+};
+static int (*netgroup_reentry)(void);
+void FN(set_netgroup_reentry)(int (*callback)(void)) {
+  netgroup_reentry = callback;
+}
+
+enum nss_status FN(setnetgrent)(const char *name, struct __netgrent *out) {
+  trace("setnetgrent", name);
+  if (!strcmp(STR(SERVICE), "fltest")) {
+    if (!strcmp(name, "flnet-set-notfound") || !strcmp(name, "flnet-remote"))
+      return NSS_STATUS_NOTFOUND;
+    if (!strcmp(name, "flnet-set-unavail")) return NSS_STATUS_UNAVAIL;
+    if (!strcmp(name, "flnet-set-again")) return NSS_STATUS_TRYAGAIN;
+    if (!strcmp(name, "flnet-set-return")) return NSS_STATUS_RETURN;
+  }
+  if (strncmp(name, "flnet-", 6) || !strcmp(name, "flnet-missing"))
+    return NSS_STATUS_NOTFOUND;
+  struct flnet_cursor *state = calloc(1, sizeof *state);
+  if (!state) return NSS_STATUS_TRYAGAIN;
+  if (strlen(name) >= sizeof state->name) {
+    free(state);
+    return NSS_STATUS_NOTFOUND;
+  }
+  strcpy(state->name, name);
+  out->data = (char *)state;
+  out->data_size = sizeof *state;
+  return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status FN(endnetgrent)(struct __netgrent *out) {
+  struct flnet_cursor *state = (struct flnet_cursor *)out->data;
+  trace("endnetgrent", state ? state->name : NULL);
+  free(state);
+  out->data = NULL;
+  out->data_size = 0;
+  return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status FN(getnetgrent_r)(struct __netgrent *out, char *buf, size_t len,
+                                  int *errnop) {
+  struct flnet_cursor *state = (struct flnet_cursor *)out->data;
+  if (!state) {
+    *errnop = EINVAL;
+    return NSS_STATUS_UNAVAIL;
+  }
+  trace("getnetgrent_r", state->name);
+  size_t index = state->position;
+  const char *host = NULL, *user = NULL, *domain = NULL, *group = NULL;
+  int large = 0;
+
+  if (!strcmp(state->name, "flnet-reentry") && !index && netgroup_reentry) {
+    int (*callback)(void) = netgroup_reentry;
+    netgroup_reentry = NULL;
+    int rc = callback();
+    netgroup_reentry = callback;
+    if (rc) {
+      *errnop = EIO;
+      return NSS_STATUS_UNAVAIL;
+    }
+  }
+  if (!strcmp(state->name, "flnet-empty")) return NSS_STATUS_RETURN;
+  if (!strcmp(state->name, "flnet-cross")) {
+    if (index) return NSS_STATUS_RETURN;
+    group = "flnet-remote";
+  } else if (!strcmp(state->name, "flnet-nested")) {
+    if (!index) { host = "root"; user = "root-user"; domain = "root-domain"; }
+    else if (index == 1 || index == 3) group = "flnet-alpha";
+    else if (index == 2) group = "flnet-beta";
+    else if (index == 4) group = "flnet-missing";
+    else return NSS_STATUS_RETURN;
+  } else if (!strcmp(state->name, "flnet-alpha")) {
+    if (!index) { host = "alpha"; user = "a"; domain = "d"; }
+    else if (index == 1) group = "flnet-nested";
+    else return NSS_STATUS_RETURN;
+  } else if (!strcmp(state->name, "flnet-beta")) {
+    if (!index) { host = "beta"; user = "b"; domain = "d"; }
+    else if (index == 1) group = "flnet-alpha";
+    else return NSS_STATUS_RETURN;
+  } else if (!strcmp(state->name, "flnet-null")) {
+    if (index) return NSS_STATUS_RETURN;
+    host = NULL; user = ""; domain = "-";
+  } else if (!strcmp(state->name, "flnet-large")) {
+    if (index) return NSS_STATUS_RETURN;
+    large = 1; user = "large-user"; domain = "large-domain";
+  } else if (!strcmp(state->name, "flnet-scratch")) {
+    if (index) return NSS_STATUS_RETURN;
+    /* Scratch requirements are a module contract, even when its final
+     * tuple would fit a much smaller buffer. Public GET may not auto-grow. */
+    if (len < 4096) {
+      trace("getnetgrent_r_ERANGE", state->name);
+      *errnop = ERANGE;
+      return NSS_STATUS_TRYAGAIN;
+    }
+    host = "scratch"; user = "scratch-user"; domain = "scratch-domain";
+  } else if (!strcmp(state->name, "flnet-retry")) {
+    if (index == 1 && !state->retried) {
+      state->retried = 1;
+      *errnop = EAGAIN;
+      return NSS_STATUS_TRYAGAIN;
+    }
+    if (index > 1) return NSS_STATUS_RETURN;
+    host = index ? "after-retry" : "before-retry";
+    user = "retry-user"; domain = "retry-domain";
+  } else if (!strncmp(state->name, "flnet-get-", 10)) {
+    if (!index) { host = "before-status"; user = "u"; domain = "d"; }
+    else if (index == 1) group = "flnet-leaf";
+    else if (!strcmp(state->name, "flnet-get-notfound")) {
+      *errnop = ENOENT;
+      return NSS_STATUS_NOTFOUND;
+    } else if (!strcmp(state->name, "flnet-get-unavail")) {
+      *errnop = ENOSYS;
+      return NSS_STATUS_UNAVAIL;
+    } else if (!strcmp(state->name, "flnet-get-quiet")) {
+      return NSS_STATUS_UNAVAIL;
+    } else if (!strcmp(state->name, "flnet-get-again-quiet")) {
+      return NSS_STATUS_TRYAGAIN;
+    } else return NSS_STATUS_RETURN;
+  } else if (!strcmp(state->name, "flnet-leaf")) {
+    if (index) return NSS_STATUS_RETURN;
+    host = "leaf"; user = "leaf-user"; domain = "leaf-domain";
+  } else {
+    if (index > 1) return NSS_STATUS_RETURN;
+    host = index ? STR(SERVICE) "-two" : STR(SERVICE) "-one";
+    user = index ? "two" : "one";
+    domain = "example.test";
+  }
+
+  size_t need = group ? strlen(group) + 1 :
+      (large ? 3073 : host ? strlen(host) + 1 : 0) +
+      (user ? strlen(user) + 1 : 0) + (domain ? strlen(domain) + 1 : 0);
+  if (len < need) {
+    trace("getnetgrent_r_ERANGE", state->name);
+    *errnop = ERANGE;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  char *cur = buf, *end = buf + len;
+  if (group) {
+    out->type = flnet_group;
+    out->val.group = put(&cur, end, group);
+  } else {
+    out->type = flnet_triple;
+    if (large) {
+      out->val.triple.host = cur;
+      memset(cur, 'n', 3072);
+      cur[3072] = '\0';
+      cur += 3073;
+    } else out->val.triple.host = host ? put(&cur, end, host) : NULL;
+    out->val.triple.user = user ? put(&cur, end, user) : NULL;
+    out->val.triple.domain = domain ? put(&cur, end, domain) : NULL;
+  }
+  state->position++;
+  return NSS_STATUS_SUCCESS;
+}

@@ -503,7 +503,8 @@ fn run_double_free_stress(
             for ptr in batch {
                 match pipeline.free(ptr as *mut u8) {
                     frankenlibc_membrane::arena::FreeResult::Freed
-                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption => {
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithFingerprintCorruption => {
                         out.freed_or_absorbed += 1;
                     }
                     frankenlibc_membrane::arena::FreeResult::DoubleFree => {
@@ -542,7 +543,8 @@ fn run_double_free_stress(
                         out.double_free_detected += 1;
                     }
                     frankenlibc_membrane::arena::FreeResult::Freed
-                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption => {
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithFingerprintCorruption => {
                         out.freed_or_absorbed += 1;
                     }
                     frankenlibc_membrane::arena::FreeResult::ForeignPointer

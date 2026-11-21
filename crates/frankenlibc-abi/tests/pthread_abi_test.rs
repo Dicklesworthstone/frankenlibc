@@ -352,33 +352,46 @@ fn thread_managed_pthread_exit_runs_tls_destructors() {
 
 #[test]
 fn thread_return_runs_tls_destructors() {
-    unsafe {
-        let _guard = ThreadingForceNativeGuard {
-            previous: pthread_threading_swap_force_native_for_tests(),
-        };
+    let ctx = std::thread::spawn(|| unsafe {
         let mut ctx = Box::new(ExitDestructorCtx {
             key: 0,
             ran: AtomicI32::new(0),
         });
         assert_eq!(pthread_key_create(&mut ctx.key, Some(exit_destructor)), 0);
 
-        let mut thr: libc::pthread_t = 0;
+        {
+            let _guard = ThreadingForceNativeGuard {
+                previous: pthread_threading_swap_force_native_for_tests(),
+            };
+            let mut thr: libc::pthread_t = 0;
+            assert_eq!(
+                pthread_create(
+                    &mut thr,
+                    ptr::null(),
+                    Some(managed_return_with_tls_destructor),
+                    (&mut *ctx as *mut ExitDestructorCtx).cast::<c_void>(),
+                ),
+                0
+            );
+
+            let mut retval: *mut c_void = ptr::null_mut();
+            assert_eq!(pthread_join(thr, &mut retval), 0);
+            assert_eq!(retval as usize, 0x66);
+            assert_eq!(ctx.ran.load(Ordering::SeqCst), 1);
+        }
+        // The native child must not mark its hosted creator's compiler-TLS
+        // key-teardown flag. After restoring host mode, this new value needs
+        // its own host exit callback even though the child already used it.
         assert_eq!(
-            pthread_create(
-                &mut thr,
-                ptr::null(),
-                Some(managed_return_with_tls_destructor),
-                (&mut *ctx as *mut ExitDestructorCtx).cast::<c_void>(),
-            ),
+            pthread_setspecific(ctx.key, (&mut *ctx as *mut ExitDestructorCtx).cast()),
             0
         );
-
-        let mut retval: *mut c_void = ptr::null_mut();
-        assert_eq!(pthread_join(thr, &mut retval), 0);
-        assert_eq!(retval as usize, 0x66);
-        assert_eq!(ctx.ran.load(Ordering::SeqCst), 1);
-        assert_eq!(pthread_key_delete(ctx.key), 0);
-    }
+        ctx
+    })
+    .join()
+    .unwrap();
+    assert_eq!(ctx.ran.load(Ordering::SeqCst), 2);
+    assert_eq!(unsafe { pthread_key_delete(ctx.key) }, 0);
 }
 
 #[test]

@@ -16,6 +16,11 @@ runtime-tracing = ["dep:tracing"]
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }
+idna = { workspace = true }
+# These explicit backend pins keep all IDNA data on Unicode 16 (see workspace).
+idna_adapter = { workspace = true }
+icu_normalizer = { workspace = true }
+icu_properties = { workspace = true }
 libm = "0.2.16"
 md-5 = { workspace = true }
 sha2 = { workspace = true }
