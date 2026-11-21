@@ -4605,6 +4605,53 @@ fn sync_input_position(stream: &mut StdioStream) {
     }
 }
 
+/// GNU descriptor underflow flushes line-buffered stdout before reading from a
+/// line-buffered or unbuffered input stream. Buffered hits and fread's direct
+/// descriptor path do not pass through this operation.
+///
+/// The caller excludes concurrent close/reopen of the input with its public
+/// FILE lock, a single-threaded cache proof, or caller-provided synchronization.
+unsafe fn flush_native_stdout_before_input(stream: &StdioStream, caller: usize) {
+    if !matches!(stream.buf_mode(), BufMode::Line | BufMode::None)
+        || stream.fd() < 0
+        || REGISTRY_PTR.load(Ordering::Acquire).is_null()
+    {
+        return;
+    }
+    let output = active_stdout_stream();
+    let id = canonical_stream_id(output);
+    let cell = {
+        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.get_stream_ref(id).cloned()
+    };
+    let Some(cell) = cell else {
+        return;
+    };
+    if std::ptr::eq(cell.stream.data_ptr(), stream) {
+        // stdout may have been reassigned to this very input FILE. Compare
+        // cell identity without dereferencing or recursively locking its data;
+        // this also handles standard-stream aliases and legacy handle tokens.
+        return;
+    }
+    let Some(mut output) = lock_snapshot_stream(id, &cell) else {
+        return;
+    };
+    // The input cell is still borrowed by the caller. Only descriptor output
+    // is safe here: cookie, memory and foreign stdout require a callback-safe
+    // handoff before invoking application code that could reenter that input.
+    if output.fd() < 0
+        || output.is_mem_backed()
+        || is_cookie_stream(id)
+        || !output.is_writable()
+        || !matches!(output.buf_mode(), BufMode::Line)
+    {
+        return;
+    }
+    // A stdout write failure marks stdout's error indicator but does not stop
+    // the input operation. Apply stdout's own cancellation mode to the write.
+    let _ = unsafe { flush_stream_for_caller(&mut output, caller) };
+}
+
 thread_local! {
     /// Reusable refill bounce buffer — refill_stream fires on EVERY buffered read refill
     /// (fgetc/fread/fgets/getline), and a fresh `vec![0u8; <=8192]` per refill is a per-refill
@@ -4637,7 +4684,7 @@ impl Drop for RefillTmpGuard {
 
 /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
 unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
-    let caller = stream_io_caller(stream, caller);
+    let io_caller = stream_io_caller(stream, caller);
     let capacity = stream.buffer_capacity();
     if capacity == 0 {
         return 0; // Cannot buffer anything.
@@ -4655,11 +4702,12 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
     if tmp.len() < want {
         tmp.resize(want, 0);
     }
+    unsafe { flush_native_stdout_before_input(stream, caller) };
     let fd = stream.fd();
     loop {
         // The owned bounce buffer and the caller's StreamGuard remain outside
         // the raw-syscall cancellation window and unwind normally on a cancel.
-        let rc = unsafe { stream_read_fd(caller, fd, tmp.as_mut_ptr().cast(), want) };
+        let rc = unsafe { stream_read_fd(io_caller, fd, tmp.as_mut_ptr().cast(), want) };
         let errno_val = if rc < 0 {
             std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {
@@ -5663,6 +5711,75 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
 // fflush
 // ---------------------------------------------------------------------------
 
+/// Flush a lifetime-checked snapshot without holding either registry while
+/// waiting for FILE locks, doing descriptor I/O, or running cookie callbacks.
+unsafe fn flush_native_streams(caller: usize, only_line_buffered: bool) -> bool {
+    if REGISTRY_PTR.load(Ordering::Acquire).is_null() {
+        return true;
+    }
+    // Streams opened after this snapshot are not part of this flush. Reuse
+    // the same close/reopen validation for fflush(NULL) and the GNU aliases.
+    let snapshot: Vec<(usize, StreamCell)> = {
+        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        sorted_stream_ids(&reg)
+            .into_iter()
+            .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, Arc::clone(c))))
+            .collect()
+    };
+    let mut any_fail = false;
+    for (id, cell) in snapshot {
+        let Some(mut s_guard) = lock_snapshot_stream(id, &cell) else {
+            continue;
+        };
+        let s = &mut *s_guard;
+        if only_line_buffered && (!s.is_writable() || !matches!(s.buf_mode(), BufMode::Line)) {
+            continue;
+        }
+        let ok = if is_cookie_stream(id) {
+            let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+            unsafe { flush_cookie_stream(id, s) }
+        } else if s.is_mem_backed() {
+            let flush_ok = s.mem_flush();
+            let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+            let wide_ok = unsafe {
+                sync_memstream_to_caller(id, s, false);
+                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
+            };
+            flush_ok && wide_ok
+        } else {
+            unsafe { flush_stream_for_caller(s, caller) }
+        };
+        if !ok {
+            any_fail = true;
+        }
+    }
+    !any_fail
+}
+
+/// GNU `_flushlbf` and `_IO_flush_all_linebuffered` share selective flushing.
+/// Fully buffered streams must remain buffered, including host-owned FILEs in
+/// an interposed process.
+pub(crate) unsafe fn flush_line_buffered_streams() {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 4, true);
+        return;
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        static HOST_FLUSHLBF: OnceLock<usize> = OnceLock::new();
+        if let Some(address) = unsafe { host_stdio_symbol(&HOST_FLUSHLBF, "_flushlbf") } {
+            // SAFETY: the host resolver returns glibc's void(void) symbol,
+            // never this library's interposed alias.
+            let flush: unsafe extern "C" fn() = unsafe { std::mem::transmute(address) };
+            unsafe { flush() };
+        }
+    }
+    let failed = !unsafe { flush_native_streams(0, true) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, failed);
+}
+
 /// POSIX `fflush`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
@@ -5740,40 +5857,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, failed);
             return if failed { libc::EOF } else { 0 };
         }
-        // Snapshot cells under one short lock, then flush per stream. Streams
-        // opened AFTER the snapshot are not flushed — same semantics as the old
-        // whole-registry hold (they could not have been registered mid-hold either).
-        let snapshot: Vec<(usize, StreamCell)> = {
-            let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-            sorted_stream_ids(&reg)
-                .into_iter()
-                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, Arc::clone(c))))
-                .collect()
-        };
-        let mut any_fail = false;
-        for (id, cell) in snapshot {
-            let Some(mut s_guard) = lock_snapshot_stream(id, &cell) else {
-                continue;
-            };
-            let s = &mut *s_guard;
-            let ok = if is_cookie_stream(id) {
-                let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-                unsafe { flush_cookie_stream(id, s) }
-            } else if s.is_mem_backed() {
-                let flush_ok = s.mem_flush();
-                let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-                let wide_ok = unsafe {
-                    sync_memstream_to_caller(id, s, false);
-                    crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
-                };
-                flush_ok && wide_ok
-            } else {
-                unsafe { flush_stream_for_caller(s, caller) }
-            };
-            if !ok {
-                any_fail = true;
-            }
-        }
+        let any_fail = !unsafe { flush_native_streams(caller, false) };
         let failed = any_fail || host_fail;
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, failed);
         return if failed { libc::EOF } else { 0 };
@@ -6021,6 +6105,7 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
     if s.buffer_capacity() == 0 {
         let mut b = [0u8; 1];
         let fd = s.fd();
+        unsafe { flush_native_stdout_before_input(s, caller) };
         let rc =
             unsafe { stream_read_fd(stream_io_caller(s, caller), fd, b.as_mut_ptr().cast(), 1) };
         if rc > 0 {
@@ -6263,7 +6348,7 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
 unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> (usize, bool) {
-    let caller = stream_io_caller(s, caller);
+    let io_caller = stream_io_caller(s, caller);
     let max = dst.len();
     let mut written = 0usize;
     let mut had_error = false;
@@ -6292,7 +6377,8 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
                     // Unbuffered fd stream: read a byte directly.
                     let mut b = [0u8; 1];
                     let fd = s.fd();
-                    let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
+                    unsafe { flush_native_stdout_before_input(s, caller) };
+                    let rc = unsafe { stream_read_fd(io_caller, fd, b.as_mut_ptr().cast(), 1) };
                     if rc > 0 {
                         s.set_offset(s.offset().saturating_add(1));
                         dst[written] = b[0];
@@ -6341,7 +6427,7 @@ fn fgets_read_failed(written: usize, had_error: bool) -> bool {
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
 unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> usize {
-    let caller = stream_io_caller(s, caller);
+    let io_caller = stream_io_caller(s, caller);
     let total = dst.len();
     let mut read_total = 0usize;
     while read_total < total {
@@ -6357,7 +6443,12 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
         // instead of a per-call direct fd read. Large requests (>= capacity) keep the direct
         // read below (buffering would just add a copy).
         let cap = s.buffer_capacity();
-        if cap > 0 && (total - read_total) < cap && !s.is_eof() {
+        if cap > 0 && (total - read_total) < cap {
+            // EOF is sticky for underflow even if the file has grown. GNU's
+            // direct descriptor reads below deliberately bypass that check.
+            if s.is_eof() {
+                break;
+            }
             let rc = unsafe { refill_stream(s, caller) };
             if rc > 0 {
                 continue;
@@ -6367,8 +6458,14 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
         // Direct fd read (avoids recursive memcpy interposition through buffered internals).
         let fd = s.fd();
         let to_read = total - read_total;
-        let rc =
-            unsafe { stream_read_fd(caller, fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
+        let rc = unsafe {
+            stream_read_fd(
+                io_caller,
+                fd,
+                dst[read_total..].as_mut_ptr().cast(),
+                to_read,
+            )
+        };
         let errno_val = if rc < 0 {
             std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {
@@ -17879,8 +17976,10 @@ pub unsafe extern "C-unwind" fn freopen(
     let file_lock = unsafe { StdioLockGuard::acquire(stream) };
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
 
-    // Close the old stream. Lock ordering: registry → cell (freopen only); no path
-    // acquires the registry while holding a cell lock, so this nesting cannot deadlock.
+    // Close the old stream under registry → cell. The public FILE lock above
+    // excludes ordinary reads on this same stream, including prompt flushes
+    // that inspect the registry while borrowing their input cell. Unlocked
+    // and BYCALLER operations require equivalent caller synchronization.
     let mut target_fd = -1;
     let mut process_child = None;
     let mut deferred_cookie_close = false;
@@ -18195,7 +18294,7 @@ unsafe fn getdelim_fill_stream(
     if s.is_error() {
         return;
     }
-    let caller = stream_io_caller(s, caller);
+    let io_caller = stream_io_caller(s, caller);
     loop {
         match s.read_until_delim(delim_byte, &mut *buf) {
             ReadUntil::Found | ReadUntil::Eof => break,
@@ -18207,7 +18306,8 @@ unsafe fn getdelim_fill_stream(
                     // Unbuffered fd stream: read a byte directly.
                     let mut b = [0u8; 1];
                     let fd = s.fd();
-                    let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
+                    unsafe { flush_native_stdout_before_input(s, caller) };
+                    let rc = unsafe { stream_read_fd(io_caller, fd, b.as_mut_ptr().cast(), 1) };
                     if rc > 0 {
                         s.set_offset(s.offset().saturating_add(1));
                         buf.push(b[0]);

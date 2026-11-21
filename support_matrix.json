@@ -2604,8 +2604,8 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Obsolete DES helper compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
-      "hardened_semantics": "Same deterministic no-op",
+      "strict_semantics": "Native unsalted DES transform of a 64-byte bit vector using the process-global setkey key; zero encrypts, nonzero decrypts, and successful calls preserve errno",
+      "hardened_semantics": "Same native transform; rejects null pointers, known-short tracked blocks, and non-bit values with EINVAL before modifying output",
       "default_stub": false
     },
     {
@@ -2613,8 +2613,8 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Reentrant obsolete DES helper compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
-      "hardened_semantics": "Same deterministic no-op",
+      "strict_semantics": "Native DES bit-vector transform using independent private crypt_data state initialized by the matching setkey_r implementation; successful calls preserve errno",
+      "hardened_semantics": "Same native transform; rejects null or known-short tracked storage, uninitialized or incompatible private state, and non-bit input with EINVAL before modifying output",
       "default_stub": false
     },
     {
@@ -2631,8 +2631,8 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Obsolete DES key schedule compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
-      "hardened_semantics": "Same deterministic no-op",
+      "strict_semantics": "Installs a process-global native DES key from 64 byte-sized bits; each eighth parity bit is ignored by DES and successful calls preserve errno",
+      "hardened_semantics": "Same native key installation; null pointers, known-short tracked keys, and non-bit values yield EINVAL while preserving the prior key",
       "default_stub": false
     },
     {
@@ -2640,8 +2640,8 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Reentrant obsolete DES key schedule compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
-      "hardened_semantics": "Same deterministic no-op",
+      "strict_semantics": "Installs an independent native DES key in private glibc/libxcrypt crypt_data workspace for the matching encrypt_r implementation, preserving public fields and errno on success",
+      "hardened_semantics": "Same native key installation; null or known-short tracked storage and non-bit values yield EINVAL before modifying the caller context",
       "default_stub": false
     },
     {

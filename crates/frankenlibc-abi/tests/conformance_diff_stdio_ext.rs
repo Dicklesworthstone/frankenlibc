@@ -490,3 +490,397 @@ fn a_null_buffer_never_yields_an_effectively_unbuffered_stream() {
         }
     }
 }
+
+// Global stream flushing and stdout reassignment must run in subprocesses:
+// libtest's parallel tests and capture streams are otherwise part of the input.
+// The parent deadline also makes a FILE/cell lock-order regression fail boundedly.
+fn run_linebuffer_case(case: &str, provider: &str, mode: &str) {
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "linebuffer_subprocess",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("FL_STDIO_LINEBUFFER_CASE", case)
+        .env("FL_STDIO_LINEBUFFER_PROVIDER", provider)
+        .env("FRANKENLIBC_MODE", mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    if case == "blocked-input" {
+        let mut output = child.stdout.take().unwrap();
+        // SAFETY: the child stdout descriptor remains owned by output.
+        assert_eq!(
+            unsafe { libc::fcntl(output.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) },
+            0
+        );
+        let mut observed = Vec::new();
+        loop {
+            let mut bytes = [0u8; 256];
+            match output.read(&mut bytes) {
+                Ok(n) => observed.extend_from_slice(&bytes[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => panic!("{case}/{provider}/{mode}: {e}"),
+            }
+            if observed
+                .windows(b"FL_PROMPT_BEFORE_INPUT".len())
+                .any(|window| window == b"FL_PROMPT_BEFORE_INPUT")
+            {
+                break;
+            }
+            if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "{case}/{provider}/{mode}: prompt never reached the pipe before input: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.stdin.take().unwrap().write_all(b"x").unwrap();
+        // Keep the child's stdout pipe open until its test harness finishes.
+        child.stdout = Some(output);
+    }
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                status.success(),
+                "{case}/{provider}/{mode}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "{case}/{provider}/{mode}: stream operation exceeded 10s: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn flush_linebuffered_preserves_full_buffers_and_mixed_providers() {
+    for case in ["flushlbf", "io_flush_linebuffered"] {
+        run_linebuffer_case(case, "glibc", "strict");
+        for mode in ["strict", "hardened"] {
+            run_linebuffer_case(case, "fl", mode);
+        }
+    }
+}
+
+#[test]
+fn input_underflow_flushes_only_linebuffered_stdout() {
+    for case in [
+        "getc-line",
+        "getc-unbuffered",
+        "gets-line",
+        "gets-unbuffered",
+        "getline-line",
+        "getline-unbuffered",
+        "fscanf-line",
+        "fread-refill",
+        "getc-full-input",
+        "getc-full-output",
+        "getc-cached",
+        "getc-sticky-eof",
+        "fread-direct",
+        "fread-unbuffered",
+        "getc-self-stdout",
+    ] {
+        run_linebuffer_case(case, "glibc", "strict");
+        for mode in ["strict", "hardened"] {
+            run_linebuffer_case(case, "fl", mode);
+        }
+    }
+}
+
+#[test]
+fn input_flushes_prompt_before_waiting_for_pipe_data() {
+    run_linebuffer_case("blocked-input", "glibc", "strict");
+    for mode in ["strict", "hardened"] {
+        run_linebuffer_case("blocked-input", "fl", mode);
+    }
+}
+
+#[test]
+#[ignore = "invoked in an isolated subprocess by the line-buffering gates"]
+fn linebuffer_subprocess() {
+    let case = std::env::var("FL_STDIO_LINEBUFFER_CASE").unwrap();
+    let provider = std::env::var("FL_STDIO_LINEBUFFER_PROVIDER").unwrap();
+    let arm = if provider == "fl" {
+        fl_arm()
+    } else {
+        host_arm()
+    };
+    if case == "flushlbf" || case == "io_flush_linebuffered" {
+        linebuffer_global_flush(&arm, &case);
+    } else {
+        linebuffer_input(&arm, &case);
+    }
+}
+
+fn linebuffer_global_flush(arm: &StdioArm, case: &str) {
+    use frankenlibc_abi::io_internal_abi;
+    type FlushLineFn = unsafe extern "C" fn();
+    // SAFETY: both exported aliases have the void(void) C ABI. The host
+    // resolver rejects a symbol that accidentally binds back to the candidate.
+    unsafe {
+        let candidate: FlushLineFn = if case == "flushlbf" {
+            fle::_flushlbf
+        } else {
+            io_internal_abi::_IO_flush_all_linebuffered
+        };
+        let name = if case == "flushlbf" {
+            c"_flushlbf"
+        } else {
+            c"_IO_flush_all_linebuffered"
+        };
+        let flush: FlushLineFn = if arm.name == "fl" {
+            candidate
+        } else {
+            dlsym_oracle::host_fn(name, candidate as *const ())
+        };
+        let host = host_arm();
+        let providers = if arm.name == "fl" {
+            vec![arm, &host]
+        } else {
+            vec![arm]
+        };
+        let mut streams = Vec::new();
+        for provider in providers {
+            for mode in [libc::_IOLBF, libc::_IOFBF] {
+                let path = temp_path(&format!("lbf-{}-{mode}", provider.name));
+                let stream = (provider.fopen)(path.as_ptr(), c"w".as_ptr());
+                assert!(!stream.is_null());
+                if provider.name == "fl" {
+                    assert!(!stdio_may_delegate_to_host_for_tests(stream));
+                }
+                assert_eq!((provider.setvbuf)(stream, std::ptr::null_mut(), mode, 0), 0);
+                assert_eq!(
+                    (provider.fprintf)(stream, c"%s".as_ptr(), c"queued".as_ptr()),
+                    6
+                );
+                assert_eq!((provider.fpending)(stream), 6);
+                streams.push((provider, stream, path, mode));
+            }
+        }
+        flush();
+        for (provider, stream, path, mode) in streams {
+            let line = mode == libc::_IOLBF;
+            assert_eq!(
+                (provider.fpending)(stream),
+                if line { 0 } else { 6 },
+                "{case}: {} mode={mode}",
+                provider.name
+            );
+            assert_eq!(
+                std::fs::metadata(path.to_str().unwrap()).unwrap().len(),
+                if line { 6 } else { 0 },
+                "{case}: fully buffered output must remain private"
+            );
+            assert_eq!((provider.fclose)(stream), 0);
+        }
+    }
+}
+
+fn linebuffer_input(arm: &StdioArm, case: &str) {
+    type FdopenFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut File;
+    type FgetcFn = unsafe extern "C-unwind" fn(*mut File) -> c_int;
+    type FgetsFn = unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut File) -> *mut c_char;
+    type FreadFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut File) -> usize;
+    type GetlineFn = unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, *mut File) -> isize;
+    type FscanfFn = unsafe extern "C-unwind" fn(*mut File, *const c_char, ...) -> c_int;
+    // SAFETY: each pointer below has its named C ABI. The process owns all
+    // descriptors and streams, and the prefilled input pipe cannot block.
+    unsafe {
+        let (fdopen, getc, gets, read, getline, scan, stdout_cell): (
+            FdopenFn,
+            FgetcFn,
+            FgetsFn,
+            FreadFn,
+            GetlineFn,
+            FscanfFn,
+            *mut *mut File,
+        ) = if arm.name == "fl" {
+            (
+                fl::fdopen,
+                fl::fgetc,
+                fl::fgets,
+                fl::fread,
+                fl::getline,
+                fl::fscanf,
+                &raw mut fl::stdout,
+            )
+        } else {
+            (
+                dlsym_oracle::host_fn(c"fdopen", fl::fdopen as *const ()),
+                dlsym_oracle::host_fn(c"fgetc", fl::fgetc as *const ()),
+                dlsym_oracle::host_fn(c"fgets", fl::fgets as *const ()),
+                dlsym_oracle::host_fn(c"fread", fl::fread as *const ()),
+                dlsym_oracle::host_fn(c"getline", fl::getline as *const ()),
+                dlsym_oracle::host_fn(c"fscanf", fl::fscanf as *const ()),
+                dlsym_oracle::host_addr(c"stdout", (&raw mut fl::stdout).cast()).cast(),
+            )
+        };
+        if case == "blocked-input" {
+            let source = fdopen(libc::STDIN_FILENO, c"r".as_ptr());
+            let sink = *stdout_cell;
+            assert!(!source.is_null());
+            assert_eq!(
+                (arm.setvbuf)(source, std::ptr::null_mut(), libc::_IOLBF, 0),
+                0
+            );
+            assert_eq!(
+                (arm.setvbuf)(sink, std::ptr::null_mut(), libc::_IOLBF, 0),
+                0
+            );
+            assert_eq!(
+                (arm.fprintf)(sink, c"%s".as_ptr(), c"FL_PROMPT_BEFORE_INPUT".as_ptr()),
+                22
+            );
+            assert_eq!((arm.fpending)(sink), 22);
+            // The parent sends this byte only after observing the prompt.
+            assert_eq!(getc(source), c_int::from(b'x'));
+            assert_eq!((arm.fpending)(sink), 0);
+            assert_eq!((arm.fclose)(source), 0);
+            return;
+        }
+        let mut output = [-1; 2];
+        let mut input = [-1; 2];
+        let saved_stdout = libc::dup(libc::STDOUT_FILENO);
+        assert!(saved_stdout >= 0);
+        assert_eq!(
+            libc::pipe2(output.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK),
+            0
+        );
+        assert_eq!(libc::pipe2(input.as_mut_ptr(), libc::O_CLOEXEC), 0);
+        assert_eq!(
+            libc::dup2(output[1], libc::STDOUT_FILENO),
+            libc::STDOUT_FILENO
+        );
+        assert_eq!(libc::close(output[1]), 0);
+        assert_eq!(libc::write(input[1], b"xyz\n".as_ptr().cast(), 4), 4);
+        assert_eq!(libc::close(input[1]), 0);
+        let source = fdopen(input[0], c"r".as_ptr());
+        assert!(!source.is_null());
+        if arm.name == "fl" {
+            assert!(!stdio_may_delegate_to_host_for_tests(source));
+        }
+        let input_mode = if case == "getc-full-input" {
+            libc::_IOFBF
+        } else if case.ends_with("unbuffered") {
+            libc::_IONBF
+        } else {
+            libc::_IOLBF
+        };
+        let output_mode = if case == "getc-full-output" {
+            libc::_IOFBF
+        } else {
+            libc::_IOLBF
+        };
+        let sink = *stdout_cell;
+        assert_eq!(
+            (arm.setvbuf)(source, std::ptr::null_mut(), input_mode, 0),
+            0
+        );
+        assert_eq!((arm.setvbuf)(sink, std::ptr::null_mut(), output_mode, 0), 0);
+        if case == "getc-cached" {
+            assert_eq!(getc(source), c_int::from(b'x'));
+        } else if case == "getc-sticky-eof" {
+            while getc(source) != libc::EOF {}
+        }
+        let other_path = temp_path("other-line-output");
+        let other = (arm.fopen)(other_path.as_ptr(), c"w".as_ptr());
+        assert!(!other.is_null());
+        assert_eq!(
+            (arm.setvbuf)(other, std::ptr::null_mut(), libc::_IOLBF, 0),
+            0
+        );
+        assert_eq!((arm.fprintf)(other, c"%s".as_ptr(), c"other".as_ptr()), 5);
+        assert_eq!((arm.fprintf)(sink, c"%s".as_ptr(), c"prompt".as_ptr()), 6);
+        assert_eq!((arm.fpending)(sink), 6, "the prompt must start buffered");
+        if case == "getc-self-stdout" {
+            *stdout_cell = source;
+        }
+
+        let mut bytes = [0u8; 8192];
+        if case.starts_with("gets-") {
+            assert!(!gets(bytes.as_mut_ptr().cast(), bytes.len() as c_int, source).is_null());
+        } else if case.starts_with("getline-") {
+            let mut line = std::ptr::null_mut();
+            let mut capacity = 0;
+            assert_eq!(getline(&mut line, &mut capacity, source), 4);
+            // A short-lived subprocess retains this one allocation until exit;
+            // freeing through the wrong provider would obscure the I/O contract.
+        } else if case == "fscanf-line" {
+            assert_eq!(scan(source, c"%c".as_ptr(), bytes.as_mut_ptr()), 1);
+        } else if case.starts_with("fread-") {
+            let n = if case == "fread-direct" {
+                bytes.len()
+            } else {
+                1
+            };
+            assert_eq!(read(bytes.as_mut_ptr().cast(), 1, n, source), n.min(4));
+        } else {
+            let expected = match case {
+                "getc-cached" => c_int::from(b'y'),
+                "getc-sticky-eof" => libc::EOF,
+                _ => c_int::from(b'x'),
+            };
+            assert_eq!(getc(source), expected);
+        }
+        *stdout_cell = sink;
+        let should_flush = !matches!(
+            case,
+            "getc-full-input"
+                | "getc-full-output"
+                | "getc-cached"
+                | "getc-sticky-eof"
+                | "fread-direct"
+                | "fread-unbuffered"
+                | "getc-self-stdout"
+        );
+        let count = libc::read(output[0], bytes.as_mut_ptr().cast(), bytes.len());
+        assert_eq!(
+            count,
+            if should_flush { 6 } else { -1 },
+            "{case}: prompt visibility"
+        );
+        if should_flush {
+            assert_eq!(&bytes[..6], b"prompt");
+        } else {
+            assert_eq!(*libc::__errno_location(), libc::EAGAIN);
+        }
+        assert_eq!((arm.fpending)(sink), if should_flush { 0 } else { 6 });
+        assert_eq!(
+            (arm.fpending)(other),
+            5,
+            "input flush is specific to stdout"
+        );
+        assert_eq!((arm.fclose)(other), 0);
+        assert_eq!((arm.fclose)(source), 0);
+        assert_eq!((arm.fflush)(sink), 0);
+        assert_eq!(
+            libc::dup2(saved_stdout, libc::STDOUT_FILENO),
+            libc::STDOUT_FILENO
+        );
+        assert_eq!(libc::close(saved_stdout), 0);
+        assert_eq!(libc::close(output[0]), 0);
+    }
+}

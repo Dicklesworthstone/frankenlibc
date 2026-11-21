@@ -206,6 +206,21 @@ fn encrypt_block(block: u64, subkeys: &[u64; 16], expansion: &[u8; 48]) -> u64 {
     permute((right << 32) | left, 64, &FP)
 }
 
+/// Transform one unsalted DES block with a packed 64-bit key.
+///
+/// Both values use the FIPS most-significant-bit-first numbering. The eight
+/// key parity bits are discarded by the existing PC-1 permutation. Reversing
+/// the round keys provides decryption without a second cipher implementation.
+/// This is the primitive for the legacy `setkey`/`encrypt` bit-vector ABI;
+/// password hashing continues to use its salt-perturbed expansion separately.
+pub fn des_block_crypt(key: u64, block: u64, decrypt: bool) -> u64 {
+    let mut subkeys = key_schedule(key);
+    if decrypt {
+        subkeys.reverse();
+    }
+    encrypt_block(block, &subkeys, &E)
+}
+
 /// Maximum bytes accepted by the historical Sun RPC DES interfaces.
 pub const RPC_DES_MAX_DATA: usize = 8192;
 
@@ -505,6 +520,41 @@ pub fn bsdi_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn des_block_known_answers_and_key_parity() {
+        for (key, plaintext, ciphertext) in [
+            (
+                0x1334_5779_9bbc_dff1,
+                0x0123_4567_89ab_cdef,
+                0x85e8_1354_0f0a_b405,
+            ),
+            (0, 0, 0x8ca6_4de9_c1b1_23a7),
+            (u64::MAX, u64::MAX, 0x7359_b216_3e4e_dc58),
+        ] {
+            assert_eq!(des_block_crypt(key, plaintext, false), ciphertext);
+            assert_eq!(des_block_crypt(key, ciphertext, true), plaintext);
+            assert_eq!(
+                des_block_crypt(key ^ 0x0101_0101_0101_0101, plaintext, false),
+                ciphertext,
+                "the eight key parity bits have no cipher effect"
+            );
+        }
+    }
+
+    #[test]
+    fn des_block_roundtrip_and_complementation() {
+        let mut seed = 0xf861_0c53_ae2d_974bu64;
+        for _ in 0..64 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let key = seed;
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let plaintext = seed;
+            let ciphertext = des_block_crypt(key, plaintext, false);
+            assert_eq!(des_block_crypt(key, ciphertext, true), plaintext);
+            assert_eq!(des_block_crypt(!key, !plaintext, false), !ciphertext);
+        }
+    }
 
     #[test]
     fn rpc_des_fips_vector_encrypts_and_decrypts() {

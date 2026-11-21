@@ -77,7 +77,7 @@
     {
       "id": "sem-libcrypt-des",
       "seed_overlay_id": "sem-libcrypt-des",
-      "surface": "obsolete libcrypt DES helpers",
+      "surface": "legacy libcrypt DES bit-vector helpers",
       "symbols": [
         "encrypt",
         "encrypt_r",
@@ -86,17 +86,19 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9834,
-      "line_marker": "DES is obsolete and unsupported",
+      "source_line": 9881,
+      "line_marker": "static LEGACY_DES_KEY:",
       "support_matrix_status": "Implemented",
-      "semantic_class": "compat_noop",
-      "contract_kind": "obsolete_noop",
-      "current_behavior": "DES block and key-schedule helpers are no-op compatibility stubs.",
-      "user_risk": "Legacy crypt callers that expect DES mutation can silently receive no transformation.",
-      "required_followup": "Keep the no-op contract explicit in fixtures or implement DES semantics before counting this family as crypt parity. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "semantic_class": "proof_gap",
+      "contract_kind": "native_des_bitvector",
+      "current_behavior": "The four helpers transform 64-byte bit vectors through the native safe-core DES engine. Non-reentrant calls share a process-global key; reentrant calls keep independent, copyable key state in private crypt_data workspace without modifying public output, setting, or input fields. Nonzero directions decrypt, parity bits are ignored, success preserves errno, and rejected input leaves output or key state unchanged.",
+      "user_risk": "Full symbol-version, provider, profile, and configuration parity remains unqualified. The opaque reentrant key state is private to the matching implementation, and DES block support does not establish modern password-hash parity.",
+      "required_followup": "Retain the named DES regression gates and qualify symbol-version, provider, profile, and configuration coverage before any full crypt-parity claim. The opaque crypt_data key state requires the matching setkey_r/encrypt_r implementation; DES support does not implement the yescrypt password KDF. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json",
-        "crates/frankenlibc-abi/src/unistd_abi.rs"
+        "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "crates/frankenlibc-core/src/crypt/des.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_crypt_r.rs"
       ],
       "review_status": "source_observed_semantics_unqualified"
     },
@@ -538,8 +540,8 @@
     "new_entries": 9,
     "by_semantic_class": {
       "limited_bootstrap": 7,
-      "proof_gap": 5,
-      "compat_noop": 2,
+      "proof_gap": 6,
+      "compat_noop": 1,
       "unsupported_platform_contract": 1,
       "deterministic_fallback": 3,
       "abort_only": 1
