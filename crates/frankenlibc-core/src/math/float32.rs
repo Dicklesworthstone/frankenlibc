@@ -1858,6 +1858,64 @@ mod tests {
     }
 
     #[test]
+    fn sinhf_coshf_hard_to_round_and_edges_exact() {
+        // Includes binary32 double-rounding tie points (0x3a1285ff for sinhf,
+        // 0x3d609528/0x3e5e1d31/0x3e6db65c/0x3e7823b9 for coshf), subnormals,
+        // small/table boundary (0.125), overflow edge (0x42b2d4fc/0x42b2d4fd),
+        // signed zeros, and infinities.
+        let cases: &[u32] = &[
+            0x0000_0000,
+            0x8000_0000,
+            0x0000_0001,
+            0x8000_0001,
+            0x007f_ffff,
+            0x0080_0000,
+            0x3a12_85ff,
+            0xba12_85ff,
+            0x3d60_9528,
+            0xbd60_9528,
+            0x3dff_ffff,
+            0x3e00_0000,
+            0x3e5e_1d31,
+            0x3e6d_b65c,
+            0x3e78_23b9,
+            0x3f80_0000,
+            0xbf80_0000,
+            0x42b2_d4fc,
+            0xc2b2_d4fc,
+            0x42b2_d4fd,
+            0xc2b2_d4fd,
+            0x7f7f_ffff,
+            0xff7f_ffff,
+            0x7f80_0000,
+            0xff80_0000,
+        ];
+        // Verify bit-exact parity against host f32::sinh / f32::cosh AND exact
+        // hard-to-round bit patterns (0x3a1285ff must NOT double-round up).
+        assert_eq!(sinhf(f32::from_bits(0x3a12_85ff)).to_bits(), 0x3a12_85ff);
+        assert_eq!(sinhf(f32::from_bits(0xba12_85ff)).to_bits(), 0xba12_85ff);
+        assert_eq!(coshf(f32::from_bits(0x3d60_9528)).to_bits(), 0x3f80_3145);
+        assert_eq!(coshf(f32::from_bits(0x3e5e_1d31)).to_bits(), 0x3f83_05e2);
+        assert_eq!(coshf(f32::from_bits(0x3e6d_b65c)).to_bits(), 0x3f83_76e6);
+        assert_eq!(coshf(f32::from_bits(0x3e78_23b9)).to_bits(), 0x3f83_c6cd);
+        for &bits in cases {
+            let x = f32::from_bits(bits);
+            assert_eq!(
+                sinhf(x).to_bits(),
+                x.sinh().to_bits(),
+                "sinhf mismatch at 0x{bits:08x} ({x:e})"
+            );
+            assert_eq!(
+                coshf(x).to_bits(),
+                x.cosh().to_bits(),
+                "coshf mismatch at 0x{bits:08x} ({x:e})"
+            );
+        }
+        assert!(sinhf(f32::NAN).is_nan());
+        assert!(coshf(f32::NAN).is_nan());
+    }
+
+    #[test]
     fn exp_log_extra_sanity() {
         assert!((exp2f(3.0) - 8.0).abs() < 1e-5);
         assert!((expm1f(0.0) - 0.0).abs() < 1e-6);
