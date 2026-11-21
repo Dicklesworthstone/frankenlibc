@@ -11357,13 +11357,16 @@ pub unsafe extern "C" fn _IO_enable_locks() {
     // No-op: our FILE operations are always thread-safe.
 }
 
-/// `errno` — compatibility TLS object.
+/// `errno` — compatibility TLS object for standalone / direct-link replacement.
 ///
-/// Normal C callers use `__errno_location()`, which stays backed by
-/// FrankenLibC's owned TLS cache in standalone mode. The exported `errno`
-/// symbol exists so direct-link toolchains that compare libc symbol types see
-/// a TLS object rather than a function.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Normal C callers use `__errno_location()`. In interpose mode
+/// (`not(feature = "standalone")`), host `libc.so.6` owns the canonical
+/// `errno@@GLIBC_PRIVATE` static TLS slot and `errno_abi.rs` addresses it via
+/// `@GOTTPOFF`. Exporting an unversioned `errno` TLS symbol from the interpose
+/// `.so` causes `ld.so` to self-bind `errno@GLIBC_PRIVATE` to FrankenLibC's own
+/// `.tbss` under both `LD_PRELOAD` (splitting `errno` from host `libc.so.6`)
+/// and `dlopen(..., RTLD_DEEPBIND)` (failing static TLS surplus allocation).
+#[cfg_attr(all(not(debug_assertions), feature = "standalone"), unsafe(no_mangle))]
 #[thread_local]
 pub static mut errno: c_int = 0;
 
