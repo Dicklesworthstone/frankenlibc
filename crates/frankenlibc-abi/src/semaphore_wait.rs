@@ -88,7 +88,9 @@ pub(crate) unsafe fn getvalue(semaphore: *mut c_void, output: *mut c_int) -> c_i
 #[inline(never)]
 extern "C" fn set_errno_fail(err: c_int) -> c_int {
     unsafe { crate::errno_abi::set_abi_errno(err) };
-    -1
+    // Prevent IPCP from replacing the return value at callers and breaking
+    // sibling tail-call elimination on hot frameless paths (`sem_post`/`sem_trywait`).
+    std::hint::black_box(-1)
 }
 
 #[cold]
@@ -97,7 +99,7 @@ unsafe extern "C" fn wake_one_slow(semaphore: *mut c_void, private: c_int) -> c_
     // SAFETY: the kernel validates the address; an already unmapped word is
     // a harmless failed wake. No user-space dereference occurs after publish.
     let _ = unsafe { syscall::sys_futex(semaphore.cast(), libc::FUTEX_WAKE | private, 1, 0, 0, 0) };
-    0
+    std::hint::black_box(0)
 }
 
 /// # Safety
