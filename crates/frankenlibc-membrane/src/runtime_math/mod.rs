@@ -3064,17 +3064,13 @@ impl RuntimeMathKernel {
             risk_bound_ppm,
         );
 
-        // Feed allocator observations directly into the primal-dual quarantine
-        // controller and allocator SOS barrier certificates BEFORE `CASCADE_STRIDE`
-        // subsampling so `QuarantineController`, `FRAGMENTATION_CERTIFICATE`, and
-        // `THREAD_SAFETY_CERTIFICATE` are never starved in `cfg(not(test))`.
+        // Keep allocator provenance/quarantine guard evaluation ahead of the
+        // statistical cascade. Generic outcomes carry neither retirement
+        // identity nor allocator geometry: the quarantine controller and
+        // fragmentation certificate receive their exact operation feedback
+        // through observe_allocator_free / observe_allocator_fragmentation.
         if matches!(family, ApiFamily::Allocator) {
-            self.observe_allocator_quarantine_and_sos(
-                profile,
-                estimated_cost_ns,
-                adverse,
-                risk_bound_ppm,
-            );
+            self.observe_allocator_sos(profile, risk_bound_ppm);
         }
 
         // Everything below -- the probe cascade and the check-order bandit -- is
@@ -3084,7 +3080,7 @@ impl RuntimeMathKernel {
         // cost (bd-rc0923-epic-eeuy4f.9); detection latency grows by the stride
         // in events, which at millions of events per second is milliseconds. The
         // core estimators above (risk bound, router, controller, Pareto, and
-        // allocator quarantine/SOS) still see every call that reaches observe.
+        // allocator SOS guards) still see every call that reaches observe.
         let tick = self.cascade_ticks.fetch_add(1, Ordering::Relaxed);
         if !tick.wrapping_add(1).is_multiple_of(CASCADE_STRIDE) {
             return;
@@ -4104,9 +4100,10 @@ impl RuntimeMathKernel {
             }
 
             // Feed SOS barrier certificate evaluator (cadence-gated).
-            // Evaluates provenance + quarantine. Allocator geometry and
-            // thread ownership cannot be inferred from generic severity.
-            {
+            // Evaluates provenance + quarantine. Allocator guards were already
+            // evaluated above the cascade; allocator geometry and thread
+            // ownership cannot be inferred from generic severity.
+            if !matches!(family, ApiFamily::Allocator) {
                 {
                     let mut barrier = self.sos_barrier.lock();
                     // Provenance barrier: use cached risk and profile.
@@ -4922,56 +4919,16 @@ impl RuntimeMathKernel {
         }
     }
 
-    fn observe_allocator_quarantine_and_sos(
-        &self,
-        profile: ValidationProfile,
-        estimated_cost_ns: u64,
-        adverse: bool,
-        risk_bound_ppm: u32,
-    ) {
-        let prev_depth = current_depth();
-        // Capture contention peak BEFORE `record_weighted_free()` resets it on an epoch boundary.
+    fn observe_allocator_sos(&self, profile: ValidationProfile, risk_bound_ppm: u32) {
+        let depth_u32 = current_depth().min(u32::MAX as usize) as u32;
         let peak_contention = crate::quarantine_controller::CONTENTION.current_peak();
-        // In `cfg(not(test))`, `runtime_policy::observe` forwards 1-in-64 non-adverse
-        // allocator events and 100% of adverse events; weight non-adverse samples by
-        // 64 so `QuarantineController`'s empirical escape-rate ratio remains unbiased.
-        let sample_weight = if cfg!(not(test)) && !adverse { 64 } else { 1 };
-        let (updated, new_depth, escape_rate_ppm, epochs, total_hits) = {
-            let mut quarantine = self.quarantine.lock();
-            let updated =
-                quarantine.record_weighted_free(estimated_cost_ns, sample_weight, adverse);
-            if updated {
-                publish_depth(&quarantine);
-            }
-            (
-                updated,
-                quarantine.depth(),
-                quarantine.estimated_escape_rate_ppm(),
-                quarantine.epochs(),
-                quarantine.total_hits(),
-            )
-        };
-        if updated && new_depth != prev_depth {
-            emit_quarantine_depth_transition_log(
-                prev_depth,
-                new_depth,
-                peak_contention,
-                risk_bound_ppm,
-                escape_rate_ppm,
-                epochs,
-                total_hits,
-            );
-        }
-
-        let barrier_code = {
+        {
             let mut barrier = self.sos_barrier.lock();
-            let depth_u32 = new_depth.min(u32::MAX as usize) as u32;
             let depth_ppm = if profile.requires_full() {
                 1_000_000u32
             } else {
                 0u32
             };
-            let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth_u32);
             let pressure_score_milli = self.cached_pressure_score_milli.load(Ordering::Relaxed);
             let pressure_raw_score_milli =
                 self.cached_pressure_raw_score_milli.load(Ordering::Relaxed);
@@ -4990,7 +4947,6 @@ impl RuntimeMathKernel {
                 projected_pressure_ppm,
                 arena_pressure_ppm,
             );
-            barrier.note_allocator_observation(adverse, depth_u32);
             if barrier.is_quarantine_cadence() {
                 let lambda_latency = crate::quarantine_controller::current_lambda_latency();
                 barrier.evaluate_quarantine(
@@ -5000,40 +4956,17 @@ impl RuntimeMathKernel {
                     lambda_latency,
                 );
             }
-            if barrier.is_fragmentation_cadence() {
-                let sparse_state =
-                    u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
-                let size_dispersion_ppm = sparse_state.saturating_mul(250_000);
-                barrier.evaluate_fragmentation(size_dispersion_ppm, arena_utilization_ppm);
-            }
-            let sparse_state = u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
-            let mfg_state = u32::from(self.cached_mfg_state.load(Ordering::Relaxed)).min(3);
-            let thread_count = crate::ebr::active_registered_threads()
-                .max(peak_contention)
-                .max(1);
-            let concurrent_writers = 1u32
-                .saturating_add(u32::from(adverse))
-                .saturating_add(mfg_state / 2)
-                .max(peak_contention);
-            let owner_conflict = adverse && !profile.requires_full() && risk_bound_ppm > 300_000;
-            let free_list_skew_ppm = sparse_state.saturating_mul(200_000).min(1_000_000);
-            let allocation_epoch_lag_ppm = risk_bound_ppm.min(1_000_000);
-            barrier.evaluate_thread_safety(
-                thread_count,
-                concurrent_writers,
-                owner_conflict,
-                free_list_skew_ppm,
-                allocation_epoch_lag_ppm,
-            );
-            match barrier.state() {
+            let barrier_code = match barrier.state() {
                 SosBarrierState::Calibrating => 0u8,
                 SosBarrierState::Safe => 1u8,
                 SosBarrierState::Warning => 2u8,
                 SosBarrierState::Violated => 3u8,
-            }
-        };
-        self.cached_sos_barrier_state
-            .store(barrier_code, Ordering::Relaxed);
+            };
+            // Publish under the controller lock so a newer sampled allocator
+            // fault cannot be overwritten by this observer's older state.
+            self.cached_sos_barrier_state
+                .store(barrier_code, Ordering::Relaxed);
+        }
     }
 
     /// Detailed SOS barrier controller summary snapshot.
@@ -5073,9 +5006,35 @@ impl RuntimeMathKernel {
         let _floating_environment = floating_environment::Guard::enter();
         // NoPoisonMutex uses raw futex syscalls, and the fixed-size controller
         // update allocates nothing: neither path changes the caller's errno.
-        let mut quarantine = self.quarantine.lock();
-        if quarantine.record_free(estimated_cost_ns, was_quarantine_hit) {
-            publish_depth(&quarantine);
+        let peak_contention = crate::quarantine_controller::CONTENTION.current_peak();
+        let transition = {
+            let mut quarantine = self.quarantine.lock();
+            let previous_depth = quarantine.depth();
+            if quarantine.record_free(estimated_cost_ns, was_quarantine_hit) {
+                publish_depth(&quarantine);
+                (quarantine.depth() != previous_depth).then(|| {
+                    (
+                        previous_depth,
+                        quarantine.depth(),
+                        quarantine.estimated_escape_rate_ppm(),
+                        quarantine.epochs(),
+                        quarantine.total_hits(),
+                    )
+                })
+            } else {
+                None
+            }
+        };
+        if let Some((previous_depth, depth, escape_rate_ppm, epochs, hits)) = transition {
+            emit_quarantine_depth_transition_log(
+                previous_depth,
+                depth,
+                peak_contention,
+                self.risk.upper_bound_ppm(ApiFamily::Allocator),
+                escape_rate_ppm,
+                epochs,
+                hits,
+            );
         }
     }
 
@@ -6579,6 +6538,36 @@ mod tests {
         let summary = kernel.sos_barrier.lock().summary();
         assert_eq!(summary.fragmentation_evaluations, 2);
         assert_eq!(summary.last_arena_fragmentation, Some(retired));
+    }
+
+    #[test]
+    fn generic_allocator_outcomes_preserve_measured_retirement_and_geometry() {
+        let arena = crate::arena::AllocationArena::new();
+        let _allocation = arena.allocate(64).expect("allocation");
+        let sample = arena.try_fragmentation_snapshot().expect("sample");
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        assert!(kernel.observe_allocator_fragmentation(sample));
+        let retirement = kernel.quarantine_snapshot();
+
+        // An adverse allocation/validation result is not a free, a double
+        // free, a size-distribution sample, or a conflicting arena writer.
+        for adverse in [false, true] {
+            for _ in 0..256 {
+                kernel.observe_validation_result(
+                    SafetyLevel::Hardened,
+                    ApiFamily::Allocator,
+                    ValidationProfile::Full,
+                    20,
+                    adverse,
+                );
+            }
+        }
+        assert_eq!(kernel.quarantine_snapshot(), retirement);
+        let summary = kernel.sos_barrier_summary();
+        assert_eq!(summary.total_observations, 512);
+        assert_eq!(summary.fragmentation_evaluations, 1);
+        assert_eq!(summary.last_arena_fragmentation, Some(sample));
+        assert_eq!(summary.thread_safety_evaluations, 0);
     }
 
     fn snapshot_struct_field_names(source: &str) -> Vec<String> {

@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/util.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn_abi.rs'
+      - 'crates/frankenlibc-abi/src/pwd_abi.rs'
+      - 'crates/frankenlibc-abi/src/grp_abi.rs'
+      - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
       - 'crates/frankenlibc-abi/src/owned_unwind_abi.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
@@ -170,6 +175,13 @@ jobs:
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/signal-waits/build.log
+      - name: Preserve native loader-error ownership and consumption
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --dlerror-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/dlerror"
       # Keep these regressions independent of the broader native-poll gate:
       # an unrelated failure there must not skip signal-wait execution.
       - name: Compare native sleep clocks and cancellation with live GNU libc
@@ -323,6 +335,38 @@ jobs:
               --library "$PWD/target/release/libfrankenlibc_abi.so" \
               --out-dir "$root/native-waits"
           fi
+      - name: Preserve native identity records and pending enumeration
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/runtime-startup/identity
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          failed=0
+          for mode in strict hardened; do
+            log="artifacts/runtime-startup/identity/$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${args[@]}" \
+                --test pwd_abi_test identity_native_tls_ \
+                -- --nocapture --test-threads=1 2>&1 | tee "$log"; then
+              failed=1
+            fi
+            if ! grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$log"; then
+              failed=1
+            fi
+            guard_log="artifacts/runtime-startup/identity/$mode-kernel-guard.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --lib "${args[@]}" \
+                util::tests::kernel_tid_guard_adoption_preserves_and_releases_inherited_recursion \
+                -- --exact --nocapture --test-threads=1 2>&1 | tee "$guard_log"; then
+              failed=1
+            fi
+            if ! grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$guard_log"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

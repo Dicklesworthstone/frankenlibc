@@ -11,8 +11,10 @@ FMEMOPEN_ONLY=0
 COOKIE_LINES_ONLY=0
 INTERNAL_LINES_ONLY=0
 LOCKS_ONLY=0
+FLUSH_ALL_ONLY=0
+EXIT_FLUSH_ONLY=0
 if [[ "$#" -gt 1 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks|--flush-all|--exit-flush]" >&2
   exit 2
 fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
@@ -33,8 +35,12 @@ elif [[ "${1:-}" == "--internal-lines" ]]; then
   INTERNAL_LINES_ONLY=1
 elif [[ "${1:-}" == "--locks" ]]; then
   LOCKS_ONLY=1
+elif [[ "${1:-}" == "--flush-all" ]]; then
+  FLUSH_ALL_ONLY=1
+elif [[ "${1:-}" == "--exit-flush" ]]; then
+  EXIT_FLUSH_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks|--flush-all|--exit-flush]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
@@ -42,7 +48,7 @@ if [[ "${GNU_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-rc0923-epic-eeuy4f.34"
 elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2.1"
-elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 ]]; then
+elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 || "${FLUSH_ALL_ONLY}" -eq 1 || "${EXIT_FLUSH_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2"
 elif [[ "${FMEMOPEN_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.7.5"
@@ -83,7 +89,62 @@ fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
-if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${INTERNAL_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 ]]; then
+if [[ "${EXIT_FLUSH_ONLY}" -eq 1 ]]; then
+  exit_bin="${BIN_DIR}/fixture_exit_sequence.bin"
+  "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_exit_sequence.c" -ldl -o "${exit_bin}"
+  host_provider="$(env -u LD_PRELOAD ldd "${exit_bin}" | awk '$1 == "libc.so.6" { print $3 }')"
+  if [[ ! -f "${host_provider}" ]]; then
+    echo "FAIL: cannot identify live GNU stdio provider" >&2
+    exit 1
+  fi
+  printf 'stdio-exit:42\n' > "${OUT_DIR}/exit-flush.expected.stdout.log"
+  failed=0
+  provider_status=0
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE \
+    timeout --kill-after=2s 20s "${exit_bin}" stdio-return "${LIB}" \
+    > "${OUT_DIR}/exit-flush.provider-negative.stdout.log" \
+    2> "${OUT_DIR}/exit-flush.provider-negative.stderr.log" || provider_status=$?
+  printf '%s\n' "${provider_status}" > "${OUT_DIR}/exit-flush.provider-negative.status"
+  if [[ "${provider_status}" -ne 86 || -s "${OUT_DIR}/exit-flush.provider-negative.stdout.log" ]] || \
+    ! grep -qx 'fixture-exit-sequence:provider-mismatch:printf' "${OUT_DIR}/exit-flush.provider-negative.stderr.log"; then
+    echo "FAIL: omitted-preload exit/stdio provider control" >&2
+    failed=1
+  fi
+  for case in stdio-return stdio-exit stdio-flush-all stdio-flush-stream stdio-closed-stdout; do
+    expected_status=0
+    if [[ "${case}" == stdio-exit ]]; then expected_status=7; fi
+    host_prefix="${OUT_DIR}/exit-flush.${case}.host"
+    host_status=0
+    env -u LD_PRELOAD -u FRANKENLIBC_MODE \
+      timeout --kill-after=2s 20s "${exit_bin}" "${case}" "${host_provider}" \
+      > "${host_prefix}.stdout.log" 2> "${host_prefix}.stderr.log" || host_status=$?
+    printf '%s\n' "${host_status}" > "${host_prefix}.status"
+    if [[ "${host_status}" -ne "${expected_status}" || -s "${host_prefix}.stderr.log" ]] || \
+      ! cmp -s "${OUT_DIR}/exit-flush.expected.stdout.log" "${host_prefix}.stdout.log"; then
+      echo "FAIL: live GNU exit/stdio case ${case} (status ${host_status})" >&2
+      failed=1
+    fi
+    for mode in strict hardened; do
+      prefix="${OUT_DIR}/exit-flush.${case}.${mode}"
+      status=0
+      timeout --kill-after=2s 20s env LD_PRELOAD="${LIB}" FRANKENLIBC_MODE="${mode}" \
+        "${exit_bin}" "${case}" "${LIB}" \
+        > "${prefix}.stdout.log" 2> "${prefix}.stderr.log" || status=$?
+      printf '%s\n' "${status}" > "${prefix}.status"
+      if [[ "${status}" -ne "${expected_status}" || "${status}" -ne "${host_status}" || -s "${prefix}.stderr.log" ]] || \
+        ! cmp -s "${host_prefix}.stdout.log" "${prefix}.stdout.log"; then
+        echo "FAIL: ${mode} exit/stdio case ${case} (status ${status})" >&2
+        failed=1
+      fi
+    done
+  done
+  if [[ "${failed}" -ne 0 ]]; then exit 1; fi
+  echo "check_stdio_native --exit-flush: PASS (5 live GNU cases, 10 native cases, 1 provider negative)"
+  exit 0
+fi
+
+if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${INTERNAL_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 || "${FLUSH_ALL_ONLY}" -eq 1 ]]; then
   error_kind=read
   error_mode=fd-errors
   error_cases=112
@@ -116,8 +177,13 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${LOCKS_ONLY}" -eq 1 ]]; then
     error_kind=locks
     error_mode=locks
-    error_cases=197
+    error_cases=203
     error_option=--locks
+  elif [[ "${FLUSH_ALL_ONLY}" -eq 1 ]]; then
+    error_kind=flush-all
+    error_mode=flush-all
+    error_cases=9
+    error_option=--flush-all
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
   "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \

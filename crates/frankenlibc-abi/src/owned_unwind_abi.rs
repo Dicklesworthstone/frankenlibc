@@ -169,7 +169,6 @@ pub struct OwnedFdeRecord {
     code_alignment_factor: usize,
     data_alignment_factor: isize,
     return_address_register: usize,
-    pub signal_frame: bool,
     cie_cfi_start: usize,
     cie_cfi_end: usize,
     fde_cfi_start: usize,
@@ -189,7 +188,6 @@ struct OwnedCieRecord {
     fde_pointer_encoding: u8,
     text_rel_base: usize,
     data_rel_base: usize,
-    signal_frame: bool,
     cfi_start: usize,
     cfi_end: usize,
 }
@@ -401,10 +399,19 @@ impl UnwindCursor {
     }
 
     fn lookup_ip(self) -> usize {
-        if self.ip_before_instruction {
-            self.ip
-        } else {
-            frame_lookup_ip(self.ip)
+        frame_lookup_ip_for_mode(self.ip, self.ip_before_instruction)
+    }
+
+    fn physical(self) -> X86PhysicalCursor {
+        X86PhysicalCursor {
+            ip: self.ip,
+            rsp: self.stack_pointer(),
+            rbp: self.registers[X86_64_DWARF_RBP],
+            rbx: self.registers[X86_64_DWARF_RBX],
+            r12: self.registers[X86_64_DWARF_R12],
+            r13: self.registers[X86_64_DWARF_R13],
+            r14: self.registers[X86_64_DWARF_R14],
+            r15: self.registers[X86_64_DWARF_R15],
         }
     }
 
@@ -415,11 +422,14 @@ impl UnwindCursor {
             frame_index,
             frame_pointer: self.registers[X86_64_DWARF_RBP],
             stack_pointer: self.stack_pointer(),
+            cfa: self.stack_pointer(),
             language_specific_data: fde.and_then(|fde| fde.language_specific_data).unwrap_or(0),
             region_start: fde.map_or(0, |fde| fde.pc_begin),
             text_rel_base: fde.map_or(0, |fde| fde.text_rel_base),
             data_rel_base: fde.map_or(0, |fde| fde.data_rel_base),
             general_registers: self.registers,
+            physical_cursor: Some(self.physical()),
+            ip_before_insn: self.ip_before_instruction,
         }
     }
 }
@@ -475,6 +485,7 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
     )
 }
 
+#[unsafe(no_mangle)]
 unsafe extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
     trace: UnwindTraceFn,
     argument: *mut c_void,
@@ -484,9 +495,9 @@ unsafe extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
         return URC_END_OF_STACK;
     };
     // The capture stub writes `CapturedUnwindCursor`. Walk with the same
-    // bounded CFI caller step raise and resume use, including signal-frame
-    // discontinuities. A physical-cursor step remains available to the
-    // forced-unwind cursor path.
+    // bounded CFI caller step raise and resume use. Backtraces additionally
+    // admit the checked physical step for a Linux restorer or hand-written
+    // frame without metadata; exception propagation still rejects missing CFI.
     let mut cursor = UnwindCursor::captured(capture);
     let Some(mut bounds) = UnwindStackBounds::new(cursor) else {
         return URC_FATAL_PHASE1_ERROR;
@@ -494,6 +505,30 @@ unsafe extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
     for frame_index in 0..MAX_BACKTRACE_FRAMES {
         let frame = match owned_frame_state(cursor) {
             Ok(frame) => frame,
+            Err(OwnedUnwindDecodeError::MissingFde) => {
+                let mut context = cursor.context(frame_index, None);
+                // SAFETY: this trace-only context is live for the callback;
+                // no loader lock or owned frame-data buffer spans the call.
+                let reason = unsafe { trace(&mut context, argument) };
+                if reason != URC_NO_REASON {
+                    return reason;
+                }
+                match backtrace_caller_without_metadata(cursor, &mut bounds) {
+                    Ok(Some(next)) => {
+                        cursor = next;
+                        continue;
+                    }
+                    Ok(None) => return URC_END_OF_STACK,
+                    Err(error) => {
+                        trace_owned_unwind(format_args!(
+                            "backtrace fallback {error:?} frame={frame_index} ip={:#x} sp={:#x}",
+                            cursor.ip,
+                            cursor.stack_pointer()
+                        ));
+                        return URC_FATAL_PHASE1_ERROR;
+                    }
+                }
+            }
             Err(error) => {
                 trace_owned_unwind(format_args!(
                     "backtrace decode {error:?} frame={frame_index} ip={:#x} sp={:#x}",
@@ -528,6 +563,40 @@ unsafe extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
         };
     }
     URC_FATAL_PHASE1_ERROR
+}
+
+fn backtrace_caller_without_metadata(
+    cursor: UnwindCursor,
+    bounds: &mut UnwindStackBounds,
+) -> Result<Option<UnwindCursor>, OwnedUnwindDecodeError> {
+    let Some((next, signal_frame)) =
+        step_x86_64_cursor_with_mode(cursor.physical(), cursor.ip_before_instruction)?
+    else {
+        return Ok(None);
+    };
+    if next.rsp == 0
+        || !next.rsp.is_multiple_of(core::mem::align_of::<usize>())
+        || (!signal_frame && (next.rsp <= cursor.stack_pointer() || next.rsp > bounds.end))
+    {
+        return Err(OwnedUnwindDecodeError::InvalidStackAddress);
+    }
+    let mut caller = UnwindCursor::captured(&CapturedUnwindCursor {
+        rbx: next.rbx,
+        rbp: next.rbp,
+        r12: next.r12,
+        r13: next.r13,
+        r14: next.r14,
+        r15: next.r15,
+        stack_pointer: next.rsp,
+        ip: next.ip,
+    });
+    caller.ip_before_instruction = signal_frame;
+    if signal_frame {
+        // Only the recognized restorer may cross from an alternate signal
+        // stack back to the interrupted stack. Ordinary frames stay bounded.
+        *bounds = UnwindStackBounds::new(caller).ok_or(OwnedUnwindDecodeError::Overflow)?;
+    }
+    Ok(Some(caller))
 }
 
 #[repr(C)]
@@ -570,7 +639,7 @@ unsafe extern "C" fn backtrace_capture_trace(
 extern "C" fn __frankenlibc_capture_backtrace_from_cursor(
     buffer: *mut *mut c_void,
     max_frames: usize,
-    cursor_ptr: *const X86PhysicalCursor,
+    capture: &CapturedUnwindCursor,
 ) -> c_int {
     if buffer.is_null() || max_frames == 0 {
         return 0;
@@ -583,14 +652,17 @@ extern "C" fn __frankenlibc_capture_backtrace_from_cursor(
         capacity,
         written: 0,
     };
-    let _ = __frankenlibc_owned_backtrace_from_cursor(
-        Some(backtrace_capture_trace),
-        (&raw mut state).cast(),
-        cursor_ptr,
-    );
-    if state.written == 0 && !cursor_ptr.is_null() {
-        // SAFETY: `cursor_ptr` points to the stack-captured cursor.
-        let fallback_ip = unsafe { (*cursor_ptr).ip };
+    // SAFETY: the entry stub supplies the exact CapturedUnwindCursor layout,
+    // and the stack-local callback state remains live for the bounded walk.
+    let _ = unsafe {
+        __frankenlibc_owned_backtrace_from_cursor(
+            Some(backtrace_capture_trace),
+            (&raw mut state).cast(),
+            capture,
+        )
+    };
+    if state.written == 0 {
+        let fallback_ip = capture.ip;
         if fallback_ip != 0 {
             // SAFETY: `buffer` has room for at least 1 pointer (`max_frames > 0`).
             unsafe { *buffer = fallback_ip as *mut c_void };
@@ -610,16 +682,16 @@ pub(crate) unsafe extern "C" fn capture_owned_backtrace(
 ) -> c_int {
     std::arch::naked_asm!(
         "sub rsp, 72",
-        "mov rax, [rsp + 72]",
-        "mov [rsp + 0], rax",
+        "mov [rsp], rbx",
+        "mov [rsp + 8], rbp",
+        "mov [rsp + 16], r12",
+        "mov [rsp + 24], r13",
+        "mov [rsp + 32], r14",
+        "mov [rsp + 40], r15",
         "lea rax, [rsp + 80]",
-        "mov [rsp + 8], rax",
-        "mov [rsp + 16], rbp",
-        "mov [rsp + 24], rbx",
-        "mov [rsp + 32], r12",
-        "mov [rsp + 40], r13",
-        "mov [rsp + 48], r14",
-        "mov [rsp + 56], r15",
+        "mov [rsp + 48], rax",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 56], rax",
         "mov rdx, rsp",
         "call {helper}",
         "add rsp, 72",
@@ -2308,7 +2380,9 @@ fn step_x86_64_cursor_with_mode(
                 Some(ip) => ip,
             },
             CfiRegisterRule::Expression(_) | CfiRegisterRule::ValExpression(_) => {
-                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(DW_CFA_EXPRESSION));
+                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(
+                    DW_CFA_EXPRESSION,
+                ));
             }
         };
 
@@ -2326,7 +2400,9 @@ fn step_x86_64_cursor_with_mode(
             CfiRegisterRule::Register(reg) => cursor_read_dwarf_reg(&cursor, reg)
                 .ok_or(OwnedUnwindDecodeError::MalformedRecord)?,
             CfiRegisterRule::Expression(_) | CfiRegisterRule::ValExpression(_) => {
-                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(DW_CFA_EXPRESSION));
+                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(
+                    DW_CFA_EXPRESSION,
+                ));
             }
         };
 
@@ -2345,9 +2421,9 @@ fn step_x86_64_cursor_with_mode(
                 }
                 CfiRegisterRule::Register(other_reg) => cursor_read_dwarf_reg(&cursor, other_reg)
                     .ok_or(OwnedUnwindDecodeError::MalformedRecord),
-                CfiRegisterRule::Expression(_) | CfiRegisterRule::ValExpression(_) => {
-                    Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(DW_CFA_EXPRESSION))
-                }
+                CfiRegisterRule::Expression(_) | CfiRegisterRule::ValExpression(_) => Err(
+                    OwnedUnwindDecodeError::UnsupportedCfiOpcode(DW_CFA_EXPRESSION),
+                ),
             }
         };
 
@@ -3347,7 +3423,6 @@ fn parse_cie_record_with_bases(
         fde_pointer_encoding,
         text_rel_base,
         data_rel_base,
-        signal_frame,
         cfi_start,
         cfi_end: record.end,
     })
@@ -3450,7 +3525,6 @@ fn parse_fde_record_with_cie(
         code_alignment_factor: cie.code_alignment_factor,
         data_alignment_factor: cie.data_alignment_factor,
         return_address_register: cie.return_address_register,
-        signal_frame: cie.signal_frame,
         cie_cfi_start: cie.cfi_start,
         cie_cfi_end: cie.cfi_end,
         fde_cfi_start,
@@ -3916,9 +3990,9 @@ fn read_stack_word(
     if !bounds.contains_word(address) {
         return Err(OwnedUnwindDecodeError::InvalidStackAddress);
     }
-    // SAFETY: compiler CFI identifies a saved word in the bounded live stack
-    // segment. Expression arithmetic alone cannot authorize other memory.
-    Ok(unsafe { (address as *const usize).read() })
+    // Bounds constrain expression arithmetic but do not prove a page is
+    // mapped. Use the same fault-safe import as the physical cursor walker.
+    read_word(address).ok_or(OwnedUnwindDecodeError::InvalidStackAddress)
 }
 
 struct DwarfExpressionStack {
@@ -4486,7 +4560,6 @@ fn read_array<const N: usize>(
         .map_err(|_| OwnedUnwindDecodeError::Truncated)
 }
 
-#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn valid_frame_pointer(frame_pointer: usize, stack_pointer: usize, stack_limit: usize) -> bool {
     frame_pointer >= stack_pointer
@@ -4494,15 +4567,24 @@ fn valid_frame_pointer(frame_pointer: usize, stack_pointer: usize, stack_limit: 
         && frame_pointer.is_multiple_of(core::mem::align_of::<usize>())
 }
 
-#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn read_word(addr: usize) -> Option<usize> {
     if addr == 0 || !addr.is_multiple_of(core::mem::align_of::<usize>()) {
         return None;
     }
-    // SAFETY: callers restrict reads to the current thread stack window and to
-    // aligned machine-word slots in the frame-pointer chain.
-    Some(unsafe { core::ptr::read(addr as *const usize) })
+    let mut word = 0usize;
+    // SAFETY: the destination is a live word. A bounded stack address or CFI
+    // expression can still name an unmapped page; the kernel copy reports that
+    // fault instead of dereferencing untrusted unwind data in Rust.
+    unsafe {
+        crate::io_abi::iov_snapshot::copy_user_bytes_raw(
+            addr as *const u8,
+            (&raw mut word).cast(),
+            core::mem::size_of::<usize>(),
+        )
+    }
+    .ok()
+    .map(|()| word)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -4530,6 +4612,83 @@ fn current_stack_pointer() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn captured_context_preserves_registers_and_signal_instruction_position() {
+        let capture = CapturedUnwindCursor {
+            rbx: 0x303,
+            rbp: 0x606,
+            r12: 0xc0c,
+            r13: 0xd0d,
+            r14: 0xe0e,
+            r15: 0xf0f,
+            stack_pointer: 0x8000,
+            ip: 0x1234,
+        };
+        let mut cursor = UnwindCursor::captured(&capture);
+        assert_eq!(cursor.lookup_ip(), 0x1233);
+        cursor.ip_before_instruction = true;
+        assert_eq!(cursor.lookup_ip(), 0x1234);
+        let mut context = cursor.context(7, None);
+        let mut before = -1;
+        // SAFETY: accessors receive a live context and output pointer owned by
+        // this test, just as a personality or trace callback would.
+        unsafe {
+            assert_eq!(_Unwind_GetIPInfo(&mut context, &mut before), 0x1234);
+            assert_eq!(before, 1);
+            assert_eq!(_Unwind_GetCFA(&mut context), 0x8000);
+            for (register, value) in [
+                (3, 0x303),
+                (6, 0x606),
+                (7, 0x8000),
+                (12, 0xc0c),
+                (13, 0xd0d),
+                (14, 0xe0e),
+                (15, 0xf0f),
+                (16, 0x1234),
+            ] {
+                assert_eq!(_Unwind_GetGR(&mut context, register), value);
+            }
+        }
+        let physical = context.physical_cursor.expect("physical register snapshot");
+        assert_eq!(physical.rbx, capture.rbx);
+        assert_eq!(physical.rsp, capture.stack_pointer);
+        assert_eq!(physical.ip, capture.ip);
+    }
+
+    #[test]
+    fn read_word_rejects_inaccessible_and_unaligned_addresses() {
+        let word = 0x1234_5678usize;
+        let address = (&raw const word) as usize;
+        assert_eq!(read_word(address), Some(word));
+        assert_eq!(read_word(address + 1), None);
+        assert_eq!(read_word(0), None);
+        // SAFETY: this mapping belongs only to this test. No Rust reference is
+        // formed to its inaccessible contents, and it is released afterward.
+        unsafe {
+            let mapping = libc::mmap(
+                core::ptr::null_mut(),
+                4096,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            assert_ne!(mapping, libc::MAP_FAILED);
+            assert_eq!(read_word(mapping as usize), None);
+            assert_eq!(
+                read_stack_word(
+                    mapping as usize,
+                    UnwindStackBounds {
+                        start: mapping as usize,
+                        end: mapping as usize + 4096,
+                    },
+                ),
+                Err(OwnedUnwindDecodeError::InvalidStackAddress),
+            );
+            assert_eq!(libc::munmap(mapping, 4096), 0);
+        }
+    }
 
     #[test]
     fn valid_frame_pointer_accepts_leaf_frame_equal_to_stack_pointer() {

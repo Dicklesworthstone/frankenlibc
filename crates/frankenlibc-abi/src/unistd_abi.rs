@@ -5576,10 +5576,8 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         if let Some(ref mut g) = _pipeline_guard {
             g.adopt_in_fork_child();
         }
-        if let Some(ref mut g) = _native_tls_heap_guard {
-            // SAFETY: freshly forked single-threaded child.
-            unsafe { g.adopt_in_fork_child() };
-        }
+        // SAFETY: freshly forked single-threaded child with signals blocked.
+        unsafe { _native_tls_heap_guard.adopt_in_fork_child() };
         // SAFETY: freshly forked child (single thread); updates both lock and
         // guard owner_tid so drop(_environ_guard) unlocks cleanly.
         unsafe { _environ_guard.adopt_in_fork_child() };
@@ -9496,10 +9494,8 @@ pub unsafe extern "C" fn forkpty(
         if let Some(ref mut g) = _pipeline_guard {
             g.adopt_in_fork_child();
         }
-        if let Some(ref mut g) = _native_tls_heap_guard {
-            // SAFETY: freshly forked single-threaded child.
-            unsafe { g.adopt_in_fork_child() };
-        }
+        // SAFETY: freshly forked single-threaded child with signals blocked.
+        unsafe { _native_tls_heap_guard.adopt_in_fork_child() };
         // SAFETY: freshly forked child (single thread); updates both lock and
         // guard owner_tid so drop(_environ_guard) unlocks cleanly.
         unsafe { _environ_guard.adopt_in_fork_child() };
@@ -31475,9 +31471,7 @@ pub unsafe extern "C" fn _Fork() -> c_int {
         // SAFETY: sole fork survivor, blockable signals still masked, parent
         // identity captured after masking. This hook uses only raw gettid and
         // fixed atomics, before any potentially interposed memory operation.
-        unsafe {
-            frankenlibc_membrane::ptr_validator::note_validation_fork_child(parent_tid)
-        };
+        unsafe { frankenlibc_membrane::ptr_validator::note_validation_fork_child(parent_tid) };
         frankenlibc_membrane::util::note_fork_child();
     }
 

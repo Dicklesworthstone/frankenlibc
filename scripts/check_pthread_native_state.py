@@ -35,6 +35,9 @@ PUBLICATION_CASES = (
     "publication-return", "publication-exit", "publication-await-creator",
     "publication-signal-await-creator", "publication-startup-error",
 )
+DLERROR_CASES = (
+    "dlerror-first-child", "dlerror-siblings", "dlerror-return", "dlerror-exit",
+)
 CPP_CASES = (
     "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
     "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
@@ -112,6 +115,8 @@ def main():
                         help="Run foreign creation attributes, live snapshots and scheduling priorities")
     parser.add_argument("--publication-only", action="store_true",
                         help="Run early self-detach, detached entry, exit and creator publication cases")
+    parser.add_argument("--dlerror-only", action="store_true",
+                        help="Run loader-error thread isolation, consumption and teardown cases")
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     output = args.out_dir.resolve()
@@ -208,6 +213,7 @@ def main():
     variants = (("", CASES, binary, "pthread-native-state", ("0", "1")),
                 ("attributes-", ATTR_CASES, binary, "pthread-native-state", ("0", "1")),
                 ("publication-", PUBLICATION_CASES, binary, "pthread-native-state", ("0", "1")),
+                ("dlerror-", DLERROR_CASES, binary, "pthread-native-state", ("0", "1")),
                 ("exceptions-", CLEANUP_CASES, exceptions_binary, "pthread-native-state", ("0", "1")),
                 ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind", ("0", "1")),
                  ("wait-", WAIT_CASES, wait_binary, "pthread-native-wait", ("0", "1")),
@@ -224,6 +230,8 @@ def main():
         variants = (("attributes-", ATTR_CASES, binary, "pthread-native-state", ("0", "1")),)
     if args.publication_only:
         variants = (("publication-", PUBLICATION_CASES, binary, "pthread-native-state", ("0", "1")),)
+    if args.dlerror_only:
+        variants = (("dlerror-", DLERROR_CASES, binary, "pthread-native-state", ("0", "1")),)
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
@@ -254,7 +262,8 @@ def main():
     gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
     candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
-              "scope": ("publication" if args.publication_only else
+              "scope": ("dlerror" if args.dlerror_only else
+                        "publication" if args.publication_only else
                         "attributes" if args.attributes_only else
                         "condition-peers" if args.condition_peers_only else
                         "sigwait" if args.sigwait_only else "all"),

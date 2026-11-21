@@ -2414,16 +2414,16 @@ impl StreamRegistry {
     }
 
     #[inline]
-    fn get_stream_ref(&self, id: usize) -> Option<StreamCell> {
+    fn get_stream_ref(&self, id: usize) -> Option<&StreamCell> {
         if let Some(slot) = dynamic_static_slot_for_id(id) {
             if slot == io_internal_abi::parked_static_slot() {
                 return None;
             }
             return self.static_slots[slot]
                 .as_ref()
-                .and_then(|(stored_id, cell)| (*stored_id == id).then(|| Arc::clone(cell)));
+                .and_then(|(stored_id, cell)| (*stored_id == id).then_some(cell));
         }
-        self.streams.get(&id).cloned()
+        self.streams.get(&id)
     }
 
     #[inline]
@@ -2702,7 +2702,10 @@ fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
 }
 
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
-    if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() || wide_io_active() {
+    if !compiler_tls_caches_available()
+        || crate::malloc_abi::native_thread_backend_active()
+        || wide_io_active()
+    {
         return;
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
@@ -3130,21 +3133,32 @@ fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGu
         if let Some(native) = io_internal_abi::try_lock_native_stream_registry()
             && let Ok(reg) = registry().try_lock()
         {
+            // Most native FILEs live in the fixed slots, while overflow and
+            // standard streams use the map. Check the same registry view that
+            // produced the snapshot, including its parked-slot exclusion.
             if !reg
-                .streams
-                .get(&id)
+                .get_stream_ref(id)
                 .is_some_and(|live| Arc::ptr_eq(live, cell))
             {
                 return None;
             }
-            let handle = resolve_flags_word(cell.flags_word);
+            let handle = resolve_flags_word(cell.flags_word.load(Ordering::Acquire));
             let file_lock = if handle == 0 {
                 // Legacy cells have no public FILE object to retire.
                 Some(StdioLockGuard(std::ptr::null_mut()))
             } else {
                 let file = native.get_by_handle(handle as *const c_void)?;
-                file.try_explicit_lock()
-                    .then(|| StdioLockGuard(handle as *mut c_void))
+                // GNU BYCALLER suppresses implicit locking for global flush
+                // too. The caller then owns synchronization with close/reopen;
+                // the private cell lock still protects Rust stream state.
+                // SAFETY: the native registry keeps this exact FILE live while
+                // reading its atomically mirrored locking-mode flag.
+                if unsafe { stream_uses_caller_locking(handle as *mut c_void) } {
+                    Some(StdioLockGuard(std::ptr::null_mut()))
+                } else {
+                    file.try_explicit_lock()
+                        .then(|| StdioLockGuard(handle as *mut c_void))
+                }
             };
             if let Some(file_lock) = file_lock {
                 let stream = cell.try_lock();
@@ -4615,9 +4629,7 @@ impl Drop for RefillTmpGuard {
     fn drop(&mut self) {
         // A callback may have created the first native thread after take().
         // In that case this call keeps ownership and drops its buffer locally.
-        if compiler_tls_caches_available()
-            && !crate::malloc_abi::native_thread_backend_active()
-        {
+        if compiler_tls_caches_available() && !crate::malloc_abi::native_thread_backend_active() {
             let _ = REFILL_TMP.try_with(|c| c.set(std::mem::take(&mut self.0)));
         }
     }
@@ -5735,7 +5747,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
             sorted_stream_ids(&reg)
                 .into_iter()
-                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, c)))
+                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, Arc::clone(c))))
                 .collect()
         };
         let mut any_fail = false;
@@ -18150,9 +18162,7 @@ struct GetdelimScratchGuard(Vec<u8>);
 impl GetdelimScratchGuard {
     #[inline]
     fn take() -> Self {
-        if !compiler_tls_caches_available()
-            || crate::malloc_abi::native_thread_backend_active()
-        {
+        if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() {
             return Self(Vec::new());
         }
         Self(GETDELIM_SCRATCH.try_with(|c| c.take()).unwrap_or_default())
@@ -18162,9 +18172,7 @@ impl Drop for GetdelimScratchGuard {
     fn drop(&mut self) {
         // Do not republish into inherited TLS after native-thread admission,
         // including when admission happened inside an application callback.
-        if compiler_tls_caches_available()
-            && !crate::malloc_abi::native_thread_backend_active()
-        {
+        if compiler_tls_caches_available() && !crate::malloc_abi::native_thread_backend_active() {
             let _ = GETDELIM_SCRATCH.try_with(|c| c.set(std::mem::take(&mut self.0)));
         }
     }
@@ -18676,9 +18684,7 @@ fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        if !compiler_tls_caches_available()
-            || crate::malloc_abi::native_thread_backend_active()
-        {
+        if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() {
             return TMPNAM_BUF_OWNED_TLS.with(|buf| {
                 // SAFETY: this thread owns the initialized 64-byte buffer;
                 // the bounded formatter supplies at most that many bytes.
@@ -21610,9 +21616,7 @@ fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
-    if !compiler_tls_caches_available()
-        || crate::malloc_abi::native_thread_backend_active()
-    {
+    if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() {
         return FGETLN_BUFFER_OWNED_TLS.with(|buf| fgetln_read_into_buffer(stream, buf));
     }
     FGETLN_BUFFER.with(|slot| {

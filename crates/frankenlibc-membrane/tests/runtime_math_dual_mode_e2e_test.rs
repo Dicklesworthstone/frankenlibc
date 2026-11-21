@@ -1476,12 +1476,13 @@ fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
             "hardened kernel must reach MembraneAction::Repair(HealingAction::UpgradeToSafeVariant) under elevated conformal risk"
         );
 
-        // Drive >= 256 allocator observations to cross QuarantineController::EPOCH_INTERVAL (256)
-        // and adapt `quarantine_controller::current_depth()` away from DEFAULT_DEPTH (8192).
+        // Generic allocation/validation outcomes are not completed frees or
+        // confirmed double frees, so they cannot train the retirement controller.
         frankenlibc_membrane::quarantine_controller::CONTENTION.free_begin();
         frankenlibc_membrane::quarantine_controller::CONTENTION.free_end();
         let initial_depth = frankenlibc_membrane::quarantine_controller::current_depth();
         assert_eq!(initial_depth, 8192);
+        let initial_retirement = kernel.quarantine_snapshot();
         for step in 0..300 {
             kernel.observe_validation_result(
                 SafetyLevel::Hardened,
@@ -1491,6 +1492,33 @@ fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
                 step % 4 == 0,
             );
         }
+        assert_eq!(kernel.quarantine_snapshot(), initial_retirement);
+        assert_eq!(
+            frankenlibc_membrane::quarantine_controller::current_depth(),
+            initial_depth
+        );
+
+        // Train one complete epoch with actual arena results. Every operation
+        // contributes once; only a confirmed repeated free contributes a hit.
+        let arena = frankenlibc_membrane::arena::AllocationArena::new();
+        for step in 0..300 {
+            let ptr = arena.allocate(16).expect("quarantine epoch allocation").ptr;
+            let (result, drained) = arena.free(ptr);
+            assert_eq!(result, frankenlibc_membrane::arena::FreeResult::Freed);
+            assert!(drained.is_empty());
+            kernel.observe_allocator_free(SafetyLevel::Hardened, result, 20);
+            if step % 4 == 0 {
+                let (result, drained) = arena.free(ptr);
+                assert_eq!(result, frankenlibc_membrane::arena::FreeResult::DoubleFree);
+                assert!(drained.is_empty());
+                kernel.observe_allocator_free(SafetyLevel::Hardened, result, 20);
+            }
+        }
+        let retirement = kernel.quarantine_snapshot();
+        assert_eq!(retirement.retirement_attempts, 375);
+        assert_eq!(retirement.successful_frees, 300);
+        assert_eq!(retirement.quarantine_hits, 75);
+        assert_eq!(retirement.epochs, 1);
         let adapted_depth = frankenlibc_membrane::quarantine_controller::current_depth();
         assert_ne!(
             adapted_depth, initial_depth,

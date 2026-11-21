@@ -2372,6 +2372,81 @@ static int test_flush_all_snapshot_lifetime(void) {
     return group.failed != 0;
 }
 
+struct flush_all_cookie {
+    int fail, writes, closes, failed;
+    char buffer[128];
+};
+
+static ssize_t flush_all_cookie_write(void *opaque, const char *bytes, size_t size) {
+    struct flush_all_cookie *cookie = opaque;
+    ++cookie->writes;
+    cookie->failed |= size != 1 || bytes[0] != '!';
+    if (cookie->fail) {
+        errno = ENOSPC;
+        return -1;
+    }
+    return (ssize_t)size;
+}
+
+static int flush_all_cookie_close(void *opaque) {
+    struct flush_all_cookie *cookie = opaque;
+    ++cookie->closes;
+    return 0;
+}
+
+/* Keep more streams alive than the candidate's fixed FILE slab can hold.
+ * Global flush must visit both its fixed slots and overflow map. Inspect the
+ * descriptors before fclose/fseek can flush anything, and include a failing
+ * callback between good streams: one error must not suppress later output. */
+static int test_flush_all_buffered_outputs(int fail_cookie) {
+    enum { FILE_COUNT = 270 };
+    FILE *streams[FILE_COUNT] = {0};
+    FILE *callback = NULL;
+    struct flush_all_cookie cookie = {.fail = fail_cookie};
+    cookie_io_functions_t functions = {
+        .write = flush_all_cookie_write, .close = flush_all_cookie_close,
+    };
+    int failed = 0, created = 0;
+    for (int i = 0; i < FILE_COUNT; ++i) {
+        streams[i] = tmpfile();
+        if (!streams[i]) { failed = 1; break; }
+        ++created;
+        unsigned char marker = (unsigned char)('A' + i % 26);
+        failed |= fputc(marker, streams[i]) != marker;
+        struct stat metadata;
+        failed |= fstat(fileno(streams[i]), &metadata) != 0;
+        if (!failed) failed |= metadata.st_size != 0;
+        if (i == FILE_COUNT / 2) {
+            callback = fopencookie(&cookie, "w", functions);
+            if (!callback) { failed = 1; break; }
+            failed |= setvbuf(callback, cookie.buffer, _IOFBF, sizeof(cookie.buffer)) != 0;
+            failed |= fputc('!', callback) != '!';
+            failed |= cookie.writes != 0;
+        }
+    }
+    int result = fflush(NULL);
+    failed |= result != (fail_cookie ? EOF : 0);
+    failed |= created != FILE_COUNT || !callback || cookie.writes != 1 || cookie.failed;
+    if (callback) failed |= (ferror(callback) != 0) != fail_cookie;
+    for (int i = 0; i < created; ++i) {
+        unsigned char bytes[2] = {0, 0};
+        unsigned char marker = (unsigned char)('A' + i % 26);
+        failed |= pread(fileno(streams[i]), bytes, sizeof(bytes), 0) != 1;
+        failed |= bytes[0] != marker || bytes[1] != 0 || __fpending(streams[i]) != 0;
+        failed |= fclose(streams[i]) != 0;
+    }
+    if (callback) {
+        /* Its failed flush is already checked; close still owns the callback. */
+        (void)fclose(callback);
+        failed |= cookie.closes != 1;
+    }
+    if (failed) fprintf(stderr,
+        "FAIL global flush outputs fail_cookie=%d files=%d callbacks=%d result=%d\n",
+        fail_cookie, created, cookie.writes, result);
+    printf("locks global flush outputs failure=%d: %s\n", fail_cookie, failed ? "FAIL" : "PASS");
+    return failed != 0;
+}
+
 struct fork_stream_lock_worker {
     FILE *stream;
     int ready_fd, command_fd, caller_owned, failed;
@@ -2517,6 +2592,27 @@ static int test_fork_stream_locks(void) {
     return failed;
 }
 
+static int test_global_flush(void) {
+    const struct stream_lock_case cases[] = {
+        {"FFLUSH_ALL", LOCK_FFLUSH_ALL, 0, 0},
+        {"FFLUSH_ALL", LOCK_FFLUSH_ALL, 0, 4},
+    };
+    alarm(25);
+    int failed = 0;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        failed += test_stream_lock_case(&cases[i], 0);
+        failed += test_stream_lock_case(&cases[i], FSETLOCKING_BYCALLER);
+        failed += test_stream_lock_case(&cases[i], FSETLOCKING_INTERNAL);
+    }
+    failed += test_flush_all_buffered_outputs(0);
+    failed += test_flush_all_buffered_outputs(1);
+    failed += test_flush_all_snapshot_lifetime();
+    alarm(0);
+    printf("fixture_stdio flush-all: %s (9 cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", failed);
+    return failed != 0;
+}
+
 static int test_stream_locking(void) {
     const struct stream_lock_case cases[] = {
 #define LOCK_CASE(op) {#op, LOCK_##op, 0, 0}
@@ -2562,12 +2658,12 @@ static int test_stream_locking(void) {
     const struct stream_lock_case caller_cases[] = {
 #define CALLER_CASE(op, backing) {#op, LOCK_##op, 0, backing}
         CALLER_CASE(FGETC, 0), CALLER_CASE(FREAD, 0), CALLER_CASE(FWRITE, 0),
-        CALLER_CASE(FFLUSH, 0), CALLER_CASE(FEOF, 0), CALLER_CASE(FERROR, 0),
+        CALLER_CASE(FFLUSH, 0), CALLER_CASE(FFLUSH_ALL, 0), CALLER_CASE(FEOF, 0), CALLER_CASE(FERROR, 0),
         CALLER_CASE(CLEARERR, 0), CALLER_CASE(FPRINTF, 0), CALLER_CASE(FSCANF, 0),
         CALLER_CASE(FGETWS, 0), CALLER_CASE(FPUTWS, 0), CALLER_CASE(FWPRINTF, 0),
         CALLER_CASE(FWSCANF, 0), CALLER_CASE(UNGETWC, 0),
         CALLER_CASE(FGETC, 4), CALLER_CASE(FREAD, 4), CALLER_CASE(FWRITE, 4),
-        CALLER_CASE(FFLUSH, 4), CALLER_CASE(FEOF, 4), CALLER_CASE(FERROR, 4),
+        CALLER_CASE(FFLUSH, 4), CALLER_CASE(FFLUSH_ALL, 4), CALLER_CASE(FEOF, 4), CALLER_CASE(FERROR, 4),
         CALLER_CASE(CLEARERR, 4), CALLER_CASE(FPRINTF, 4), CALLER_CASE(FSCANF, 4),
         CALLER_CASE(FGETWS, 4), CALLER_CASE(FPUTWS, 4), CALLER_CASE(FWPRINTF, 4),
         CALLER_CASE(FWSCANF, 4), CALLER_CASE(UNGETWC, 4),
@@ -2587,20 +2683,30 @@ static int test_stream_locking(void) {
         failed += test_stream_lock_case(&caller_cases[i], FSETLOCKING_INTERNAL);
     }
     failed += test_puts_records_are_atomic();
+    failed += test_flush_all_buffered_outputs(0);
+    failed += test_flush_all_buffered_outputs(1);
     failed += test_flush_all_snapshot_lifetime();
     failed += test_fork_stream_locks();
     alarm(0);
     printf("fixture_stdio locks: %s (%zu cases, %d failed)\n",
            failed ? "FAIL" : "PASS",
-           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 14,
+           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 16,
            failed);
     return failed != 0;
 }
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "flush-all") == 0) {
+        const char *symbols[] = {"tmpfile", "flockfile", "funlockfile", "ftrylockfile",
+            "__fsetlocking", "fputc", "fgetc", "fflush", "fileno", "ferror", "feof",
+            "fclose", "setvbuf", "fopencookie", "__fpending"};
+        if (argc != 3 || check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_global_flush();
+    }
     if (argc >= 2 && strcmp(argv[1], "locks") == 0) {
         const char *symbols[] = {"tmpfile", "flockfile", "funlockfile", "ftrylockfile", "__fsetlocking",
-            "fgetc", "getc", "fgets", "fread", "fputc", "putc", "fputs", "fwrite", "fflush",
+            "fgetc", "getc", "fgets", "fread", "fputc", "putc", "fputs", "fwrite", "fflush", "__fpending",
             "fseek", "ftell", "rewind", "fgetpos", "fsetpos", "feof", "ferror", "clearerr",
             "ungetc", "setvbuf", "fclose", "freopen", "fprintf", "__isoc99_fscanf", "getline",
             "fgetwc", "getwc", "fgetws", "fputwc", "putwc", "fputws", "fwprintf", "__isoc99_fwscanf", "ungetwc",

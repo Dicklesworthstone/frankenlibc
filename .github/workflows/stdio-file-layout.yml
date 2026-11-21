@@ -36,6 +36,7 @@ on:
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/mntent/**'
       - 'tests/integration/fixture_stdio.c'
+      - 'tests/integration/fixture_exit_sequence.c'
       - 'tests/integration/fixture_stdio_globals.c'
       - 'tests/integration/fixture_stdio_file_layout.c'
       - 'tests/integration/fixture_stdio_positions.c'
@@ -263,6 +264,20 @@ jobs:
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/locks" \
             bash scripts/check_stdio_native.sh --locks
+      - name: Flush every native and foreign FILE with caller-selected locking
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/flush-all" \
+            bash scripts/check_stdio_native.sh --flush-all
+      - name: Preserve buffered stdout on normal return and global flush
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/exit-flush" \
+            bash scripts/check_stdio_native.sh --exit-flush
       - name: Stress native FILE locking through the Rust ABI
         if: always() && steps.build.outcome == 'success'
         run: |

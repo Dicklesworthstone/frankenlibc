@@ -2016,7 +2016,7 @@ impl NativeStreamRegistry {
         // SAFETY: caller holds `NATIVE_STREAM_REGISTRY` mutex and static slots
         // reside at stable addresses for the lifetime of the process.
         unsafe {
-            slot.file.set_chain(native_file_list().cast::<NativeFile>());
+            slot.file.set_chain(native_file_list());
             publish_native_file_list(ptr.cast());
         }
         STATIC_SLOT_OCCUPIED[index].store(1, Ordering::Release);
@@ -2233,6 +2233,24 @@ impl NativeStreamRegistry {
     /// Global flush uses this together with the stream registry to acquire a
     /// FILE lock before a concurrent close can retire or reuse its slot.
     pub(crate) fn get_by_handle(&self, handle: *const c_void) -> Option<&NativeFile> {
+        let address = handle as usize;
+        if !self.local_test_instance && address != 0 {
+            // Standard streams can expose a GNU object distinct from the
+            // registry's private NativeFile header. Resolve only published
+            // aliases while holding this lock; do not initialize stdio here.
+            let standard = owned_io_2_1_fd_for_addr(address)
+                .map(|fd| fd as usize)
+                .or_else(|| {
+                    VISIBLE_STDIO_HANDLE_ADDR
+                        .iter()
+                        .position(|slot| slot.load(Ordering::Acquire) == address)
+                });
+            if let Some(index) = standard {
+                // get retains the occupied-state check after fclose/stdout
+                // retirement, rather than recreating a closed standard stream.
+                return self.get(index);
+            }
+        }
         self.handle_slot(handle).and_then(|index| self.get(index))
     }
 
@@ -2249,8 +2267,15 @@ impl NativeStreamRegistry {
     pub(crate) unsafe fn recover_file_locks_in_child(&self, parent_tid: usize) {
         for slot in self.slots().filter(|slot| slot.state == SLOT_OCCUPIED) {
             let state = &slot.file._frankenlibc_state;
-            let lock = if state.std_lock_slot != 0 {
-                Some(&STD_STREAM_LOCKS[(state.std_lock_slot - 1) as usize])
+            let lock = if state.static_lock_slot != 0 {
+                let index = (state.static_lock_slot - 1) as usize;
+                if index < STD_STREAM_LOCKS.len() {
+                    Some(&STD_STREAM_LOCKS[index])
+                } else {
+                    // Recover only existing locks; fork-child recovery must
+                    // not allocate an uninitialized static slot's lock.
+                    STATIC_SLOT_LOCKS[index].get()
+                }
             } else {
                 state.locked.get()
             };
@@ -2542,27 +2567,28 @@ pub(crate) fn static_slot_lock_is_unowned(slot: usize) -> bool {
 pub(crate) unsafe fn park_static_slot_st(slot: usize, handle: *mut c_void) {
     debug_assert!((3..STREAM_REGISTRY_CAPACITY).contains(&slot));
     STATIC_SLOT_OCCUPIED[slot].store(0, Ordering::Release);
-    let file_ptr = handle.cast::<NativeFile>();
+    let file_ptr = handle.cast::<_IO_FILE_Layout>();
     // SAFETY: single-threaded recycler owns `file_ptr` and `_IO_list_all`;
     // unlink the closed stream from `_IO_list_all` so C callers inspecting
-    // `_IO_list_all->_chain` never observe a closed FILE.
+    // `_IO_list_all->_chain` never observe a closed FILE. Traverse only the
+    // common ABI header: standard-stream list nodes have no NativeFile tail.
     unsafe {
-        let mut prev: *mut NativeFile = ptr::null_mut();
-        let mut curr = native_file_list().cast::<NativeFile>();
+        let mut prev: *mut _IO_FILE_Layout = ptr::null_mut();
+        let mut curr = native_file_list().cast::<_IO_FILE_Layout>();
         while !curr.is_null() {
             if curr == file_ptr {
-                let next = (*curr).chain();
+                let next = (*curr)._chain;
                 if prev.is_null() {
                     publish_native_file_list(next.cast::<c_void>());
                 } else {
-                    (*prev).set_chain(next);
+                    (*prev)._chain = next;
                 }
                 core::sync::atomic::compiler_fence(Ordering::SeqCst);
-                (*file_ptr).set_chain(ptr::null_mut());
+                (*file_ptr)._chain = ptr::null_mut();
                 break;
             }
             prev = curr;
-            curr = (*curr).chain();
+            curr = (*curr)._chain;
         }
     }
     PARKED_STATIC_SLOT.store(slot, Ordering::Release);
@@ -2583,7 +2609,7 @@ pub(crate) unsafe fn reoccupy_parked_static_slot_st(
         (*file)._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
         (*file)._fileno = -2;
         (*file)._mode = -1;
-        (*native_file).set_chain(native_file_list().cast::<NativeFile>());
+        (*native_file).set_chain(native_file_list());
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         publish_native_file_list(handle);
     }

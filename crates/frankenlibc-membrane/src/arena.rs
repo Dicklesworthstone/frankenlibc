@@ -1007,7 +1007,7 @@ impl AllocationArena {
         {
             return false;
         }
-        self.verify_canary_for_slot(slot)
+        Self::verify_tail_for_slot(slot, &header)
     }
 
     /// Resolve an interior or base pointer `addr` to its owning arena slot and,
@@ -1782,6 +1782,33 @@ mod tests {
         assert_ne!(old_generation, current.generation);
         assert_eq!(stale_lookup.generation, current.generation);
         assert_eq!(stale_lookup.state, SafetyState::Valid);
+    }
+
+    #[test]
+    fn live_canary_check_rejects_corrupted_header_tail_and_retired_blocks() {
+        let arena = AllocationArena::new();
+        let allocation = arena.allocate(17).expect("unaligned-tail allocation");
+        let addr = allocation.ptr as usize;
+        assert!(arena.verify_live_canary(addr));
+        assert!(!arena.verify_live_canary(addr + 1));
+        assert!(!arena.verify_live_canary(0));
+
+        // SAFETY: the exclusive live allocation includes its prepended header
+        // and eight-byte tail. Restore each byte before testing the other tag.
+        unsafe { *allocation.ptr.add(17) ^= 1 };
+        assert!(!arena.verify_live_canary(addr));
+        unsafe { *allocation.ptr.add(17) ^= 1 };
+        assert!(arena.verify_live_canary(addr));
+        unsafe { *allocation.ptr.sub(FINGERPRINT_SIZE) ^= 1 };
+        assert!(!arena.verify_live_canary(addr));
+        unsafe { *allocation.ptr.sub(FINGERPRINT_SIZE) ^= 1 };
+        assert!(arena.verify_live_canary(addr));
+
+        let (result, drained) = arena.free(allocation.ptr);
+        assert_eq!(result, FreeResult::Freed);
+        // SAFETY: this free exclusively returned these retired backing blocks.
+        unsafe { AllocationArena::deallocate_drained(&drained) };
+        assert!(!arena.verify_live_canary(addr));
     }
 
     // ═══════════════════════════════════════════════════════════════

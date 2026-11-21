@@ -1067,6 +1067,184 @@ static void publication_lifecycle(const char *name) {
     CHECK(pthread_key_delete(publication_key) == 0);
 }
 
+/* The default native backend inherits its creator's compiler thread pointer.
+ * dlerror must nevertheless be owned by the calling pthread, including the
+ * first child and application key destructors. Invalid dlopen flags exercise
+ * the candidate's native error path without entering the host loader from a
+ * native clone. Each worker reports observations to its parent rather than
+ * formatting diagnostics through inherited host TLS on an assertion failure. */
+struct dlerror_worker {
+    pthread_t thread;
+    uintptr_t tp;
+    int initially_clear;
+    int made_error;
+    int first_error;
+    int consumed;
+    int cleared;
+    int made_exit_error;
+    int destructor_ok;
+    _Atomic int command;
+    _Atomic int stage;
+};
+static struct dlerror_worker dlerror_workers[2];
+static pthread_key_t dlerror_key;
+static int dlerror_explicit_exit;
+
+static int verify_dlerror_provider(const char *expected) {
+    const char *names[] = {"dlopen", "dlclose", "dlerror"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        void *address = dlsym(RTLD_DEFAULT, names[i]);
+        Dl_info info;
+        if (!address || !dladdr(address, &info) || !same_file(info.dli_fname, expected)) {
+            fprintf(stderr, "pthread-native-state:provider-mismatch:%s\n", names[i]);
+            return 86;
+        }
+    }
+    return 0;
+}
+
+static int make_dlerror(void) {
+    void *handle = dlopen("libc.so.6", 0);
+    if (!handle) return 1;
+    dlclose(handle);
+    return 0;
+}
+
+static int clear_dlerror_with_success(void) {
+    void *handle = dlopen(NULL, RTLD_NOW);
+    return handle && dlclose(handle) == 0 && dlerror() == NULL;
+}
+
+static void verify_dlerror_backend(const struct dlerror_worker *w, uintptr_t parent_tp) {
+    const char *native = getenv("FRANKENLIBC_THREAD_NATIVE");
+    int expected_same_tp = native && !strcmp(native, "1");
+    CHECK((w->tp == parent_tp) == expected_same_tp);
+}
+
+static void *dlerror_first_worker(void *argument) {
+    struct dlerror_worker *w = argument;
+    w->tp = (uintptr_t)__builtin_thread_pointer();
+    w->initially_clear = dlerror() == NULL;
+    w->consumed = dlerror() == NULL;
+    return w;
+}
+
+static void dlerror_first_child(void) {
+    uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+    struct dlerror_worker *w = &dlerror_workers[0];
+    for (int host_message = 0; host_message < 2; ++host_message) {
+        CHECK(clear_dlerror_with_success());
+        if (host_message) {
+            /* This invalid procfs fd cannot name a DSO. The interpose path
+             * retains the host-owned diagnostic, unlike the static first case. */
+            CHECK(dlopen("/proc/self/fd/-1", RTLD_NOW) == NULL);
+        } else {
+            CHECK(make_dlerror());
+        }
+        CHECK(pthread_create(&w->thread, NULL, dlerror_first_worker, w) == 0);
+        void *result = NULL;
+        CHECK(pthread_join(w->thread, &result) == 0 && result == w);
+        verify_dlerror_backend(w, parent_tp);
+        CHECK(w->initially_clear && w->consumed);
+        const char *error = dlerror();
+        CHECK(error != NULL);
+        if (host_message) CHECK(strstr(error, "/proc/self/fd/-1") != NULL);
+        CHECK(dlerror() == NULL);
+    }
+}
+
+static void *dlerror_sibling_worker(void *argument) {
+    struct dlerror_worker *w = argument;
+    w->tp = (uintptr_t)__builtin_thread_pointer();
+    w->initially_clear = dlerror() == NULL;
+    publish(&w->stage, 1);
+    wait_at_least(&w->command, 1);
+    w->made_error = make_dlerror();
+    publish(&w->stage, 2);
+    wait_at_least(&w->command, 2);
+    w->first_error = dlerror() != NULL;
+    w->consumed = dlerror() == NULL;
+    publish(&w->stage, 3);
+    wait_at_least(&w->command, 3);
+    w->cleared = clear_dlerror_with_success();
+    publish(&w->stage, 4);
+    wait_at_least(&w->command, 4);
+    w->made_exit_error = make_dlerror();
+    return w;
+}
+
+static void dlerror_siblings(void) {
+    uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+    CHECK(clear_dlerror_with_success());
+    for (int i = 0; i < 2; ++i) {
+        struct dlerror_worker *w = &dlerror_workers[i];
+        CHECK(pthread_create(&w->thread, NULL, dlerror_sibling_worker, w) == 0);
+        wait_at_least(&w->stage, 1);
+        verify_dlerror_backend(w, parent_tp);
+    }
+    CHECK(make_dlerror());
+    for (int i = 0; i < 2; ++i) {
+        publish(&dlerror_workers[i].command, 1);
+        wait_at_least(&dlerror_workers[i].stage, 2);
+    }
+    /* Consuming the parent's error and clearing one sibling must leave the
+     * other sibling's pending error intact. All state changes are ordered. */
+    CHECK(dlerror() != NULL && dlerror() == NULL);
+    publish(&dlerror_workers[0].command, 2);
+    wait_at_least(&dlerror_workers[0].stage, 3);
+    publish(&dlerror_workers[0].command, 3);
+    wait_at_least(&dlerror_workers[0].stage, 4);
+    publish(&dlerror_workers[1].command, 2);
+    wait_at_least(&dlerror_workers[1].stage, 3);
+    CHECK(dlerror() == NULL);
+    publish(&dlerror_workers[1].command, 3);
+    wait_at_least(&dlerror_workers[1].stage, 4);
+    for (int i = 0; i < 2; ++i) {
+        struct dlerror_worker *w = &dlerror_workers[i];
+        void *result = NULL;
+        publish(&w->command, 4);
+        CHECK(pthread_join(w->thread, &result) == 0 && result == w);
+        CHECK(w->initially_clear && w->made_error && w->first_error && w->consumed);
+        CHECK(w->cleared && w->made_exit_error);
+        CHECK(dlerror() == NULL);
+    }
+}
+
+static void dlerror_destructor(void *argument) {
+    struct dlerror_worker *w = argument;
+    w->destructor_ok = dlerror() != NULL && dlerror() == NULL &&
+        clear_dlerror_with_success() && make_dlerror();
+}
+
+static void *dlerror_exit_worker(void *argument) {
+    struct dlerror_worker *w = argument;
+    w->tp = (uintptr_t)__builtin_thread_pointer();
+    w->initially_clear = dlerror() == NULL;
+    w->made_error = make_dlerror();
+    if (pthread_setspecific(dlerror_key, w) != 0) return NULL;
+    if (dlerror_explicit_exit) pthread_exit(w);
+    return w;
+}
+
+static void dlerror_lifecycle(int exit_explicitly) {
+    uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+    dlerror_explicit_exit = exit_explicitly;
+    CHECK(pthread_key_create(&dlerror_key, dlerror_destructor) == 0);
+    CHECK(clear_dlerror_with_success());
+    for (int i = 0; i < 16; ++i) {
+        struct dlerror_worker *w = &dlerror_workers[0];
+        w->initially_clear = w->made_error = w->destructor_ok = 0;
+        CHECK(make_dlerror());
+        CHECK(pthread_create(&w->thread, NULL, dlerror_exit_worker, w) == 0);
+        void *result = NULL;
+        CHECK(pthread_join(w->thread, &result) == 0 && result == w);
+        verify_dlerror_backend(w, parent_tp);
+        CHECK(w->initially_clear && w->made_error && w->destructor_ok);
+        CHECK(dlerror() != NULL && dlerror() == NULL);
+    }
+    CHECK(pthread_key_delete(dlerror_key) == 0);
+}
+
 /* Linked into the C++ native-unwind probe as an independently compiled C
  * frame without exception landing pads. Its registered cleanup must run
  * between the inner and outer C++ destructors, in the same unwind. */
@@ -1089,6 +1267,10 @@ int main(int argc, char **argv) {
     if (provider) return provider;
     if (!strncmp(argv[1], "legacy-", 7)) {
         provider = verify_legacy_provider(argv[2]);
+        if (provider) return provider;
+    }
+    if (!strncmp(argv[1], "dlerror-", 8)) {
+        provider = verify_dlerror_provider(argv[2]);
         if (provider) return provider;
     }
     alarm(12);
@@ -1127,7 +1309,12 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "attributes-priority-self")) scheduling_priority(0);
     else if (!strcmp(name, "attributes-priority-worker")) scheduling_priority(1);
     else if (!strncmp(name, "publication-", 12)) publication_lifecycle(name);
+    else if (!strcmp(name, "dlerror-first-child")) dlerror_first_child();
+    else if (!strcmp(name, "dlerror-siblings")) dlerror_siblings();
+    else if (!strcmp(name, "dlerror-return")) dlerror_lifecycle(0);
+    else if (!strcmp(name, "dlerror-exit")) dlerror_lifecycle(1);
     else return 2;
     printf("pthread-native-state:%s:PASS\n", name);
+    if (!strncmp(name, "dlerror-", 8)) CHECK(fflush(stdout) == 0);
     return 0;
 }

@@ -103,6 +103,494 @@ fn with_passwd_path(path: &std::path::Path, f: impl FnOnce()) {
 const FIXTURE: &[u8] =
     b"root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/sh\nbob:x:1001:1001:Bob:/home/bob:/bin/zsh\n";
 
+fn native_identity_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_NATIVE_IDENTITY_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(name) {
+        return false;
+    }
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "frankenlibc-native-identity-{}-{seq}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    for (file, variable, content) in [
+        (
+            "passwd",
+            "FRANKENLIBC_PASSWD_PATH",
+            "creator:x:4101:4201:Creator:/creator:/bin/sh\nworker:x:4102:4202:Worker:/worker:/bin/sh\n",
+        ),
+        (
+            "group",
+            "FRANKENLIBC_GROUP_PATH",
+            "creator:x:4201:creator\nworker:x:4202:worker,other\n",
+        ),
+        (
+            "shadow",
+            "FRANKENLIBC_SHADOW_PATH",
+            "creator:!:19001:0:99999:7:::\nworker:!!:19002:0:99999:7:::\n",
+        ),
+        (
+            "gshadow",
+            "FRANKENLIBC_GSHADOW_PATH",
+            "creator:!:creator:creator\nworker:!!:worker:worker,other\n",
+        ),
+    ] {
+        let path = directory.join(file);
+        std::fs::write(&path, content).unwrap();
+        command.env(variable, path);
+    }
+    let mut child = command
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, name)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start isolated native identity test");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out && output.status.success() && stdout.contains("1 passed;"),
+        "native identity child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+        output.status
+    );
+    true
+}
+
+fn run_native_identity_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> usize {
+    use frankenlibc_abi::pthread_abi;
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(pthread_abi::pthread_threading_swap_force_native_for_tests());
+    let mut thread = 0;
+    // SAFETY: the argument remains live until the matching join below.
+    assert_eq!(
+        unsafe { pthread_abi::pthread_create(&mut thread, ptr::null(), Some(worker), argument) },
+        0
+    );
+    let mut result = ptr::null_mut();
+    // SAFETY: this is the live joinable native thread just created.
+    assert_eq!(unsafe { pthread_abi::pthread_join(thread, &mut result) }, 0);
+    result as usize
+}
+
+#[test]
+fn identity_native_tls_preserves_records_and_pending_enumeration() {
+    use frankenlibc_abi::{grp_abi, pwd_abi};
+    if native_identity_child("identity_native_tls_preserves_records_and_pending_enumeration") {
+        return;
+    }
+    unsafe extern "C" fn enumerate(argument: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        // SAFETY: the creator supplies four live address values through join.
+        // Every native result is inspected before this worker's TLS teardown.
+        unsafe {
+            let creator = &*argument.cast::<[usize; 4]>();
+            let pwd = getpwent();
+            if pwd.is_null()
+                || pwd as usize == creator[0]
+                || CStr::from_ptr((*pwd).pw_name).to_bytes() != b"creator"
+            {
+                return 2usize as *mut c_void;
+            }
+            let grp = grp_abi::getgrent();
+            if grp.is_null()
+                || grp as usize == creator[1]
+                || CStr::from_ptr((*grp).gr_name).to_bytes() != b"creator"
+            {
+                return 3usize as *mut c_void;
+            }
+            let shadow = pwd_abi::getspent().cast::<libc::spwd>();
+            if shadow.is_null()
+                || shadow as usize == creator[2]
+                || CStr::from_ptr((*shadow).sp_namp).to_bytes() != b"creator"
+            {
+                return 4usize as *mut c_void;
+            }
+            let gshadow = pwd_abi::getsgent().cast::<TestSgrp>();
+            if gshadow.is_null()
+                || gshadow as usize == creator[3]
+                || CStr::from_ptr((*gshadow).sg_namp).to_bytes() != b"creator"
+            {
+                return 5usize as *mut c_void;
+            }
+            let pwd = getpwent();
+            let grp = grp_abi::getgrent();
+            let shadow = pwd_abi::getspent().cast::<libc::spwd>();
+            let gshadow = pwd_abi::getsgent().cast::<TestSgrp>();
+            if pwd.is_null() || CStr::from_ptr((*pwd).pw_name).to_bytes() != b"worker" {
+                return 6usize as *mut c_void;
+            }
+            if grp.is_null() || CStr::from_ptr((*grp).gr_name).to_bytes() != b"worker" {
+                return 7usize as *mut c_void;
+            }
+            if shadow.is_null() || CStr::from_ptr((*shadow).sp_namp).to_bytes() != b"worker" {
+                return 8usize as *mut c_void;
+            }
+            if gshadow.is_null() || CStr::from_ptr((*gshadow).sg_namp).to_bytes() != b"worker" {
+                return 9usize as *mut c_void;
+            }
+            endpwent();
+            grp_abi::endgrent();
+            pwd_abi::endspent();
+            pwd_abi::endsgent();
+        }
+        ptr::null_mut()
+    }
+    // Two native files sources exercise the NSS cursor and ERANGE pending
+    // entry in addition to each files cache. No installed NSS module is used.
+    for database in [c"passwd", c"group", c"shadow"] {
+        assert_eq!(
+            unsafe {
+                frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup(
+                    database.as_ptr(),
+                    c"files files".as_ptr(),
+                )
+            },
+            0
+        );
+    }
+    // SAFETY: these fixtures belong to this isolated child. Caller storage
+    // stays live until all reentrant calls and native workers have completed.
+    unsafe {
+        setpwent();
+        grp_abi::setgrent();
+        pwd_abi::setspent();
+        pwd_abi::setsgent();
+        let pwd = getpwent();
+        let grp = grp_abi::getgrent();
+        let shadow = pwd_abi::getspent().cast::<libc::spwd>();
+        let gshadow = pwd_abi::getsgent().cast::<TestSgrp>();
+        assert!(!pwd.is_null() && !grp.is_null() && !shadow.is_null() && !gshadow.is_null());
+        let mut creator = [
+            pwd as usize,
+            grp as usize,
+            shadow as usize,
+            gshadow as usize,
+        ];
+        let mut pwd_out = std::mem::zeroed::<libc::passwd>();
+        let mut grp_out = std::mem::zeroed::<libc::group>();
+        let mut shadow_out = std::mem::zeroed::<libc::spwd>();
+        let mut gshadow_out = std::mem::zeroed::<TestSgrp>();
+        let mut pwd_result = ptr::null_mut();
+        let mut grp_result = ptr::null_mut();
+        let mut shadow_result = ptr::null_mut();
+        let mut gshadow_result = ptr::null_mut();
+        let mut buffer = [0 as c_char; 512];
+        assert_eq!(
+            pwd_abi::getpwent_r(&mut pwd_out, buffer.as_mut_ptr(), 1, &mut pwd_result),
+            libc::ERANGE
+        );
+        assert_eq!(
+            grp_abi::getgrent_r(&mut grp_out, buffer.as_mut_ptr(), 1, &mut grp_result),
+            libc::ERANGE
+        );
+        assert_eq!(
+            pwd_abi::getspent_r(
+                (&raw mut shadow_out).cast(),
+                buffer.as_mut_ptr(),
+                1,
+                &mut shadow_result,
+            ),
+            libc::ERANGE
+        );
+        assert_eq!(
+            pwd_abi::getsgent_r(
+                (&raw mut gshadow_out).cast(),
+                buffer.as_mut_ptr(),
+                1,
+                &mut gshadow_result,
+            ),
+            libc::ERANGE
+        );
+        assert!(pwd_result.is_null() && grp_result.is_null());
+        assert!(shadow_result.is_null() && gshadow_result.is_null());
+        for _ in 0..3 {
+            assert_eq!(
+                run_native_identity_worker(enumerate, (&raw mut creator).cast()),
+                0
+            );
+            assert_eq!(CStr::from_ptr((*pwd).pw_name).to_bytes(), b"creator");
+            assert_eq!(CStr::from_ptr((*grp).gr_name).to_bytes(), b"creator");
+            assert_eq!(CStr::from_ptr((*shadow).sp_namp).to_bytes(), b"creator");
+            assert_eq!(CStr::from_ptr((*gshadow).sg_namp).to_bytes(), b"creator");
+        }
+        let next = getpwent();
+        assert_eq!(next, pwd, "hosted passwd storage must not migrate");
+        assert_eq!(CStr::from_ptr((*next).pw_name).to_bytes(), b"worker");
+        let next = grp_abi::getgrent();
+        assert_eq!(next, grp, "hosted group storage must not migrate");
+        assert_eq!(CStr::from_ptr((*next).gr_name).to_bytes(), b"worker");
+        let next = pwd_abi::getspent().cast::<libc::spwd>();
+        assert_eq!(next, shadow, "hosted shadow storage must not migrate");
+        assert_eq!(CStr::from_ptr((*next).sp_namp).to_bytes(), b"worker");
+        let next = pwd_abi::getsgent().cast::<TestSgrp>();
+        assert_eq!(next, gshadow, "hosted gshadow storage must not migrate");
+        assert_eq!(CStr::from_ptr((*next).sg_namp).to_bytes(), b"worker");
+
+        // Each NSS iterator was already at the end of its first files source
+        // when ERANGE retained worker. Only the second source may remain.
+        // A native worker's end*ent must not rewind the creator's bare cursor,
+        // replaying the first source and inventing two additional records.
+        for expected in [b"creator".as_slice(), b"worker".as_slice()] {
+            let pwd = getpwent();
+            let grp = grp_abi::getgrent();
+            let shadow = pwd_abi::getspent().cast::<libc::spwd>();
+            assert!(!pwd.is_null() && !grp.is_null() && !shadow.is_null());
+            assert_eq!(CStr::from_ptr((*pwd).pw_name).to_bytes(), expected);
+            assert_eq!(CStr::from_ptr((*grp).gr_name).to_bytes(), expected);
+            assert_eq!(CStr::from_ptr((*shadow).sp_namp).to_bytes(), expected);
+        }
+        assert_eq!(
+            (
+                getpwent().is_null(),
+                grp_abi::getgrent().is_null(),
+                pwd_abi::getspent().is_null(),
+            ),
+            (true, true, true),
+            "native end*ent must not rewind the creator's passwd/group/shadow NSS cursors"
+        );
+        assert!(pwd_abi::getsgent().is_null());
+        endpwent();
+        grp_abi::endgrent();
+        pwd_abi::endspent();
+        pwd_abi::endsgent();
+    }
+}
+
+unsafe fn identity_record_named(record: *mut c_void, name: &[u8]) -> bool {
+    // SAFETY: each public record layout begins with its name pointer. The
+    // caller keeps the record and strings alive until this comparison ends.
+    !record.is_null()
+        && unsafe { CStr::from_ptr(record.cast::<*mut c_char>().read()).to_bytes() == name }
+}
+
+unsafe fn identity_next(database: usize) -> *mut c_void {
+    use frankenlibc_abi::{grp_abi, pwd_abi};
+    // SAFETY: each result belongs to the caller and is consumed before reuse.
+    unsafe {
+        match database {
+            0 => getpwent().cast(),
+            1 => grp_abi::getgrent().cast(),
+            2 => pwd_abi::getspent(),
+            3 => pwd_abi::getsgent(),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn identity_reentrant(
+    database: usize,
+    lookup: Option<&CStr>,
+    capacity: usize,
+    expected: Option<&[u8]>,
+) -> (i32, bool) {
+    use std::mem::{align_of, size_of};
+
+    use frankenlibc_abi::{grp_abi, pwd_abi};
+    const {
+        assert!(size_of::<libc::passwd>() <= size_of::<AlignedShadowStorage>());
+        assert!(size_of::<libc::group>() <= size_of::<AlignedShadowStorage>());
+        assert!(size_of::<libc::spwd>() <= size_of::<AlignedShadowStorage>());
+        assert!(size_of::<TestSgrp>() <= size_of::<AlignedShadowStorage>());
+        assert!(align_of::<libc::passwd>() <= align_of::<AlignedShadowStorage>());
+        assert!(align_of::<libc::group>() <= align_of::<AlignedShadowStorage>());
+        assert!(align_of::<libc::spwd>() <= align_of::<AlignedShadowStorage>());
+        assert!(align_of::<TestSgrp>() <= align_of::<AlignedShadowStorage>());
+    }
+    let mut record = AlignedShadowStorage::zeroed();
+    let mut buffer = [0 as c_char; 512];
+    let mut result: *mut c_void = ptr::null_mut();
+    assert!(capacity <= buffer.len());
+    let out = record.as_mut_void();
+    // SAFETY: size and alignment for each record are checked above. The record,
+    // buffer and result slot remain alive until its returned name is consumed.
+    let rc = unsafe {
+        let buf = buffer.as_mut_ptr();
+        match (database, lookup) {
+            (0, Some(name)) => getpwnam_r(
+                name.as_ptr(),
+                out.cast(),
+                buf,
+                capacity,
+                (&raw mut result).cast(),
+            ),
+            (1, Some(name)) => grp_abi::getgrnam_r(
+                name.as_ptr(),
+                out.cast(),
+                buf,
+                capacity,
+                (&raw mut result).cast(),
+            ),
+            (2, Some(name)) => pwd_abi::getspnam_r(name.as_ptr(), out, buf, capacity, &mut result),
+            (3, Some(name)) => pwd_abi::getsgnam_r(name.as_ptr(), out, buf, capacity, &mut result),
+            (0, None) => pwd_abi::getpwent_r(out.cast(), buf, capacity, (&raw mut result).cast()),
+            (1, None) => grp_abi::getgrent_r(out.cast(), buf, capacity, (&raw mut result).cast()),
+            (2, None) => pwd_abi::getspent_r(out, buf, capacity, &mut result),
+            (3, None) => pwd_abi::getsgent_r(out, buf, capacity, &mut result),
+            _ => unreachable!(),
+        }
+    };
+    let matches = match expected {
+        Some(name) => result == out && unsafe { identity_record_named(result, name) },
+        None => result.is_null(),
+    };
+    (rc, matches)
+}
+
+fn configure_native_identity_sources() {
+    for database in [c"passwd", c"group", c"shadow"] {
+        // SAFETY: each caller runs in its own isolated test process.
+        assert_eq!(
+            unsafe {
+                frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup(
+                    database.as_ptr(),
+                    c"files files".as_ptr(),
+                )
+            },
+            0
+        );
+    }
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn identity_native_tls_reentrant_lookups_ignore_creator_borrows() {
+    use frankenlibc_abi::{grp_abi, pwd_abi};
+    if native_identity_child("identity_native_tls_reentrant_lookups_ignore_creator_borrows") {
+        return;
+    }
+    configure_native_identity_sources();
+    unsafe extern "C" fn worker(_: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        for database in 0..4 {
+            for _ in 0..2 {
+                if identity_reentrant(database, Some(c"worker"), 512, Some(b"worker")) != (0, true)
+                {
+                    return (2 + database) as *mut c_void;
+                }
+            }
+            if identity_reentrant(database, None, 512, Some(b"creator")) != (0, true) {
+                return (6 + database) as *mut c_void;
+            }
+        }
+        ptr::null_mut()
+    }
+    let result = pwd_abi::with_identity_cache_borrows_for_tests(|| {
+        grp_abi::with_group_cache_borrows_for_tests(|| {
+            run_native_identity_worker(worker, ptr::null_mut())
+        })
+    });
+    assert_eq!(
+        result, 0,
+        "native reentrant account access shared creator caches"
+    );
+}
+
+#[test]
+fn identity_native_tls_preserves_pending_records_across_fork() {
+    if native_identity_child("identity_native_tls_preserves_pending_records_across_fork") {
+        return;
+    }
+    configure_native_identity_sources();
+    fn consume_pending_and_tail(addresses: &[usize; 4]) -> usize {
+        for database in 0..4 {
+            if identity_reentrant(database, None, 512, Some(b"worker")) != (0, true) {
+                return 20 + database;
+            }
+            if database != 3 {
+                // Exactly the second files source remains. Its nonreentrant
+                // results must still use the pre-fork caller's storage.
+                for (index, name) in [b"creator".as_slice(), b"worker"].into_iter().enumerate() {
+                    let record = unsafe { identity_next(database) };
+                    if record as usize != addresses[database]
+                        || !unsafe { identity_record_named(record, name) }
+                    {
+                        return 30 + 2 * database + index;
+                    }
+                }
+            } else {
+                let record = unsafe { frankenlibc_abi::pwd_abi::getsgnam(c"worker".as_ptr()) };
+                if record as usize != addresses[database]
+                    || !unsafe { identity_record_named(record, b"worker") }
+                {
+                    return 36;
+                }
+            }
+            if !unsafe { identity_next(database) }.is_null() {
+                return 40 + database;
+            }
+        }
+        0
+    }
+    unsafe extern "C" fn worker(_: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        let mut addresses = [0usize; 4];
+        for (database, address) in addresses.iter_mut().enumerate() {
+            let record = unsafe { identity_next(database) };
+            if !unsafe { identity_record_named(record, b"creator") } {
+                return (2 + database) as *mut c_void;
+            }
+            *address = record as usize;
+            if identity_reentrant(database, None, 1, None) != (libc::ERANGE, true) {
+                return (6 + database) as *mut c_void;
+            }
+        }
+        // SAFETY: the child inspects only inherited caller-owned records and
+        // exits without returning through the parent's native thread entry.
+        let pid = unsafe { frankenlibc_abi::process_abi::fork() };
+        if pid < 0 {
+            return 10usize as *mut c_void;
+        }
+        if pid == 0 {
+            unsafe { libc::alarm(10) };
+            let result = consume_pending_and_tail(&addresses);
+            unsafe { libc::_exit(result as i32) };
+        }
+        let mut status = 0;
+        let waited = unsafe { frankenlibc_abi::process_abi::waitpid(pid, &mut status, 0) };
+        if waited != pid || !libc::WIFEXITED(status) {
+            return 11usize as *mut c_void;
+        }
+        let child_result = libc::WEXITSTATUS(status);
+        if child_result != 0 {
+            return (100 + child_result as usize) as *mut c_void;
+        }
+        // Child-side adoption must not change the parent's pending records.
+        consume_pending_and_tail(&addresses) as *mut c_void
+    }
+    assert_eq!(
+        run_native_identity_worker(worker, ptr::null_mut()),
+        0,
+        "fork lost native identity ownership, pending records, or source position"
+    );
+}
+
 #[test]
 fn nss_files_passwd_lookup_returns_records_and_preserves_miss_errnop() {
     with_passwd_file(FIXTURE, || {

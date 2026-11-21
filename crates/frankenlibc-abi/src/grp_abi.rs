@@ -683,12 +683,32 @@ impl GrpStorage {
     }
 }
 
+// Keep the NSS cursor under the same native ownership as its files buffers.
+static GR_ENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Cell<EntCursor>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| Cell::new(EntCursor::default()));
+
 thread_local! {
     /// Multi-source `getgrent` position, and an entry `getgrent_r` could not
     /// fit into the caller's buffer (returned again on the next call).
+    #[cfg(not(feature = "owned-tls-cache"))]
     static GR_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
     static GR_PENDING: crate::util::TlsHeapCell<RefCell<Option<frankenlibc_core::grp::Group>>> =
         const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_gr_cursor<R>(f: impl FnOnce(&Cell<EntCursor>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GR_ENT_OWNED_TLS.with(|cursor| f(cursor))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return GR_ENT_OWNED_TLS.with(|cursor| f(cursor));
+        }
+        GR_ENT.with(f)
+    }
 }
 
 #[inline]
@@ -703,9 +723,9 @@ fn next_group_entry() -> Result<frankenlibc_core::grp::Group, Option<c_int>> {
         return Ok(entry);
     }
     loop {
-        let mut cursor = GR_ENT.with(Cell::get);
+        let mut cursor = with_gr_cursor(Cell::get);
         let (step, service) = nss_module::ent_step(EntDb::Group, &mut cursor, nss_module::getgrent);
-        GR_ENT.with(|c| c.set(cursor));
+        with_gr_cursor(|c| c.set(cursor));
         let answer = match step {
             EntStep::Done => return Err(None),
             EntStep::Files { restart } => with_grp_storage(|s| s.next_files_entry(restart)),
@@ -721,9 +741,9 @@ fn next_group_entry() -> Result<frankenlibc_core::grp::Group, Option<c_int>> {
         let Some(service) = service else {
             return Err(None);
         };
-        let mut cursor = GR_ENT.with(Cell::get);
+        let mut cursor = with_gr_cursor(Cell::get);
         let advanced = nss_module::ent_advance(&mut cursor, &service, status);
-        GR_ENT.with(|c| c.set(cursor));
+        with_gr_cursor(|c| c.set(cursor));
         if !advanced {
             return Err(err);
         }
@@ -731,7 +751,7 @@ fn next_group_entry() -> Result<frankenlibc_core::grp::Group, Option<c_int>> {
 }
 
 fn reset_group_enumeration() {
-    GR_ENT.with(|c| c.set(EntCursor::default()));
+    with_gr_cursor(|c| c.set(EntCursor::default()));
     with_gr_pending(|p| *p.borrow_mut() = None);
 }
 
@@ -1491,6 +1511,18 @@ pub unsafe extern "C" fn group_from_gid(gid: libc::gid_t, nogroup: c_int) -> *co
     let ptr = buf.as_ptr() as *const c_char;
     drop(guard);
     ptr
+}
+
+/// Keep the creator's group caches borrowed while a native worker is tested.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_group_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> R {
+    with_grp_storage(|_| {
+        with_gr_pending(|pending| {
+            let _pending = pending.borrow_mut();
+            f()
+        })
+    })
 }
 
 // The inline `#[cfg(test)] mod tests` that stood here never compiled: lib.rs
