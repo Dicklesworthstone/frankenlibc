@@ -146,7 +146,10 @@ pub mod tests {
             rlim_max: 0,
         };
         // SAFETY: original is writable and has the native rlimit layout.
-        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_DATA, &mut original) }, 0);
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_DATA, &mut original) },
+            0
+        );
         let allowance = data_kib.checked_mul(1024).unwrap() + 2 * 1024 * 1024;
         assert!((allowance as libc::rlim_t) <= original.rlim_max);
         let limited = libc::rlimit {
@@ -173,8 +176,7 @@ pub mod tests {
         // the first unused gap after the second sidecar split the mapping.
         let first = initialize_segment(31).expect("first narrow sidecar");
         assert_eq!(first, 0, "regression requires a fresh subprocess arena");
-        let first_meta = SEGMENT_DESCRIPTORS
-            .get(first)
+        let first_meta = segment_descriptor(first)
             .unwrap()
             .meta_base
             .load(Ordering::Acquire);

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/util.rs'
       - 'crates/frankenlibc-abi/src/dlfcn_abi.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
@@ -353,6 +354,15 @@ jobs:
               failed=1
             fi
             if ! grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$log"; then
+              failed=1
+            fi
+            guard_log="artifacts/runtime-startup/identity/$mode-kernel-guard.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --lib "${args[@]}" \
+                util::tests::kernel_tid_guard_adoption_preserves_and_releases_inherited_recursion \
+                -- --exact --nocapture --test-threads=1 2>&1 | tee "$guard_log"; then
+              failed=1
+            fi
+            if ! grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$guard_log"; then
               failed=1
             fi
           done

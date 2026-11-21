@@ -2702,7 +2702,10 @@ fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
 }
 
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
-    if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() || wide_io_active() {
+    if !compiler_tls_caches_available()
+        || crate::malloc_abi::native_thread_backend_active()
+        || wide_io_active()
+    {
         return;
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
@@ -4626,9 +4629,7 @@ impl Drop for RefillTmpGuard {
     fn drop(&mut self) {
         // A callback may have created the first native thread after take().
         // In that case this call keeps ownership and drops its buffer locally.
-        if compiler_tls_caches_available()
-            && !crate::malloc_abi::native_thread_backend_active()
-        {
+        if compiler_tls_caches_available() && !crate::malloc_abi::native_thread_backend_active() {
             let _ = REFILL_TMP.try_with(|c| c.set(std::mem::take(&mut self.0)));
         }
     }
@@ -18161,9 +18162,7 @@ struct GetdelimScratchGuard(Vec<u8>);
 impl GetdelimScratchGuard {
     #[inline]
     fn take() -> Self {
-        if !compiler_tls_caches_available()
-            || crate::malloc_abi::native_thread_backend_active()
-        {
+        if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() {
             return Self(Vec::new());
         }
         Self(GETDELIM_SCRATCH.try_with(|c| c.take()).unwrap_or_default())
@@ -18173,9 +18172,7 @@ impl Drop for GetdelimScratchGuard {
     fn drop(&mut self) {
         // Do not republish into inherited TLS after native-thread admission,
         // including when admission happened inside an application callback.
-        if compiler_tls_caches_available()
-            && !crate::malloc_abi::native_thread_backend_active()
-        {
+        if compiler_tls_caches_available() && !crate::malloc_abi::native_thread_backend_active() {
             let _ = GETDELIM_SCRATCH.try_with(|c| c.set(std::mem::take(&mut self.0)));
         }
     }
@@ -18687,9 +18684,7 @@ fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        if !compiler_tls_caches_available()
-            || crate::malloc_abi::native_thread_backend_active()
-        {
+        if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() {
             return TMPNAM_BUF_OWNED_TLS.with(|buf| {
                 // SAFETY: this thread owns the initialized 64-byte buffer;
                 // the bounded formatter supplies at most that many bytes.
@@ -21628,9 +21623,7 @@ fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
-    if !compiler_tls_caches_available()
-        || crate::malloc_abi::native_thread_backend_active()
-    {
+    if !compiler_tls_caches_available() || crate::malloc_abi::native_thread_backend_active() {
         return FGETLN_BUFFER_OWNED_TLS.with(|buf| fgetln_read_into_buffer(stream, buf));
     }
     FGETLN_BUFFER.with(|slot| {
