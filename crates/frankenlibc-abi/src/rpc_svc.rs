@@ -543,11 +543,6 @@ static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_snapshot);
 #[cfg(feature = "owned-tls-cache")]
 fn empty_snapshot() -> PollSnapshot {
-    const ZERO_POLL: libc::pollfd = libc::pollfd {
-        fd: 0,
-        events: 0,
-        revents: 0,
-    };
     PollSnapshot {
         entries: Vec::new(),
     }

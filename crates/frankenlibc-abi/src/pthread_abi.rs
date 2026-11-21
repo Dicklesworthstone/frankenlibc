@@ -5841,7 +5841,7 @@ pub(crate) fn ensure_host_thread_key_teardown() {
         let (key, set) = host_key_teardown_bridge();
         // SAFETY: the host key and function belong to the same loaded libc.
         // Its opaque non-null value merely requests the thread-exit callback.
-        if unsafe { set(key, 1usize as *const c_void) } != 0 {
+        if unsafe { set(key, std::ptr::dangling::<c_void>()) } != 0 {
             std::process::abort();
         }
     }
@@ -5957,7 +5957,7 @@ unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
         // teardown completes: cancellation or pthread_exit in a user callback
         // can unwind this frame and restart the host's destructor protocol.
         // SAFETY: this thread already owns the valid host key's storage.
-        if unsafe { set(key, 1usize as *const c_void) } != 0 {
+        if unsafe { set(key, std::ptr::dangling::<c_void>()) } != 0 {
             std::process::abort();
         }
         (key, set)
