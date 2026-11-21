@@ -1,10 +1,11 @@
-//! Native DSO thread-local destructors and loader lifetime pins.
+//! Native thread-local destructors and loader lifetime pins.
 //!
-//! Only native relocation scopes bind to this registration function. The host
-//! must never receive a native __dso_handle, nor may we register host callbacks
-//! in this queue. Hosted threads use Rust/host exit hooks; native clone threads
-//! keep their state and exit hooks in their native ThreadHandle instead of
-//! their inherited compiler TLS.
+//! Native relocation scopes and public registrations on managed native threads
+//! share this queue. Native DSOs receive lifetime pins; public callbacks may
+//! also belong to the executable or the explicitly pinned runtime. Other host
+//! owners/providers are rejected. The host never receives a native __dso_handle.
+//! Hosted threads retain their existing exit hooks; native clones keep their
+//! state and exit hooks in ThreadHandle, outside inherited compiler TLS.
 
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::Cell;
@@ -24,6 +25,209 @@ use super::tls::{Block, Module};
 use super::{NativeDso, OPERATIONS, lifecycle, registry};
 
 type Destructor = unsafe extern "C" fn(*mut c_void);
+
+// A native clone must not enter the host loader through its creator's TCB.
+// Prepare the only host images admitted by public native registrations before
+// the first clone: the executable cannot unload, and a retained loader handle
+// pins this runtime. Other host DSOs require an unsupported lifetime bridge.
+#[derive(Clone, Copy)]
+struct ProcessImageSegment {
+    start: usize,
+    end: usize,
+    flags: u32,
+}
+
+#[derive(Clone, Copy)]
+struct ProcessImage {
+    base: usize,
+    segments: [ProcessImageSegment; 16],
+    len: usize,
+}
+
+impl ProcessImage {
+    fn from_phdrs(base: usize, phdrs: &[libc::Elf64_Phdr]) -> Option<Self> {
+        let mut image = Self {
+            base,
+            segments: [ProcessImageSegment { start: 0, end: 0, flags: 0 }; 16],
+            len: 0,
+        };
+        for header in phdrs {
+            if header.p_type != libc::PT_LOAD || header.p_memsz == 0 {
+                continue;
+            }
+            if image.len == image.segments.len() {
+                return None;
+            }
+            let start = base.checked_add(usize::try_from(header.p_vaddr).ok()?)?;
+            let end = start.checked_add(usize::try_from(header.p_memsz).ok()?)?;
+            image.segments[image.len] = ProcessImageSegment {
+                start,
+                end,
+                flags: header.p_flags,
+            };
+            image.len += 1;
+        }
+        (image.len != 0).then_some(image)
+    }
+
+    fn contains(&self, address: usize, executable: bool) -> bool {
+        self.segments[..self.len].iter().any(|segment| {
+            segment.start <= address && address < segment.end
+                && (!executable || segment.flags & libc::PF_X != 0)
+        })
+    }
+}
+
+struct ProcessTlsOwners {
+    main: Option<ProcessImage>,
+    runtime: Option<ProcessImage>,
+    // Deliberately retained for the process lifetime: native thread entry,
+    // teardown and queued runtime callbacks must all remain executable.
+    _runtime_pin: usize,
+}
+
+static PROCESS_TLS_OWNERS: OnceLock<ProcessTlsOwners> = OnceLock::new();
+
+fn executable_image() -> Option<ProcessImage> {
+    // The startup auxv cache is seeded from the real kernel vector. This runs
+    // on a hosted creator (or initial standalone thread), never on a clone.
+    let phdr = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHDR) } as usize;
+    let count = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHNUM) } as usize;
+    let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHENT) } as usize;
+    if phdr == 0 || count == 0 || count > 4096
+        || entry != std::mem::size_of::<libc::Elf64_Phdr>()
+        || !phdr.is_multiple_of(std::mem::align_of::<libc::Elf64_Phdr>())
+    {
+        return None;
+    }
+    // SAFETY: these bounded, aligned program headers come from kernel auxv;
+    // the executable and its header table remain mapped for process lifetime.
+    let headers = unsafe { std::slice::from_raw_parts(phdr as *const libc::Elf64_Phdr, count) };
+    let table = headers.iter().find(|header| header.p_type == libc::PT_PHDR)?;
+    let base = phdr.checked_sub(usize::try_from(table.p_vaddr).ok()?)?;
+    ProcessImage::from_phdrs(base, headers)
+}
+
+#[cfg(not(feature = "standalone"))]
+fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
+    // A successful host dlopen/dlinfo may free an earlier host dlerror buffer.
+    // pthread_create must preserve that public pending/returned pointer. If
+    // one exists, leave the runtime unadmitted rather than invalidate it or
+    // claim a lifetime pin that was never acquired; executable/native owners
+    // remain supported through their independent lifetime proofs.
+    if crate::dlfcn_abi::hosted_dlerror_pointer_outstanding() {
+        return None;
+    }
+    struct Scan {
+        address: usize,
+        image: Option<ProcessImage>,
+        name: [u8; 4096],
+    }
+    unsafe extern "C" fn collect(
+        info: *mut libc::dl_phdr_info,
+        size: usize,
+        data: *mut c_void,
+    ) -> c_int {
+        if info.is_null() || data.is_null()
+            || size < std::mem::offset_of!(libc::dl_phdr_info, dlpi_phnum)
+                + std::mem::size_of::<libc::Elf64_Half>()
+        {
+            return 0;
+        }
+        // SAFETY: the host iterate callback supplies this documented prefix
+        // and retains the object's header/name storage during the callback.
+        let (info, scan) = unsafe { (&*info, &mut *data.cast::<Scan>()) };
+        let count = usize::from(info.dlpi_phnum);
+        if info.dlpi_phdr.is_null() || count == 0 || count > 4096 {
+            return 0;
+        }
+        let headers = unsafe { std::slice::from_raw_parts(info.dlpi_phdr, count) };
+        let Some(image) = ProcessImage::from_phdrs(info.dlpi_addr as usize, headers) else {
+            return 0;
+        };
+        if !image.contains(scan.address, true) || info.dlpi_name.is_null() {
+            return 0;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr(info.dlpi_name) }.to_bytes();
+        if name.is_empty() || name.len() >= scan.name.len() {
+            return 1;
+        }
+        scan.name[..name.len()].copy_from_slice(name);
+        scan.image = Some(image);
+        1
+    }
+    type Iterate = unsafe extern "C" fn(
+        Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
+        *mut c_void,
+    ) -> c_int;
+    type Open = unsafe extern "C" fn(*const std::ffi::c_char, c_int) -> *mut c_void;
+    type Info = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
+    type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let iterate = crate::host_resolve::host_dl_iterate_phdr_cached()?;
+    let open = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
+    let info = crate::host_resolve::resolve_host_symbol_raw("dlinfo")?;
+    let close = crate::host_resolve::resolve_host_symbol_raw("dlclose")?;
+    // SAFETY: these addresses are host-owned entry points with the documented
+    // C signatures. This entire preparation runs before cloning, on real host TLS.
+    let (iterate, open, info, close): (Iterate, Open, Info, Close) = unsafe {
+        (std::mem::transmute(iterate), std::mem::transmute(open),
+         std::mem::transmute(info), std::mem::transmute(close))
+    };
+    let mut scan = Scan {
+        address: prepare_native_public_tls_destructors as *const () as usize,
+        image: None,
+        name: [0; 4096],
+    };
+    unsafe { iterate(Some(collect), std::ptr::from_mut(&mut scan).cast()) };
+    let image = scan.image?;
+    let handle = unsafe { open(scan.name.as_ptr().cast(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut map: *mut c_void = std::ptr::null_mut();
+    let result = unsafe {
+        info(handle, libc::RTLD_DI_LINKMAP, std::ptr::from_mut(&mut map).cast())
+    };
+    // The public link_map prefix starts with l_addr. Verify the retained
+    // object is the runtime we inspected, not another object with that name.
+    if result != 0 || map.is_null() || unsafe { *map.cast::<usize>() } != image.base {
+        unsafe { close(handle) };
+        return None;
+    }
+    Some((image, handle as usize))
+}
+
+/// Called on a hosted creator before publishing a native child. Nested native
+/// pthread_create never initializes this cache or enters the host loader.
+pub(crate) fn prepare_native_public_tls_destructors() {
+    if current_thread_handle().is_some() {
+        return;
+    }
+    PROCESS_TLS_OWNERS.get_or_init(|| {
+        let main = executable_image();
+        let runtime_address = prepare_native_public_tls_destructors as *const () as usize;
+        let mut owners = ProcessTlsOwners { main, runtime: None, _runtime_pin: 0 };
+        if main.as_ref().is_some_and(|image| image.contains(runtime_address, true)) {
+            return owners;
+        }
+        #[cfg(not(feature = "standalone"))]
+        if let Some((image, pin)) = pin_runtime_image() {
+            owners.runtime = Some(image);
+            owners._runtime_pin = pin;
+        }
+        owners
+    });
+}
+
+fn process_lifetime_address(address: usize, executable: bool) -> bool {
+    PROCESS_TLS_OWNERS.get().is_some_and(|owners| {
+        // GNU accepts a null owner for an executable callback. The callback's
+        // own executable mapping still needs an independent lifetime proof.
+        (!executable && address == 0 && owners.main.is_some())
+            || owners.main.as_ref().is_some_and(|image| image.contains(address, executable))
+            || owners.runtime.as_ref().is_some_and(|image| image.contains(address, executable))
+    })
+}
 
 struct Entry {
     destructor: Destructor,
@@ -681,24 +885,66 @@ fn contains_address(dso: &NativeDso, address: usize) -> bool {
 }
 
 fn register(destructor: Destructor, argument: *mut c_void, dso_handle: *mut c_void) -> Option<()> {
+    register_with_owner_policy(destructor, argument, dso_handle, false)
+}
+
+/// Public registration from a native worker uses the same queue and lifetime
+/// pins as native DSOs. None means an ordinary hosted caller; -1 rejects an
+/// unpinnable owner/provider instead of putting its callback on the creator's TCB.
+pub(crate) fn register_native_public_tls_destructor(
+    destructor: Destructor,
+    argument: *mut c_void,
+    dso_handle: *mut c_void,
+) -> Option<c_int> {
+    current_thread_handle()?;
+    Some(if register_with_owner_policy(destructor, argument, dso_handle, true).is_some() {
+        0
+    } else {
+        -1
+    })
+}
+
+fn registration_owner(
+    dsos: &[NativeDso],
+    address: usize,
+    executable: bool,
+    allow_process_images: bool,
+) -> Option<Option<usize>> {
+    if let Some(dso) = dsos.iter().find(|dso| {
+        !dso.retiring && if executable {
+            lifecycle::executable_address(dso, address)
+        } else {
+            contains_address(dso, address)
+        }
+    }) {
+        return Some(Some(dso.id));
+    }
+    (allow_process_images && process_lifetime_address(address, executable)).then_some(None)
+}
+
+fn register_with_owner_policy(
+    destructor: Destructor,
+    argument: *mut c_void,
+    dso_handle: *mut c_void,
+    allow_process_images: bool,
+) -> Option<()> {
     let _operation = OPERATIONS.lock();
     with_state(|state| {
         let mut entries = state.destructors.try_borrow_mut().ok()?;
         entries.try_reserve(1)?;
         let mut dsos = registry().lock().ok()?;
-        let owner = dsos
-            .iter()
-            .find(|dso| !dso.retiring && contains_address(dso, dso_handle as usize))?
-            .id;
-        let provider = dsos
-            .iter()
-            .find(|dso| {
-                !dso.retiring
-                    && lifecycle::executable_address(dso, destructor as *const () as usize)
-            })?
-            .id;
-        let owners = [owner, provider];
-        let owner_count = if provider == owner { 1 } else { 2 };
+        let owner = registration_owner(&dsos, dso_handle as usize, false, allow_process_images)?;
+        let provider = registration_owner(
+            &dsos, destructor as *const () as usize, true, allow_process_images,
+        )?;
+        let mut owners = [0; 2];
+        let mut owner_count = 0;
+        for id in [owner, provider].into_iter().flatten() {
+            if !owners[..owner_count].contains(&id) {
+                owners[owner_count] = id;
+                owner_count += 1;
+            }
+        }
         // Check all counts before changing any resident state. Once pinned,
         // the reserved queue slot cannot fail and owns exactly these pins.
         for id in &owners[..owner_count] {
@@ -721,6 +967,9 @@ fn register(destructor: Destructor, argument: *mut c_void, dso_handle: *mut c_vo
 }
 
 fn release_pins(owners: &[usize]) {
+    if owners.is_empty() {
+        return;
+    }
     let _operation = OPERATIONS.lock();
     if let Ok(mut dsos) = registry().lock() {
         for dso in dsos.iter_mut().filter(|dso| owners.contains(&dso.id)) {

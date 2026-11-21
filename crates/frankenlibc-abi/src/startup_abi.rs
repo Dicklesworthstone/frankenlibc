@@ -1907,6 +1907,14 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     obj: *mut c_void,
     _dso_handle: *mut c_void,
 ) -> c_int {
+    // Native clones inherit their creator's hardware TLS. Neither the host's
+    // destructor queue nor our compiler-TLS fallback belongs to this worker.
+    // Dispatch before reading any of the hosted reentry/capture TLS flags.
+    if let Some(result) = crate::dlfcn_abi::register_native_public_tls_destructor(
+        dtor, obj, _dso_handle,
+    ) {
+        return result;
+    }
     if !tls_atexit_capture_for_tests_enabled()
         && let Some(host) = unsafe { host_cxa_thread_atexit_impl() }
     {

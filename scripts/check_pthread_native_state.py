@@ -103,6 +103,98 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def check_public_tls_destructors(root, library, output, environment, compile_fixture):
+    source = root / "tests/integration/fixture_pthread_native_tls_dtors.cpp"
+    binary = output / "fixture_public_tls_dtors"
+    native_module = output / "public_tls_native.so"
+    host_module = output / "public_tls_host.so"
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    flags = ["-std=c++17", "-O2", "-fno-omit-frame-pointer", "-Wall", "-Wextra", "-Werror"]
+    compile_fixture("public-tls", compiler + flags + [str(source), "-o", str(binary),
+                                                     "-pthread", "-ldl"])
+    module_flags = flags + ["-shared", "-fPIC", "-DFRANKENLIBC_TLS_DTOR_MODULE"]
+    compile_fixture("public-tls-native-module", compiler + module_flags + [
+        "-nostdlib", "-DFRANKENLIBC_TLS_DTOR_NATIVE_MODULE", str(source),
+        "-o", str(native_module)])
+    compile_fixture("public-tls-host-module", compiler + module_flags + [
+        str(source), "-Wl,--no-as-needed", "-lc", "-o", str(host_module)])
+    records, failures = [], []
+
+    def execute(lane, case, extra):
+        command = [str(binary), case]
+        if case == "native-dso":
+            command.append(str(native_module))
+        elif case.startswith("host-"):
+            command.append(str(host_module))
+        try:
+            run = subprocess.run(command, env=dict(environment, **extra), capture_output=True,
+                                 text=True, timeout=15)
+            code, stdout, stderr = run.returncode, run.stdout, run.stderr
+        except subprocess.TimeoutExpired as error:
+            code = 124
+            stdout = (error.stdout or b"").decode(errors="replace")
+            stderr = (error.stderr or b"").decode(errors="replace") + "\nfixture timeout\n"
+        passed = (code == 0 and stdout.startswith(f"native public TLS dtors {case}: ")
+                  and stdout.endswith(" PASS\n") and not stderr)
+        row = {"lane": lane, "case": case, "returncode": code,
+               "stdout": stdout, "stderr": stderr, "passed": passed}
+        records.append(row)
+        (output / f"{lane}-{case}.log").write_text(stdout + stderr)
+        return row
+
+    negative = execute("provider-negative", "return", {"FRANKENLIBC_TEST_LIBRARY": str(library)})
+    if not (negative["returncode"] == 80 and not negative["stdout"] and
+            negative["stderr"] == "wrong provider for pthread_create\n"):
+        failures.append("provider-negative")
+    common = ("return", "exit", "cancel", "late-key", "runtime-callback")
+    gnu_cases = common + ("creator-error", "creator-error-consumed", "native-dso", "host-owner")
+    for case in gnu_cases:
+        row = execute("gnu", case, {})
+        print(f"public-tls gnu {case}: {'PASS' if row['passed'] else 'FAIL'}", flush=True)
+        if not row["passed"]:
+            failures.append(f"gnu:{case}")
+    candidate_count = 0
+    for mode in ("strict", "hardened"):
+        for native in ("0", "1"):
+            cases = common + ("host-owner",)
+            if native == "0":
+                # Hosted key cleanup uses different existing bridges across
+                # feature sets. The final late-registration drain under change
+                # is a native contract, separately checked against GNU ordering.
+                cases = tuple(case for case in cases if case != "late-key")
+            if native == "1":
+                # Creator errors specifically cover the new native preparation
+                # hook; the existing hosted hardened cold resolver has a
+                # separate error-buffer lifetime defect, observed on baseline.
+                cases += ("creator-error", "creator-error-consumed", "native-dso", "host-provider")
+            for case in cases:
+                lane = f"{'native' if native == '1' else 'hosted'}-{mode}"
+                row = execute(lane, case, {
+                    "LD_PRELOAD": str(library), "FRANKENLIBC_TEST_LIBRARY": str(library),
+                    "FRANKENLIBC_MODE": mode, "FRANKENLIBC_THREAD_NATIVE": native,
+                    "FRANKENLIBC_RUNTIME_MATH": "off",
+                })
+                candidate_count += 1
+                print(f"public-tls {lane} {case}: {'PASS' if row['passed'] else 'FAIL'}", flush=True)
+                if not row["passed"]:
+                    failures.append(f"{lane}:{case}")
+    report = {
+        "scope": "public-tls-dtors", "library": str(library),
+        "library_sha256": sha256(library), "fixture_sha256": sha256(source),
+        "binary_sha256": sha256(binary), "native_module_sha256": sha256(native_module),
+        "host_module_sha256": sha256(host_module), "gnu_cases": len(gnu_cases),
+        "candidate_cases": candidate_count, "provider_negative_cases": 1,
+        "policy": "Native public registrations require a native pin or proven process-lifetime owner and provider; unloadable host images are rejected.",
+        "late_key_policy": "Native teardown requires its final TLS drain (five events); GNU controls verify TLS-before-key ordering (four events). Hosted late-key variants are outside this focused lane because their existing bridges differ by feature.",
+        "failures": failures, "runs": records,
+    }
+    (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    if failures:
+        raise SystemExit("public native TLS destructors: FAIL " + ", ".join(failures))
+    print(f"public native TLS destructors: PASS ({len(gnu_cases)} live GNU cases, "
+          f"{candidate_count} candidate cases, one provider negative)")
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -123,6 +215,8 @@ def main():
                         help="Run loader-error thread isolation, consumption and teardown cases")
     parser.add_argument("--unwind-only", action="store_true",
                         help="Check interpose unwind exports and C/C++ exit/cancellation cleanup")
+    parser.add_argument("--public-tls-dtors-only", action="store_true",
+                        help="Check public native TLS callback ownership, ordering and DSO lifetimes")
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     output = args.out_dir.resolve()
@@ -147,6 +241,10 @@ def main():
         log.write_text(compiled.stdout + compiled.stderr)
         if compiled.returncode:
             raise SystemExit(f"fixture compilation failed: {log}")
+
+    if args.public_tls_dtors_only:
+        check_public_tls_destructors(root, library, output, environment, compile_fixture)
+        return
 
     compile_fixture("c", c_flags + ["-fno-exceptions", str(source), "-o", str(binary),
                                    "-pthread", "-ldl"])

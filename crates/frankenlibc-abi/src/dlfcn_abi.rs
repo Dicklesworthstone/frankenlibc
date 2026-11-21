@@ -176,6 +176,22 @@ fn clear_dlerror() {
     set_dlerror_pointer(std::ptr::null());
 }
 
+/// Read only the hosted creator's record before an internal loader operation
+/// that could invalidate borrowed host text. Native workers must never enter
+/// that operation, even if their own record is empty.
+#[cfg(not(feature = "standalone"))]
+pub(super) fn hosted_dlerror_pointer_outstanding() -> bool {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PENDING_PTR.try_with(|pointer| !pointer.get().is_null()).unwrap_or(true)
+            || STABLE_PTR.try_with(|pointer| !pointer.get().is_null()).unwrap_or(true)
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        DLERROR_OWNED_TLS.with(|state| state.pending != 0 || state.stable != 0)
+    }
+}
+
 #[inline]
 pub(crate) unsafe fn dlvsym_next(symbol: *const c_char, version: *const c_char) -> *mut c_void {
     // SAFETY: callers provide symbol/version pointers for host-side symbol lookup.
@@ -504,6 +520,9 @@ fn close_main_program_handle() -> c_int {
 #[path = "dlfcn_native.rs"]
 mod native;
 pub(crate) use native::fork_prepare as native_fork_prepare;
+pub(crate) use native::{
+    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
+};
 #[cfg(not(feature = "standalone"))]
 use native::host_may_load_declined_object;
 #[cfg(feature = "standalone")]

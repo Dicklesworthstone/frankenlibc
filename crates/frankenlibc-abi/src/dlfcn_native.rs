@@ -44,6 +44,9 @@ mod tls;
 
 #[path = "dlfcn_thread_exit.rs"]
 mod thread_exit;
+pub(crate) use thread_exit::{
+    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
+};
 #[cfg(not(test))]
 pub(crate) use thread_exit::{
     ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,

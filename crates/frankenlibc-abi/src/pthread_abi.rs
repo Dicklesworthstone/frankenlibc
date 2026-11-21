@@ -2437,6 +2437,10 @@ unsafe fn native_pthread_create(
         return error;
     }
 
+    // Resolve and retain process-lifetime TLS destructor owners while a host
+    // creator can safely enter the host loader, before any native worker runs.
+    crate::dlfcn_abi::prepare_native_public_tls_destructors();
+
     // These threads share this thread's TCB self pointer; stop keying allocator
     // slots by it before the clone.
     crate::malloc_abi::note_native_thread_backend();
