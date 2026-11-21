@@ -6,6 +6,9 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-abi/src/dlfcn_abi.rs'
+      - 'crates/frankenlibc-abi/src/pwd_abi.rs'
+      - 'crates/frankenlibc-abi/src/grp_abi.rs'
+      - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
       - 'crates/frankenlibc-abi/src/owned_unwind_abi.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
@@ -331,6 +334,29 @@ jobs:
               --library "$PWD/target/release/libfrankenlibc_abi.so" \
               --out-dir "$root/native-waits"
           fi
+      - name: Preserve native identity records and pending enumeration
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/runtime-startup/identity
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          failed=0
+          for mode in strict hardened; do
+            log="artifacts/runtime-startup/identity/$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${args[@]}" \
+                --test pwd_abi_test identity_native_tls_preserves_records_and_pending_enumeration \
+                -- --exact --nocapture --test-threads=1 2>&1 | tee "$log"; then
+              failed=1
+            fi
+            if ! grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$log"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

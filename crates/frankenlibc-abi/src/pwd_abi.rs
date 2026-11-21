@@ -679,12 +679,33 @@ impl PwdStorage {
     }
 }
 
+// Files buffers already have native ownership. The NSS cursor must belong
+// to the same lifecycle, rather than the creator's inherited compiler TLS.
+static PW_ENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Cell<EntCursor>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| Cell::new(EntCursor::default()));
+
 thread_local! {
     /// Multi-source `getpwent` position, and an entry `getpwent_r` could not
     /// fit into the caller's buffer (returned again on the next call).
+    #[cfg(not(feature = "owned-tls-cache"))]
     static PW_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
     static PW_PENDING: crate::util::TlsHeapCell<RefCell<Option<frankenlibc_core::pwd::Passwd>>> =
         const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_pw_cursor<R>(f: impl FnOnce(&Cell<EntCursor>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PW_ENT_OWNED_TLS.with(|cursor| f(cursor))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return PW_ENT_OWNED_TLS.with(|cursor| f(cursor));
+        }
+        PW_ENT.with(f)
+    }
 }
 
 #[inline]
@@ -699,10 +720,10 @@ fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
         return Ok(entry);
     }
     loop {
-        let mut cursor = PW_ENT.with(Cell::get);
+        let mut cursor = with_pw_cursor(Cell::get);
         let (step, service) =
             nss_module::ent_step(EntDb::Passwd, &mut cursor, nss_module::getpwent);
-        PW_ENT.with(|c| c.set(cursor));
+        with_pw_cursor(|c| c.set(cursor));
         let answer = match step {
             EntStep::Done => return Err(None),
             EntStep::Files { restart } => with_pwd_storage(|s| s.next_files_entry(restart)),
@@ -718,9 +739,9 @@ fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
         let Some(service) = service else {
             return Err(None);
         };
-        let mut cursor = PW_ENT.with(Cell::get);
+        let mut cursor = with_pw_cursor(Cell::get);
         let advanced = nss_module::ent_advance(&mut cursor, &service, status);
-        PW_ENT.with(|c| c.set(cursor));
+        with_pw_cursor(|c| c.set(cursor));
         if !advanced {
             return Err(err);
         }
@@ -728,7 +749,7 @@ fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
 }
 
 fn reset_passwd_enumeration() {
-    PW_ENT.with(|c| c.set(EntCursor::default()));
+    with_pw_cursor(|c| c.set(EntCursor::default()));
     with_pw_pending(|p| *p.borrow_mut() = None);
 }
 
@@ -1637,13 +1658,32 @@ impl ShadowTlsStorage {
     }
 }
 
+static SP_ENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Cell<EntCursor>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| Cell::new(EntCursor::default()));
+
 thread_local! {
     /// `getspent` position across the configured shadow sources, and an entry
     /// `getspent_r` could not fit into the caller's buffer.
+    #[cfg(not(feature = "owned-tls-cache"))]
     static SP_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
     static SP_PENDING: crate::util::TlsHeapCell<
         RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>,
     > = const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_sp_cursor<R>(f: impl FnOnce(&Cell<EntCursor>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SP_ENT_OWNED_TLS.with(|cursor| f(cursor))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return SP_ENT_OWNED_TLS.with(|cursor| f(cursor));
+        }
+        SP_ENT.with(f)
+    }
 }
 
 #[inline]
@@ -1661,10 +1701,10 @@ fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Opt
         return Ok(entry);
     }
     loop {
-        let mut cursor = SP_ENT.with(Cell::get);
+        let mut cursor = with_sp_cursor(Cell::get);
         let (step, service) =
             nss_module::ent_step(EntDb::Shadow, &mut cursor, nss_module::getspent);
-        SP_ENT.with(|c| c.set(cursor));
+        with_sp_cursor(|c| c.set(cursor));
         let answer = match step {
             EntStep::Done => return Err(None),
             EntStep::Files { restart } => {
@@ -1682,9 +1722,9 @@ fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Opt
         let Some(service) = service else {
             return Err(None);
         };
-        let mut cursor = SP_ENT.with(Cell::get);
+        let mut cursor = with_sp_cursor(Cell::get);
         let advanced = nss_module::ent_advance(&mut cursor, &service, status);
-        SP_ENT.with(|c| c.set(cursor));
+        with_sp_cursor(|c| c.set(cursor));
         if !advanced {
             return Err(err);
         }
@@ -1692,7 +1732,7 @@ fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Opt
 }
 
 fn reset_shadow_enumeration() {
-    SP_ENT.with(|c| c.set(EntCursor::default()));
+    with_sp_cursor(|c| c.set(EntCursor::default()));
     with_sp_pending(|p| *p.borrow_mut() = None);
 }
 
