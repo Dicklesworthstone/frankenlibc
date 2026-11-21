@@ -42367,3 +42367,28 @@ establish the original throughput targets or integrated L1 readiness.
 
 
 
+
+## 2026-11-21 — `bd-2g7oyh`: Five Certified `FL_FASTER` Flips (`mtx_trylock`, `tanhf`, `sem_post`, `coshf`, `sinhf`) + `thrd_current` Fast-TLS Reduction
+
+- **LEVERS (`e366fa4fe`, `d14f6d552`, `74313b197`, `58e042060`, `f8dc73592`, `f04f23f13`).**
+  1. **`mtx_trylock` / `pthread_mutex_trylock` (`e366fa4fe`):** Added TTAS relaxed busy pre-check before CAS in `futex_trylock_normal` + `#[inline(always)] pthread_mutex_trylock_fast_inline` checking null/align/`MANAGED_MUTEX_MAGIC`/`PTHREAD_MUTEX_NORMAL_TYPE` once with `#[cold] pthread_mutex_trylock_slow`.
+  2. **`sem_post` + `sem_trywait` + `set_abi_errno` (`d14f6d552`, `f04f23f13`):** Outlined `set_abi_errno`/`set_abi_errno_local` as `#[cold] #[inline(never)]` (shrinking `libfrankenlibc_abi.so` by `~660 KiB` across 2,128 call sites) and gave `semaphore_wait::{post_inline, trywait}` `#[cold] #[inline(never)] extern "C"` tail-call helpers (`set_errno_fail`, `wake_one_slow`) with `std::hint::black_box` returns so LLVM IPCP preserves sibling `jmp` tail-calls and emits zero-frame 10–14 instruction leaf fast paths.
+  3. **`sinhf`, `coshf`, `tanhf`, and `math_abi` frameless entry (`d14f6d552`, `58e042060`, `f8dc73592`):** Replaced indirect `avx2_fma_dispatch!` with `#[inline(always)]` signed baseline SSE2 `f64`-intermediate `POWF_EXP2_TAB` Estrin kernels (`0 / 2^32` mismatches vs glibc 2.43 across all 4 IEEE-754 rounding modes `RN`/`RU`/`RD`/`RZ` and `FE_*` flags), split call-free `math_membrane_fastpath_inline()` from `runtime_math_disabled()`, baked `0.5` into `sinhf`/`coshf` coefficients, eliminated `.abs()`/`.copysign()` and `ax < 0x42b2_d4fc` overflow rechecks via `extern "C"` sibling tail-calls (`{sinhf,coshf}_overflow_or_special_abi`), and switched `tanhf` (`|x| < 9.5`) to exact single-step `TANHF_LN2_32` range reduction.
+  4. **`pthread_self` / `thrd_current` (`74313b197`):** Replaced compiler `thread_local! PTHREAD_SELF_FAST` with POD `#[thread_local] PTHREAD_SELF_FAST_RAW` outside `owned-tls-cache`/`standalone`, outlined `extern "C" fn native_pthread_self_slow`, and fixed fork-child cache invalidation in `reset_threading_policy_in_fork_child()`.
+- **OBJECTS.**
+  - `fl` (`f04f23f13`): `/data/tmp/cargo-target/release/libfrankenlibc_abi.so`, bytes `17,729,184`, SHA-256 `af17db5a40e093bee30cf740f7165b13f2c0bd38310ed731e6ebed03792f5e2c` (`sem_post`, `sinhf_coshf`, `tanhf`); `645a6887ce2e6f1bf18e14ac0365fed47491aafffc530f68784cf0012c0a44d1` (`mtx_trylock`, `thrd_current`, identical `mtx_trylock`/`thrd_current` codegen).
+  - `incumbent`: live host glibc 2.43 `/usr/lib/x86_64-linux-gnu/libc.so.6` (`9941dc28...`) and `/usr/lib/x86_64-linux-gnu/libm.so.6` (`37b9e6c9...`).
+  - `bench`: `/data/tmp/cargo-target/release/examples/incumbent_coverage_ab` (`c7be99da...`), `--pin-quietest 1`, `HostWideBenchmarkGuard` `verdict=clear` pre+post, `samples=36`, `reps_per_arm=1_000_000` (`4_000_000` for `thrd_current`).
+- **SAME-INVOCATION CERTIFIED RESULTS (`hetzner2`, `nulls_hold=true`, `clears_2x_null=true`, `DECIDABLE`):**
+
+  | Family / Case | `fl_median_ns` | `glibc_median_ns` | `fl/glibc` median (`CI95`) | `null_fl_fl` / `null_gl_gl` | Verdict |
+  |---|---:|---:|---|---|---|
+  | `mtx_trylock` (`already_owned_busy`, `645a6887`) | `2.830` | `3.888` | **`0.767325`** (`[0.753131, 0.777357]`) | `1.000202` / `0.999662` | **`FL_FASTER`, `DECIDABLE`** |
+  | `tanhf` (`tanhf_mid_sweep`, `worst_ulp=0`, `af17db5a`) | `5.068` | `5.568` | **`0.897615`** (`[0.894502, 0.901725]`) | `0.998121` / `0.996776` | **`FL_FASTER`, `DECIDABLE`** |
+  | `sem_post` (`uncontended_cycle`, `af17db5a`) | `5.161` | `5.441` | **`0.950585`** (`[0.946774, 0.952008]`) | `1.000684` / `1.000994` | **`FL_FASTER`, `DECIDABLE`** |
+  | `coshf` (`coshf_mid_sweep`, `worst_ulp=0`, `af17db5a`) | `5.395` | `5.653` | **`0.958186`** (`[0.948154, 0.973843]`) | `1.000603` / `0.998076` | **`FL_FASTER`, `DECIDABLE`** |
+  | `sinhf` (`sinhf_mid_sweep`, `worst_ulp=0`, `af17db5a`) | `5.340` | `5.490` | **`0.973000`** (`[0.968572, 0.976388]`) | `0.996975` / `0.998343` | **`FL_FASTER`, `DECIDABLE`** |
+  | `thrd_current` (`current_identity`, `645a6887`) | `3.868` | `2.210` | `1.749588` (`[1.748523, 1.751325]`) | `1.000047` / `0.998812` | `FL_SLOWER`, `DECIDABLE` (`-23.2%` vs `2.278x`) |
+
+- **GATES GREEN.** `check_baseline_isa.sh` on `af17db5a...`: `functions_with_extensions=61 unlisted=0`, `non_math_abi_math_calls=0`, `Nehalem 28/28`, `qemu64 28/28`; `incumbent_coverage_ab` conformance `pass` on all 6 families (`worst_sinhf_ulp=0`, `worst_coshf_ulp=0`, `worst_tanhf_ulp=0`, `special_values_bit_exact=true`).
+- **DISPOSITION.** KEEP. Five `bd-2g7oyh` families flipped from certified `FL_SLOWER` losses to certified `FL_FASTER` wins against live host glibc 2.43; `thrd_current` improved by 23.2% and remains honestly tracked as `FL_SLOWER`.

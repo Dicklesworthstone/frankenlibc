@@ -58,7 +58,7 @@
       ],
       "module": "frankenlibc-abi::pthread_abi",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 11960,
+      "source_line": 12598,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __pthread_register_cancel(",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -114,7 +114,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 11801,
+      "source_line": 12021,
       "line_marker": "_nss_files_endXX NSS plugin",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -140,7 +140,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 1829,
+      "source_line": 1844,
       "line_marker": "__nss_configure_lookup: process-local source selection",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -171,7 +171,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4088,
+      "source_line": 4103,
       "line_marker": "native file overflow bridge",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "limited_bootstrap",
@@ -198,7 +198,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5968,
+      "source_line": 6014,
       "line_marker": "bdflush: deprecated Linux syscall",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "unsupported_platform_contract",
@@ -225,7 +225,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 24173,
+      "source_line": 24411,
       "line_marker": "Malloc debug stubs",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -252,7 +252,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 28568,
+      "source_line": 28814,
       "line_marker": "pub unsafe extern \"C\" fn argp_help(",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -306,7 +306,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5268,
+      "source_line": 5283,
       "line_marker": "pub unsafe extern \"C\" fn __fentry__()",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -336,7 +336,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 9794,
+      "source_line": 9816,
       "line_marker": "__gconv_open",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -365,7 +365,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 10552,
+      "source_line": 10772,
       "line_marker": "NIS / Yellow Pages is dead infrastructure",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -391,7 +391,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 11735,
+      "source_line": 11955,
       "line_marker": "Without a real NIS backend",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -416,7 +416,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 32505,
+      "source_line": 32790,
       "line_marker": "/// GNU asynchronous name/service resolution using the native resolver.",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -472,7 +472,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 20700,
+      "source_line": 20938,
       "line_marker": "__cxa_pure_virtual",
       "support_matrix_status": "Implemented",
       "semantic_class": "abort_only",
@@ -496,7 +496,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 7432,
+      "source_line": 7464,
       "line_marker": "// rcmd/rcmd_af: rsh remote command",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "deterministic_fallback",
@@ -518,7 +518,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4147,
+      "source_line": 4162,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __printf_fp(",
       "support_matrix_status": "Implemented",
       "semantic_class": "limited_bootstrap",
@@ -621,25 +621,25 @@
         }
       }
     },
-    "source_tree_sha256": "c906b8970c7e742cc12a29a1c165cc9f1040dd3bde50bd68328299014bf16dd9",
-    "version_script_sha256": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
-    "support_rows_sha256": "ec131fcc9de84b8c0a62111d186aeb248bf45da38ea0935a92779a8cd9e9e53d",
-    "contract_rows_sha256": "317cf3d303332caf12c5e4631a560da4939496ef2ce061c8dc77f3881cfa7d5c",
+    "source_tree_sha256": "2fa7d565eab53079037e43a5523b7a8ba03fd9de658cda906ac34dcf589458c1",
+    "version_script_sha256": "4c8e751ac3df1773f551056609e1f189dbf0b2d86da6fba534f0808bf84bb410",
+    "support_rows_sha256": "3f0052f319f51398554fdd22ca7249a2909d64aaa165e6ee9ecbcd5e36920908",
+    "contract_rows_sha256": "defc3e14a042307dcdaefb504c4e4650682216fa36eafaf2e3eeea5443002f20",
     "summary": {
-      "declared_symbol_count": 4731,
-      "raw_source_symbol_count": 4726,
+      "declared_symbol_count": 4736,
+      "raw_source_symbol_count": 4731,
       "profile_source_symbol_counts": {
-        "interpose-release-linux-x86_64": 4702,
-        "standalone-release-linux-x86_64": 4705
+        "interpose-release-linux-x86_64": 4706,
+        "standalone-release-linux-x86_64": 4710
       },
       "profile_function_symbol_counts": {
-        "interpose-release-linux-x86_64": 4605,
-        "standalone-release-linux-x86_64": 4606
+        "interpose-release-linux-x86_64": 4610,
+        "standalone-release-linux-x86_64": 4611
       },
       "version_script_symbol_count": 4237,
       "support_symbol_count": 4119,
-      "group_count": 151,
-      "unknown_semantics_count": 4731,
+      "group_count": 152,
+      "unknown_semantics_count": 4736,
       "full_semantics_count": 0,
       "unqualified_configuration_count": 26
     },
@@ -5855,6 +5855,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "__pthread_setspecific",
           "pthread_cancel",
           "pthread_clockjoin_np",
           "pthread_cond_clockwait",
@@ -5877,6 +5878,7 @@
           "pthread_rwlock_wrlock",
           "pthread_setcancelstate",
           "pthread_setcanceltype",
+          "pthread_setspecific",
           "pthread_testcancel",
           "pthread_timedjoin_np",
           "pthread_tryjoin_np"
@@ -7206,7 +7208,6 @@
           "argp_program_version",
           "argp_program_version_hook",
           "daylight",
-          "errno",
           "error_one_per_line",
           "error_print_progname",
           "getdate_err",
@@ -8128,7 +8129,6 @@
           "__pthread_rwlock_trywrlock",
           "__pthread_rwlock_unlock",
           "__pthread_rwlock_wrlock",
-          "__pthread_setspecific",
           "pthread_atfork",
           "pthread_attr_destroy",
           "pthread_attr_getaffinity_np",
@@ -8211,7 +8211,6 @@
           "pthread_setattr_default_np",
           "pthread_setconcurrency",
           "pthread_setname_np",
-          "pthread_setspecific",
           "pthread_sigqueue",
           "pthread_spin_destroy",
           "pthread_spin_init",
@@ -8391,6 +8390,36 @@
         "backend_review": "unreviewed",
         "symbols": [
           "psignal"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
+        "id": "unknown-d7ffcbf306bdcaec",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "owned_unwind_abi"
+        ],
+        "version_nodes": [],
+        "support_status": "not_listed",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "__frankenlibc_owned_backtrace_from_cursor",
+          "__frankenlibc_owned_forced_from_cursor",
+          "__frankenlibc_owned_raise_from_cursor",
+          "__frankenlibc_owned_resume_from_cursor",
+          "__frankenlibc_owned_rethrow_from_cursor"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -8821,7 +8850,8 @@
         "backend_review": "unreviewed",
         "symbols": [
           "_environ",
-          "environ"
+          "environ",
+          "errno"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },

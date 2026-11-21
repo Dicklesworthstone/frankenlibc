@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-11-18T23:15:02Z",
-  "source_commit": "4d0f827bb167af864b9f41fde4a2fdd9e8d40ab7",
+  "generated_at_utc": "2026-11-21T23:05:00Z",
+  "source_commit": "7adb1023333cd3b824a8d2bd6418ca0c1753c147",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
@@ -10647,10 +10647,10 @@
     },
     {
       "symbol": "pthread_setspecific",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Thread-specific data storage.",
+      "strict_semantics": "Thread-specific data storage (registers host teardown bridge on hosted interpose threads).",
       "hardened_semantics": "Same.",
       "default_stub": "Returns EINVAL"
     },
@@ -18312,7 +18312,7 @@
     },
     {
       "symbol": "__pthread_setspecific",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
@@ -33231,22 +33231,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2545,
+    "implemented": 2543,
     "raw_syscall": 408,
-    "wraps_host_libc": 1166,
+    "wraps_host_libc": 1168,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2545,
+  "implemented": 2543,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2545,
+    "implemented": 2543,
     "raw_syscall": 408,
-    "wraps_host_libc": 1166,
+    "wraps_host_libc": 1168,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "wraps_host_libc": 1166
+  "wraps_host_libc": 1168
 }

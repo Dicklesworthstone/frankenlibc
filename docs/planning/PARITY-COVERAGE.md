@@ -1,10 +1,10 @@
 # FrankenLibC Parity Coverage Report
 
-**Reconciled:** 2026-11-17. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
+**Reconciled:** 2026-11-21. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
 
 ## Current Scope
 
-The declared replacement level is **L1 hardened interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,545 `Implemented`, 408 `RawSyscall`, 1,166 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,953 native/direct-syscall classifications (71.7%) measure ownership, not complete semantics or a standalone process.
+The declared replacement level is **L1 hardened interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,543 `Implemented`, 408 `RawSyscall`, 1,168 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,951 native/direct-syscall classifications (71.6%) measure ownership, not complete semantics or a standalone process.
 
 The committed support-maintenance report validates 4,119/4,119 classifications (0 status-invalid rows) while conservatively retaining unproven native wrapper rows under `WrapsHostLibc` until fixture/promotion-proof evidence is attached. Fixture linkage covers 1,205/4,119 rows (29.3%); linkage is not an executed pass rate. The 36-entry semantic overlay (`tests/conformance/support_semantic_overlay.v1.json`) is representative, not exhaustive.
 
@@ -46,15 +46,15 @@ The full POSIX/GNU objective remains. Historical exclusions must not silently re
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| Implemented | 2545 | Classified native Rust behavior |
+| Implemented | 2543 | Classified native Rust behavior |
 | RawSyscall | 408 | Classified direct syscall path |
-| WrapsHostLibc | 1166 | Explicit host-backed subset |
+| WrapsHostLibc | 1168 | Explicit host-backed subset |
 | GlibcCallThrough | 0 | Opaque call-through subset |
 | Stub | 0 | Explicit unsupported contracts |
 
-**Native-classified:** 2,953 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
+**Native-classified:** 2,951 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
 
-**Host-backed:** 1,166 symbols (`WrapsHostLibc`). Conservative promotion-evidence boundaries are described above.
+**Host-backed:** 1,168 symbols (`WrapsHostLibc`). Conservative promotion-evidence boundaries are described above.
 
 ## Behavioral Parity Verification
 
