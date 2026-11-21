@@ -6443,7 +6443,12 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
         // instead of a per-call direct fd read. Large requests (>= capacity) keep the direct
         // read below (buffering would just add a copy).
         let cap = s.buffer_capacity();
-        if cap > 0 && (total - read_total) < cap && !s.is_eof() {
+        if cap > 0 && (total - read_total) < cap {
+            // EOF is sticky for underflow even if the file has grown. GNU's
+            // direct descriptor reads below deliberately bypass that check.
+            if s.is_eof() {
+                break;
+            }
             let rc = unsafe { refill_stream(s, caller) };
             if rc > 0 {
                 continue;
