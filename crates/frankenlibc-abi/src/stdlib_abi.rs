@@ -1235,13 +1235,10 @@ pub(crate) fn with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> R
 
 /// Non-blocking variant of [`with_environ_locked`] for diagnostic readers
 /// (such as `runtime_policy::parse_mode_from_environ`) that must not deadlock
-/// if another thread holds `ENVIRON_LOCK` while mutating `environ`.
+/// if another thread (or an interrupted outer `setenv`/`unsetenv` on the same
+/// thread) holds `ENVIRON_LOCK` while mutating `environ`.
 pub(crate) fn try_with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> Option<R> {
-    let _lock = if crate::glibc_internal_abi::is_process_single_threaded() {
-        None
-    } else {
-        Some(ENVIRON_LOCK.try_lock()?)
-    };
+    let _lock = ENVIRON_LOCK.try_lock()?;
     let envp = unsafe { HOST_ENVIRON };
     Some(f(envp))
 }

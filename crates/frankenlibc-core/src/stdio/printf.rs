@@ -3080,8 +3080,15 @@ static NATIVE_RENDER_FAILURE_TIDS: [core::sync::atomic::AtomicI32; NATIVE_PRINTF
     [const { core::sync::atomic::AtomicI32::new(0) }; NATIVE_PRINTF_SLOTS];
 static NATIVE_RENDER_FAILURE_ERRNOS: [core::sync::atomic::AtomicI32; NATIVE_PRINTF_SLOTS] =
     [const { core::sync::atomic::AtomicI32::new(0) }; NATIVE_PRINTF_SLOTS];
-static NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO: core::sync::atomic::AtomicI32 =
-    core::sync::atomic::AtomicI32::new(0);
+/// Packed `((tid as u32 as u64) << 32) | (errno as u32 as u64)` overflow fallback
+/// so a thread hitting table saturation or mid-claim signal reentry never loses
+/// its error and sibling threads never steal it or issue an unconditional RMW.
+static NATIVE_RENDER_FAILURE_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+const fn pack_render_failure_overflow(tid: i32, errno: i32) -> u64 {
+    (((tid as u32) as u64) << 32) | ((errno as u32) as u64)
+}
 
 /// Fail this thread's current printf call with `errno`.
 #[cold]
@@ -3100,7 +3107,8 @@ pub fn note_render_failure(errno: i32) {
                     let mut cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
                     while is_printf_slot_claiming(cur) {
                         if cur == self_claiming {
-                            NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.store(errno, Ordering::Release);
+                            NATIVE_RENDER_FAILURE_OVERFLOW
+                                .store(pack_render_failure_overflow(tid, errno), Ordering::Release);
                             return;
                         }
                         core::hint::spin_loop();
@@ -3150,8 +3158,9 @@ pub fn note_render_failure(errno: i32) {
                 }
                 break;
             }
+            NATIVE_RENDER_FAILURE_OVERFLOW
+                .store(pack_render_failure_overflow(tid, errno), Ordering::Release);
         }
-        NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.store(errno, Ordering::Release);
         return;
     }
     RENDER_FAILURE.with(|failure| failure.set(errno));
@@ -3241,7 +3250,7 @@ pub fn rekey_native_printf_tables_after_fork(parent_tid: i32, child_tid: i32) {
         }
     }
     if ANY_RENDER_FAILURE.load(Ordering::Acquire) {
-        NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.store(0, Ordering::Release);
+        NATIVE_RENDER_FAILURE_OVERFLOW.store(0, Ordering::Release);
         for idx in 0..NATIVE_PRINTF_SLOTS {
             if NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Relaxed) != 0 {
                 NATIVE_RENDER_FAILURE_ERRNOS[idx].store(0, Ordering::Release);
@@ -3288,8 +3297,17 @@ pub fn take_render_failure() -> i32 {
                     break;
                 }
             }
+            let packed = NATIVE_RENDER_FAILURE_OVERFLOW.load(Ordering::Acquire);
+            if packed != 0
+                && (packed >> 32) as i32 == tid
+                && NATIVE_RENDER_FAILURE_OVERFLOW
+                    .compare_exchange(packed, 0, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                return (packed as u32) as i32;
+            }
         }
-        return NATIVE_RENDER_FAILURE_OVERFLOW_ERRNO.swap(0, Ordering::AcqRel);
+        return 0;
     }
     RENDER_FAILURE.with(|failure| failure.replace(0))
 }

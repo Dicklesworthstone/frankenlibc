@@ -356,6 +356,7 @@ int main(int argc, char **argv) {
         .arg("--deepbind")
         .arg(&lib)
         .env_remove("LD_PRELOAD")
+        .env_remove("FRANKENLIBC_MODE")
         .env("GLIBC_TUNABLES", "glibc.rtld.optional_static_tls=16384")
         .output()
         .expect("deepbind probe_fmemopen_fread");

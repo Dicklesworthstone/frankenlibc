@@ -21073,17 +21073,11 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
         return template;
     }
 
-    // Count trailing 'X' characters (BSD/glibc requires at least 6).
+    // Per POSIX/glibc `mktemp(3)`, the last 6 characters must be `"XXXXXX"`,
+    // and only those trailing 6 characters are replaced (zero heap allocation).
     let tmpl = unsafe { std::slice::from_raw_parts_mut(template as *mut u8, len) };
-    let mut x_count = 0usize;
-    for b in tmpl.iter().rev() {
-        if *b == b'X' {
-            x_count += 1;
-        } else {
-            break;
-        }
-    }
-    if x_count < 6 {
+    let start = len - 6;
+    if &tmpl[start..] != b"XXXXXX" {
         unsafe {
             *template = 0;
             set_abi_errno(errno::EINVAL);
@@ -21092,14 +21086,13 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
     }
 
     const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let start = len - x_count;
-    let mut rand_buf = vec![0u8; x_count];
+    let mut rand_buf = [0u8; 6];
     let mut st = core::mem::MaybeUninit::<libc::stat>::zeroed();
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
 
     for _attempt in 0..100 {
         let mut filled = 0usize;
-        while filled < x_count {
+        while filled < rand_buf.len() {
             match frankenlibc_core::syscall::sys_getrandom_slice(&mut rand_buf[filled..], 0) {
                 Ok(0) => break,
                 Ok(n) => filled += n,
@@ -21113,7 +21106,7 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
                 }
             }
         }
-        if filled < x_count {
+        if filled < rand_buf.len() {
             unsafe {
                 *template = 0;
                 set_abi_errno(errno::EIO);
