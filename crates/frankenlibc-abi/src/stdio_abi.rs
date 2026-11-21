@@ -3131,13 +3131,12 @@ fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGu
             && let Ok(reg) = registry().try_lock()
         {
             if !reg
-                .streams
-                .get(&id)
-                .is_some_and(|live| Arc::ptr_eq(live, cell))
+                .get_stream_ref(id)
+                .is_some_and(|live| Arc::ptr_eq(&live, cell))
             {
                 return None;
             }
-            let handle = resolve_flags_word(cell.flags_word);
+            let handle = resolve_flags_word(cell.flags_word.load(Ordering::Acquire));
             let file_lock = if handle == 0 {
                 // Legacy cells have no public FILE object to retire.
                 Some(StdioLockGuard(std::ptr::null_mut()))

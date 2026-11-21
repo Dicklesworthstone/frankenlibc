@@ -5,16 +5,6 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
-// Controller math must not resolve through the C ABI that this library
-// interposes: std's f64 transcendentals can call math_abi and change errno.
-// These are the same pure-Rust algorithms used by frankenlibc-core, with no
-// libc calls or errno writes. RuntimeMathKernel's floating-environment guard
-// separately preserves the caller's rounding mode and sticky exception flags.
-pub(crate) use libm::{
-    acos as acos_f64, exp as exp_f64, log as ln_f64, log1p as ln_1p_f64, log2 as log2_f64,
-    pow as pow_f64,
-};
-
 /// Deterministic, integer-fast hasher for the crate's internal maps.
 ///
 /// Was `#[cfg(feature = "owned-tls-cache")]`, so the DEPLOYED build (which does not enable
@@ -1332,7 +1322,7 @@ pub fn powf_f64(base: f64, exp: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LazyBox, acos_f64, ceil_f64, exp_f64, floor_f64, ln_1p_f64, ln_f64, log2_f64, pow_f64,
+        LazyBox, acos_f64, ceil_f64, exp_f64, floor_f64, ln_1p_f64, ln_f64, log2_f64, powf_f64,
         round_f64, trunc_f64,
     };
     use std::sync::Arc;
@@ -1416,7 +1406,7 @@ mod tests {
             assert_math_close(ln_1p_f64(signed), signed.ln_1p(), "ln_1p", signed);
             assert_math_close(acos_f64(signed), signed.acos(), "acos", signed);
             let base = 0.01 + 100.0 * fraction;
-            assert_math_close(pow_f64(base, 4.0 / 3.0), base.powf(4.0 / 3.0), "pow", base);
+            assert_math_close(powf_f64(base, 4.0 / 3.0), base.powf(4.0 / 3.0), "pow", base);
         }
     }
 
@@ -1451,7 +1441,7 @@ mod tests {
                 assert_eq!(unsafe { errno.read() }, sentinel);
             }
             unsafe { errno.write(sentinel) };
-            std::hint::black_box(pow_f64(std::hint::black_box(-1.0), 0.5));
+            std::hint::black_box(powf_f64(std::hint::black_box(-1.0), 0.5));
             assert_eq!(unsafe { errno.read() }, sentinel);
         }
     }

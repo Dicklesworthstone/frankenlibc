@@ -1606,8 +1606,7 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
     /// cannot allocate later can prepare on their creating thread first.
     #[must_use]
     pub fn prepare_storage(&self) -> bool {
-        self.ring.prepared_slots().is_some()
-            && self.decision_cards.prepared_slots().is_some()
+        self.ring.prepared_slots().is_some() && self.decision_cards.prepared_slots().is_some()
     }
 
     /// Whether publication can use its already allocated bounded buffers.
@@ -2315,31 +2314,6 @@ fn decision_reasoning_flags(
 }
 
 #[inline]
-fn stack_thread_id_u64() -> u64 {
-    let stack_probe = 0u8;
-    let stack_addr = &stack_probe as *const u8 as usize as u64;
-    u64::from(std::process::id()).rotate_left(32) ^ stack_addr.rotate_right(4)
-}
-
-#[cfg(feature = "owned-tls-cache")]
-fn current_thread_id_u64() -> u64 {
-    stack_thread_id_u64()
-}
-
-#[inline]
-#[cfg(not(feature = "owned-tls-cache"))]
-fn current_thread_id_u64() -> u64 {
-    if crate::tls_cache::compiler_tls_disabled() {
-        return stack_thread_id_u64();
-    }
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::thread::current().id().hash(&mut hasher);
-    hasher.finish()
-}
-
-#[inline]
 fn monotonic_elapsed_ns(start: Instant) -> u64 {
     let nanos = start.elapsed().as_nanos();
     u64::try_from(nanos).unwrap_or(u64::MAX)
@@ -2741,7 +2715,8 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
         })
     }
 
-    /// Publish a card, or return false if initial storage is unavailable.
+    /// Publish a card, or return false if initial storage is unavailable or
+    /// the slot already contains a card with the same or a newer decision ID.
     /// A later publication retries initialization after memory pressure eases.
     pub fn publish(&self, decision_id: u64, card: DecisionCardV1) -> bool {
         let Some(slots) = self.prepared_slots() else {
@@ -2752,7 +2727,7 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
         debug_assert_eq!(card.decision_id, decision_id);
         let mut guard = slot.card.lock();
         if slot.published_decision_id.load(Ordering::Relaxed) >= decision_id {
-            return;
+            return false;
         }
         *guard = card;
         slot.published_decision_id
@@ -2861,7 +2836,8 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
     }
 
     /// Publish a record for a previously allocated seqno, or return false if
-    /// initial storage is unavailable. A later publication retries allocation.
+    /// initial storage is unavailable or this slot has a same/newer sequence.
+    /// A later publication retries allocation.
     pub fn publish(&self, seqno: u64, record: EvidenceSymbolRecord) -> bool {
         let Some(slots) = self.prepared_slots() else {
             return false;
@@ -2873,7 +2849,7 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
         // wrap-around writers never pair a newer seqno with an older payload.
         let mut guard = slot.record.lock();
         if slot.published_seqno.load(Ordering::Relaxed) >= seqno {
-            return;
+            return false;
         }
         *guard = record;
         slot.published_seqno.store(seqno, Ordering::Release);
@@ -3269,6 +3245,63 @@ mod tests {
         assert!(snap.len() <= CAP);
         // The latest seqno should be 10 (since we wrote 10 records).
         assert_eq!(snap.last().unwrap().seqno(), 10);
+    }
+
+    #[test]
+    fn evidence_ring_rejects_stale_and_duplicate_publications() {
+        let ring: EvidenceRingBuffer<2> = EvidenceRingBuffer::new();
+        let record = |seqno, byte| {
+            EvidenceSymbolRecord::build_v1(
+                1,
+                seqno,
+                2,
+                ApiFamily::Allocator,
+                SafetyLevel::Hardened,
+                MembraneAction::Allow,
+                ValidationProfile::Fast,
+                FLAG_SYSTEMATIC,
+                0,
+                256,
+                0,
+                0,
+                &[byte; EVIDENCE_SYMBOL_SIZE_T],
+                None,
+            )
+        };
+        let newest = record(3, 0x33);
+        assert!(ring.publish(3, newest));
+        // Both sequence numbers address slot 1. A delayed writer must report
+        // its lost publication without replacing the already newer payload.
+        assert!(!ring.publish(1, record(1, 0x11)));
+        assert!(!ring.publish(3, record(3, 0xff)));
+        assert_eq!(ring.snapshot_sorted(), vec![newest]);
+    }
+
+    #[test]
+    fn decision_card_ring_rejects_stale_and_duplicate_publications() {
+        let ring: DecisionCardRingBuffer<2> = DecisionCardRingBuffer::new();
+        let newest = DecisionCardV1 {
+            decision_id: 3,
+            symbol_id: 33,
+            ..DecisionCardV1::zeroed()
+        };
+        assert!(ring.publish(3, newest));
+        assert!(!ring.publish(
+            1,
+            DecisionCardV1 {
+                decision_id: 1,
+                symbol_id: 11,
+                ..newest
+            },
+        ));
+        assert!(!ring.publish(
+            3,
+            DecisionCardV1 {
+                symbol_id: 99,
+                ..newest
+            },
+        ));
+        assert_eq!(ring.snapshot_sorted(), vec![newest]);
     }
 
     #[test]
