@@ -376,6 +376,7 @@ mod tests {
         CACHE.with(|v| assert_eq!(*v, 99));
     }
 
+    #[test]
     fn callbacks_on_different_threads_can_run_at_the_same_time() {
         let _cleanup = ThreadTlsCleanup;
         static CACHE: OwnedTlsCache<usize> = OwnedTlsCache::new(|| 1);
