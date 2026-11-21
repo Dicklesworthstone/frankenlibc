@@ -467,12 +467,13 @@ struct FrameRegistration {
 static FRAME_REGISTRY: Mutex<[FrameRegistration; FRAME_REGISTRY_SLOTS]> =
     Mutex::new([FrameRegistration { fde: 0, object: 0 }; FRAME_REGISTRY_SLOTS]);
 
+// Keep the public Itanium ABI behind its opt-in feature. In the default
+// interpose build, resident libgcc owns opaque contexts and exception state;
+// mixing its forced-unwind entry with an owned Resume skips cleanup or aborts.
+// Private capture helpers remain available for native backtrace support.
+
 #[cfg(not(target_arch = "x86_64"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_Backtrace(
     trace: UnwindTraceFn,
     trace_argument: *mut c_void,
@@ -794,11 +795,7 @@ fn owned_backtrace_from_frame_pointer(
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_DeleteException(exception: *mut UnwindException) {
     if exception.is_null() {
         return;
@@ -826,11 +823,7 @@ pub(crate) unsafe fn owned_get_cfa_raw(ctx: *mut c_void) -> UnwindWord {
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetDataRelBase(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
         return 0;
@@ -841,11 +834,7 @@ pub unsafe extern "C" fn _Unwind_GetDataRelBase(ctx: *mut UnwindContext) -> Unwi
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetGR(ctx: *mut UnwindContext, index: c_int) -> UnwindWord {
     let Ok(index) = usize::try_from(index) else {
         return 0;
@@ -858,11 +847,7 @@ pub unsafe extern "C" fn _Unwind_GetGR(ctx: *mut UnwindContext, index: c_int) ->
     unsafe { (*ctx).general_registers[index] }
 }
 
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetCFA(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
         return 0;
@@ -873,7 +858,7 @@ pub unsafe extern "C" fn _Unwind_GetCFA(ctx: *mut UnwindContext) -> UnwindWord {
     unsafe { (*ctx).stack_pointer }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetIP(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
         return 0;
@@ -884,11 +869,7 @@ pub unsafe extern "C" fn _Unwind_GetIP(ctx: *mut UnwindContext) -> UnwindWord {
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetIPInfo(
     ctx: *mut UnwindContext,
     ip_before_insn: *mut c_int,
@@ -910,11 +891,7 @@ pub unsafe extern "C" fn _Unwind_GetIPInfo(
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetLanguageSpecificData(ctx: *mut UnwindContext) -> *mut c_void {
     if ctx.is_null() {
         return std::ptr::null_mut();
@@ -924,11 +901,7 @@ pub unsafe extern "C" fn _Unwind_GetLanguageSpecificData(ctx: *mut UnwindContext
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetRegionStart(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
         return 0;
@@ -938,11 +911,7 @@ pub unsafe extern "C" fn _Unwind_GetRegionStart(ctx: *mut UnwindContext) -> Unwi
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetTextRelBase(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
         return 0;
@@ -991,7 +960,7 @@ core::arch::global_asm!(
 // an ordinary Rust wrapper would insert a compiler-dependent capture frame.
 #[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_RaiseException(
     exception: *mut UnwindException,
 ) -> UnwindReasonCode {
@@ -1000,18 +969,14 @@ pub unsafe extern "C-unwind" fn _Unwind_RaiseException(
 
 #[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_Resume(exception: *mut UnwindException) -> ! {
     core::arch::naked_asm!("jmp __frankenlibc_owned_resume_capture");
 }
 
 #[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_Resume_or_Rethrow(
     exception: *mut UnwindException,
 ) -> UnwindReasonCode {
@@ -1020,7 +985,7 @@ pub unsafe extern "C-unwind" fn _Unwind_Resume_or_Rethrow(
 
 #[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_ForcedUnwind(
     exception: *mut UnwindException,
     stop: Option<UnwindStopFn>,
@@ -1031,11 +996,7 @@ pub unsafe extern "C-unwind" fn _Unwind_ForcedUnwind(
 
 #[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_Backtrace(
     trace: UnwindTraceFn,
     argument: *mut c_void,
@@ -1044,7 +1005,7 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_RaiseException(
     _exception: *mut UnwindException,
 ) -> UnwindReasonCode {
@@ -1141,7 +1102,7 @@ extern "C-unwind" fn __frankenlibc_owned_forced_unwind_from_cursor(
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_Resume(_exception: *mut UnwindException) -> ! {
     std::process::abort()
 }
@@ -1167,7 +1128,7 @@ fn owned_resume(exception: *mut UnwindException, cursor: UnwindCursor) -> ! {
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_Resume_or_Rethrow(
     _exception: *mut UnwindException,
 ) -> UnwindReasonCode {
@@ -1188,7 +1149,7 @@ unsafe extern "C" fn __frankenlibc_owned_rethrow_from_cursor(
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _Unwind_ForcedUnwind(
     _exception: *mut UnwindException,
     _stop: Option<UnwindStopFn>,
@@ -1221,11 +1182,7 @@ unsafe extern "C" fn __frankenlibc_owned_forced_from_cursor(
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_SetGR(
     ctx: *mut UnwindContext,
     index: c_int,
@@ -1242,11 +1199,7 @@ pub unsafe extern "C" fn _Unwind_SetGR(
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_SetIP(ctx: *mut UnwindContext, new_value: UnwindWord) {
     if ctx.is_null() {
         return;
@@ -1256,41 +1209,25 @@ pub unsafe extern "C" fn _Unwind_SetIP(ctx: *mut UnwindContext, new_value: Unwin
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn __register_frame(fde: *mut c_void) {
     register_frame(fde as usize, 0);
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn __register_frame_info(fde: *mut c_void, object: *mut c_void) {
     register_frame(fde as usize, object as usize);
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn __deregister_frame(fde: *mut c_void) {
     deregister_frame(fde as usize);
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
-#[cfg_attr(
-    all(debug_assertions, feature = "owned-unwind-stub"),
-    unsafe(no_mangle)
-)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn __deregister_frame_info(fde: *mut c_void) -> *mut c_void {
     deregister_frame(fde as usize)
         .map(|object| object as *mut c_void)

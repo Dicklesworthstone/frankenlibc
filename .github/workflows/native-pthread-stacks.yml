@@ -182,6 +182,13 @@ jobs:
           python3 scripts/check_pthread_native_state.py --dlerror-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/dlerror"
+      - name: Preserve the platform unwind provider and native C++ cleanup
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --unwind-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/unwind"
       # Keep these regressions independent of the broader native-poll gate:
       # an unrelated failure there must not skip signal-wait execution.
       - name: Compare native sleep clocks and cancellation with live GNU libc
