@@ -368,7 +368,11 @@ struct PinnedEpochGuard<'a> {
 // must therefore follow the kernel TID in both cache configurations.
 // Admission uses per-tid native slots: fork-child reset and saturating depth.
 // The probe table remains so its remote-ordering and tombstone-reuse tests stay live.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    test,
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod kernel_validation_context {
     use std::cell::Cell;
     use std::marker::PhantomData;
@@ -483,9 +487,11 @@ mod kernel_validation_context {
             if self.identity_unavailable.load(Ordering::Acquire) {
                 return None;
             }
-            self.active_hint.fetch_update(
-                Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1),
-            ).ok()?;
+            self.active_hint
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    count.checked_add(1)
+                })
+                .ok()?;
             let slot = self.acquire(&mut current_tid);
             match slot {
                 Some(index) => Some(ContextGuard {

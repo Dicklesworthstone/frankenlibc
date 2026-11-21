@@ -138,6 +138,7 @@ impl Canary {
         Self::derive(base_addr, size, generation, header_hash)
     }
 
+    #[cfg(test)]
     fn with_key(
         key: [u64; 2],
         base_addr: usize,
@@ -411,6 +412,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 const KEY_STATE_UNINIT: u8 = 0;
 const KEY_STATE_INIT: u8 = 1;
+#[cfg(test)]
 const KEY_STATE_READY: u8 = 2;
 
 static KEY_INIT_STATE: AtomicU8 = AtomicU8::new(KEY_STATE_UNINIT);
