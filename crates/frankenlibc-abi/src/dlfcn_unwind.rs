@@ -304,11 +304,17 @@ fn append_record(output: &mut Vec<u8>, body: &[u8]) -> Option<()> {
 }
 
 fn copy_cie(record: &[u8], source: usize, output: &mut Vec<u8>) -> Option<CopiedCie> {
-    let parsed = cie_record(record, source)?;
     let version = *record.get(4)?;
     let augmentation_end =
         5usize.checked_add(record.get(5..)?.iter().position(|byte| *byte == 0)?)?;
     if record.get(5..augmentation_end)? != b"zR" {
+        return None;
+    }
+    let mut fixups = Vec::new();
+    let parsed = cie_record(record, source, source.checked_add(4)?, &mut fixups)?;
+    // This normalizer accepts only zR, which contains no CIE pointers that
+    // need rebasing. Never discard a fixup from a broader augmentation.
+    if !fixups.is_empty() {
         return None;
     }
     let mut cursor = augmentation_end.checked_add(1)?;
@@ -443,7 +449,13 @@ fn normalize_unterminated(
     }
     output.try_reserve(4).ok()?;
     output.extend_from_slice(&[0; 4]);
-    if !validate_stream(&output, Some(index.len()))? {
+    let plan = validate_stream(&output, Some(index.len()))??;
+    // The normalized output must be complete, terminated, and entirely
+    // absolute; a partial/count-bounded plan is insufficient here.
+    if !plan.terminated_in_place
+        || plan.byte_len.checked_add(4)? != output.len()
+        || !plan.pcrel_fixups.is_empty()
+    {
         return None;
     }
     // Vec<u64> supplies ELF64 alignment and stable storage through deregister.
