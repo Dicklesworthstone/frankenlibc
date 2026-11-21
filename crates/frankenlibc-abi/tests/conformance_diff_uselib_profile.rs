@@ -212,6 +212,7 @@ fn profile_frequency_matches_glibc_and_its_own_sysconf() {
 /// two must stay consistent. Pinned because the period is what a caller sees.
 #[test]
 fn sprofil_period_is_derived_from_the_frequency() {
+    let _serial = PROFIL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: no arguments.
     let freq = unsafe { frankenlibc_abi::glibc_internal_abi::__profile_frequency() };
     assert!(freq > 0);
@@ -238,11 +239,21 @@ fn sprofil_period_is_derived_from_the_frequency() {
     );
 }
 
+static PROFIL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[inline(never)]
 fn profil_sample_hot_loop() -> u64 {
+    let start = std::time::Instant::now();
     let mut acc = 1u64;
-    for i in 0..80_000_000u64 {
-        acc = core::hint::black_box(acc.wrapping_mul(6364136223846793005).wrapping_add(i | 1));
+    let mut round = 0u64;
+    while start.elapsed() < std::time::Duration::from_millis(120) {
+        for i in 0..200_000u64 {
+            acc = core::hint::black_box(
+                acc.wrapping_mul(6364136223846793005)
+                    .wrapping_add((round ^ i) | 1),
+            );
+        }
+        round = round.wrapping_add(1);
     }
     acc
 }
@@ -252,6 +263,7 @@ fn profil_sample_hot_loop() -> u64 {
 /// `>> 18` for `PROF_UINT` vs `>> 17` for `PROF_USHORT`, and clean disable).
 #[test]
 fn native_sprofil_and_profil_collect_live_sigprof_samples_and_disable_cleanly() {
+    let _serial = PROFIL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     #[repr(C)]
     struct Prof {
         pr_base: *mut c_void,
@@ -261,7 +273,11 @@ fn native_sprofil_and_profil_collect_live_sigprof_samples_and_disable_cleanly() 
     }
 
     let fn_addr = profil_sample_hot_loop as *const () as usize;
-    let base_off = fn_addr.saturating_sub(256);
+    // Place `fn_addr` at +2048 bytes past `base_off`: with `scale = 0x10000`,
+    // `PROF_UINT` (`>> 18`, 4 bytes/bin) maps `fn_addr` to bin `512` (so the
+    // peak inside this small function sits in `[512, 1024)`), whereas a buggy
+    // `>> 17` shift would place the peak at `>= 1024`.
+    let base_off = fn_addr.saturating_sub(2048);
 
     // 1. `sprofil` with `PROF_UINT` (`1 << 0`) and `scale = 0x10000` (4 bytes/bin).
     let mut bins_u32 = vec![0u32; 4096];
@@ -300,17 +316,17 @@ fn native_sprofil_and_profil_collect_live_sigprof_samples_and_disable_cleanly() 
     };
     assert_eq!(rc_off, 0, "sprofil disable must succeed");
     let u32_hits: u32 = bins_u32.iter().copied().sum();
-    let u32_first = bins_u32.iter().position(|&c| c > 0);
     assert!(
         u32_hits > 0 || overflow_u32[0] > 0,
         "sprofil PROF_UINT must record live SIGPROF samples (hits={u32_hits}, overflow={})",
         overflow_u32[0]
     );
-    if let Some(idx) = u32_first {
-        // `base_off = fn_addr - 256` with `PROF_UINT` (`>> 18`) maps `fn_addr` to bin `>= 64`.
+    if let Some((peak_idx, &peak_cnt)) = bins_u32.iter().enumerate().max_by_key(|&(_, c)| c)
+        && peak_cnt > 0
+    {
         assert!(
-            idx >= 64,
-            "PROF_UINT bin index {idx} < 64 indicates wrong >>18 vs >>17 scaling"
+            (512..1024).contains(&peak_idx),
+            "PROF_UINT peak bin {peak_idx} outside [512, 1024) indicates wrong >>18 vs >>17 scaling"
         );
     }
 
@@ -331,4 +347,13 @@ fn native_sprofil_and_profil_collect_live_sigprof_samples_and_disable_cleanly() 
     assert_eq!(rc_off, 0, "profil disable must succeed");
     let u16_hits: u32 = bins_u16.iter().map(|&v| u32::from(v)).sum();
     assert!(u16_hits > 0, "profil must record live SIGPROF samples");
+    if let Some((peak_idx, &peak_cnt)) = bins_u16.iter().enumerate().max_by_key(|&(_, c)| c)
+        && peak_cnt > 0
+    {
+        // With `PROF_USHORT` (`>> 17`, 2 bytes/bin), `fn_addr = base_off + 2048` maps to >= 1024.
+        assert!(
+            (1024..2048).contains(&peak_idx),
+            "PROF_USHORT peak bin {peak_idx} outside [1024, 2048) indicates wrong >>17 scaling"
+        );
+    }
 }

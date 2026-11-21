@@ -1890,6 +1890,8 @@ pub(crate) struct PolicyTlsForkGuard {
     resolv_context: Option<crate::owned_tls_cache::OwnedTlsForkGuard<usize>>,
     #[cfg(not(test))]
     dlfcn_thread_exit: Option<crate::dlfcn_abi::ThreadExitForkGuard>,
+    #[cfg(not(test))]
+    profil: Option<crate::glibc_internal_abi::ProfilForkGuard>,
     policy: Option<crate::owned_tls_cache::OwnedTlsForkGuard<RuntimePolicyTls>>,
 }
 
@@ -1900,6 +1902,8 @@ pub(crate) fn lock_policy_tls_for_fork() -> PolicyTlsForkGuard {
     let resolv_context = crate::glibc_internal_abi::lock_resolv_context_tls_for_fork();
     #[cfg(not(test))]
     let dlfcn_thread_exit = Some(crate::dlfcn_abi::lock_thread_exit_for_fork());
+    #[cfg(not(test))]
+    let profil = Some(crate::glibc_internal_abi::lock_profil_for_fork());
     let policy = if use_owned_runtime_policy_tls() {
         Some(RUNTIME_POLICY_OWNED_TLS.lock_for_fork())
     } else {
@@ -1912,6 +1916,8 @@ pub(crate) fn lock_policy_tls_for_fork() -> PolicyTlsForkGuard {
         resolv_context,
         #[cfg(not(test))]
         dlfcn_thread_exit,
+        #[cfg(not(test))]
+        profil,
         policy,
     }
 }
@@ -1941,6 +1947,14 @@ impl PolicyTlsForkGuard {
         #[cfg(not(test))]
         {
             self.dlfcn_thread_exit = None;
+        }
+        #[cfg(not(test))]
+        if let Some(ref mut guard) = self.profil {
+            guard.adopt_and_unlock_in_fork_child();
+        }
+        #[cfg(not(test))]
+        {
+            self.profil = None;
         }
         if let Some(ref mut guard) = self.policy {
             guard.adopt_and_unlock_in_fork_child();

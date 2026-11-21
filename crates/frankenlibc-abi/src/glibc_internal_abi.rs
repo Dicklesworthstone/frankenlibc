@@ -587,7 +587,10 @@ pub(crate) fn is_process_single_threaded() -> bool {
     if cfg!(test) {
         return false;
     }
-    if __libc_single_threaded.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+    if __libc_single_threaded.load(std::sync::atomic::Ordering::Relaxed) == 0
+        || crate::malloc_abi::is_multi_threaded()
+        || crate::malloc_abi::native_thread_backend_active()
+    {
         return false;
     }
     host_single_threaded_allows_st_fast()
@@ -611,7 +614,9 @@ static THREAD_ACTIVITY_MARKER: u8 = 0;
 /// block address.
 #[inline]
 pub(crate) fn note_current_thread_activity() {
-    if __libc_single_threaded.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+    if __libc_single_threaded.load(std::sync::atomic::Ordering::Relaxed) == 0
+        || crate::malloc_abi::native_thread_backend_active()
+    {
         return;
     }
     let thread_token = std::ptr::addr_of!(THREAD_ACTIVITY_MARKER) as usize;
@@ -5476,6 +5481,35 @@ impl Drop for ProfilLockGuard {
     }
 }
 
+/// Fork-safety guard for `profil`/`sprofil` state (`PROFIL_STATE_LOCK` +
+/// `PROFIL_IN_HANDLER` + `PROFIL_ACTIVE_COUNT`).
+///
+/// Linux clears `ITIMER_PROF` across `fork()` while preserving `SIGPROF`'s
+/// disposition. Holding `PROFIL_STATE_LOCK` across `fork()` and resetting
+/// `PROFIL_IN_HANDLER`/`PROFIL_ACTIVE_COUNT` in the child prevents permanent
+/// spin-deadlock if a sibling thread in the parent held the lock or was
+/// executing `profil_sigprof_handler` at the instant of `fork()`.
+#[cfg(not(test))]
+pub(crate) struct ProfilForkGuard {
+    _lock: Option<ProfilLockGuard>,
+}
+
+#[cfg(not(test))]
+pub(crate) fn lock_profil_for_fork() -> ProfilForkGuard {
+    ProfilForkGuard {
+        _lock: Some(ProfilLockGuard::acquire()),
+    }
+}
+
+#[cfg(not(test))]
+impl ProfilForkGuard {
+    pub(crate) fn adopt_and_unlock_in_fork_child(&mut self) {
+        PROFIL_IN_HANDLER.store(0, Ordering::Release);
+        PROFIL_ACTIVE_COUNT.store(0, Ordering::Release);
+        self._lock = None;
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn profil_extract_pc(uctx: *const c_void) -> Option<usize> {
@@ -5710,11 +5744,13 @@ unsafe fn sprofil_native_impl(
     core::sync::atomic::fence(Ordering::SeqCst);
     profil_wait_handlers_idle();
 
+    let use_uint32 = (flags & PROF_UINT_FLAG) != 0;
+    let elem_size = if use_uint32 { 4usize } else { 2usize };
     let mut active = 0usize;
     for i in 0..count {
         // SAFETY: caller supplied `profcnt` contiguous `struct prof` entries.
         let r = unsafe { std::ptr::read_unaligned(regions_ptr.add(i)) };
-        if r.pr_base.is_null() || r.pr_size == 0 || r.pr_scale < 2 {
+        if r.pr_base.is_null() || r.pr_size < elem_size || r.pr_scale < 2 {
             continue;
         }
         let slot = &PROFIL_SLOTS[active];
@@ -5724,7 +5760,7 @@ unsafe fn sprofil_native_impl(
         slot.scale.store(r.pr_scale as usize, Ordering::Relaxed);
         active += 1;
     }
-    PROFIL_USE_UINT32.store((flags & PROF_UINT_FLAG) != 0, Ordering::Relaxed);
+    PROFIL_USE_UINT32.store(use_uint32, Ordering::Relaxed);
 
     if active == 0 {
         let _ = profil_disable_locked();

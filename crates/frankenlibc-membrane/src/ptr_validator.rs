@@ -1164,7 +1164,12 @@ impl ValidationExecutionGuard {
                     entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
                 }
                 NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
-                ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
+                let active = u32::from(
+                    VALIDATION_DEPTH
+                        .try_with(|depth| depth.get() > 0)
+                        .unwrap_or(false),
+                );
+                ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
             }
         }
     }

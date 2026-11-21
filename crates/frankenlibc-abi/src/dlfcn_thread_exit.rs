@@ -389,13 +389,18 @@ pub(crate) fn migrate_creator_thread_exit_for_native_threads() {
 }
 
 pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
+    if let Some(handle) = current_thread_handle() {
+        let state = native_state(handle, true)?;
+        // SAFETY: this native thread exclusively owns its ThreadHandle-pinned state.
+        return callback(unsafe { &*state });
+    }
     if use_tid_keyed_thread_exit() {
         let tid = current_exit_tid();
         let mut state = lookup_native_state(tid);
         if state.is_null() {
             let allocation = Box::new(ThreadState::default());
             state = Box::into_raw(allocation);
-            if !NATIVE_PROCESS_EXIT.load(Ordering::Acquire) && !attach_native_reclaimer(state) {
+            if !NATIVE_PROCESS_EXIT.load(Ordering::Acquire) && !attach_reclaimer(state) {
                 // SAFETY: registration failed before the pointer was exposed.
                 unsafe { drop(Box::from_raw(state)) };
                 return None;
@@ -445,6 +450,11 @@ pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) ->
 pub(super) fn with_existing_state<T>(
     callback: impl FnOnce(&ThreadState) -> Option<T>,
 ) -> Option<T> {
+    if let Some(handle) = current_thread_handle() {
+        let state = native_state(handle, false)?;
+        // SAFETY: this native thread exclusively owns its ThreadHandle-pinned state.
+        return callback(unsafe { &*state });
+    }
     if use_tid_keyed_thread_exit() {
         let state = lookup_native_state(current_exit_tid());
         if state.is_null() {
@@ -480,19 +490,17 @@ fn drain_state(state: *mut ThreadState) {
     if state.is_null() {
         return;
     }
-    loop {
-        // SAFETY: this thread owns `state` through the entire drain.
-        // Remove before invoking, with no borrow held across user code.
-        let next = unsafe { &*state }.destructors.borrow_mut().pop();
-        let Some(entry) = next else {
-            break;
-        };
-        unsafe { (entry.destructor)(entry.argument) };
-        release_pins(&entry.owners);
-    }
+    // SAFETY: this thread owns `state` through the entire drain.
+    drain(unsafe { &*state }, false);
 }
 
 fn drain_current() {
+    if let Some(handle) = current_thread_handle() {
+        if let Some(state) = native_state(handle, false) {
+            drain_state(state);
+        }
+        return;
+    }
     if use_tid_keyed_thread_exit() {
         drain_state(lookup_native_state(current_exit_tid()));
         return;
@@ -576,7 +584,7 @@ struct Reclaimer {
     set: SetSpecific,
 }
 static NATIVE_RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
-#[cfg(not(any(feature = "standalone", feature = "owned-tls-cache")))]
+#[cfg(not(feature = "standalone"))]
 static HOST_RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
 
 fn attach_native_reclaimer(state: *mut ThreadState) -> bool {
@@ -595,9 +603,9 @@ fn attach_native_reclaimer(state: *mut ThreadState) -> bool {
         .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
 }
 
-#[cfg(not(any(feature = "standalone", feature = "owned-tls-cache")))]
+#[cfg(not(feature = "standalone"))]
 fn attach_reclaimer(state: *mut ThreadState) -> bool {
-    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+    if current_thread_handle().is_some() {
         return attach_native_reclaimer(state);
     }
     let reclaimer = HOST_RECLAIMER.get_or_init(|| {
@@ -622,7 +630,7 @@ fn attach_reclaimer(state: *mut ThreadState) -> bool {
         .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
 }
 
-#[cfg(all(feature = "standalone", not(feature = "owned-tls-cache")))]
+#[cfg(feature = "standalone")]
 fn attach_reclaimer(state: *mut ThreadState) -> bool {
     attach_native_reclaimer(state)
 }

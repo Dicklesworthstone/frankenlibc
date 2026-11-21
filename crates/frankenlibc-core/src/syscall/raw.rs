@@ -276,11 +276,14 @@ pub fn arm_native_cancel_syscall(
                 stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
             }
             if stored == tid {
-                let prev_state = ACTIVE_CANCEL_STATE[idx].swap(0, Ordering::AcqRel);
-                let prev_signal_depth = ACTIVE_SIGNAL_DEPTH[idx].swap(0, Ordering::AcqRel);
+                // Swap `RSPS`/`WORDS` BEFORE clearing `ACTIVE_SIGNAL_DEPTH` so a
+                // `SIGCANCEL` arriving mid-transition while `signal_depth > 0`
+                // ignores the slot rather than seeing mismatched outer/inner RSPs.
                 let prev_rsp = ACTIVE_CANCEL_RSPS[idx].swap(window_rsp, Ordering::AcqRel);
                 let prev_word =
                     ACTIVE_CANCEL_WORDS[idx].swap(cancel_word as usize, Ordering::AcqRel);
+                let prev_state = ACTIVE_CANCEL_STATE[idx].swap(0, Ordering::AcqRel);
+                let prev_signal_depth = ACTIVE_SIGNAL_DEPTH[idx].swap(0, Ordering::AcqRel);
                 return NativeCancelWindowToken::Nested {
                     idx,
                     prev_state,
@@ -356,10 +359,12 @@ pub fn disarm_native_cancel_syscall(tid: i32, token: NativeCancelWindowToken) ->
             if tid <= 0 || ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire) != tid {
                 return false;
             }
-            let inner_state = ACTIVE_CANCEL_STATE[idx].swap(prev_state, Ordering::AcqRel);
+            // Restore `ACTIVE_SIGNAL_DEPTH` FIRST so a `SIGCANCEL` arriving while
+            // restoring the outer `WORDS`/`RSPS`/`STATE` observes the outer signal depth.
+            ACTIVE_SIGNAL_DEPTH[idx].store(prev_signal_depth, Ordering::Release);
             ACTIVE_CANCEL_WORDS[idx].store(prev_word, Ordering::Release);
             ACTIVE_CANCEL_RSPS[idx].store(prev_rsp, Ordering::Release);
-            ACTIVE_SIGNAL_DEPTH[idx].store(prev_signal_depth, Ordering::Release);
+            let inner_state = ACTIVE_CANCEL_STATE[idx].swap(prev_state, Ordering::AcqRel);
             inner_state & CANCEL_STATE_INTERRUPTED != 0
         }
         NativeCancelWindowToken::Fresh => {
