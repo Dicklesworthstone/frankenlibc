@@ -9216,15 +9216,25 @@ pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
     if (x - 2.0f128).abs() <= (1.0f128 / 64.0f128) {
         return lgamma_near_two_f256(F256::from_f128(x).sub(F256::TWO)).to_f128();
     }
-    // Above 2^16370, x * (ln(x) - 1) > 2^16383.46 > f128::MAX unconditionally.
-    if x >= f128::from_bits((16_383u128 + 16_370) << 112) {
+    // Above 2^16371, x * (ln(x) - 1) > 2^16384.47 > f128::MAX (~2^16384)
+    // unconditionally. Note that 2^16370 itself is STILL finite (~1.385 * 2^16383)
+    // and is handled by the scaled path below.
+    let return_overflow = || -> f128 {
         let _ = core::hint::black_box(
             core::hint::black_box(f64::MAX) * core::hint::black_box(f64::MAX),
         );
-        set_range_errno();
-        return f128::INFINITY;
+        let rm = active_rounding_mode();
+        if rm == ARCH_FE_DOWNWARD || rm == ARCH_FE_TOWARDZERO {
+            f128::MAX
+        } else {
+            set_range_errno();
+            f128::INFINITY
+        }
+    };
+    if x >= f128::from_bits((16_383u128 + 16_371) << 112) {
+        return return_overflow();
     }
-    // Near the binary128 overflow threshold (x * (ln(x) - 1) > f128::MAX around x ~ 1.0477e4928),
+    // Near the binary128 overflow threshold (x * (ln(x) - 1) > f128::MAX around x ~ 1.445 * 2^16370),
     // scale x down by 2^-16 before forming the leading product so intermediate F256 overflow
     // cannot occur prematurely.
     let overflow_scale_thresh = f128::from_bits((16_383u128 + 16_350) << 112);
@@ -9234,7 +9244,7 @@ pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
         let scaled = wx.ldexp(-16).mul(ln_x.sub(F256::ONE));
         let result = scaled.to_f128() * f128::from_bits((16_383u128 + 16) << 112);
         if result.is_infinite() {
-            set_range_errno();
+            return return_overflow();
         }
         return result;
     }

@@ -154,7 +154,7 @@ fn lgammaf128_r_finite_alias_preserves_binary128_argument_and_sign() {
 #[test]
 fn lgammaf128_r_matches_glibc_across_all_regions_and_signs() {
     let host = host_lgammaf128_r();
-    let cases: [f128; 27] = [
+    let cases: [f128; 28] = [
         0.0f128,
         -0.0f128,
         1.0f128,
@@ -177,7 +177,8 @@ fn lgammaf128_r_matches_glibc_across_all_regions_and_signs() {
         -2.5f128,
         -10.25f128,
         -1.0f128,
-        f128::from_bits((16_383u128 + 16_370) << 112), // overflow boundary
+        f128::from_bits((16_383u128 + 16_370) << 112), // still finite (~1.385 * 2^16383)
+        f128::from_bits((16_383u128 + 16_371) << 112), // unconditional overflow (> f128::MAX)
         f128::MAX,
         f128::INFINITY,
         f128::NEG_INFINITY,
@@ -219,4 +220,40 @@ fn lgammaf128_r_matches_glibc_across_all_regions_and_signs() {
             );
         }
     }
+
+    // Verify overflow rounding-mode parity (FE_DOWNWARD/FE_TOWARDZERO yield
+    // f128::MAX with no ERANGE; FE_TONEAREST/FE_UPWARD yield +Inf with ERANGE).
+    unsafe extern "C" {
+        fn fegetround() -> c_int;
+        fn fesetround(round: c_int) -> c_int;
+    }
+    let saved_rm = unsafe { fegetround() };
+    #[cfg(target_arch = "aarch64")]
+    let rms = [0, 0x80_0000, 0x40_0000, 0xc0_0000];
+    #[cfg(not(target_arch = "aarch64"))]
+    let rms = [0, 0x400, 0x800, 0xc00];
+    let overflow_cases = [
+        f128::from_bits((16_383u128 + 16_370) << 112),
+        f128::from_bits((16_383u128 + 16_371) << 112),
+        f128::MAX,
+    ];
+    for rm in rms {
+        assert_eq!(unsafe { fesetround(rm) }, 0);
+        for x in overflow_cases {
+            let mut host_sign = 0;
+            let expected = unsafe { host(x, &mut host_sign) };
+            let mut fl_sign = 0;
+            let actual = unsafe { ma::lgammaf128_r(x, &mut fl_sign) };
+            assert_eq!(fl_sign, host_sign, "rm={rm:#x} sign at x={:#034x}", x.to_bits());
+            let diff = actual.to_bits().abs_diff(expected.to_bits());
+            assert!(
+                diff <= 1,
+                "rm={rm:#x} lgammaf128_r({:#034x}) diverged by {diff} ulp: fl={:#034x} glibc={:#034x}",
+                x.to_bits(),
+                actual.to_bits(),
+                expected.to_bits()
+            );
+        }
+    }
+    unsafe { fesetround(saved_rm) };
 }
