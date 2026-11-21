@@ -2394,38 +2394,38 @@ unsafe fn native_pthread_create(
             }
             #[cfg(not(feature = "standalone"))]
             {
-            // Foreign attributes are opaque: use the host's public getters,
-            // including execution constraints, before starting any user code.
-            // Share the standard-field import with notification attributes.
-            let mut imported: PthreadAttrData = unsafe { std::mem::zeroed() };
-            if let Err(error) =
-                unsafe { NotificationThreadAttributes::copy_host_fields(attr, &mut imported) }
-            {
-                return error;
-            }
-            stack_size = imported.stack_size;
-            stack_addr = imported.stack_addr;
-            caller_stack = imported.has_stack_address();
-            guard_size = imported.guard_size;
-            if imported.inherit_sched == libc::PTHREAD_EXPLICIT_SCHED {
-                scheduling = Some((imported.sched_policy, imported.sched_priority));
-            }
-            affinity = match unsafe { host_attr_affinity(attr) } {
-                Ok(affinity) => affinity.map(|(_, bytes)| bytes),
-                Err(error) => return error,
-            };
-            signal_mask = match unsafe { host_attr_signal_mask(attr) } {
-                Ok(mask) => mask,
-                Err(error) => return error,
-            };
-            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
-            else {
-                return libc::ENOSYS;
-            };
-            let rc = unsafe { getdetachstate(attr, &mut detach_state) };
-            if rc != 0 {
-                return rc;
-            }
+                // Foreign attributes are opaque: use the host's public getters,
+                // including execution constraints, before starting any user code.
+                // Share the standard-field import with notification attributes.
+                let mut imported: PthreadAttrData = unsafe { std::mem::zeroed() };
+                if let Err(error) =
+                    unsafe { NotificationThreadAttributes::copy_host_fields(attr, &mut imported) }
+                {
+                    return error;
+                }
+                stack_size = imported.stack_size;
+                stack_addr = imported.stack_addr;
+                caller_stack = imported.has_stack_address();
+                guard_size = imported.guard_size;
+                if imported.inherit_sched == libc::PTHREAD_EXPLICIT_SCHED {
+                    scheduling = Some((imported.sched_policy, imported.sched_priority));
+                }
+                affinity = match unsafe { host_attr_affinity(attr) } {
+                    Ok(affinity) => affinity.map(|(_, bytes)| bytes),
+                    Err(error) => return error,
+                };
+                signal_mask = match unsafe { host_attr_signal_mask(attr) } {
+                    Ok(mask) => mask,
+                    Err(error) => return error,
+                };
+                let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
+                else {
+                    return libc::ENOSYS;
+                };
+                let rc = unsafe { getdetachstate(attr, &mut detach_state) };
+                if rc != 0 {
+                    return rc;
+                }
             }
         }
     }
@@ -3159,7 +3159,13 @@ fn futex_lock_normal(word: &AtomicI32) -> c_int {
     }
 }
 
+#[inline(always)]
 fn futex_trylock_normal(word: &AtomicI32) -> c_int {
+    // Test-and-test-and-set: avoids an expensive LOCK CMPXCHG cache-line
+    // invalidation when the mutex is already locked.
+    if word.load(Ordering::Relaxed) != 0 {
+        return libc::EBUSY;
+    }
     if word
         .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
@@ -4787,9 +4793,9 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
     }
 }
 
-/// POSIX `pthread_mutex_trylock`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+#[cold]
+#[inline(never)]
+unsafe fn pthread_mutex_trylock_slow(mutex: *mut libc::pthread_mutex_t) -> c_int {
     if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
@@ -4803,7 +4809,7 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
     // SAFETY: alignment is validated by `mutex_word_ptr`.
     let word = unsafe { &*word_ptr };
 
-    match read_mutex_type(mutex) {
+    match raw_type & MUTEX_TYPE_MASK {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
             let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
                 return libc::EINVAL;
@@ -4859,6 +4865,37 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
             futex_trylock_normal(word)
         }
     }
+}
+
+/// Fast inlinable core for `pthread_mutex_trylock` and C11 `mtx_trylock`:
+/// checks null/alignment once, verifies `MANAGED_MUTEX_MAGIC` and plain
+/// `PTHREAD_MUTEX_NORMAL_TYPE` (`raw_type == 0`) once, and executes the
+/// test-and-test-and-set fast path without an extra `extern "C"` call frame.
+#[inline(always)]
+pub(crate) unsafe fn pthread_mutex_trylock_fast_inline(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() || !(mutex as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return libc::EINVAL;
+    }
+    let base = mutex.cast::<u8>();
+    // SAFETY: `mutex` is non-null and 4-byte aligned, and `MUTEX_MAGIC_OFFSET`
+    // and `MUTEX_TYPE_OFFSET` are multiples of 4 within `pthread_mutex_t`.
+    let magic = unsafe { &*base.add(MUTEX_MAGIC_OFFSET).cast::<AtomicU32>() };
+    if magic.load(Ordering::Acquire) != MANAGED_MUTEX_MAGIC {
+        return unsafe { pthread_mutex_trylock_slow(mutex) };
+    }
+    let mtype = unsafe { &*base.add(MUTEX_TYPE_OFFSET).cast::<AtomicI32>() };
+    if mtype.load(Ordering::Acquire) != PTHREAD_MUTEX_NORMAL_TYPE {
+        return unsafe { pthread_mutex_trylock_slow(mutex) };
+    }
+    // SAFETY: leading word of managed normal `pthread_mutex_t`.
+    let word = unsafe { &*mutex.cast::<AtomicI32>() };
+    futex_trylock_normal(word)
+}
+
+/// POSIX `pthread_mutex_trylock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_trylock_fast_inline(mutex) }
 }
 
 /// POSIX `pthread_mutex_unlock`.

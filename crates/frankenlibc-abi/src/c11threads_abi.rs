@@ -334,13 +334,20 @@ pub unsafe extern "C" fn mtx_lock(mtx: *mut MtxT) -> c_int {
 /// C11 `mtx_trylock` — try to lock a mutex without blocking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_trylock(mtx: *mut MtxT) -> c_int {
-    // Strict mode trusts caller-owned object bounds, while the delegated pthread
-    // implementation still rejects null and misaligned mutex pointers. Hardened
+    // Strict mode trusts caller-owned object bounds, while the inlined pthread
+    // fast path still rejects null and misaligned mutex pointers. Hardened
     // mode retains the tracked-allocation size check before any object access.
     if !mtx_trylock_strict_fastpath() && !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_trylock(mtx) })
+    let rc = unsafe { crate::pthread_abi::pthread_mutex_trylock_fast_inline(mtx) };
+    if rc == 0 {
+        THRD_SUCCESS
+    } else if rc == libc::EBUSY {
+        THRD_BUSY
+    } else {
+        pthread_rc_to_thrd(rc)
+    }
 }
 
 // mtx_timedlock — Implemented

@@ -271,8 +271,7 @@ where
         if key == 0 {
             return;
         }
-        let raw =
-            tls::internal_tls_getspecific(InternalTlsKey { id: key }) as *mut OwnedTlsSlot<T>;
+        let raw = tls::internal_tls_getspecific(InternalTlsKey { id: key }) as *mut OwnedTlsSlot<T>;
         if raw.is_null() {
             return;
         }

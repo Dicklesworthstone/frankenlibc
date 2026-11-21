@@ -7191,7 +7191,7 @@ pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
 /// POSIX `sem_post` — increment the semaphore and wake one waiter.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
-    unsafe { crate::semaphore_wait::post(sem) }
+    unsafe { crate::semaphore_wait::post_inline(sem) }
 }
 
 /// POSIX `sem_wait` — decrement the semaphore, blocking if zero.

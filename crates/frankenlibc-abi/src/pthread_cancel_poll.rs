@@ -368,8 +368,7 @@ pub(super) unsafe fn wait_sleep(
     // Blocking handlers keeps the setting stable until ppoll has copied any
     // remainder. Check every sleep: STICKY_TIMEOUTS also changes restart
     // behavior for absolute deadlines and callers that need no remainder.
-    let persona =
-        unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+    let persona = unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
     if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
         return guard.restore().map(|()| SleepResult::Unsupported);
     }
@@ -411,8 +410,7 @@ unsafe fn wait_absolute_clock(
     // SAFETY: this read-only query changes neither personality nor errno.
     // STICKY_TIMEOUTS makes ppoll expose EINTR after stop/continue, whereas
     // absolute clock_nanosleep restarts. Preserve that contract on the raw path.
-    let persona =
-        unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+    let persona = unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
     if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
         return mask.restore().map(|()| SleepResult::Unsupported);
     }
@@ -2056,7 +2054,11 @@ unsafe fn receive_slices(
             return Ok(ReceiveResult::Unsupported);
         }
         recheck_handlers = true;
-        let mut remaining = match batch_timeout.as_ref().map(BatchTimeout::remaining).transpose() {
+        let mut remaining = match batch_timeout
+            .as_ref()
+            .map(BatchTimeout::remaining)
+            .transpose()
+        {
             Ok(remaining) => remaining,
             Err(_) => return Ok(ReceiveResult::Unsupported),
         };

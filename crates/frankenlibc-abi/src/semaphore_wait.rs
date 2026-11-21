@@ -86,6 +86,7 @@ pub(crate) unsafe fn getvalue(semaphore: *mut c_void, output: *mut c_int) -> c_i
 
 /// # Safety
 /// semaphore is initialized. This nonblocking operation is not a cancellation point.
+#[inline(always)]
 pub(crate) unsafe fn trywait(semaphore: *mut c_void) -> c_int {
     if semaphore.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
@@ -102,7 +103,8 @@ pub(crate) unsafe fn trywait(semaphore: *mut c_void) -> c_int {
 /// # Safety
 /// semaphore is initialized. Signal-safe: only atomics, immutable metadata and
 /// a raw wake are used. No memory access follows successful token publication.
-pub unsafe extern "C" fn post(semaphore: *mut c_void) -> c_int {
+#[inline(always)]
+pub(crate) unsafe fn post_inline(semaphore: *mut c_void) -> c_int {
     if semaphore.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
@@ -122,6 +124,13 @@ pub unsafe extern "C" fn post(semaphore: *mut c_void) -> c_int {
             unsafe { syscall::sys_futex(semaphore.cast(), libc::FUTEX_WAKE | private, 1, 0, 0, 0) };
     }
     0
+}
+
+/// # Safety
+/// semaphore is initialized. Signal-safe: only atomics, immutable metadata and
+/// a raw wake are used. No memory access follows successful token publication.
+pub unsafe extern "C" fn post(semaphore: *mut c_void) -> c_int {
+    unsafe { post_inline(semaphore) }
 }
 
 #[inline(always)]
