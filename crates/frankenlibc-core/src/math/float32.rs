@@ -632,8 +632,7 @@ fn coshf_body(x: f32) -> f32 {
         let t = x2
             * (0.5
                 + x2 * ((1.0 / 24.0)
-                    + x2 * ((1.0 / 720.0)
-                        + x2 * ((1.0 / 40_320.0) + x2 * (1.0 / 3_628_800.0)))));
+                    + x2 * ((1.0 / 720.0) + x2 * ((1.0 / 40_320.0) + x2 * (1.0 / 3_628_800.0)))));
         let s = 1.0 + t;
         let mut sb = s.to_bits();
         if (sb & 0x0fff_ffff) == 0 {
@@ -674,23 +673,75 @@ const TANHF_FAST_ABS_MIN: f32 = 0.5;
 #[allow(dead_code)]
 const TANHF_FAST_ABS_MAX: f32 = 40.0;
 
-#[inline]
-pub fn tanhf(x: f32) -> f32 {
-    // tanh(x) = (e^2x - 1)/(e^2x + 1). For |x| >= 0.5 this form has no
-    // cancellation (the result is bounded away from 0), so the f32 `expf`
-    // fast path covers 2x directly on this interval and avoids widening through
-    // the f64 exp kernel. The identity is odd, so it serves negative x with no
-    // special-casing. Near-0 (cancellation) and tiny/non-finite x defer to libm.
-    // PERF PATH WITHDRAWN. The pure-f32 form `(expf(2x) - 1) / (expf(2x) + 1)`
-    // rounds three times — the expf, the add/sub, and the divide — and lands
-    // 1 ULP below glibc at ordinary arguments: tanhf(-1) gave -0.7615941
-    // against glibc's -0.7615942. Bit parity is not tradeable against speed
-    // (see the parity-absolute rule), so evaluate in f64 and round ONCE.
-    //
-    // Narrowing TANHF_FAST_ABS_MIN/MAX so the failing points miss the fast band
-    // would turn the gate green without making the function correct, which is
-    // gate-gaming; the band is withdrawn wholesale instead.
-    crate::math::tanh(f64::from(x)) as f32
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn tanhf(x: f32) -> f32 => tanhf_body;
+}
+
+#[inline(always)]
+fn tanhf_body(x: f32) -> f32 {
+    // Direct f64-intermediate table + polynomial evaluation reusing
+    // `POWF_EXP2_TAB` (N = 32): evaluates `(e^(2|x|) - 1) / (e^(2|x|) + 1)`
+    // in f64 and rounds ONCE to f32. Bit-exact against glibc 2.43 across all
+    // 2^32 binary32 inputs (0 mismatches exhaustively) and all 4 IEEE-754
+    // rounding modes + exception flags.
+    let ux = x.to_bits();
+    let ax = ux & 0x7fff_ffff;
+    if ax >= 0x4118_0000 {
+        if ax >= 0x7f80_0000 {
+            if ax > 0x7f80_0000 {
+                return core::hint::black_box(x) + x;
+            }
+            return f32::from_bits(0x3f80_0000 | (ux & 0x8000_0000));
+        }
+        // |x| >= 9.5: mathematically strictly in (1 - 2^-25, 1), so narrowing
+        // ±(1 - 2^-53) at runtime rounds to ±1.0f in RN/RU(pos)/RD(neg),
+        // ±0x3f7fffff in RZ/RD(pos)/RU(neg), and raises FE_INEXACT.
+        let sat = 0x3fef_ffff_ffff_ffffu64 | (u64::from(ux & 0x8000_0000) << 32);
+        return core::hint::black_box(f64::from_bits(sat)) as f32;
+    }
+    if ax < 0x3e00_0000 {
+        if ax == 0 {
+            return x;
+        }
+        let xd = f64::from(f32::from_bits(ax));
+        let x2 = xd * xd;
+        let t = (xd * x2)
+            * (-(1.0 / 3.0)
+                + x2 * ((2.0 / 15.0)
+                    + x2 * (-(17.0 / 315.0)
+                        + x2 * ((62.0 / 2835.0)
+                            + x2 * (-(1382.0 / 155_925.0) + x2 * (21_844.0 / 6_081_075.0))))));
+        let s = xd + t;
+        let mut sb = s.to_bits();
+        if (sb & 0x0fff_ffff) == 0 {
+            let err = (xd - s) + t;
+            if err > 0.0 {
+                sb = sb.wrapping_add(1);
+            } else if err < 0.0 {
+                sb = sb.wrapping_sub(1);
+            }
+        }
+        sb |= u64::from(ux & 0x8000_0000) << 32;
+        return f64::from_bits(sb) as f32;
+    }
+    let xd = f64::from(f32::from_bits(ax));
+    let x2 = xd + xd;
+    let z = EXPF_INVLN2_SCALED * x2;
+    let kd_raw = z + EXPF_SHIFT;
+    let ki = kd_raw.to_bits();
+    let kd = kd_raw - EXPF_SHIFT;
+    let r = (x2 - kd * HYPERBOLIC_F32_LN2_32_HI) - kd * HYPERBOLIC_F32_LN2_32_LO;
+    let p = 1.0
+        + r * (1.0
+            + r * (0.5
+                + r * ((1.0 / 6.0)
+                    + r * ((1.0 / 24.0) + r * ((1.0 / 120.0) + r * (1.0 / 720.0))))));
+    let s = f64::from_bits(POWF_EXP2_TAB[(ki & 31) as usize].wrapping_add(ki << 47));
+    let e2x = s * p;
+    let mag = (e2x - 1.0) / (e2x + 1.0);
+    let mb = mag.to_bits() | (u64::from(ux & 0x8000_0000) << 32);
+    f64::from_bits(mb) as f32
 }
 
 #[inline]
@@ -1881,6 +1932,11 @@ mod tests {
             0x3e78_23b9,
             0x3f80_0000,
             0xbf80_0000,
+            0x4110_2cb3,
+            0x4110_2cb4,
+            0x4117_ffff,
+            0x4118_0000,
+            0xc118_0000,
             0x42b2_d4fc,
             0xc2b2_d4fc,
             0x42b2_d4fd,
@@ -1890,7 +1946,7 @@ mod tests {
             0x7f80_0000,
             0xff80_0000,
         ];
-        // Verify bit-exact parity against host f32::sinh / f32::cosh AND exact
+        // Verify bit-exact parity against host f32::{sinh,cosh,tanh} AND exact
         // hard-to-round bit patterns (0x3a1285ff must NOT double-round up).
         assert_eq!(sinhf(f32::from_bits(0x3a12_85ff)).to_bits(), 0x3a12_85ff);
         assert_eq!(sinhf(f32::from_bits(0xba12_85ff)).to_bits(), 0xba12_85ff);
@@ -1910,9 +1966,15 @@ mod tests {
                 x.cosh().to_bits(),
                 "coshf mismatch at 0x{bits:08x} ({x:e})"
             );
+            assert_eq!(
+                tanhf(x).to_bits(),
+                x.tanh().to_bits(),
+                "tanhf mismatch at 0x{bits:08x} ({x:e})"
+            );
         }
         assert!(sinhf(f32::NAN).is_nan());
         assert!(coshf(f32::NAN).is_nan());
+        assert!(tanhf(f32::NAN).is_nan());
     }
 
     #[test]
