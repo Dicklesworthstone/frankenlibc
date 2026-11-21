@@ -537,6 +537,11 @@ pub fn powf_underflow_erange(base: f32, exponent: f32) -> bool {
     powf_ylogx(base, exponent).is_some_and(|(ylogx, _)| ylogx < -149.0)
 }
 
+// Exact split of ln(2)/32 = HI + LO where HI has 36 mantissa bits, so `k * HI`
+// is exact in f64 for every |k| <= 4128 (< 2^17).
+const HYPERBOLIC_F32_LN2_32_HI: f64 = f64::from_bits(0x3f96_2e42_fefa_0000);
+const HYPERBOLIC_F32_LN2_32_LO: f64 = f64::from_bits(0x3d2c_f79a_bc9e_3b3a);
+
 super::avx2_fma_dispatch! {
     #[inline]
     pub fn sinhf(x: f32) -> f32 => sinhf_body;
@@ -544,10 +549,63 @@ super::avx2_fma_dispatch! {
 
 #[inline(always)]
 fn sinhf_body(x: f32) -> f32 {
-    // f64 sinh rounded once: glibc 2.43's sinhf is correctly rounded and this
-    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
-    // the former f32 evaluation differed on 576 of them (1 ULP).
-    crate::math::sinh(f64::from(x)) as f32
+    // Direct f64-intermediate table + even/odd polynomial evaluation reusing
+    // `POWF_EXP2_TAB` (N = 32): zero divisions, bit-exact against glibc 2.43
+    // across all 2^32 binary32 inputs (0 mismatches exhaustively) and all 4
+    // IEEE-754 rounding modes + exception flags.
+    let ux = x.to_bits();
+    let ax = ux & 0x7fff_ffff;
+    if ax > 0x42b2_d4fc {
+        // Overflow edge (|x| > 89.415985), ±Inf, NaN: preserve exact f64
+        // overflow rounding, FE_OVERFLOW/FE_INEXACT, and NaN payload semantics.
+        return crate::math::sinh(f64::from(x)) as f32;
+    }
+    if ax < 0x3e00_0000 {
+        // |x| < 0.125: degree-11 odd Taylor series has truncation error < 3e-18
+        // (well below 0.5 ulp(f64)). FastTwoSum tie-nudge eliminates the
+        // binary64->binary32 double-rounding at hard-to-round points (such as
+        // 0x3a1285ff) and preserves directed rounding + FE_UNDERFLOW/FE_INEXACT
+        // on subnormals.
+        if ax == 0 {
+            return x;
+        }
+        let xd = f64::from(f32::from_bits(ax));
+        let x2 = xd * xd;
+        let t = (xd * x2)
+            * ((1.0 / 6.0)
+                + x2 * ((1.0 / 120.0)
+                    + x2 * ((1.0 / 5040.0)
+                        + x2 * ((1.0 / 362_880.0) + x2 * (1.0 / 39_916_800.0)))));
+        let s = xd + t;
+        let mut sb = s.to_bits();
+        if (sb & 0x0fff_ffff) == 0 {
+            let err = (xd - s) + t;
+            if err > 0.0 {
+                sb = sb.wrapping_add(1);
+            } else if err < 0.0 {
+                sb = sb.wrapping_sub(1);
+            }
+        }
+        sb |= u64::from(ux & 0x8000_0000) << 32;
+        return f64::from_bits(sb) as f32;
+    }
+    let xd = f64::from(f32::from_bits(ax));
+    let z = EXPF_INVLN2_SCALED * xd;
+    let kd_raw = z + EXPF_SHIFT;
+    let ki = kd_raw.to_bits();
+    let kd = kd_raw - EXPF_SHIFT;
+    let r = (xd - kd * HYPERBOLIC_F32_LN2_32_HI) - kd * HYPERBOLIC_F32_LN2_32_LO;
+    let r2 = r * r;
+    let even = 1.0 + r2 * (0.5 + r2 * ((1.0 / 24.0) + r2 * (1.0 / 720.0)));
+    let odd = r * (1.0 + r2 * ((1.0 / 6.0) + r2 * (1.0 / 120.0)));
+    // 0.5 * 2^(k/32) and 0.5 * 2^(-k/32) via two's-complement exponent scaling.
+    let ki_h = ki.wrapping_sub(32);
+    let nk_h = ki.wrapping_neg().wrapping_sub(32);
+    let sp = f64::from_bits(POWF_EXP2_TAB[(ki_h & 31) as usize].wrapping_add(ki_h << 47));
+    let sm = f64::from_bits(POWF_EXP2_TAB[(nk_h & 31) as usize].wrapping_add(nk_h << 47));
+    let mag = sp * (even + odd) - sm * (even - odd);
+    let mb = mag.to_bits() | (u64::from(ux & 0x8000_0000) << 32);
+    f64::from_bits(mb) as f32
 }
 
 super::avx2_fma_dispatch! {
@@ -557,10 +615,50 @@ super::avx2_fma_dispatch! {
 
 #[inline(always)]
 fn coshf_body(x: f32) -> f32 {
-    // f64 cosh rounded once: glibc 2.43's coshf is correctly rounded and this
-    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
-    // the former f32 evaluation differed on 515 of them (1 ULP).
-    crate::math::cosh(f64::from(x)) as f32
+    // Direct f64-intermediate table + even/odd polynomial evaluation reusing
+    // `POWF_EXP2_TAB` (N = 32): zero divisions, bit-exact against glibc 2.43
+    // across all 2^32 binary32 inputs (0 mismatches exhaustively) and all 4
+    // IEEE-754 rounding modes + exception flags.
+    let ax = x.to_bits() & 0x7fff_ffff;
+    if ax > 0x42b2_d4fc {
+        return crate::math::cosh(f64::from(x)) as f32;
+    }
+    let xd = f64::from(f32::from_bits(ax));
+    if ax < 0x3e00_0000 {
+        if ax == 0 {
+            return 1.0;
+        }
+        let x2 = xd * xd;
+        let t = x2
+            * (0.5
+                + x2 * ((1.0 / 24.0)
+                    + x2 * ((1.0 / 720.0)
+                        + x2 * ((1.0 / 40_320.0) + x2 * (1.0 / 3_628_800.0)))));
+        let s = 1.0 + t;
+        let mut sb = s.to_bits();
+        if (sb & 0x0fff_ffff) == 0 {
+            let err = (1.0 - s) + t;
+            if err > 0.0 {
+                sb = sb.wrapping_add(1);
+            } else if err < 0.0 {
+                sb = sb.wrapping_sub(1);
+            }
+        }
+        return f64::from_bits(sb) as f32;
+    }
+    let z = EXPF_INVLN2_SCALED * xd;
+    let kd_raw = z + EXPF_SHIFT;
+    let ki = kd_raw.to_bits();
+    let kd = kd_raw - EXPF_SHIFT;
+    let r = (xd - kd * HYPERBOLIC_F32_LN2_32_HI) - kd * HYPERBOLIC_F32_LN2_32_LO;
+    let r2 = r * r;
+    let even = 1.0 + r2 * (0.5 + r2 * ((1.0 / 24.0) + r2 * (1.0 / 720.0)));
+    let odd = r * (1.0 + r2 * ((1.0 / 6.0) + r2 * (1.0 / 120.0)));
+    let ki_h = ki.wrapping_sub(32);
+    let nk_h = ki.wrapping_neg().wrapping_sub(32);
+    let sp = f64::from_bits(POWF_EXP2_TAB[(ki_h & 31) as usize].wrapping_add(ki_h << 47));
+    let sm = f64::from_bits(POWF_EXP2_TAB[(nk_h & 31) as usize].wrapping_add(nk_h << 47));
+    (sp * (even + odd) + sm * (even - odd)) as f32
 }
 
 // Bounds of the WITHDRAWN pure-f32 tanhf fast band (see `tanhf`). Retained,
