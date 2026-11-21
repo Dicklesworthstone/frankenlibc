@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn_abi.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
       - 'crates/frankenlibc-abi/src/owned_unwind_abi.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
@@ -170,6 +171,13 @@ jobs:
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/signal-waits/build.log
+      - name: Preserve native loader-error ownership and consumption
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --dlerror-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/dlerror"
       # Keep these regressions independent of the broader native-poll gate:
       # an unrelated failure there must not skip signal-wait execution.
       - name: Compare native sleep clocks and cancellation with live GNU libc
