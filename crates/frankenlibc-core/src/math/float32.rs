@@ -541,6 +541,8 @@ pub fn powf_underflow_erange(base: f32, exponent: f32) -> bool {
 // is exact in f64 for every |k| <= 4128 (< 2^17).
 const HYPERBOLIC_F32_LN2_32_HI: f64 = f64::from_bits(0x3f96_2e42_fefa_0000);
 const HYPERBOLIC_F32_LN2_32_LO: f64 = f64::from_bits(0x3d2c_f79a_bc9e_3b3a);
+// Full-precision ln(2)/32 (exact for `tanhf` over |x| < 9.5 across all 4 modes).
+const TANHF_LN2_32: f64 = f64::from_bits(0x3f96_2e42_fefa_39ef);
 
 #[cold]
 #[inline(never)]
@@ -562,37 +564,37 @@ extern "C" fn coshf_overflow_or_special(x: f32) -> f32 {
 
 #[inline(always)]
 pub fn sinhf(x: f32) -> f32 {
-    // Direct f64-intermediate table + Estrin even/odd polynomial evaluation
-    // reusing `POWF_EXP2_TAB` (N = 32): zero divisions, frameless baseline
-    // SSE2 leaf (no dispatch indirection), bit-exact against glibc 2.43 across
-    // all 2^32 binary32 inputs (0 mismatches exhaustively) and all 4 IEEE-754
-    // rounding modes + exception flags.
+    // Direct signed f64-intermediate table + Estrin even/odd polynomial
+    // evaluation reusing `POWF_EXP2_TAB` (N = 32): zero divisions, zero
+    // `.abs()`/`.copysign()`, 0.5 baked into polynomial coefficients,
+    // frameless baseline SSE2 leaf, bit-exact against glibc 2.43 across all
+    // 2^32 binary32 inputs and all 4 IEEE-754 rounding modes (0 mismatches).
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax > 0x42b2_d4fc {
+    if ax >= 0x42b2_d4fc {
         return sinhf_overflow_or_special(x);
     }
-    let x_f64 = f64::from(x);
-    let xd = x_f64.abs();
+    let xd = f64::from(x);
     if ax < 0x3e00_0000 {
         if ax == 0 {
             return x;
         }
-        let x2 = xd * xd;
+        let xa = xd.abs();
+        let x2 = xa * xa;
         let x4 = x2 * x2;
-        let t = (xd * x2)
+        let t = (xa * x2)
             * (((1.0 / 6.0) + x2 * (1.0 / 120.0))
                 + x4 * (((1.0 / 5040.0) + x2 * (1.0 / 362_880.0)) + x4 * (1.0 / 39_916_800.0)));
-        let s = xd + t;
+        let s = xa + t;
         let mut sb = s.to_bits();
         if (sb & 0x0fff_ffff) == 0 {
-            let err = (xd - s) + t;
+            let err = (xa - s) + t;
             if err > 0.0 {
                 sb = sb.wrapping_add(1);
             } else if err < 0.0 {
                 sb = sb.wrapping_sub(1);
             }
         }
-        return f64::from_bits(sb).copysign(x_f64) as f32;
+        return f64::from_bits(sb).copysign(xd) as f32;
     }
     let z = EXPF_INVLN2_SCALED * xd;
     let kd_raw = z + EXPF_SHIFT;
@@ -601,29 +603,26 @@ pub fn sinhf(x: f32) -> f32 {
     let r = (xd - kd * HYPERBOLIC_F32_LN2_32_HI) - kd * HYPERBOLIC_F32_LN2_32_LO;
     let r2 = r * r;
     let r4 = r2 * r2;
-    let even = (1.0 + r2 * 0.5) + r4 * ((1.0 / 24.0) + r2 * (1.0 / 720.0));
-    let odd = r * ((1.0 + r2 * (1.0 / 6.0)) + r4 * (1.0 / 120.0));
-    // 0.5 * 2^(k/32) and 0.5 * 2^(-k/32) via two's-complement exponent scaling.
-    let ki_h = ki.wrapping_sub(32);
-    let nk_h = ki.wrapping_neg().wrapping_sub(32);
-    let sp = f64::from_bits(POWF_EXP2_TAB[(ki_h & 31) as usize].wrapping_add(ki_h << 47));
-    let sm = f64::from_bits(POWF_EXP2_TAB[(nk_h & 31) as usize].wrapping_add(nk_h << 47));
-    let mag = (sp - sm) * even + (sp + sm) * odd;
-    mag.copysign(x_f64) as f32
+    let even = (0.5 + r2 * 0.25) + r4 * ((1.0 / 48.0) + r2 * (1.0 / 1440.0));
+    let odd = r * ((0.5 + r2 * (1.0 / 12.0)) + r4 * (1.0 / 240.0));
+    let nk = ki.wrapping_neg();
+    let sp = f64::from_bits(POWF_EXP2_TAB[(ki & 31) as usize].wrapping_add(ki << 47));
+    let sm = f64::from_bits(POWF_EXP2_TAB[(nk & 31) as usize].wrapping_add(nk << 47));
+    ((sp - sm) * even + (sp + sm) * odd) as f32
 }
 
 #[inline(always)]
 pub fn coshf(x: f32) -> f32 {
-    // Direct f64-intermediate table + Estrin even/odd polynomial evaluation
-    // reusing `POWF_EXP2_TAB` (N = 32): zero divisions, frameless baseline
-    // SSE2 leaf (no dispatch indirection), bit-exact against glibc 2.43 across
-    // all 2^32 binary32 inputs (0 mismatches exhaustively) and all 4 IEEE-754
-    // rounding modes + exception flags.
+    // Direct signed f64-intermediate table + Estrin even/odd polynomial
+    // evaluation reusing `POWF_EXP2_TAB` (N = 32): zero divisions, zero
+    // `.abs()`, 0.5 baked into polynomial coefficients, frameless baseline
+    // SSE2 leaf, bit-exact against glibc 2.43 across all 2^32 binary32 inputs
+    // and all 4 IEEE-754 rounding modes (0 mismatches).
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax > 0x42b2_d4fc {
+    if ax >= 0x42b2_d4fc {
         return coshf_overflow_or_special(x);
     }
-    let xd = f64::from(x).abs();
+    let xd = f64::from(x);
     if ax < 0x3e00_0000 {
         if ax == 0 {
             return 1.0;
@@ -652,12 +651,11 @@ pub fn coshf(x: f32) -> f32 {
     let r = (xd - kd * HYPERBOLIC_F32_LN2_32_HI) - kd * HYPERBOLIC_F32_LN2_32_LO;
     let r2 = r * r;
     let r4 = r2 * r2;
-    let even = (1.0 + r2 * 0.5) + r4 * ((1.0 / 24.0) + r2 * (1.0 / 720.0));
-    let odd = r * ((1.0 + r2 * (1.0 / 6.0)) + r4 * (1.0 / 120.0));
-    let ki_h = ki.wrapping_sub(32);
-    let nk_h = ki.wrapping_neg().wrapping_sub(32);
-    let sp = f64::from_bits(POWF_EXP2_TAB[(ki_h & 31) as usize].wrapping_add(ki_h << 47));
-    let sm = f64::from_bits(POWF_EXP2_TAB[(nk_h & 31) as usize].wrapping_add(nk_h << 47));
+    let even = (0.5 + r2 * 0.25) + r4 * ((1.0 / 48.0) + r2 * (1.0 / 1440.0));
+    let odd = r * ((0.5 + r2 * (1.0 / 12.0)) + r4 * (1.0 / 240.0));
+    let nk = ki.wrapping_neg();
+    let sp = f64::from_bits(POWF_EXP2_TAB[(ki & 31) as usize].wrapping_add(ki << 47));
+    let sm = f64::from_bits(POWF_EXP2_TAB[(nk & 31) as usize].wrapping_add(nk << 47));
     ((sp + sm) * even + (sp - sm) * odd) as f32
 }
 
@@ -676,9 +674,9 @@ const TANHF_FAST_ABS_MAX: f32 = 40.0;
 
 #[inline(always)]
 pub fn tanhf(x: f32) -> f32 {
-    // Direct f64-intermediate table + split-reduction Estrin polynomial
-    // evaluation reusing `POWF_EXP2_TAB` (N = 32): evaluates
-    // `(e^(2|x|) - 1) / (e^(2|x|) + 1)` in f64 and rounds ONCE to f32.
+    // Direct signed f64-intermediate table + Estrin polynomial evaluation
+    // reusing `POWF_EXP2_TAB` (N = 32): evaluates `(e^(2x) - 1) / (e^(2x) + 1)`
+    // in f64 with zero `.abs()`/`.copysign()` and single-step range reduction.
     // Frameless baseline SSE2 leaf, bit-exact against glibc 2.43 across all
     // 2^32 binary32 inputs and all 4 IEEE-754 rounding modes (0 mismatches).
     let ux = x.to_bits();
@@ -696,45 +694,44 @@ pub fn tanhf(x: f32) -> f32 {
         let sat = 0x3fef_ffff_ffff_ffffu64 | (u64::from(ux & 0x8000_0000) << 32);
         return core::hint::black_box(f64::from_bits(sat)) as f32;
     }
-    let x_f64 = f64::from(x);
-    let xd = x_f64.abs();
+    let xd = f64::from(x);
     if ax < 0x3e00_0000 {
         if ax == 0 {
             return x;
         }
-        let x2 = xd * xd;
-        let t = (xd * x2)
+        let xa = xd.abs();
+        let x2 = xa * xa;
+        let t = (xa * x2)
             * (-(1.0 / 3.0)
                 + x2 * ((2.0 / 15.0)
                     + x2 * (-(17.0 / 315.0)
                         + x2 * ((62.0 / 2835.0)
                             + x2 * (-(1382.0 / 155_925.0) + x2 * (21_844.0 / 6_081_075.0))))));
-        let s = xd + t;
+        let s = xa + t;
         let mut sb = s.to_bits();
         if (sb & 0x0fff_ffff) == 0 {
-            let err = (xd - s) + t;
+            let err = (xa - s) + t;
             if err > 0.0 {
                 sb = sb.wrapping_add(1);
             } else if err < 0.0 {
                 sb = sb.wrapping_sub(1);
             }
         }
-        return f64::from_bits(sb).copysign(x_f64) as f32;
+        return f64::from_bits(sb).copysign(xd) as f32;
     }
     let z = (2.0 * EXPF_INVLN2_SCALED) * xd;
     let x2 = xd + xd;
     let kd_raw = z + EXPF_SHIFT;
     let ki = kd_raw.to_bits();
     let kd = kd_raw - EXPF_SHIFT;
-    let r = (x2 - kd * HYPERBOLIC_F32_LN2_32_HI) - kd * HYPERBOLIC_F32_LN2_32_LO;
+    let r = x2 - kd * TANHF_LN2_32;
     let r2 = r * r;
     let r4 = r2 * r2;
     let p = ((1.0 + r) + r2 * (0.5 + r * (1.0 / 6.0)))
         + r4 * (((1.0 / 24.0) + r * (1.0 / 120.0)) + r2 * (1.0 / 720.0));
     let s = f64::from_bits(POWF_EXP2_TAB[(ki & 31) as usize].wrapping_add(ki << 47));
     let e2x = s * p;
-    let mag = (e2x - 1.0) / (e2x + 1.0);
-    mag.copysign(x_f64) as f32
+    ((e2x - 1.0) / (e2x + 1.0)) as f32
 }
 
 #[inline]
@@ -1930,8 +1927,16 @@ mod tests {
             0x4117_ffff,
             0x4118_0000,
             0xc118_0000,
+            0x4195_bc36,
+            0xc195_bc36,
+            0x41b7_ee9a,
+            0xc1b7_ee9a,
             0x4288_942b,
             0xc288_942b,
+            0x42a2_8a1b,
+            0xc2a2_8a1b,
+            0x42b2_d4fb,
+            0xc2b2_d4fb,
             0x42b2_d4fc,
             0xc2b2_d4fc,
             0x42b2_d4fd,

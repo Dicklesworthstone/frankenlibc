@@ -71,14 +71,6 @@ extern "C" fn set_range_errno() {
     unsafe { set_abi_errno(libc::ERANGE) };
 }
 
-#[cold]
-#[inline(never)]
-extern "C" fn range_errno_f32(out: f32) -> f32 {
-    // SAFETY: `__errno_location` returns writable thread-local errno storage.
-    unsafe { set_abi_errno(libc::ERANGE) };
-    out
-}
-
 /// Unbiased base-2 exponent of a finite, nonzero binary128 value (its `logb`),
 /// handling subnormals via the mantissa's leading-zero count. Caller guarantees
 /// the value is finite and nonzero.
@@ -1963,16 +1955,36 @@ extern "C" fn tanhf_slow(x: f32) -> f32 {
     unary_entry_f32(x, 5, frankenlibc_core::math::tanhf)
 }
 
+#[cold]
+#[inline(never)]
+extern "C" fn sinhf_overflow_or_special_abi(x: f32) -> f32 {
+    let out = frankenlibc_core::math::sinhf(x);
+    if out.is_infinite() && x.is_finite() {
+        set_range_errno();
+    }
+    out
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn coshf_overflow_or_special_abi(x: f32) -> f32 {
+    let out = frankenlibc_core::math::coshf(x);
+    if out.is_infinite() && x.is_finite() {
+        set_range_errno();
+    }
+    out
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinhf(x: f32) -> f32 {
     if !runtime_policy::math_membrane_fastpath_inline() {
         return sinhf_slow(x);
     }
-    let out = frankenlibc_core::math::sinhf(x);
-    if out.is_infinite() && x.is_finite() {
-        return range_errno_f32(out);
+    // Every finite |x| < 0x42b2_d4fc has |sinh(x)| < f32::MAX in all 4 rounding modes.
+    if (x.to_bits() & 0x7fff_ffff) >= 0x42b2_d4fc {
+        return sinhf_overflow_or_special_abi(x);
     }
-    out
+    frankenlibc_core::math::sinhf(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1980,11 +1992,11 @@ pub unsafe extern "C" fn coshf(x: f32) -> f32 {
     if !runtime_policy::math_membrane_fastpath_inline() {
         return coshf_slow(x);
     }
-    let out = frankenlibc_core::math::coshf(x);
-    if out.is_infinite() && x.is_finite() {
-        return range_errno_f32(out);
+    // Every finite |x| < 0x42b2_d4fc has cosh(x) < f32::MAX in all 4 rounding modes.
+    if (x.to_bits() & 0x7fff_ffff) >= 0x42b2_d4fc {
+        return coshf_overflow_or_special_abi(x);
     }
-    out
+    frankenlibc_core::math::coshf(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
