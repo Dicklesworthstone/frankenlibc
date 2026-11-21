@@ -22,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/tests/native_file_layout_test.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
       - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
@@ -124,6 +125,44 @@ jobs:
               /bin/echo stdio-normal-exit > "$prefix-echo.out" 2> "$prefix-echo.err"
             cmp artifacts/stdio-layout/echo-expected.out "$prefix-echo.out"
             test ! -s "$prefix-echo.err"
+          done
+      - name: Prepare real numeric locales for scanf conformance
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          if ! command -v localedef >/dev/null || \
+              [[ ! -f /usr/share/i18n/locales/ps_AF ]] || \
+              [[ ! -f /usr/share/i18n/locales/de_DE ]]; then
+            sudo apt-get update
+            sudo apt-get install -y locales
+          fi
+          locale_path="$PWD/target/stdio-scanner-locales"
+          mkdir -p "$locale_path"
+          localedef --no-archive -i ps_AF -f UTF-8 "$locale_path/ps_AF.UTF-8"
+          localedef --no-archive -i de_DE -f UTF-8 "$locale_path/de_DE.UTF-8"
+          printf 'FRANKENLIBC_TEST_LOCALE_PATH=%s\n' "$locale_path" >> "$GITHUB_ENV"
+      - name: Preserve numeric radix widths and unread scanf input
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          test -n "${FRANKENLIBC_TEST_LOCALE_PATH:-}"
+          core_log=artifacts/stdio-layout/scanf-numeric-radix-core.log
+          cargo test -p frankenlibc-core --lib wide_stream_scan_tests \
+            -- --test-threads=1 --nocapture 2>&1 | tee "$core_log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$core_log"
+          for regression in \
+            multibyte_radix_preserves_narrow_widths_and_source_counts \
+            multibyte_radix_retains_partial_input_and_distinguishes_eof \
+            multibyte_radix_wide_buffer_width_counts_characters; do
+            grep -Eq "^test .*::$regression \\.\\.\\. ok$" "$core_log"
+          done
+          for mode in strict hardened; do
+            log="artifacts/stdio-layout/fscanf-numeric-radix-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test conformance_diff_fscanf_host_stream \
+              -- --test-threads=1 --nocapture 2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
+            grep -Eq '^test streaming_narrow::numeric_radix_preserves_byte_widths_counts_and_unread_input \.\.\.' "$log"
           done
       - name: Preserve real GNU standard stream objects and COPY relocations
         if: always() && steps.build.outcome == 'success'

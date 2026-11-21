@@ -613,7 +613,18 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
             // with `input_end` found once above.
             let slice = unsafe { std::slice::from_raw_parts(p, remaining) };
 
-            match frankenlibc_core::stdio::scanf::scan_default_float(slice, 0) {
+            let parsed = if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+                // Keep the common C-locale field on its existing fast parser;
+                // resolving a named locale is only needed for a different radix.
+                frankenlibc_core::stdio::scanf::scan_default_float(slice, 0)
+            } else {
+                frankenlibc_core::stdio::scanf::scan_default_float_with_radix(
+                    slice,
+                    0,
+                    NumericLocale::current().radix,
+                )
+            };
+            match parsed {
                 Some((value, next)) => {
                     if kinds[index] == b'F' {
                         // SAFETY: `%lf` was parsed, so the caller passed a `double *`.
@@ -16716,6 +16727,7 @@ pub unsafe extern "C-unwind" fn vasprintf(
 
 use frankenlibc_core::stdio::scanf::{
     ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format, scan_input,
+    scan_input_with_radix,
 };
 
 pub fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
@@ -16850,7 +16862,11 @@ pub(crate) fn scanf_core(
     dialect: ScanfDialect,
 ) -> Option<(ScanResult, ScanDirectives)> {
     let directives = scanf_directives(format, None, dialect)?;
-    let result = scan_input(input, directives.as_slice());
+    let result = if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+        scan_input(input, directives.as_slice())
+    } else {
+        scan_input_with_radix(input, directives.as_slice(), NumericLocale::current().radix)
+    };
     Some((result, directives))
 }
 
@@ -16944,10 +16960,9 @@ unsafe fn scan_narrow_stream(
         return libc::EOF;
     };
     let locale = NumericLocale::current();
-    let radix = frankenlibc_core::stdio::printf::numeric_radix_byte().unwrap_or(b'.');
     let mut session = WideScanSession::new_narrow(
         directives.as_slice(),
-        radix,
+        locale.radix,
         crate::locale_abi::active_multibyte_codec(),
     );
     let mut writer = crate::wchar_abi::WideScanWriter::new_narrow(ap);

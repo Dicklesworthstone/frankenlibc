@@ -1424,6 +1424,16 @@ pub fn significandf(x: f32) -> f32 {
 mod tests {
     use super::*;
 
+    // These kernels no longer dispatch in production. Keep the code-generation
+    // parity check by compiling test-only AVX2/FMA twins of the inline kernels,
+    // without adding dispatch overhead back to their public fast paths.
+    crate::math::avx2_fma_dispatch! {
+        fn sinhf_test_dispatch(x: f32) -> f32 => sinhf;
+    }
+    crate::math::avx2_fma_dispatch! {
+        fn coshf_test_dispatch(x: f32) -> f32 => coshf;
+    }
+
     #[test]
     fn avx2_fma_twins_match_baseline_bodies() {
         use crate::math::{assert_dispatch_matches_body, avx2_fma_dispatch_inputs};
@@ -1442,8 +1452,8 @@ mod tests {
         };
         f32_case("sinf", sinf, sinf_body);
         f32_case("cosf", cosf, cosf_body);
-        f32_case("sinhf", sinhf, sinhf_body);
-        f32_case("coshf", coshf, coshf_body);
+        f32_case("sinhf", sinhf_test_dispatch, sinhf);
+        f32_case("coshf", coshf_test_dispatch, coshf);
         f32_case("erff", erff, erff_body);
     }
 
