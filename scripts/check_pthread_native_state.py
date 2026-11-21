@@ -42,6 +42,14 @@ UNWIND_CASES = (
     "native-exit", "native-cancel", "native-cancel-catch-all",
     "native-mixed-cancel", "native-legacy-mixed-cancel",
 )
+OWNED_UNWIND_CASES = UNWIND_CASES + ("native-legacy-base-cancel",)
+OWNED_UNWIND_SYMBOLS = (
+    "_Unwind_Backtrace", "_Unwind_DeleteException", "_Unwind_ForcedUnwind", "_Unwind_GetCFA",
+    "_Unwind_GetDataRelBase", "_Unwind_GetGR", "_Unwind_GetIP", "_Unwind_GetIPInfo",
+    "_Unwind_GetLanguageSpecificData", "_Unwind_GetRegionStart", "_Unwind_GetTextRelBase",
+    "_Unwind_RaiseException", "_Unwind_Resume", "_Unwind_Resume_or_Rethrow",
+    "_Unwind_SetGR", "_Unwind_SetIP",
+)
 CPP_CASES = (
     "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
     "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
@@ -215,6 +223,8 @@ def main():
                         help="Run loader-error thread isolation, consumption and teardown cases")
     parser.add_argument("--unwind-only", action="store_true",
                         help="Check interpose unwind exports and C/C++ exit/cancellation cleanup")
+    parser.add_argument("--owned-unwind-only", action="store_true",
+                        help="Check owned providers, native cleanup and deep propagation in both frame layouts")
     parser.add_argument("--public-tls-dtors-only", action="store_true",
                         help="Check public native TLS callback ownership, ordering and DSO lifetimes")
     args = parser.parse_args()
@@ -253,12 +263,34 @@ def main():
     compile_fixture("c-frame", c_flags + ["-fno-exceptions", "-c", str(source),
                                          "-Dmain=frankenlibc_native_state_unused_main",
                                          "-o", str(c_frame_object)])
-    compile_fixture("cpp", shlex.split(os.environ.get("CXX", "c++")) + [
+    cpp_flags = shlex.split(os.environ.get("CXX", "c++")) + [
         "-std=c++17", "-O2", "-fno-builtin", "-Wall", "-Wextra", "-Werror",
+    ]
+    compile_fixture("cpp", cpp_flags + [
         str(cpp_source), str(c_frame_object), "-o", str(cpp_binary), "-pthread", "-ldl",
     ])
     compile_fixture("wait", c_flags + ["-fno-exceptions", str(wait_source),
                                       "-o", str(wait_binary), "-pthread", "-ldl"])
+    owned_cpp_fixtures = []
+    owned_deep_fixtures = []
+    deep_source = root / "tests/conformance/fixtures/unwind/minimal_throw_catch.cpp"
+    if args.owned_unwind_only:
+        for layout, flag in (("frame-pointer", "-fno-omit-frame-pointer"),
+                             ("omitted-frame-pointer", "-fomit-frame-pointer")):
+            frame_object = output / f"native_cleanup_c_{layout}.o"
+            layout_binary = output / f"fixture_pthread_native_unwind_{layout}"
+            deep_binary = output / f"fixture_owned_unwind_deep_{layout}"
+            compile_fixture(f"c-frame-{layout}", c_flags + [
+                flag, "-fno-exceptions", "-c", str(source),
+                "-Dmain=frankenlibc_native_state_unused_main", "-o", str(frame_object)])
+            compile_fixture(f"cpp-{layout}", cpp_flags + [
+                flag, str(cpp_source), str(frame_object), "-o", str(layout_binary), "-pthread", "-ldl"])
+            compile_fixture(f"deep-{layout}", cpp_flags + [
+                flag, "-DFRANKENLIBC_WRAP_CXA_THROW", "-DFRANKENLIBC_WRAP_PERSONALITY",
+                "-Wl,--wrap=__cxa_throw", "-Wl,--wrap=__gxx_personality_v0",
+                str(deep_source), "-o", str(deep_binary)])
+            owned_cpp_fixtures.append((layout, layout_binary))
+            owned_deep_fixtures.append((layout, deep_binary))
     provider = subprocess.run([str(binary), "--provider"], env=environment,
                               capture_output=True, text=True, timeout=15)
     if provider.returncode or provider.stderr:
@@ -268,7 +300,7 @@ def main():
     failures = []
     explicit_skips = []
     symbol_ownership = None
-    if args.unwind_only:
+    if args.unwind_only or args.owned_unwind_only:
         # The interpose artifact must leave the complete opaque unwind protocol
         # with the resident platform provider. A partial owned export surface can
         # run one destructor and silently skip every remaining language cleanup.
@@ -283,20 +315,28 @@ def main():
             stderr = (error.stderr or b"").decode(errors="replace") + "\nsymbol scan timeout\n"
         except OSError as error:
             code, stdout, stderr = 127, "", str(error) + "\n"
-        (output / "interpose-unwind-symbols.log").write_text(stdout + stderr)
+        symbol_mode = "owned" if args.owned_unwind_only else "interpose"
+        (output / f"{symbol_mode}-unwind-symbols.log").write_text(stdout + stderr)
         exported = sorted({line.split()[-1].split("@", 1)[0]
                            for line in stdout.splitlines() if line.split()
                            and line.split()[-1].startswith("_Unwind_")})
-        symbol_ownership = {"returncode": code, "unexpected_public_exports": exported,
-                            "passed": code == 0 and not exported}
+        if args.owned_unwind_only:
+            missing = sorted(set(OWNED_UNWIND_SYMBOLS) - set(exported))
+            symbol_ownership = {"returncode": code, "defined_public_exports": exported,
+                                "required_public_exports": list(OWNED_UNWIND_SYMBOLS),
+                                "missing_public_exports": missing, "passed": code == 0 and not missing}
+        else:
+            symbol_ownership = {"returncode": code, "unexpected_public_exports": exported,
+                                "passed": code == 0 and not exported}
         if not symbol_ownership["passed"]:
             failures.append("unwind-symbol-ownership")
-        print("interpose unwind exports: " +
+        print(f"{symbol_mode} unwind exports: " +
               ("PASS" if symbol_ownership["passed"] else f"FAIL {exported}"), flush=True)
 
     def execute(label, case, expected, extra, executable=binary, oracle_for=None):
         try:
-            run = subprocess.run([str(executable), case, expected],
+            command = [str(executable), case] + ([] if expected is None else [expected])
+            run = subprocess.run(command,
                                  env=dict(environment, **extra), capture_output=True,
                                  text=True, timeout=15)
             code, stdout, stderr = run.returncode, run.stdout, run.stderr
@@ -339,6 +379,13 @@ def main():
             backend_negative["stderr"] ==
             "pthread-native-wait:sem-wait:FAIL:thread backend does not match inherited/native or hosted TP\n"):
         failures.append("wait-backend-negative")
+    if args.owned_unwind_only:
+        owned_negative = execute("owned-unwind-provider-negative", "native-exit", host,
+                                 {"FRANKENLIBC_TEST_OWNED_UNWIND": "1"}, cpp_binary)
+        if not (owned_negative["returncode"] == 86 and owned_negative["stdout"] == "" and
+                owned_negative["stderr"] ==
+                "pthread-native-unwind:unwind-provider-mismatch:_Unwind_Backtrace\n"):
+            failures.append("owned-unwind-provider-negative")
 
     variants = (("", CASES, binary, "pthread-native-state", ("0", "1")),
                 ("attributes-", ATTR_CASES, binary, "pthread-native-state", ("0", "1")),
@@ -365,6 +412,13 @@ def main():
     if args.unwind_only:
         variants = (("cpp-", UNWIND_CASES, cpp_binary, "pthread-native-unwind", ("0", "1")),
                     ("wait-", ("sem-wait",), wait_binary, "pthread-native-wait", ("0", "1")))
+    if args.owned_unwind_only:
+        # Hosted cancellation still belongs to the platform runtime; this lane
+        # explicitly qualifies the native owned protocol, not that separate path.
+        variants = tuple((f"owned-{layout}-", OWNED_UNWIND_CASES, executable,
+                          "pthread-native-unwind", ("1",))
+                         for layout, executable in owned_cpp_fixtures)
+        variants += (("owned-wait-", ("sem-wait",), wait_binary, "pthread-native-wait", ("1",)),)
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
@@ -381,10 +435,13 @@ def main():
             for mode in ("strict", "hardened"):
                 for native in backends:
                     label = f"{prefix}{'native' if native == '1' else 'hosted'}-{mode}"
-                    candidate = execute(label, case, str(library), {
+                    extra = {
                         "LD_PRELOAD": str(library), "FRANKENLIBC_MODE": mode,
                         "FRANKENLIBC_THREAD_NATIVE": native, "FRANKENLIBC_RUNTIME_MATH": "off",
-                    }, executable)
+                    }
+                    if args.owned_unwind_only:
+                        extra["FRANKENLIBC_TEST_OWNED_UNWIND"] = "1"
+                    candidate = execute(label, case, str(library), extra, executable)
                     passed = (candidate["returncode"] == 0 and candidate["stdout"] == expected
                               and candidate["stderr"] == "")
                     if not candidate.get("skipped"):
@@ -394,8 +451,29 @@ def main():
 
     gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
     candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
+    for layout, executable in owned_deep_fixtures:
+        for case in ("deep_ordinary", "deep_forced"):
+            expected = f"PASS: deep {case.removeprefix('deep_')} propagation depth=96 guards=2\n"
+            reference = execute(f"owned-deep-{layout}-gnu", case, None, {}, executable)
+            gnu_cases += 1
+            if reference["returncode"] or reference["stdout"] != expected or reference["stderr"]:
+                failures.append(f"owned-deep-{layout}-gnu:{case}")
+            for mode in ("strict", "hardened"):
+                label = f"owned-deep-{layout}-{mode}"
+                candidate = execute(label, case, None, {
+                    "LD_PRELOAD": str(library), "FRANKENLIBC_MODE": mode,
+                    "FRANKENLIBC_THREAD_NATIVE": "1", "FRANKENLIBC_RUNTIME_MATH": "off",
+                }, executable)
+                candidate_cases += 1
+                passed = (candidate["returncode"] == 0 and candidate["stdout"] == expected
+                          and candidate["stdout"] == reference["stdout"] and candidate["stderr"] == "")
+                print(f"{label} {case}: {'PASS' if passed else 'FAIL'}", flush=True)
+                if not passed:
+                    failures.append(f"{label}:{case}")
+    provider_negatives = 4 if args.owned_unwind_only else 3
     report = {"library": str(library), "library_sha256": sha256(library),
-              "scope": ("unwind" if args.unwind_only else
+              "scope": ("owned-unwind" if args.owned_unwind_only else
+                        "unwind" if args.unwind_only else
                         "dlerror" if args.dlerror_only else
                         "publication" if args.publication_only else
                         "attributes" if args.attributes_only else
@@ -406,15 +484,24 @@ def main():
               "wait_fixture_sha256": sha256(wait_source), "wait_binary_sha256": sha256(wait_binary),
               "exceptions_binary_sha256": sha256(exceptions_binary),
               "gnu_provider": host, "gnu_cases": gnu_cases,
-              "candidate_cases": candidate_cases, "provider_negative_cases": 3,
+              "candidate_cases": candidate_cases, "provider_negative_cases": provider_negatives,
               "backend_negative_cases": 1, "explicit_skips": explicit_skips,
               "symbol_ownership": symbol_ownership,
               "failures": failures, "runs": records}
+    if args.owned_unwind_only:
+        report.update({"thread_backends": ["native"],
+                       "hosted_cleanup_excluded": True,
+                       "owned_cpp_binaries": {layout: sha256(executable)
+                                              for layout, executable in owned_cpp_fixtures},
+                       "deep_fixture_sha256": sha256(deep_source),
+                       "deep_binaries": {layout: sha256(executable)
+                                         for layout, executable in owned_deep_fixtures}})
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
         raise SystemExit("pthread native state: FAIL " + ", ".join(failures))
+    provider_word = "four" if args.owned_unwind_only else "three"
     print(f"pthread native state: PASS ({gnu_cases} live GNU cases, "
-          f"{candidate_cases} candidate cases, three provider negatives, one backend negative)")
+          f"{candidate_cases} candidate cases, {provider_word} provider negatives, one backend negative)")
 
 
 if __name__ == "__main__":

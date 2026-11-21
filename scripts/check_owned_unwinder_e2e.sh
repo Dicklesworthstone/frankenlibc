@@ -232,7 +232,7 @@ for variant in frame_pointer omit_frame_pointer; do
     exit 1
   fi
 
-  for case_name in ordinary forced rethrow signal signal_altstack end negative missing_fde boundary; do
+  for case_name in ordinary forced rethrow signal signal_altstack end negative missing_fde boundary deep_ordinary deep_forced; do
     if [[ "${case_name}" != missing_fde && "${case_name}" != boundary ]]; then
       echo "Running ${variant}/${case_name} host reference"
       "${HOST_BIN}" "${case_name}" > "${OUT_DIR}/host_${variant}_${case_name}.log"
@@ -310,6 +310,8 @@ entries = {
     "negative": "owned_unwind_negative_entry",
     "missing_fde": "owned_unwind_missing_fde_entry",
     "boundary": "owned_forced_unwind_boundary_entry",
+    "deep_ordinary": "owned_deep_ordinary_entry",
+    "deep_forced": "owned_deep_forced_entry",
 }
 entry_name = entries[case_name]
 entry = getattr(fixture, entry_name)
@@ -325,6 +327,10 @@ if result != 0:
 reject_host_unwinder("after executing fixture")
 PY
     cat "${OUT_DIR}/owned_${variant}_${case_name}.log"
+    if [[ "${case_name}" == deep_ordinary || "${case_name}" == deep_forced ]]; then
+      cmp "${OUT_DIR}/host_${variant}_${case_name}.log" \
+          "${OUT_DIR}/owned_${variant}_${case_name}.log"
+    fi
   done
 done
 

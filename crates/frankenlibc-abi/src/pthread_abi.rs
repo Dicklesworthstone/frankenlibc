@@ -12370,7 +12370,7 @@ unsafe extern "C-unwind" fn owned_forced_unwind_bridge(
 
 #[inline]
 unsafe fn resolve_forced_unwind_pair() -> (ForcedUnwindRawFn, GetCfaRawFn) {
-    #[cfg(not(feature = "standalone"))]
+    #[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
     {
         // Probe only already-loaded objects via RTLD_NEXT; never dlopen libgcc_s.so.1.
         let forced = unsafe {
@@ -12395,6 +12395,8 @@ unsafe fn resolve_forced_unwind_pair() -> (ForcedUnwindRawFn, GetCfaRawFn) {
             };
         }
     }
+    // Owned Resume/accessors interpret our private exception and context
+    // layout. Starting that propagation in libgcc would mix two protocols.
     (owned_forced_unwind_bridge, owned_get_cfa_bridge)
 }
 

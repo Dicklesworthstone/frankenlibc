@@ -813,13 +813,10 @@ pub unsafe extern "C" fn _Unwind_DeleteException(exception: *mut UnwindException
 
 #[inline]
 pub(crate) unsafe fn owned_get_cfa_raw(ctx: *mut c_void) -> UnwindWord {
-    if ctx.is_null() {
-        return 0;
-    }
-    // SAFETY: non-null contexts are owned by this module during unwind stop or
-    // personality callbacks. `cfa` holds the frame's DWARF Canonical Frame
-    // Address matching libgcc's `_Unwind_GetCFA(context)` (`context->cfa`).
-    unsafe { (*(ctx.cast::<UnwindContext>())).cfa }
+    // The native stop protocol and public personalities must observe the
+    // same suspended-frame SP, including after a cleanup calls Resume.
+    // SAFETY: non-null contexts are owned by this module during callbacks.
+    unsafe { _Unwind_GetCFA(ctx.cast::<UnwindContext>()) }
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
@@ -1049,24 +1046,10 @@ pub(crate) unsafe extern "C-unwind" fn owned_forced_unwind_entry(
     _stop: Option<UnwindStopFn>,
     _stop_parameter: *mut c_void,
 ) -> UnwindReasonCode {
-    std::arch::naked_asm!(
-        "sub rsp, 72",
-        "mov rax, [rsp + 72]",
-        "mov [rsp + 0], rax",
-        "lea rax, [rsp + 80]",
-        "mov [rsp + 8], rax",
-        "mov [rsp + 16], rbp",
-        "mov [rsp + 24], rbx",
-        "mov [rsp + 32], r12",
-        "mov [rsp + 40], r13",
-        "mov [rsp + 48], r14",
-        "mov [rsp + 56], r15",
-        "mov rcx, rsp",
-        "call {helper}",
-        "add rsp, 72",
-        "ret",
-        helper = sym __frankenlibc_owned_forced_unwind_from_cursor,
-    );
+    // Native cancellation must use the same cursor and phase-two engine as
+    // the public entry and Resume. Tail-branch before a Rust prologue can
+    // change the caller's register state or suspended stack pointer.
+    core::arch::naked_asm!("jmp __frankenlibc_owned_forced_capture");
 }
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -1178,7 +1161,9 @@ unsafe extern "C" fn __frankenlibc_owned_forced_from_cursor(
         (*exception).private_1 = stop as usize;
         (*exception).private_2 = argument as usize;
     }
-    owned_phase2_cleanup(exception, UnwindCursor::captured(capture))
+    let cursor = UnwindCursor::captured(capture);
+    emit_owned_unwind_jsonl("forced_unwind_enter", 0, cursor.ip, cursor.stack_pointer(), 0);
+    owned_phase2_cleanup(exception, cursor)
 }
 
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
@@ -1911,7 +1896,7 @@ fn owned_phase2_cleanup(
         Some(unsafe { core::mem::transmute::<usize, UnwindStopFn>(stop_address) })
     };
 
-    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+    for frame_index in 0..MAX_UNWIND_FRAMES {
         let frame_result = owned_frame_state(cursor);
         let frame = frame_result.as_ref().ok().copied().flatten();
         let at_end = matches!(frame_result, Ok(None));
@@ -1954,7 +1939,13 @@ fn owned_phase2_cleanup(
         let Some((fde, state)) = frame else {
             return URC_FATAL_PHASE2_ERROR;
         };
-        if let Some(personality) = fde.personality {
+        // Preserve the native forced engine's abort-profile handling: those
+        // own-image frames have no Drop cleanup, only terminate pads. Stop
+        // callbacks and CFI stepping still run, and ordinary exceptions keep
+        // their personalities in every profile.
+        if let Some(personality) = fde.personality
+            && !(stop.is_some() && own_panic_abort_frame(cursor.lookup_ip()))
+        {
             let code = call_personality(
                 personality,
                 actions,
@@ -2485,7 +2476,7 @@ fn owned_phase1_search(
     let mut bounds = UnwindStackBounds::new(cursor).ok_or(())?;
     // SAFETY: the raise entry rejected a null exception pointer.
     let exception_class = unsafe { (*exception).exception_class };
-    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+    for frame_index in 0..MAX_UNWIND_FRAMES {
         let Some((fde, state)) = owned_frame_state(cursor).map_err(|_| ())? else {
             return Ok(None);
         };

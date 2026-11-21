@@ -619,7 +619,144 @@ extern "C" int owned_unwind_negative_entry() {
     return result;
 }
 
+namespace {
+
+// Exception propagation has its own budget; the backtrace display limit must
+// not truncate a legitimate chain before the first handler or cleanup frame.
+constexpr unsigned deep_frame_count = 96;
+static volatile bool deep_allow_return = false;
+struct DeepObservations {
+    unsigned entered, returned_frames, events[2], event_count, stop_calls;
+    unsigned deletes, failures;
+    uintptr_t target_sp;
+    _Unwind_Reason_Code returned;
+};
+static DeepObservations deep;
+static _Unwind_Exception deep_exception;
+static std::jmp_buf deep_destination;
+
+struct DeepGuard {
+    unsigned id;
+    ~DeepGuard() noexcept {
+        if (deep.event_count < 2) deep.events[deep.event_count++] = id;
+        else ++deep.failures;
+    }
+};
+
+void deep_exception_deleted(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
+    if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT || exception != &deep_exception)
+        ++deep.failures;
+    ++deep.deletes;
+}
+
+_Unwind_Reason_Code deep_stop(int version, _Unwind_Action actions,
+                              _Unwind_Exception_Class exception_class,
+                              _Unwind_Exception* exception, _Unwind_Context* context,
+                              void* argument) {
+    if (version != 1 || actions != (_UA_FORCE_UNWIND | _UA_CLEANUP_PHASE) ||
+        exception_class != forced_class || exception != &deep_exception ||
+        argument != &deep || context == nullptr) {
+        ++deep.failures;
+        return _URC_FATAL_PHASE2_ERROR;
+    }
+    ++deep.stop_calls;
+    const uintptr_t sp = _Unwind_GetCFA(context);
+    if (sp == deep.target_sp) {
+        _Unwind_DeleteException(exception);
+        std::longjmp(deep_destination, 1);
+    }
+    if (sp == 0 || sp > deep.target_sp) {
+        ++deep.failures;
+        return _URC_FATAL_PHASE2_ERROR;
+    }
+    return _URC_NO_REASON;
+}
+
+__attribute__((noinline)) void deep_frames(unsigned depth, bool forced) {
+    ++deep.entered;
+    if (depth != 0) {
+        deep_frames(depth - 1, forced);
+        // A possible normal return and this post-call effect prevent a tail
+        // recursion rewrite. The forced stop count also verifies real frames.
+        asm volatile("" : : "r"(depth) : "memory");
+        ++deep.returned_frames;
+        return;
+    }
+    if (deep_allow_return) return;
+    if (!forced) throw TestException();
+    deep.returned = _Unwind_ForcedUnwind(&deep_exception, deep_stop, &deep);
+    ++deep.failures;
+    std::longjmp(deep_destination, 1);
+}
+
+__attribute__((noinline)) void deep_inner(bool forced) {
+    DeepGuard guard{0};
+    deep_frames(deep_frame_count, forced);
+}
+
+__attribute__((noinline)) void deep_outer(bool forced) {
+    DeepGuard guard{1};
+    deep_inner(forced);
+}
+
+int report_deep(const char* mode, bool result) {
+    std::printf("%s: deep %s propagation depth=%u guards=%u\n",
+                result ? "PASS" : "FAIL", mode, deep_frame_count, deep.event_count);
+    if (!result)
+        std::fprintf(stderr, "deep entered=%u returns=%u stops=%u deletes=%u reason=%d failures=%u\n",
+                     deep.entered, deep.returned_frames, deep.stop_calls, deep.deletes,
+                     static_cast<int>(deep.returned), deep.failures);
+    return result ? 0 : 1;
+}
+
+bool deep_guards_match() {
+    return deep.entered == deep_frame_count + 1 && deep.returned_frames == 0 &&
+           deep.event_count == 2 && deep.events[0] == 0 && deep.events[1] == 1 &&
+           deep.failures == 0;
+}
+
+} // namespace
+
+extern "C" int owned_deep_ordinary_entry() {
+    // Existing personality instrumentation retains its own bounded counters;
+    // the deep chain uses separate stop/cleanup observations above.
+    reset_observations(false);
+    deep = {};
+    bool caught = false;
+    try {
+        deep_outer(false);
+    } catch (const TestException&) {
+        caught = true;
+    } catch (...) {
+        ++deep.failures;
+    }
+    return report_deep("ordinary", caught && deep_guards_match());
+}
+
+extern "C" int owned_deep_forced_entry() {
+    reset_observations(false);
+    deep = {};
+    deep_exception = {};
+    deep_exception.exception_class = forced_class;
+    deep_exception.exception_cleanup = deep_exception_deleted;
+    deep.target_sp = stack_pointer();
+    if (setjmp(deep_destination) == 0) {
+        deep_outer(true);
+        ++deep.failures;
+    }
+    const bool passed = deep_guards_match() && deep.stop_calls > deep_frame_count &&
+                        deep.deletes == 1;
+    if (deep.deletes == 0) _Unwind_DeleteException(&deep_exception);
+    return report_deep("forced", passed);
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "deep_ordinary") == 0) {
+        return owned_deep_ordinary_entry();
+    }
+    if (argc == 2 && std::strcmp(argv[1], "deep_forced") == 0) {
+        return owned_deep_forced_entry();
+    }
     if (argc == 2 && std::strcmp(argv[1], "signal") == 0) {
         return owned_signal_unwind_entry(0);
     }

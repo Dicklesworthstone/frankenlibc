@@ -423,6 +423,39 @@ static int native_provider(const char *expected, const char *name) {
       return 86;
     }
   }
+  const char *require_owned = std::getenv("FRANKENLIBC_TEST_OWNED_UNWIND");
+  if (require_owned && std::strcmp(require_owned, "1") == 0) {
+    const struct { const char *name, *version; } unwind_symbols[] = {
+      {"_Unwind_Backtrace", "GCC_3.3"},
+      {"_Unwind_DeleteException", "GCC_3.0"},
+      {"_Unwind_ForcedUnwind", "GCC_3.0"},
+      {"_Unwind_GetCFA", "GCC_3.3"},
+      {"_Unwind_GetDataRelBase", "GCC_3.0"},
+      {"_Unwind_GetGR", "GCC_3.0"},
+      {"_Unwind_GetIP", "GCC_3.0"},
+      {"_Unwind_GetIPInfo", "GCC_4.2.0"},
+      {"_Unwind_GetLanguageSpecificData", "GCC_3.0"},
+      {"_Unwind_GetRegionStart", "GCC_3.0"},
+      {"_Unwind_GetTextRelBase", "GCC_3.0"},
+      {"_Unwind_RaiseException", "GCC_3.0"},
+      {"_Unwind_Resume", "GCC_3.0"},
+      {"_Unwind_Resume_or_Rethrow", "GCC_3.3"},
+      {"_Unwind_SetGR", "GCC_3.0"},
+      {"_Unwind_SetIP", "GCC_3.0"},
+    };
+    for (const auto &symbol : unwind_symbols) {
+      void *address = dlsym(RTLD_DEFAULT, symbol.name);
+      void *versioned = dlvsym(RTLD_DEFAULT, symbol.name, symbol.version);
+      Dl_info info{};
+      struct stat actual{};
+      if (!address || address != versioned || !dladdr(address, &info) || !info.dli_fname ||
+          stat(info.dli_fname, &actual) || actual.st_dev != wanted.st_dev ||
+          actual.st_ino != wanted.st_ino) {
+        std::fprintf(stderr, "pthread-native-unwind:unwind-provider-mismatch:%s\n", symbol.name);
+        return 86;
+      }
+    }
+  }
   if (std::strstr(name, "join-alias"))
     native_alias_join = reinterpret_cast<NativeJoin>(dlsym(RTLD_DEFAULT, "__pthread_join"));
   if (std::strstr(name, "legacy")) {
