@@ -3738,6 +3738,17 @@ pub(crate) fn math_membrane_fastpath() -> bool {
             && !runtime_math_disabled())
 }
 
+/// Call-free inline fast-path predicate for hot math entrypoints.
+/// When this returns `false`, the cold slow path re-checks `math_membrane_fastpath()`
+/// (including `runtime_math_disabled()`) so semantics are identical without forcing
+/// register spills or stack frames on the common path.
+#[inline(always)]
+pub(crate) fn math_membrane_fastpath_inline() -> bool {
+    cfg!(not(test))
+        && !(MODE_STATE.load(AtomicOrdering::Relaxed) == MODE_HARDENED
+            && is_family_escalated(ApiFamily::MathFenv))
+}
+
 /// Cheap predicate gating the ctype ABI fast-path (bd-n40in2 sibling).
 /// Automatically yields to `decide()` in hardened mode if `Ctype` is escalated.
 #[inline(always)]

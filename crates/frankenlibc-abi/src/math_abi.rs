@@ -59,16 +59,24 @@ fn heal_non_finite(x: f64) -> f64 {
 
 #[cold]
 #[inline(never)]
-fn set_domain_errno() {
+extern "C" fn set_domain_errno() {
     // SAFETY: `__errno_location` returns writable thread-local errno storage.
     unsafe { set_abi_errno(libc::EDOM) };
 }
 
 #[cold]
 #[inline(never)]
-fn set_range_errno() {
+extern "C" fn set_range_errno() {
     // SAFETY: `__errno_location` returns writable thread-local errno storage.
     unsafe { set_abi_errno(libc::ERANGE) };
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn range_errno_f32(out: f32) -> f32 {
+    // SAFETY: `__errno_location` returns writable thread-local errno storage.
+    unsafe { set_abi_errno(libc::ERANGE) };
+    out
 }
 
 /// Unbiased base-2 exponent of a finite, nonzero binary128 value (its `logb`),
@@ -510,6 +518,9 @@ fn is_integral_f32(x: f32) -> bool {
 #[cold]
 #[inline(never)]
 fn unary_entry_slow(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -556,7 +567,7 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
     // membrane is provably always-Allow for MathFenv and can never heal a math
     // result, so `decide()`+`observe()` cannot change the output.
-    if runtime_policy::math_membrane_fastpath() {
+    if runtime_policy::math_membrane_fastpath_inline() {
         return f(x);
     }
     unary_entry_slow(x, base_cost_ns, f)
@@ -565,6 +576,9 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
 #[cold]
 #[inline(never)]
 fn unary_infallible_entry_slow<F: FnOnce(f64) -> f64>(x: f64, base_cost_ns: u64, f: F) -> f64 {
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -598,7 +612,7 @@ fn unary_infallible_entry<F: FnOnce(f64) -> f64>(x: f64, base_cost_ns: u64, f: F
     if x.is_nan() {
         return std::hint::black_box(x) + 0.0;
     }
-    if runtime_policy::math_membrane_fastpath() {
+    if runtime_policy::math_membrane_fastpath_inline() {
         return f(x);
     }
     unary_infallible_entry_slow(x, base_cost_ns, f)
@@ -607,6 +621,9 @@ fn unary_infallible_entry<F: FnOnce(f64) -> f64>(x: f64, base_cost_ns: u64, f: F
 #[cold]
 #[inline(never)]
 fn binary_entry_slow(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x, y);
+    }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
     let (mode, decision) = runtime_policy::decide(
@@ -645,7 +662,7 @@ fn binary_entry_slow(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) 
 #[inline(always)]
 fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
-    if runtime_policy::math_membrane_fastpath() {
+    if runtime_policy::math_membrane_fastpath_inline() {
         return f(x, y);
     }
     binary_entry_slow(x, y, base_cost_ns, f)
@@ -1626,6 +1643,9 @@ pub unsafe extern "C" fn pow10(x: f64) -> f64 {
 #[cold]
 #[inline(never)]
 fn unary_entry_f32_slow<F: FnOnce(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -1672,7 +1692,7 @@ fn unary_entry_f32<F: FnOnce(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f3
         return std::hint::black_box(x) + 0.0;
     }
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
-    if runtime_policy::math_membrane_fastpath() {
+    if runtime_policy::math_membrane_fastpath_inline() {
         return f(x);
     }
     unary_entry_f32_slow(x, base_cost_ns, f)
@@ -1681,6 +1701,9 @@ fn unary_entry_f32<F: FnOnce(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f3
 #[cold]
 #[inline(never)]
 fn binary_entry_f32_slow(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x, y);
+    }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
     let (mode, decision) = runtime_policy::decide(
@@ -1725,7 +1748,7 @@ fn binary_entry_f32_slow(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f
 #[inline(always)]
 fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
-    if runtime_policy::math_membrane_fastpath() {
+    if runtime_policy::math_membrane_fastpath_inline() {
         return f(x, y);
     }
     binary_entry_f32_slow(x, y, base_cost_ns, f)
@@ -1914,8 +1937,9 @@ pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
 
 // --- Hyperbolic f32 ---
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinhf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn sinhf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::sinhf);
     if out.is_infinite() && x.is_finite() {
         set_range_errno();
@@ -1923,8 +1947,9 @@ pub unsafe extern "C" fn sinhf(x: f32) -> f32 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn coshf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn coshf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::coshf);
     if out.is_infinite() && x.is_finite() {
         set_range_errno();
@@ -1932,9 +1957,42 @@ pub unsafe extern "C" fn coshf(x: f32) -> f32 {
     out
 }
 
+#[cold]
+#[inline(never)]
+extern "C" fn tanhf_slow(x: f32) -> f32 {
+    unary_entry_f32(x, 5, frankenlibc_core::math::tanhf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sinhf(x: f32) -> f32 {
+    if !runtime_policy::math_membrane_fastpath_inline() {
+        return sinhf_slow(x);
+    }
+    let out = frankenlibc_core::math::sinhf(x);
+    if out.is_infinite() && x.is_finite() {
+        return range_errno_f32(out);
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn coshf(x: f32) -> f32 {
+    if !runtime_policy::math_membrane_fastpath_inline() {
+        return coshf_slow(x);
+    }
+    let out = frankenlibc_core::math::coshf(x);
+    if out.is_infinite() && x.is_finite() {
+        return range_errno_f32(out);
+    }
+    out
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanhf(x: f32) -> f32 {
-    unary_entry_f32(x, 5, frankenlibc_core::math::tanhf)
+    if !runtime_policy::math_membrane_fastpath_inline() {
+        return tanhf_slow(x);
+    }
+    frankenlibc_core::math::tanhf(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
