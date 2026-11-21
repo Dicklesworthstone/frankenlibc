@@ -218,6 +218,11 @@ pub struct ThreadHandle {
     /// handlers access this cell; no inherited compiler TLS is involved.
     pub errno: core::cell::UnsafeCell<i32>,
 
+    /// Native signal deferral belongs to this thread, independently of the
+    /// creator's compiler TLS. Initialized before clone and retained through
+    /// application destructors; exit blocks signals before handle retirement.
+    pub signal_state: crate::signal::ThreadSignalState,
+
     /// Formatting state belongs to the native owner, including during key
     /// destructors. A new thread starts on the global numeric locale and with
     /// no pending render error, independently of its creator's compiler TLS.
@@ -1080,6 +1085,7 @@ pub unsafe fn prepare_thread_with_startup(
             entry_gate: AtomicU32::new(ENTRY_WAITING),
             retval: core::cell::UnsafeCell::new(0),
             errno: core::cell::UnsafeCell::new(0),
+            signal_state: crate::signal::ThreadSignalState::new(),
             numeric_locale: core::cell::UnsafeCell::new(None),
             render_failure: core::cell::UnsafeCell::new(0),
             cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE

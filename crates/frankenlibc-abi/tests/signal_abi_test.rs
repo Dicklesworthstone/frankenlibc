@@ -614,6 +614,75 @@ fn signal_delivery_remains_immediate_for_safe_classification() {
 }
 
 #[test]
+fn nested_signal_sections_preserve_the_outer_classification() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
+    let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = counting_handler as *const () as usize;
+    assert_eq!(
+        unsafe { sigaction(libc::SIGUSR1, &action, &mut previous) },
+        0
+    );
+
+    struct RestoreSignal(libc::sigaction);
+    impl Drop for RestoreSignal {
+        fn drop(&mut self) {
+            // SAFETY: the saved disposition belongs to this serialized test.
+            unsafe { sigaction(libc::SIGUSR1, &self.0, std::ptr::null_mut()) };
+        }
+    }
+    let _restore = RestoreSignal(previous);
+
+    {
+        let _outer =
+            enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+        {
+            let _inner =
+                enter_signal_critical_section(SignalCriticalSectionKind::RuntimePolicyDecision);
+            assert_eq!(
+                current_signal_classification_for_test(),
+                SignalSafetyClassification::MaskRequired,
+                "a safe nested operation cannot weaken the outer allocator section"
+            );
+            unsafe { invoke_signal_handler_for_test(libc::SIGUSR1) };
+            assert_eq!(DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed), 0);
+        }
+        assert_eq!(
+            current_signal_classification_for_test(),
+            SignalSafetyClassification::MaskRequired
+        );
+        unsafe { invoke_signal_handler_for_test(libc::SIGUSR1) };
+        assert_eq!(DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed), 0);
+    }
+    assert_eq!(DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        current_signal_classification_for_test(),
+        SignalSafetyClassification::Safe
+    );
+
+    {
+        let _outer =
+            enter_signal_critical_section(SignalCriticalSectionKind::RuntimePolicyDecision);
+        {
+            let _inner =
+                enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+            assert_eq!(
+                current_signal_classification_for_test(),
+                SignalSafetyClassification::MaskRequired
+            );
+        }
+        assert_eq!(
+            current_signal_classification_for_test(),
+            SignalSafetyClassification::Safe,
+            "leaving the unsafe inner section must restore the safe outer section"
+        );
+        unsafe { invoke_signal_handler_for_test(libc::SIGUSR1) };
+        assert_eq!(DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed), 3);
+    }
+}
+
+#[test]
 fn malloc_storm_prewarm_prevents_lazy_host_allocator_resolution_during_live_signal_delivery() {
     let _guard = TEST_GUARD
         .lock()
@@ -1409,6 +1478,228 @@ fn under_sigaltstack_query_only_succeeds() {
     let mut old: libc::stack_t = unsafe { std::mem::zeroed() };
     let rc = unsafe { __sigaltstack(std::ptr::null(), &mut old) };
     assert_eq!(rc, 0);
+}
+
+#[test]
+fn signal_sections_restore_live_guards_after_non_lifo_drops() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    for (first, second, remaining) in [
+        (
+            SignalCriticalSectionKind::RuntimePolicyDecision,
+            SignalCriticalSectionKind::MallocArenaLockAcquire,
+            SignalSafetyClassification::MaskRequired,
+        ),
+        (
+            SignalCriticalSectionKind::MallocArenaLockAcquire,
+            SignalCriticalSectionKind::RuntimePolicyDecision,
+            SignalSafetyClassification::Safe,
+        ),
+        (
+            SignalCriticalSectionKind::MallocArenaLockAcquire,
+            SignalCriticalSectionKind::MallocArenaLockAcquire,
+            SignalSafetyClassification::MaskRequired,
+        ),
+    ] {
+        let outer = enter_signal_critical_section(first);
+        let inner = enter_signal_critical_section(second);
+        drop(outer);
+        assert_eq!(current_signal_classification_for_test(), remaining);
+        drop(inner);
+        assert_eq!(
+            current_signal_classification_for_test(),
+            SignalSafetyClassification::Safe
+        );
+    }
+}
+
+static NATIVE_SIGNAL_CREATOR_TID: AtomicI32 = AtomicI32::new(0);
+static NATIVE_SIGNAL_WORKER_TID: AtomicI32 = AtomicI32::new(0);
+static NATIVE_SIGNAL_CREATOR_COUNT: AtomicUsize = AtomicUsize::new(0);
+static NATIVE_SIGNAL_WORKER_COUNT: AtomicUsize = AtomicUsize::new(0);
+static NATIVE_SIGNAL_BAD_INFO: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn native_signal_owner_handler(signum: c_int) {
+    let tid = frankenlibc_core::syscall::sys_gettid();
+    if signum != libc::SIGUSR1 {
+        NATIVE_SIGNAL_BAD_INFO.fetch_add(1, Ordering::Relaxed);
+    } else if tid == NATIVE_SIGNAL_CREATOR_TID.load(Ordering::Relaxed) {
+        NATIVE_SIGNAL_CREATOR_COUNT.fetch_add(1, Ordering::Relaxed);
+    } else if tid == NATIVE_SIGNAL_WORKER_TID.load(Ordering::Relaxed) {
+        NATIVE_SIGNAL_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
+    } else {
+        NATIVE_SIGNAL_BAD_INFO.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+unsafe extern "C" fn native_signal_owner_siginfo_handler(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    context: *mut std::ffi::c_void,
+) {
+    // SAFETY: the kernel or deferred replay supplies this callback's metadata.
+    if info.is_null()
+        || context.is_null()
+        || unsafe { (*info).si_signo } != signum
+        || unsafe { (*info).si_code } != libc::SI_TKILL
+        || unsafe { (*info).si_pid() } != frankenlibc_core::syscall::sys_getpid()
+    {
+        NATIVE_SIGNAL_BAD_INFO.fetch_add(1, Ordering::Relaxed);
+    }
+    // SAFETY: the common handler accepts the same signal number.
+    unsafe { native_signal_owner_handler(signum) };
+}
+
+unsafe extern "C" fn native_signal_isolation_worker(
+    _: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    use frankenlibc_core::syscall::{sys_getpid, sys_gettid, sys_tgkill};
+
+    let mut failures = 0usize;
+    let tid = sys_gettid();
+    NATIVE_SIGNAL_WORKER_TID.store(tid, Ordering::Relaxed);
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+        failures |= 1;
+    }
+    if current_signal_classification_for_test() != SignalSafetyClassification::Safe {
+        failures |= 2;
+    }
+    if sys_tgkill(sys_getpid(), tid, libc::SIGUSR1).is_err() {
+        failures |= 4;
+    }
+    if NATIVE_SIGNAL_WORKER_COUNT.load(Ordering::Relaxed) != 1 {
+        failures |= 8;
+    }
+    let outer = enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+    if sys_tgkill(sys_getpid(), tid, libc::SIGUSR1).is_err() {
+        failures |= 16;
+    }
+    let inner = enter_signal_critical_section(SignalCriticalSectionKind::RuntimePolicyDecision);
+    if current_signal_classification_for_test() != SignalSafetyClassification::MaskRequired {
+        failures |= 32;
+    }
+    if sys_tgkill(sys_getpid(), tid, libc::SIGUSR1).is_err() {
+        failures |= 64;
+    }
+    drop(inner);
+    if NATIVE_SIGNAL_WORKER_COUNT.load(Ordering::Relaxed) != 1
+        || current_signal_classification_for_test() != SignalSafetyClassification::MaskRequired
+    {
+        failures |= 128;
+    }
+    drop(outer);
+    if NATIVE_SIGNAL_WORKER_COUNT.load(Ordering::Relaxed) != 3
+        || current_signal_classification_for_test() != SignalSafetyClassification::Safe
+    {
+        failures |= 256;
+    }
+    if NATIVE_SIGNAL_CREATOR_COUNT.load(Ordering::Relaxed) != 0 {
+        failures |= 512;
+    }
+    failures as *mut std::ffi::c_void
+}
+
+#[test]
+fn signal_native_tls_keeps_kernel_delivery_and_pending_siginfo_with_the_owner() {
+    const NAME: &str = "signal_native_tls_keeps_kernel_delivery_and_pending_siginfo_with_the_owner";
+    const CHILD: &str = "FRANKENLIBC_SIGNAL_NATIVE_TLS_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut timed_out = false;
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                timed_out = true;
+                let _ = child.kill();
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !timed_out && output.status.success() && stdout.contains("1 passed;"),
+            "native signal child timed_out={timed_out}, status={}:\n{stdout}\n{stderr}",
+            output.status
+        );
+        return;
+    }
+
+    use frankenlibc_abi::pthread_abi;
+    use frankenlibc_core::syscall::{sys_getpid, sys_gettid, sys_tgkill};
+
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _backend = RestoreBackend(pthread_abi::pthread_threading_swap_force_native_for_tests());
+    NATIVE_SIGNAL_CREATOR_TID.store(sys_gettid(), Ordering::Relaxed);
+
+    for with_siginfo in [false, true] {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = if with_siginfo {
+            action.sa_flags = libc::SA_SIGINFO;
+            native_signal_owner_siginfo_handler as *const () as usize
+        } else {
+            native_signal_owner_handler as *const () as usize
+        };
+        assert_eq!(unsafe { sigemptyset(&mut action.sa_mask) }, 0);
+        assert_eq!(
+            unsafe { sigaction(libc::SIGUSR1, &action, &mut previous) },
+            0
+        );
+        struct RestoreAction(libc::sigaction);
+        impl Drop for RestoreAction {
+            fn drop(&mut self) {
+                let _ = unsafe { sigaction(libc::SIGUSR1, &self.0, std::ptr::null_mut()) };
+            }
+        }
+        let _restore = RestoreAction(previous);
+        // A second native lifetime also checks that pending slots and nesting
+        // counters do not leak from the retired thread into its replacement.
+        for _ in 0..2 {
+            NATIVE_SIGNAL_CREATOR_COUNT.store(0, Ordering::Relaxed);
+            NATIVE_SIGNAL_WORKER_COUNT.store(0, Ordering::Relaxed);
+            NATIVE_SIGNAL_BAD_INFO.store(0, Ordering::Relaxed);
+            let creator =
+                enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+            assert!(sys_tgkill(sys_getpid(), sys_gettid(), libc::SIGUSR1).is_ok());
+            assert_eq!(NATIVE_SIGNAL_CREATOR_COUNT.load(Ordering::Relaxed), 0);
+            let mut worker = 0;
+            assert_eq!(
+                unsafe {
+                    pthread_abi::pthread_create(
+                        &mut worker,
+                        std::ptr::null(),
+                        Some(native_signal_isolation_worker),
+                        std::ptr::null_mut(),
+                    )
+                },
+                0
+            );
+            let mut result = std::ptr::null_mut();
+            assert_eq!(unsafe { pthread_abi::pthread_join(worker, &mut result) }, 0);
+            assert_eq!(
+                result as usize, 0,
+                "native worker failure bits; siginfo={with_siginfo}"
+            );
+            assert_eq!(NATIVE_SIGNAL_WORKER_COUNT.load(Ordering::Relaxed), 3);
+            assert_eq!(NATIVE_SIGNAL_CREATOR_COUNT.load(Ordering::Relaxed), 0);
+            drop(creator);
+            assert_eq!(NATIVE_SIGNAL_CREATOR_COUNT.load(Ordering::Relaxed), 1);
+            assert_eq!(NATIVE_SIGNAL_BAD_INFO.load(Ordering::Relaxed), 0);
+        }
+    }
 }
 
 /// The HJI critical-section verdicts ship as a constant table; it must equal

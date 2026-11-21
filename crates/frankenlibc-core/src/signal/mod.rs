@@ -3,6 +3,81 @@
 //! Implements `<signal.h>` pure-logic helpers. Actual syscall invocations
 //! (`kill`, `sigaction`, etc.) live in the ABI crate.
 
+use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64};
+
+/// Bounded storage for the Linux siginfo snapshots retained by the ABI's
+/// signal-deferral controller. The ABI checks the size and alignment before
+/// copying its platform-specific siginfo_t into these words.
+pub const DEFERRED_SIGINFO_SLOTS: usize = 4;
+
+pub struct DeferredSiginfoSlot {
+    pub signum: AtomicU8,
+    pub siginfo: UnsafeCell<MaybeUninit<[u64; 16]>>,
+}
+
+impl DeferredSiginfoSlot {
+    const fn new() -> Self {
+        Self {
+            signum: AtomicU8::new(0),
+            siginfo: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+}
+
+pub struct DeferredSignalTable {
+    pub counts: [AtomicU16; 65],
+    pub siginfos: [DeferredSiginfoSlot; DEFERRED_SIGINFO_SLOTS],
+}
+
+impl DeferredSignalTable {
+    pub const fn new() -> Self {
+        Self {
+            counts: [const { AtomicU16::new(0) }; 65],
+            siginfos: [const { DeferredSiginfoSlot::new() }; DEFERRED_SIGINFO_SLOTS],
+        }
+    }
+}
+
+impl Default for DeferredSignalTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Signal-controller state owned by one native thread and its signal handlers.
+/// Embedded in ThreadHandle before clone, so neither first signal delivery nor
+/// nested critical-section access needs allocation, a cache borrow, or compiler
+/// TLS inherited from the creator. Zero classification means the ABI's Safe
+/// state. No references may outlive the owning native thread.
+pub struct ThreadSignalState {
+    pub critical_depth: AtomicU32,
+    /// Number of live guards at each signal-safety classification.
+    pub critical_classes: [AtomicU32; 3],
+    pub classification: AtomicU8,
+    pub deferred_signals: DeferredSignalTable,
+    pub deferred_pending: AtomicU64,
+}
+
+impl ThreadSignalState {
+    pub const fn new() -> Self {
+        Self {
+            critical_depth: AtomicU32::new(0),
+            critical_classes: [const { AtomicU32::new(0) }; 3],
+            classification: AtomicU8::new(0),
+            deferred_signals: DeferredSignalTable::new(),
+            deferred_pending: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Default for ThreadSignalState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Signal numbers.
 pub const SIGHUP: i32 = 1;
 pub const SIGINT: i32 = 2;

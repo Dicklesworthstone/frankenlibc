@@ -3,13 +3,12 @@
 //! Validates via `frankenlibc_core::signal` helpers, then calls `libc` for
 //! actual signal delivery.
 
-use std::cell::UnsafeCell;
 use std::ffi::{c_int, c_void};
-use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::signal as signal_core;
+use frankenlibc_core::signal::{DEFERRED_SIGINFO_SLOTS, DeferredSignalTable};
 use frankenlibc_core::syscall;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::hji_reachability::{HjiReachabilityController, ReachState};
@@ -439,35 +438,13 @@ impl SignalHandlerSlot {
     }
 }
 
-const DEFERRED_SIGINFO_SLOTS: usize = 4;
-
-struct DeferredSiginfoSlot {
-    signum: AtomicU8,
-    siginfo: UnsafeCell<MaybeUninit<libc::siginfo_t>>,
-}
-
-impl DeferredSiginfoSlot {
-    const fn new() -> Self {
-        Self {
-            signum: AtomicU8::new(0),
-            siginfo: UnsafeCell::new(MaybeUninit::uninit()),
-        }
-    }
-}
-
-struct DeferredSignalTable {
-    counts: [std::sync::atomic::AtomicU16; MAX_TRACKED_SIGNAL + 1],
-    siginfos: [DeferredSiginfoSlot; DEFERRED_SIGINFO_SLOTS],
-}
-
-impl DeferredSignalTable {
-    const fn new() -> Self {
-        Self {
-            counts: [const { std::sync::atomic::AtomicU16::new(0) }; MAX_TRACKED_SIGNAL + 1],
-            siginfos: [const { DeferredSiginfoSlot::new() }; DEFERRED_SIGINFO_SLOTS],
-        }
-    }
-}
+// Core owns the native thread's storage without depending on libc's types.
+// These checks bind the opaque snapshot to the Linux ABI on both supported ISAs.
+const _: () = {
+    assert!(std::mem::size_of::<libc::siginfo_t>() == std::mem::size_of::<[u64; 16]>());
+    assert!(std::mem::align_of::<libc::siginfo_t>() <= std::mem::align_of::<[u64; 16]>());
+    assert!(SignalSafetyClassification::Safe as u8 == 0);
+};
 
 struct DeferredSignalReplay {
     signum: c_int,
@@ -481,6 +458,7 @@ static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
 #[cfg(feature = "owned-tls-cache")]
 struct SignalTls {
     critical_depth: AtomicU32,
+    critical_classes: [AtomicU32; 3],
     classification: AtomicU8,
     deferred_signals: DeferredSignalTable,
     deferred_pending: AtomicU64,
@@ -496,6 +474,7 @@ unsafe impl Send for SignalTls {}
 fn new_signal_tls() -> SignalTls {
     SignalTls {
         critical_depth: AtomicU32::new(0),
+        critical_classes: [const { AtomicU32::new(0) }; 3],
         classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
         deferred_signals: DeferredSignalTable::new(),
         deferred_pending: AtomicU64::new(0),
@@ -509,6 +488,8 @@ static SIGNAL_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<SignalTls> =
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
+    static SIGNAL_CRITICAL_CLASSES: [AtomicU32; 3] =
+        const { [const { AtomicU32::new(0) }; 3] };
     static SIGNAL_CLASSIFICATION: AtomicU8 =
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
     static DEFERRED_SIGNALS: DeferredSignalTable = const { DeferredSignalTable::new() };
@@ -516,6 +497,11 @@ thread_local! {
 }
 
 fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: the native owner and its handlers retain the initialized
+        // handle through teardown; no allocation or cache borrow is involved.
+        return f(unsafe { &(*handle).signal_state.critical_depth });
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         SIGNAL_OWNED_TLS.with(|tls| f(&tls.critical_depth))
@@ -526,7 +512,26 @@ fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
     }
 }
 
+fn with_signal_critical_classes<R>(f: impl FnOnce(&[AtomicU32; 3]) -> R) -> R {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: the native owner and its handlers retain this live handle.
+        return f(unsafe { &(*handle).signal_state.critical_classes });
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.critical_classes))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SIGNAL_CRITICAL_CLASSES.with(f)
+    }
+}
+
 fn with_signal_classification<R>(f: impl FnOnce(&AtomicU8) -> R) -> R {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: only the native owner and its signal handlers use this state.
+        return f(unsafe { &(*handle).signal_state.classification });
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         SIGNAL_OWNED_TLS.with(|tls| f(&tls.classification))
@@ -538,6 +543,11 @@ fn with_signal_classification<R>(f: impl FnOnce(&AtomicU8) -> R) -> R {
 }
 
 fn with_deferred_signals<R>(f: impl FnOnce(&DeferredSignalTable) -> R) -> R {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: the handle stays registered while callbacks can run, and
+        // signals are blocked before the owning thread retires the mapping.
+        return f(unsafe { &(*handle).signal_state.deferred_signals });
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_signals))
@@ -555,6 +565,10 @@ fn with_deferred_signals<R>(f: impl FnOnce(&DeferredSignalTable) -> R) -> R {
 /// slots to learn that was ~460 instructions, 18% of a hardened malloc+free
 /// (bd-rc0923-epic-eeuy4f.9).
 fn with_deferred_pending<R>(f: impl FnOnce(&AtomicU64) -> R) -> R {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: this is the calling native owner's initialized signal state.
+        return f(unsafe { &(*handle).signal_state.deferred_pending });
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_pending))
@@ -934,7 +948,11 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
             // returning so deferred replay can hand the user handler the
             // original metadata instead of `NULL`.
             unsafe {
-                std::ptr::copy_nonoverlapping(info, (*slot.siginfo.get()).as_mut_ptr(), 1);
+                std::ptr::copy_nonoverlapping(
+                    info,
+                    slot.siginfo.get().cast::<libc::siginfo_t>(),
+                    1,
+                );
             }
             slot.signum.store(sig_u8, Ordering::Release);
         } else {
@@ -998,7 +1016,8 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
                         // SAFETY: the slot was populated before `signum` was
                         // published, and clearing `signum` gives the caller
                         // exclusive ownership of this snapshot.
-                        siginfo = Some(unsafe { (*slot.siginfo.get()).assume_init_read() });
+                        siginfo =
+                            Some(unsafe { slot.siginfo.get().cast::<libc::siginfo_t>().read() });
                         break;
                     }
                 }
@@ -1102,12 +1121,15 @@ fn rewrite_old_sigaction(oldact_ref: &mut libc::sigaction, prev_handler: usize, 
 
 pub struct SignalCriticalSectionGuard {
     active: bool,
+    classification: u8,
+    // A guard must restore the same thread's signal state on which it entered.
+    _thread_affinity: std::marker::PhantomData<*mut ()>,
 }
 
 impl Drop for SignalCriticalSectionGuard {
     fn drop(&mut self) {
         if self.active {
-            exit_signal_critical_section();
+            exit_signal_critical_section(self.classification);
             self.active = false;
         }
     }
@@ -1121,11 +1143,31 @@ pub fn enter_signal_critical_section(
         depth.fetch_add(1, Ordering::Relaxed);
     });
     let classification = handler_dispatch_classification(kind);
-    with_signal_classification(|value| value.store(classification.as_u8(), Ordering::Relaxed));
-    SignalCriticalSectionGuard { active: true }
+    // Nested operations may strengthen the current restriction, but a safe
+    // inner call cannot admit handlers while an outer allocator lock is held.
+    with_signal_critical_classes(|classes| {
+        classes[classification.as_u8() as usize].fetch_add(1, Ordering::Relaxed);
+    });
+    with_signal_classification(|value| {
+        value.fetch_max(classification.as_u8(), Ordering::Relaxed);
+    });
+    SignalCriticalSectionGuard {
+        active: true,
+        classification: classification.as_u8(),
+        _thread_affinity: std::marker::PhantomData,
+    }
 }
 
-pub fn exit_signal_critical_section() {
+fn exit_signal_critical_section(classification: u8) {
+    // Explicitly dropped guards need not follow lexical nesting order. Keep
+    // the strongest restriction of every guard that is still alive.
+    let remaining_classification = with_signal_critical_classes(|classes| {
+        classes[classification as usize].fetch_sub(1, Ordering::Relaxed);
+        classes
+            .iter()
+            .rposition(|count| count.load(Ordering::Relaxed) != 0)
+            .unwrap_or(0) as u8
+    });
     let should_flush = with_signal_critical_depth(|depth| {
         let current = depth.load(Ordering::Relaxed);
         if current == 0 {
@@ -1135,12 +1177,10 @@ pub fn exit_signal_critical_section() {
         depth.store(next, Ordering::Relaxed);
         next == 0
     });
+    with_signal_classification(|value| value.store(remaining_classification, Ordering::Relaxed));
     if !should_flush {
         return;
     }
-    with_signal_classification(|value| {
-        value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed)
-    });
     let has_pending = with_deferred_pending(|mask| mask.load(Ordering::Relaxed) != 0);
     if has_pending {
         flush_deferred_signals_slow();
