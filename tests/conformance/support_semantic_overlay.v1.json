@@ -6,9 +6,9 @@
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2552,
+      "Implemented": 2545,
       "RawSyscall": 408,
-      "WrapsHostLibc": 1159,
+      "WrapsHostLibc": 1166,
       "GlibcCallThrough": 0,
       "Stub": 0
     }

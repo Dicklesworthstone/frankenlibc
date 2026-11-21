@@ -1880,7 +1880,7 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Capture stack backtrace via host glibc",
+      "strict_semantics": "Capture stack backtrace via owned DWARF/frame-pointer unwinder",
       "hardened_semantics": "Stack capture with buffer validation",
       "default_stub": false
     },
@@ -5771,8 +5771,8 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getprotobyname",
-      "hardened_semantics": "Passthrough to glibc getprotobyname",
+      "strict_semantics": "Native /etc/protocols lookup returning static protoent",
+      "hardened_semantics": "Native /etc/protocols lookup with pointer validation",
       "default_stub": false
     },
     {
@@ -5789,8 +5789,8 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getprotobynumber",
-      "hardened_semantics": "Passthrough to glibc getprotobynumber",
+      "strict_semantics": "Native /etc/protocols lookup by protocol number",
+      "hardened_semantics": "Native /etc/protocols lookup by protocol number with bounds checks",
       "default_stub": false
     },
     {
@@ -7961,7 +7961,7 @@
     },
     {
       "symbol": "malloc_info",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "cold",
       "strict_semantics": "FrankenLibC allocator counters formatted through host FILE/libio stream helpers",
@@ -15741,7 +15741,7 @@
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "hotpath",
-      "strict_semantics": "pass-through",
+      "strict_semantics": "Native wide-string duplication via allocator",
       "hardened_semantics": "bounds-check-and-repair",
       "default_stub": false
     },
@@ -17277,7 +17277,7 @@
     },
     {
       "symbol": "_IO_switch_to_wget_mode",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "standalone_ready": true
     },
@@ -17338,7 +17338,7 @@
     },
     {
       "symbol": "_IO_wdefault_uflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "standalone_ready": true
     },
@@ -17383,7 +17383,7 @@
     },
     {
       "symbol": "_IO_wfile_sync",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "standalone_ready": true
     },
@@ -17814,7 +17814,7 @@
     },
     {
       "symbol": "__isoc99_fwscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "isoc_abi"
     },
     {
@@ -17824,7 +17824,7 @@
     },
     {
       "symbol": "__isoc99_vfwscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "isoc_abi"
     },
     {
@@ -17834,7 +17834,7 @@
     },
     {
       "symbol": "__isoc99_vwscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "isoc_abi"
     },
     {
@@ -19524,7 +19524,7 @@
     },
     {
       "symbol": "dlinfo",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
       "strict_semantics": "Native self-handle path for RTLD_DI_LINKMAP/ORIGIN, host delegation for others"
     },
@@ -20632,7 +20632,7 @@
     },
     {
       "symbol": "profil",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -33231,22 +33231,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2552,
+    "implemented": 2545,
     "raw_syscall": 408,
-    "wraps_host_libc": 1159,
+    "wraps_host_libc": 1166,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2552,
+  "implemented": 2545,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2552,
+    "implemented": 2545,
     "raw_syscall": 408,
-    "wraps_host_libc": 1159,
+    "wraps_host_libc": 1166,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "wraps_host_libc": 1159
+  "wraps_host_libc": 1166
 }

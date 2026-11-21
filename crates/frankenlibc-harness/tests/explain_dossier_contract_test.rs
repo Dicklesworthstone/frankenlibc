@@ -184,6 +184,7 @@ fn validate_manifest_source_commit_freshness(manifest: &Value) -> TestResult {
             let rch_commit = rch_raw.trim().trim_end_matches("-dirty");
             let rch_obj = format!("{rch_commit}^{{commit}}");
             if is_hex_commit(rch_commit)
+                && source_commit == rch_commit
                 && git_stdout(&repo, &["cat-file", "-e", &rch_obj]).is_err()
             {
                 return Ok(());

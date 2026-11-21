@@ -90,8 +90,8 @@ with:
 - hardened mode enabling deterministic repair under bounded risk/latency budgets.
 
 Implementation status (reconciled 2026-11-18 against the source-derived maintenance evidence in `support_matrix.json`; the earlier "3,705 Implemented / 100% native" status line in this spot was a stale 2026-05 snapshot and false as a present-tense claim):
-- **4,119 exported symbols classified**: 2,552 Implemented + 408 RawSyscall = 2,960 (71.9%) native coverage
-- **1,159 WrapsHostLibc, 0 GlibcCallThrough, 0 Stub** in support taxonomy
+- **4,119 exported symbols classified**: 2,545 Implemented + 408 RawSyscall = 2,953 (71.7%) native coverage
+- **1,166 WrapsHostLibc, 0 GlibcCallThrough, 0 Stub** in support taxonomy
 - **L1 (Hardened Interpose)** deployment level per `replacement_levels.json` (`bd-rc0923-epic-eeuy4f.47`, resolved; host glibc remains required for `WrapsHostLibc` rows until L2/L3 standalone closure)
 - Membrane live in `frankenlibc-membrane` for pointer validation
 - ~71 runtime-math control kernels implemented and wired

@@ -10,7 +10,7 @@
 ![rust](https://img.shields.io/badge/rust-nightly-f74c00)
 ![platform](https://img.shields.io/badge/platform-linux-181717)
 ![arch](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64-005f87)
-![coverage](https://img.shields.io/badge/native_coverage-71.9%25-2ea043)
+![coverage](https://img.shields.io/badge/native_coverage-71.7%25-2ea043)
 ![license](https://img.shields.io/badge/license-MIT%20with%20rider-8a2be2)
 
 </div>
@@ -43,8 +43,8 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Why it matters | Current state |
 |---|---|
 | Large classified ABI surface | **4,119 exported symbols** all classified |
-| Recorded native classifications | **2,552 `Implemented` + 408 `RawSyscall` = 2,960 / 4,119 (71.9% native coverage)** |
-| Host-backed and unsupported subsets are explicit | **1,159 `WrapsHostLibc` (28.1%), 0 `GlibcCallThrough`, 0 `Stub` (0%)** |
+| Recorded native classifications | **2,545 `Implemented` + 408 `RawSyscall` = 2,953 / 4,119 (71.7% native coverage)** |
+| Host-backed and unsupported subsets are explicit | **1,166 `WrapsHostLibc` (28.3%), 0 `GlibcCallThrough`, 0 `Stub` (0%)** |
 | Interposition has a checked workload snapshot | The committed 2026-11-17 preload artifact reports **360 passes / 0 fails / 4 optional skips / 0 xfails** across strict + hardened modes (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
@@ -183,8 +183,8 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-18, bound to ABI source `77f53a59b`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v20 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
-Reality snapshot: total_exported=4119, implemented=2552, raw_syscall=408, wraps_host_libc=1159, glibc_call_through=0, stub=0.
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-18, bound to ABI source `77f53a59b`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v21 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
+Reality snapshot: total_exported=4119, implemented=2545, raw_syscall=408, wraps_host_libc=1166, glibc_call_through=0, stub=0.
 
 Declared replacement level: **L1 — Hardened Interpose**.
 Declared replacement level claim: **L1 — Hardened Interpose**.
@@ -192,9 +192,9 @@ Total exports in the checked taxonomy snapshot: **4119**.
 
 | Status | Count | % | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 2552 | 62.0% | Native ABI-backed Rust-owned behavior |
+| `Implemented` | 2545 | 61.8% | Native ABI-backed Rust-owned behavior |
 | `RawSyscall` | 408 | 9.9% | ABI path delegates directly to Linux syscalls |
-| `WrapsHostLibc` | 1159 | 28.1% | Native wrapper that still calls host libc symbols internally |
+| `WrapsHostLibc` | 1166 | 28.3% | Native wrapper that still calls host libc symbols internally |
 | `GlibcCallThrough` | 0 | 0% | No opaque host-glibc symbol call-through rows remain |
 | `Stub` | 0 | 0% | Zero explicit unsupported/failure stub rows remain in the checked snapshot |
 | **Total classified** | 4119 | 100% | Native coverage = `Implemented + RawSyscall`; host-backed L1 interpose = `WrapsHostLibc + GlibcCallThrough` |
@@ -340,7 +340,7 @@ On membrane-wired paths, the TSM classifies pointers, regions, fds, and contexts
 
 ### 3. Native by default
 
-Every row in the checked-in support matrix is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`. The checked matrix has 2,960 native classified symbols (`Implemented + RawSyscall`); 1,159 `WrapsHostLibc` rows remain as explicit host-backed interpose scope, with zero `GlibcCallThrough` and zero `Stub` rows. Host-delegation and proof boundaries are verified against source (`status_invalid = 0`); the taxonomy does not by itself prove semantic parity.
+Every row in the checked-in support matrix is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`. The checked matrix has 2,953 native classified symbols (`Implemented + RawSyscall`); 1,166 `WrapsHostLibc` rows remain as explicit host-backed interpose scope, with zero `GlibcCallThrough` and zero `Stub` rows. Host-delegation and proof boundaries are verified against source (`status_invalid = 0`); the taxonomy does not by itself prove semantic parity.
 
 ### 4. Clean-room over translation
 
@@ -381,7 +381,7 @@ These invariants are maintained as the codebase grows:
 | Memory-safe implementation goal | No | No | No | Yes for native paths |
 | Runtime repair mode | No | No | No | Yes — `FRANKENLIBC_MODE=hardened` |
 | Per-symbol implementation census | No | No | No | Yes — `support_matrix.json` |
-| Host-glibc dependency in classified surface | N/A | No | Yes | **Partial — 1,159 explicit `WrapsHostLibc` rows call host libc internally; 0 opaque `GlibcCallThrough`** |
+| Host-glibc dependency in classified surface | N/A | No | Yes | **Partial — 1,166 explicit `WrapsHostLibc` rows call host libc internally; 0 opaque `GlibcCallThrough`** |
 | Raw syscall fallback paths | Internal | Internal | No | Explicit taxonomy: 408 `RawSyscall` |
 | Auditable structured verification artifacts | Limited | Limited | Limited | Core workflow — 282 completion contracts + 69 CLI contracts |
 | Machine-checked proof catalog | No | No | No | Not yet; `docs/proofs/` currently holds proof notes and obligation mappings |
@@ -703,7 +703,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,220 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,236 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -1376,7 +1376,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 ### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (1,237 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
+`crates/frankenlibc-membrane/build.rs` (1,244 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
 
 | Task label | What the build actually checks |
 |---|---|
@@ -1469,7 +1469,7 @@ The symbol taxonomy is what makes this staged model legible:
 - `Implemented` + `RawSyscall` symbols apply to both artifacts.
 - `WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
-In the checked-in `support_matrix.json`, the classified surface is 71.9% native: 2,552 `Implemented` plus 408 `RawSyscall` rows. The remaining surface is 1,159 explicit host-backed `WrapsHostLibc` rows, zero `GlibcCallThrough` rows, and zero `Stub` rows (`status_invalid = 0`). These are taxonomy counts, not semantic-parity proof; integrated L1 interpose graduation was verified under `bd-rc0923-epic-eeuy4f.47` (resolved).
+In the checked-in `support_matrix.json`, the classified surface is 71.7% native: 2,545 `Implemented` plus 408 `RawSyscall` rows. The remaining surface is 1,166 explicit host-backed `WrapsHostLibc` rows, zero `GlibcCallThrough` rows, and zero `Stub` rows (`status_invalid = 0`). These are taxonomy counts, not semantic-parity proof; integrated L1 interpose graduation was verified under `bd-rc0923-epic-eeuy4f.47` (resolved).
 
 ### Today
 
@@ -1633,11 +1633,11 @@ The membrane crate's `build.rs` fails if supplied-matrix Cholesky verification t
 
 ### Is FrankenLibC a drop-in replacement for glibc today?
 
-The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 71.9% of rows as native/direct-syscall, and the committed 2026-11-17 smoke artifact (`run 20261117T074800Z-fec80ccf6`) reports 360 passes / 0 fails / 4 optional skips / 0 xfails at source `fec80ccf…`. The matrix includes the NSS module dependency reclassification described above; the smoke result establishes bounded preload behavior on its curated battery rather than universal production readiness. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed subset and by L2/L3 contracts; it is not yet declared ready.
+The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 71.7% of rows as native/direct-syscall, and the committed 2026-11-17 smoke artifact (`run 20261117T074800Z-fec80ccf6`) reports 360 passes / 0 fails / 4 optional skips / 0 xfails at source `fec80ccf…`. The matrix includes the NSS module dependency reclassification described above; the smoke result establishes bounded preload behavior on its curated battery rather than universal production readiness. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed subset and by L2/L3 contracts; it is not yet declared ready.
 
 ### Does it implement a lot of symbols natively?
 
-Yes. The current classified surface has **4,119 symbols**: 2,552 `Implemented`, 408 `RawSyscall`, 1,159 `WrapsHostLibc`, 0 `GlibcCallThrough`, and 0 `Stub`. The native subset is 2,960 symbols (71.9%).
+Yes. The current classified surface has **4,119 symbols**: 2,545 `Implemented`, 408 `RawSyscall`, 1,166 `WrapsHostLibc`, 0 `GlibcCallThrough`, and 0 `Stub`. The native subset is 2,953 symbols (71.7%).
 
 ### Do the CVE validation scripts prove FrankenLibC would have prevented famous exploits?
 
@@ -1677,7 +1677,7 @@ Because the project is building machinery to reconcile implementation claims, ev
 
 ### What does "native coverage" actually mean?
 
-It means the share of symbols in `support_matrix.json` classified as `Implemented` (native Rust) or `RawSyscall` (direct Linux syscall). The current count is 2,960 / 4,119, or 71.9% native. The remaining surface includes 1,159 host-backed `WrapsHostLibc` rows, zero opaque `GlibcCallThrough` rows, and zero explicit `Stub` rows.
+It means the share of symbols in `support_matrix.json` classified as `Implemented` (native Rust) or `RawSyscall` (direct Linux syscall). The current count is 2,953 / 4,119, or 71.7% native. The remaining surface includes 1,166 host-backed `WrapsHostLibc` rows, zero opaque `GlibcCallThrough` rows, and zero explicit `Stub` rows.
 
 ### What's the difference between "interpose" and "replace"?
 
@@ -1704,7 +1704,7 @@ Unsafe is permitted only in explicitly documented boundary modules. The TSM adds
 
 ## How LD_PRELOAD Interposition Works
 
-`LD_PRELOAD` tells the Linux dynamic linker to load a shared library before any others. When a program calls `malloc`, `strlen`, or any libc function, the linker resolves the symbol to FrankenLibC's implementation first. The classified ABI surface is 71.9% native, and the host-backed rows are explicit in `support_matrix.json` (with zero `Stub` rows). Internal fallback paths such as the `__libc_start_main` host fallback chain in `startup_abi.rs` or `host_resolve.rs` for `dlvsym_next` lookups are part of why the shipping artifact is interpose-first, not standalone replace.
+`LD_PRELOAD` tells the Linux dynamic linker to load a shared library before any others. When a program calls `malloc`, `strlen`, or any libc function, the linker resolves the symbol to FrankenLibC's implementation first. The classified ABI surface is 71.7% native, and the host-backed rows are explicit in `support_matrix.json` (with zero `Stub` rows). Internal fallback paths such as the `__libc_start_main` host fallback chain in `startup_abi.rs` or `host_resolve.rs` for `dlvsym_next` lookups are part of why the shipping artifact is interpose-first, not standalone replace.
 
 FrankenLibC is usable for many experiments without relinking: same binary, same kernel, same filesystem, different libc implementation behind the ABI boundary.
 
@@ -1776,7 +1776,7 @@ Do not rely on adjectives in the README. Use the artifacts.
 
 | Question | Where to look |
 |---|---|
-| How much of the exported surface is native? | `support_matrix.json` and `tests/conformance/replacement_levels.json` (71.9% in the checked taxonomy) |
+| How much of the exported surface is native? | `support_matrix.json` and `tests/conformance/replacement_levels.json` (71.7% in the checked taxonomy) |
 | Is a symbol really implemented or still delegated? | `support_matrix.json` |
 | Does the repo still reconcile code and docs? | `bash scripts/check_support_matrix_maintenance.sh` |
 | Does interposition work on actual programs? | `bash scripts/ld_preload_smoke.sh` |
@@ -2680,7 +2680,7 @@ A symbol with `status: "Implemented"` could be:
 
 These five buckets live in `tests/conformance/support_semantic_overlay.v1.json`. The `docs_semantic_claims.v1.json` contract prevents prose in this README or `FEATURE_PARITY.md` from promoting taxonomy ownership to full semantic parity by accident.
 
-"Native coverage" is a *taxonomy* claim. The current native subset is 71.9%; the number of symbols at "Full semantic parity" is meaningfully smaller and grows along a different schedule. Conflating taxonomy ownership with semantic parity is a category error this project refuses to commit.
+"Native coverage" is a *taxonomy* claim. The current native subset is 71.7%; the number of symbols at "Full semantic parity" is meaningfully smaller and grows along a different schedule. Conflating taxonomy ownership with semantic parity is a category error this project refuses to commit.
 
 ---
 
@@ -2966,7 +2966,7 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,237 lines at this snapshot. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,244 lines at this snapshot. It performs three jobs at compile time:
 
 ### Job 1: Supplied SOS-Task Consistency
 
@@ -3473,7 +3473,7 @@ Edition 2024 also brings `unsafe extern "C"` defaults (which make the FFI bounda
 - Version-symbol resolution for compatibility shims that need `@@GLIBC_x.y` precision
 - One-time bootstrap discovery of host-loader state for the phase-0 startup envelope
 
-`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,159 `WrapsHostLibc` taxonomy rows record host delegation in the interpose artifact, verified against host-delegation census v20 (`status_invalid = 0`).
+`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,166 `WrapsHostLibc` taxonomy rows record host delegation in the interpose artifact, verified against host-delegation census v21 (`status_invalid = 0`).
 
 This is the practical difference between the L1 interpose artifact and the future L2/L3 replace artifact: the replace artifact removes `host_resolve.rs` entirely, since by definition no host glibc is loaded.
 
@@ -3965,12 +3965,12 @@ Selected project health snapshot:
 | Dimension | Status |
 |---|---|
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
-| Classified ABI surface | 4,119 symbols; 2,960 native/direct-syscall rows (71.9%), 1,159 host-backed wrapper rows (28.1%), and 0 explicit stub classifications (0%) |
+| Classified ABI surface | 4,119 symbols; 2,953 native/direct-syscall rows (71.7%), 1,166 host-backed wrapper rows (28.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,909 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 251,113 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,352 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,178,271 lines including generated codec tables |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 252,887 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,488 lines |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,178,398 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
@@ -3993,7 +3993,7 @@ Selected project health snapshot:
 | TSM | Transparent Safety Membrane |
 | `Implemented` | Symbol path is natively owned in FrankenLibC |
 | `RawSyscall` | Symbol path goes directly to Linux syscalls rather than host glibc |
-| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,159 in the checked taxonomy) |
+| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,166 in the checked taxonomy) |
 | `GlibcCallThrough` | Symbol still depends opaquely on host glibc for behavior (0 in that snapshot) |
 | `Stub` | Deterministic unsupported/failure contract (0 taxonomy rows in that snapshot; not proof that every other fallback/no-op semantic has reached full parity) |
 | `strict` | Compatibility-first runtime mode (default) |

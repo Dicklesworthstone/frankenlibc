@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-19T00:01:19Z",
+  "generated_at": "2026-11-20T21:13:26Z",
   "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
   "source_generated_at_utc": "2026-11-18T23:15:02Z",
   "newest_abi_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
@@ -15,25 +15,25 @@
     "fixture_linked": 1205,
     "fixture_unlinked": 2914,
     "fixture_coverage_pct": 29.3,
-    "total_warnings": 633
+    "total_warnings": 644
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2552,
+      "Implemented": 2545,
       "RawSyscall": 408,
-      "WrapsHostLibc": 1159,
+      "WrapsHostLibc": 1166,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 62.0,
+      "Implemented": 61.8,
       "RawSyscall": 9.9,
-      "WrapsHostLibc": 28.1,
+      "WrapsHostLibc": 28.3,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 71.9
+    "native_coverage_pct": 71.7
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -68,13 +68,13 @@
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": -3,
+      "Implemented": -7,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": 3
+      "WrapsHostLibc": 7
     },
-    "native_coverage_pct_delta": -0.04,
-    "reclassified_symbol_count": 3,
+    "native_coverage_pct_delta": -0.21,
+    "reclassified_symbol_count": 9,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -94,19 +94,19 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 3,
+      "total_reclassified": 9,
       "violations": []
     },
     "fixture_coverage_ratchet": {
       "status": "pass",
-      "implemented_promotion_delta": 0,
+      "implemented_promotion_delta": 1,
       "violation_count": 0,
       "promotion_triage_manifest_loaded": true
     },
     "downgrade_only_evidence": {
       "status": "pass",
       "stub_annotation_count": 0,
-      "host_evidence_count": 37,
+      "host_evidence_count": 35,
       "downgrade_mismatch_count": 0,
       "promotion_suppressed_count": 0,
       "evidence_error_count": 0
@@ -126,17 +126,17 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "2be548d7ca83d0153912e0b3aa7140074d7c0d886f6f74eabf29416c51aa46d2",
+        "artifact_sha256": "243883c204aba4c533a93a14fac8be3459f30d562ca23b64e041e41a5c2945df",
         "schema_version": "host_delegation_census.v1",
-        "detector_version": 20,
-        "source_tree_sha256": "fe9db6dd012e1a6cdbdc40fda513c96628a0a8451bd8977d34ce41900e13ef75"
+        "detector_version": 21,
+        "source_tree_sha256": "103c666d265f914b58783bb314a2b8dcb725014f9187e01268e59d3a4e991f8a"
       }
     },
     "summary": {
       "status": "pass",
       "symbol_count": 4119,
       "stub_annotation_count": 0,
-      "host_evidence_count": 37,
+      "host_evidence_count": 35,
       "downgrade_mismatch_count": 0,
       "promotion_suppressed_count": 0,
       "evidence_error_count": 0
@@ -1346,10 +1346,10 @@
       {
         "symbol": "_IO_switch_to_wget_mode",
         "module": "io_internal_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -1467,10 +1467,10 @@
       {
         "symbol": "_IO_wdefault_uflow",
         "module": "io_internal_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -1555,10 +1555,10 @@
       {
         "symbol": "_IO_wfile_sync",
         "module": "io_internal_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -2432,7 +2432,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1889",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1905",
             "host_symbols": [
               "__cxa_thread_atexit_impl"
             ],
@@ -2441,7 +2441,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "startup_abi:__cxa_thread_atexit_impl:1889:001"
+              "startup_abi:__cxa_thread_atexit_impl:1905:001"
             ]
           }
         }
@@ -4374,10 +4374,10 @@
       {
         "symbol": "__isoc99_fwscanf",
         "module": "isoc_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -4429,10 +4429,10 @@
       {
         "symbol": "__isoc99_vfwscanf",
         "module": "isoc_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -4473,10 +4473,10 @@
       {
         "symbol": "__isoc99_vwscanf",
         "module": "isoc_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -5262,7 +5262,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1434",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1450",
             "host_symbols": [
               "__libc_start_main"
             ],
@@ -5272,10 +5272,10 @@
             ],
             "callsite_count": 4,
             "callsite_ids": [
-              "startup_abi:__libc_start_main:1434:001",
-              "startup_abi:__libc_start_main:1434:002",
-              "startup_abi:__libc_start_main:1434:003",
-              "startup_abi:__libc_start_main:1434:004"
+              "startup_abi:__libc_start_main:1450:001",
+              "startup_abi:__libc_start_main:1450:002",
+              "startup_abi:__libc_start_main:1450:003",
+              "startup_abi:__libc_start_main:1450:004"
             ]
           }
         }
@@ -6545,7 +6545,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11984",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11959",
             "host_symbols": [
               "__pthread_register_cancel"
             ],
@@ -6554,7 +6554,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_register_cancel:11984:001"
+              "pthread_abi:__pthread_register_cancel:11959:001"
             ]
           }
         }
@@ -6570,7 +6570,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12015",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11990",
             "host_symbols": [
               "__pthread_register_cancel_defer"
             ],
@@ -6579,7 +6579,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_register_cancel_defer:12015:001"
+              "pthread_abi:__pthread_register_cancel_defer:11990:001"
             ]
           }
         }
@@ -6683,7 +6683,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12000",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11975",
             "host_symbols": [
               "__pthread_unregister_cancel"
             ],
@@ -6692,7 +6692,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unregister_cancel:12000:001"
+              "pthread_abi:__pthread_unregister_cancel:11975:001"
             ]
           }
         }
@@ -6708,7 +6708,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12030",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12005",
             "host_symbols": [
               "__pthread_unregister_cancel_restore"
             ],
@@ -6717,7 +6717,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unregister_cancel_restore:12030:001"
+              "pthread_abi:__pthread_unregister_cancel_restore:12005:001"
             ]
           }
         }
@@ -6733,7 +6733,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12080",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12055",
             "host_symbols": [
               "__pthread_unwind_next"
             ],
@@ -6742,7 +6742,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unwind_next:12080:001"
+              "pthread_abi:__pthread_unwind_next:12055:001"
             ]
           }
         }
@@ -9596,7 +9596,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5120",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5165",
             "host_symbols": [
               "_dl_find_object"
             ],
@@ -9605,7 +9605,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:_dl_find_object:5120:001"
+              "glibc_internal_abi:_dl_find_object:5165:001"
             ]
           }
         }
@@ -12328,7 +12328,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8480",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8594",
             "host_symbols": [
               "calloc"
             ],
@@ -12337,7 +12337,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:calloc:8480:001"
+              "malloc_abi:calloc:8594:001"
             ]
           }
         }
@@ -15873,7 +15873,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1399",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1401",
             "host_symbols": [
               "dl_iterate_phdr"
             ],
@@ -15882,8 +15882,8 @@
             ],
             "callsite_count": 2,
             "callsite_ids": [
-              "dlfcn_abi:dl_iterate_phdr:1399:001",
-              "dlfcn_abi:dl_iterate_phdr:1399:002"
+              "dlfcn_abi:dl_iterate_phdr:1401:001",
+              "dlfcn_abi:dl_iterate_phdr:1401:002"
             ]
           }
         }
@@ -15899,7 +15899,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1637",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1640",
             "host_symbols": [
               "dladdr"
             ],
@@ -15908,7 +15908,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "dlfcn_abi:dladdr:1637:001"
+              "dlfcn_abi:dladdr:1640:001"
             ]
           }
         }
@@ -15935,7 +15935,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1207",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1209",
             "host_symbols": [
               "dlclose"
             ],
@@ -15944,8 +15944,8 @@
             ],
             "callsite_count": 2,
             "callsite_ids": [
-              "dlfcn_abi:dlclose:1207:001",
-              "dlfcn_abi:dlclose:1207:002"
+              "dlfcn_abi:dlclose:1209:001",
+              "dlfcn_abi:dlclose:1209:002"
             ]
           }
         }
@@ -15964,10 +15964,10 @@
       {
         "symbol": "dlinfo",
         "module": "glibc_internal_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -15994,7 +15994,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:562",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:564",
             "host_symbols": [
               "dlopen"
             ],
@@ -16003,7 +16003,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "dlfcn_abi:dlopen:562:001"
+              "dlfcn_abi:dlopen:564:001"
             ]
           }
         }
@@ -16019,7 +16019,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:708",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:710",
             "host_symbols": [
               "dlsym"
             ],
@@ -16029,12 +16029,12 @@
             ],
             "callsite_count": 6,
             "callsite_ids": [
-              "dlfcn_abi:dlsym:708:001",
-              "dlfcn_abi:dlsym:708:002",
-              "dlfcn_abi:dlsym:708:003",
-              "dlfcn_abi:dlsym:708:004",
-              "dlfcn_abi:dlsym:708:005",
-              "dlfcn_abi:dlsym:708:006"
+              "dlfcn_abi:dlsym:710:001",
+              "dlfcn_abi:dlsym:710:002",
+              "dlfcn_abi:dlsym:710:003",
+              "dlfcn_abi:dlsym:710:004",
+              "dlfcn_abi:dlsym:710:005",
+              "dlfcn_abi:dlsym:710:006"
             ]
           }
         }
@@ -16050,7 +16050,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:935",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:937",
             "host_symbols": [
               "dlvsym"
             ],
@@ -16058,13 +16058,12 @@
               "host_dlvsym_helper",
               "resolve_host_symbol_raw_literal"
             ],
-            "callsite_count": 5,
+            "callsite_count": 4,
             "callsite_ids": [
-              "dlfcn_abi:dlvsym:935:001",
-              "dlfcn_abi:dlvsym:935:002",
-              "dlfcn_abi:dlvsym:935:003",
-              "dlfcn_abi:dlvsym:935:004",
-              "dlfcn_abi:dlvsym:935:005"
+              "dlfcn_abi:dlvsym:937:001",
+              "dlfcn_abi:dlvsym:937:002",
+              "dlfcn_abi:dlvsym:937:003",
+              "dlfcn_abi:dlvsym:937:004"
             ]
           }
         }
@@ -21099,7 +21098,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8018",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8132",
             "host_symbols": [
               "free"
             ],
@@ -21108,7 +21107,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:free:8018:001"
+              "malloc_abi:free:8132:001"
             ]
           }
         }
@@ -22048,7 +22047,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5926",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:6281",
             "host_symbols": [
               "fwide"
             ],
@@ -22057,7 +22056,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:fwide:5926:001"
+              "glibc_internal_abi:fwide:6281:001"
             ]
           }
         }
@@ -28409,7 +28408,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7754",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7868",
             "host_symbols": [
               "malloc"
             ],
@@ -28418,7 +28417,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:malloc:7754:001"
+              "malloc_abi:malloc:7868:001"
             ]
           }
         }
@@ -28426,10 +28425,10 @@
       {
         "symbol": "malloc_info",
         "module": "malloc_abi",
-        "current_status": "Implemented",
+        "current_status": "WrapsHostLibc",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "Implemented",
+        "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -32221,27 +32220,13 @@
       {
         "symbol": "profil",
         "module": "glibc_internal_abi",
-        "current_status": "WrapsHostLibc",
-        "evidence_state": "observed_host_dependency",
-        "derived_status": "WrapsHostLibc",
-        "recommended_status": "WrapsHostLibc",
+        "current_status": "Implemented",
+        "evidence_state": "none",
+        "derived_status": null,
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
-        "provenance": {
-          "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5340",
-            "host_symbols": [
-              "profil"
-            ],
-            "delegation_kinds": [
-              "resolve_host_symbol_raw_literal"
-            ],
-            "callsite_count": 1,
-            "callsite_ids": [
-              "glibc_internal_abi:profil:5340:001"
-            ]
-          }
-        }
+        "provenance": {}
       },
       {
         "symbol": "program_invocation_name",
@@ -32661,7 +32646,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6958",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6938",
             "host_symbols": [
               "pthread_cancel"
             ],
@@ -32670,7 +32655,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_cancel:6958:001"
+              "pthread_abi:pthread_cancel:6938:001"
             ]
           }
         }
@@ -32686,7 +32671,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10882",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10857",
             "host_symbols": [
               "pthread_clockjoin_np"
             ],
@@ -32695,7 +32680,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_clockjoin_np:10882:001"
+              "pthread_abi:pthread_clockjoin_np:10857:001"
             ]
           }
         }
@@ -32854,7 +32839,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4416",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4396",
             "host_symbols": [
               "pthread_create"
             ],
@@ -32863,7 +32848,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_create:4416:001"
+              "pthread_abi:pthread_create:4396:001"
             ]
           }
         }
@@ -32879,7 +32864,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4511",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4491",
             "host_symbols": [
               "pthread_detach"
             ],
@@ -32888,7 +32873,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_detach:4511:001"
+              "pthread_abi:pthread_detach:4491:001"
             ]
           }
         }
@@ -32915,7 +32900,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11107",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11082",
             "host_symbols": [
               "pthread_exit"
             ],
@@ -32924,7 +32909,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_exit:11107:001"
+              "pthread_abi:pthread_exit:11082:001"
             ]
           }
         }
@@ -33039,7 +33024,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4482",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4462",
             "host_symbols": [
               "pthread_join"
             ],
@@ -33048,7 +33033,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_join:4482:001"
+              "pthread_abi:pthread_join:4462:001"
             ]
           }
         }
@@ -33636,7 +33621,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7036",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7016",
             "host_symbols": [
               "pthread_setcancelstate"
             ],
@@ -33645,7 +33630,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_setcancelstate:7036:001"
+              "pthread_abi:pthread_setcancelstate:7016:001"
             ]
           }
         }
@@ -33661,7 +33646,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7084",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7064",
             "host_symbols": [
               "pthread_setcanceltype"
             ],
@@ -33670,7 +33655,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_setcanceltype:7084:001"
+              "pthread_abi:pthread_setcanceltype:7064:001"
             ]
           }
         }
@@ -33818,7 +33803,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8517",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8492",
             "host_symbols": [
               "pthread_testcancel"
             ],
@@ -33827,7 +33812,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_testcancel:8517:001"
+              "pthread_abi:pthread_testcancel:8492:001"
             ]
           }
         }
@@ -33843,7 +33828,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10770",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10745",
             "host_symbols": [
               "pthread_timedjoin_np"
             ],
@@ -33852,7 +33837,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_timedjoin_np:10770:001"
+              "pthread_abi:pthread_timedjoin_np:10745:001"
             ]
           }
         }
@@ -33868,7 +33853,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10816",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10791",
             "host_symbols": [
               "pthread_tryjoin_np"
             ],
@@ -33877,7 +33862,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_tryjoin_np:10816:001"
+              "pthread_abi:pthread_tryjoin_np:10791:001"
             ]
           }
         }
@@ -34663,7 +34648,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8670",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8784",
             "host_symbols": [
               "realloc"
             ],
@@ -34672,7 +34657,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:realloc:8670:001"
+              "malloc_abi:realloc:8784:001"
             ]
           }
         }
@@ -38487,26 +38472,12 @@
         "symbol": "sprofil",
         "module": "glibc_internal_abi",
         "current_status": "WrapsHostLibc",
-        "evidence_state": "observed_host_dependency",
-        "derived_status": "WrapsHostLibc",
+        "evidence_state": "none",
+        "derived_status": null,
         "recommended_status": "WrapsHostLibc",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
-        "provenance": {
-          "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5369",
-            "host_symbols": [
-              "sprofil"
-            ],
-            "delegation_kinds": [
-              "resolve_host_symbol_raw_literal"
-            ],
-            "callsite_count": 1,
-            "callsite_ids": [
-              "glibc_internal_abi:sprofil:5369:001"
-            ]
-          }
-        }
+        "provenance": {}
       },
       {
         "symbol": "sqrt",
@@ -46013,8 +45984,8 @@
       "mode_requirement": "Implemented promotions require strict and hardened passing conformance, or an explicit triage rationale for downgrade/scanner handling"
     },
     "summary": {
-      "implemented_promotion_delta": 0,
-      "module_count": 0,
+      "implemented_promotion_delta": 1,
+      "module_count": 1,
       "violation_count": 0,
       "status": "pass"
     },
@@ -46045,23 +46016,27 @@
         }
       },
       "glibc_internal_abi": {
-        "implemented_promotion_delta": 0,
-        "proof_class_counts": {},
+        "implemented_promotion_delta": 1,
+        "proof_class_counts": {
+          "strict_hardened_conformance_proof": 1
+        },
         "mode_deltas": {
           "strict": {
-            "fixture_rows": 0,
-            "passing_conformance_promotions": 0,
+            "fixture_rows": 1,
+            "passing_conformance_promotions": 1,
             "missing_fixture_promotions": 0,
             "missing_passing_conformance_promotions": 0
           },
           "hardened": {
-            "fixture_rows": 0,
-            "passing_conformance_promotions": 0,
+            "fixture_rows": 1,
+            "passing_conformance_promotions": 1,
             "missing_fixture_promotions": 0,
             "missing_passing_conformance_promotions": 0
           }
         },
-        "triage_category_counts": {},
+        "triage_category_counts": {
+          "prove-now": 1
+        },
         "violating_symbols": [],
         "current_module_coverage": {
           "total": 568,
@@ -46659,16 +46634,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2552,
-      "fixture_linked": 878
+      "count": 2545,
+      "fixture_linked": 871
     },
     "RawSyscall": {
       "count": 408,
       "fixture_linked": 156
     },
     "WrapsHostLibc": {
-      "count": 1159,
-      "fixture_linked": 171
+      "count": 1166,
+      "fixture_linked": 178
     }
   },
   "module_coverage": {
@@ -46983,7 +46958,7 @@
     "_IO_switch_to_get_mode": "WrapsHostLibc",
     "_IO_switch_to_main_wget_area": "Implemented",
     "_IO_switch_to_wbackup_area": "Implemented",
-    "_IO_switch_to_wget_mode": "Implemented",
+    "_IO_switch_to_wget_mode": "WrapsHostLibc",
     "_IO_un_link": "Implemented",
     "_IO_ungetc": "WrapsHostLibc",
     "_IO_unsave_markers": "Implemented",
@@ -46994,7 +46969,7 @@
     "_IO_wdefault_doallocate": "Implemented",
     "_IO_wdefault_finish": "Implemented",
     "_IO_wdefault_pbackfail": "WrapsHostLibc",
-    "_IO_wdefault_uflow": "Implemented",
+    "_IO_wdefault_uflow": "WrapsHostLibc",
     "_IO_wdefault_xsgetn": "WrapsHostLibc",
     "_IO_wdefault_xsputn": "WrapsHostLibc",
     "_IO_wdo_write": "Implemented",
@@ -47002,7 +46977,7 @@
     "_IO_wfile_jumps": "Implemented",
     "_IO_wfile_overflow": "WrapsHostLibc",
     "_IO_wfile_seekoff": "WrapsHostLibc",
-    "_IO_wfile_sync": "Implemented",
+    "_IO_wfile_sync": "WrapsHostLibc",
     "_IO_wfile_underflow": "WrapsHostLibc",
     "_IO_wfile_xsputn": "WrapsHostLibc",
     "_IO_wmarker_delta": "Implemented",
@@ -47257,16 +47232,16 @@
     "__isoc23_wcstoumax": "Implemented",
     "__isoc23_wscanf": "WrapsHostLibc",
     "__isoc99_fscanf": "WrapsHostLibc",
-    "__isoc99_fwscanf": "Implemented",
+    "__isoc99_fwscanf": "WrapsHostLibc",
     "__isoc99_scanf": "WrapsHostLibc",
     "__isoc99_sscanf": "Implemented",
     "__isoc99_swscanf": "Implemented",
     "__isoc99_vfscanf": "WrapsHostLibc",
-    "__isoc99_vfwscanf": "Implemented",
+    "__isoc99_vfwscanf": "WrapsHostLibc",
     "__isoc99_vscanf": "WrapsHostLibc",
     "__isoc99_vsscanf": "Implemented",
     "__isoc99_vswscanf": "Implemented",
-    "__isoc99_vwscanf": "Implemented",
+    "__isoc99_vwscanf": "WrapsHostLibc",
     "__isoc99_wscanf": "WrapsHostLibc",
     "__isprint_l": "Implemented",
     "__ispunct_l": "Implemented",
@@ -48291,7 +48266,7 @@
     "dladdr1": "WrapsHostLibc",
     "dlclose": "WrapsHostLibc",
     "dlerror": "Implemented",
-    "dlinfo": "Implemented",
+    "dlinfo": "WrapsHostLibc",
     "dlmopen": "WrapsHostLibc",
     "dlopen": "WrapsHostLibc",
     "dlsym": "WrapsHostLibc",
@@ -49414,7 +49389,7 @@
     "mallinfo": "Implemented",
     "mallinfo2": "Implemented",
     "malloc": "WrapsHostLibc",
-    "malloc_info": "Implemented",
+    "malloc_info": "WrapsHostLibc",
     "malloc_stats": "Implemented",
     "malloc_trim": "Implemented",
     "malloc_usable_size": "Implemented",
@@ -49759,7 +49734,7 @@
     "process_mrelease": "RawSyscall",
     "process_vm_readv": "RawSyscall",
     "process_vm_writev": "RawSyscall",
-    "profil": "WrapsHostLibc",
+    "profil": "Implemented",
     "program_invocation_name": "Implemented",
     "program_invocation_short_name": "Implemented",
     "pselect": "RawSyscall",
@@ -50996,8 +50971,8 @@
   },
   "reclassified_symbols": [
     {
-      "symbol": "_authenticate",
-      "module": "rpc_abi",
+      "symbol": "_IO_switch_to_wget_mode",
+      "module": "io_internal_abi",
       "previous_status": "Implemented",
       "current_status": "WrapsHostLibc",
       "promotion_requires_evidence": false,
@@ -51021,8 +50996,8 @@
       "missing_evidence": []
     },
     {
-      "symbol": "callrpc",
-      "module": "rpc_abi",
+      "symbol": "_IO_wdefault_uflow",
+      "module": "io_internal_abi",
       "previous_status": "Implemented",
       "current_status": "WrapsHostLibc",
       "promotion_requires_evidence": false,
@@ -51046,11 +51021,161 @@
       "missing_evidence": []
     },
     {
-      "symbol": "clnt_create",
-      "module": "rpc_abi",
+      "symbol": "_IO_wfile_sync",
+      "module": "io_internal_abi",
       "previous_status": "Implemented",
       "current_status": "WrapsHostLibc",
       "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_fwscanf",
+      "module": "isoc_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_vfwscanf",
+      "module": "isoc_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_vwscanf",
+      "module": "isoc_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "dlinfo",
+      "module": "glibc_internal_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "malloc_info",
+      "module": "malloc_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "profil",
+      "module": "glibc_internal_abi",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
       "strict_fixture_count": 1,
       "hardened_fixture_count": 1,
       "strict_conformance": {
@@ -57287,6 +57412,19 @@
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
+      "symbol": "sprofil",
+      "status": "WrapsHostLibc",
+      "module": "glibc_internal_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
       "symbol": "sstk",
       "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
@@ -60602,6 +60740,19 @@
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
+      "symbol": "__lgammaf128_r_finite",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
       "symbol": "__gamma_r_finite",
       "status": "WrapsHostLibc",
       "module": "math_abi",
@@ -60629,6 +60780,19 @@
     },
     {
       "symbol": "__gammal_r_finite",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "__gammaf128_r_finite",
       "status": "WrapsHostLibc",
       "module": "math_abi",
       "valid": true,
@@ -62656,6 +62820,19 @@
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
+      "symbol": "fmaf128",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
       "symbol": "fmodf128",
       "status": "WrapsHostLibc",
       "module": "math_abi",
@@ -62709,6 +62886,19 @@
     },
     {
       "symbol": "fsqrtl",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "gammal",
       "status": "WrapsHostLibc",
       "module": "math_abi",
       "valid": true,
@@ -62825,6 +63015,32 @@
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
+      "symbol": "lgammaf128",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "lgammaf128_r",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
       "symbol": "lgammaf32_r",
       "status": "WrapsHostLibc",
       "module": "math_abi",
@@ -62852,6 +63068,58 @@
     },
     {
       "symbol": "lgammaf64_r",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "lgammaf64x",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "lgammaf64x_r",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "lgammal",
+      "status": "WrapsHostLibc",
+      "module": "math_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "lgammal_r",
       "status": "WrapsHostLibc",
       "module": "math_abi",
       "valid": true,
