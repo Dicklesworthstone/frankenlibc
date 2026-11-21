@@ -11,8 +11,9 @@ FMEMOPEN_ONLY=0
 COOKIE_LINES_ONLY=0
 INTERNAL_LINES_ONLY=0
 LOCKS_ONLY=0
+FLUSH_ALL_ONLY=0
 if [[ "$#" -gt 1 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks|--flush-all]" >&2
   exit 2
 fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
@@ -33,8 +34,10 @@ elif [[ "${1:-}" == "--internal-lines" ]]; then
   INTERNAL_LINES_ONLY=1
 elif [[ "${1:-}" == "--locks" ]]; then
   LOCKS_ONLY=1
+elif [[ "${1:-}" == "--flush-all" ]]; then
+  FLUSH_ALL_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks|--flush-all]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
@@ -42,7 +45,7 @@ if [[ "${GNU_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-rc0923-epic-eeuy4f.34"
 elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2.1"
-elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 ]]; then
+elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 || "${FLUSH_ALL_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2"
 elif [[ "${FMEMOPEN_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.7.5"
@@ -83,7 +86,7 @@ fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
-if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${INTERNAL_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 ]]; then
+if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${INTERNAL_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 || "${FLUSH_ALL_ONLY}" -eq 1 ]]; then
   error_kind=read
   error_mode=fd-errors
   error_cases=112
@@ -116,8 +119,13 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${LOCKS_ONLY}" -eq 1 ]]; then
     error_kind=locks
     error_mode=locks
-    error_cases=197
+    error_cases=203
     error_option=--locks
+  elif [[ "${FLUSH_ALL_ONLY}" -eq 1 ]]; then
+    error_kind=flush-all
+    error_mode=flush-all
+    error_cases=9
+    error_option=--flush-all
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
   "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \

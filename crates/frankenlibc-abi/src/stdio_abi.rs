@@ -2414,16 +2414,16 @@ impl StreamRegistry {
     }
 
     #[inline]
-    fn get_stream_ref(&self, id: usize) -> Option<StreamCell> {
+    fn get_stream_ref(&self, id: usize) -> Option<&StreamCell> {
         if let Some(slot) = dynamic_static_slot_for_id(id) {
             if slot == io_internal_abi::parked_static_slot() {
                 return None;
             }
             return self.static_slots[slot]
                 .as_ref()
-                .and_then(|(stored_id, cell)| (*stored_id == id).then(|| Arc::clone(cell)));
+                .and_then(|(stored_id, cell)| (*stored_id == id).then_some(cell));
         }
-        self.streams.get(&id).cloned()
+        self.streams.get(&id)
     }
 
     #[inline]
@@ -3130,9 +3130,12 @@ fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGu
         if let Some(native) = io_internal_abi::try_lock_native_stream_registry()
             && let Ok(reg) = registry().try_lock()
         {
+            // Most native FILEs live in the fixed slots, while overflow and
+            // standard streams use the map. Check the same registry view that
+            // produced the snapshot, including its parked-slot exclusion.
             if !reg
                 .get_stream_ref(id)
-                .is_some_and(|live| Arc::ptr_eq(&live, cell))
+                .is_some_and(|live| Arc::ptr_eq(live, cell))
             {
                 return None;
             }
@@ -3142,8 +3145,17 @@ fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGu
                 Some(StdioLockGuard(std::ptr::null_mut()))
             } else {
                 let file = native.get_by_handle(handle as *const c_void)?;
-                file.try_explicit_lock()
-                    .then(|| StdioLockGuard(handle as *mut c_void))
+                // GNU BYCALLER suppresses implicit locking for global flush
+                // too. The caller then owns synchronization with close/reopen;
+                // the private cell lock still protects Rust stream state.
+                // SAFETY: the native registry keeps this exact FILE live while
+                // reading its atomically mirrored locking-mode flag.
+                if unsafe { stream_uses_caller_locking(handle as *mut c_void) } {
+                    Some(StdioLockGuard(std::ptr::null_mut()))
+                } else {
+                    file.try_explicit_lock()
+                        .then(|| StdioLockGuard(handle as *mut c_void))
+                }
             };
             if let Some(file_lock) = file_lock {
                 let stream = cell.try_lock();
@@ -5734,7 +5746,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
             sorted_stream_ids(&reg)
                 .into_iter()
-                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, c)))
+                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, Arc::clone(c))))
                 .collect()
         };
         let mut any_fail = false;
