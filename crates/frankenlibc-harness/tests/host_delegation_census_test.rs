@@ -702,7 +702,7 @@ unary! {
     );
 
     let data = load_json(&output_path)?;
-    assert_eq!(data["detector"]["version"].as_u64(), Some(20));
+    assert_eq!(data["detector"]["version"].as_u64(), Some(21));
 
     let deps_for = |profile: &str, symbol: &str| -> BTreeSet<String> {
         data["profile_census"][profile]["host_dependencies_by_symbol"]
@@ -797,7 +797,7 @@ unary! {
 fn canonical_census_records_cancellation_and_cleanup_host_dependencies() -> TestResult {
     let root = workspace_root();
     let data = load_json(&artifact(&root))?;
-    assert_eq!(data["detector"]["version"].as_u64(), Some(20));
+    assert_eq!(data["detector"]["version"].as_u64(), Some(21));
 
     let interpose_deps = |symbol: &str| -> BTreeSet<String> {
         data["profile_census"]["interpose-release-linux-x86_64"]["host_dependencies_by_symbol"]

@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 20
+DETECTOR_VERSION = 21
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -926,23 +926,42 @@ def source_tree_sha256(files: list[Path], root: Path) -> str:
     return digest.hexdigest()
 
 
+def _append_glob_import(out: dict[str, str], prefix: str) -> None:
+    if not prefix:
+        return
+    existing = out.get("*")
+    if not existing:
+        out["*"] = prefix
+        return
+    parts = existing.split(";")
+    if prefix not in parts:
+        parts.append(prefix)
+        out["*"] = ";".join(parts)
+
+
 def _expand_use_items(
     prefix: str,
     expr: str,
     out: dict[str, str],
     *,
     is_indented: bool = False,
+    allow_overwrite: bool = True,
 ) -> None:
     expr = expr.strip()
     if not expr:
         return
     if expr == "*":
-        if prefix:
-            out.setdefault("*", prefix)
+        _append_glob_import(out, prefix)
         return
     if expr.startswith("{") and expr.endswith("}"):
         for child in split_top_level(expr[1:-1]):
-            _expand_use_items(prefix, child, out, is_indented=is_indented)
+            _expand_use_items(
+                prefix,
+                child,
+                out,
+                is_indented=is_indented,
+                allow_overwrite=allow_overwrite,
+            )
         return
     brace_pos = expr.find("::{")
     if brace_pos >= 0 and expr.endswith("}"):
@@ -951,7 +970,13 @@ def _expand_use_items(
             sub_base = re.sub(r"\s+", "", expr[:brace_pos])
             combined = f"{prefix}::{sub_base}" if prefix else sub_base
             for child in split_top_level(expr[brace_pos + 3 : -1]):
-                _expand_use_items(combined, child, out, is_indented=is_indented)
+                _expand_use_items(
+                    combined,
+                    child,
+                    out,
+                    is_indented=is_indented,
+                    allow_overwrite=allow_overwrite,
+                )
             return
     alias_parts = re.split(r"\s+as\s+", expr, maxsplit=1)
     original = re.sub(r"\s+", "", alias_parts[0])
@@ -961,8 +986,7 @@ def _expand_use_items(
     if original.endswith("::*"):
         glob_base = original[:-3]
         combined = f"{prefix}::{glob_base}" if prefix else glob_base
-        if combined:
-            out.setdefault("*", combined)
+        _append_glob_import(out, combined)
         return
     if original == "self":
         if not prefix:
@@ -990,7 +1014,10 @@ def _expand_use_items(
         and local_name != target
         and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local_name)
     ):
-        out[local_name] = target
+        if allow_overwrite:
+            out[local_name] = target
+        else:
+            out.setdefault(local_name, target)
 
 
 TYPE_ALIAS_RE = re.compile(
@@ -1000,10 +1027,16 @@ TYPE_ALIAS_RE = re.compile(
 
 
 def parse_module_imports(text: str) -> dict[str, str]:
-    """Return module- and block-scope `use` and `type` aliases as local -> target path."""
+    """Return module- and block-scope `use` and `type` aliases as local -> target path.
+
+    Top-level module `use` items are expanded first so block-local (indented)
+    `use` statements inside one function body can never clobber a module-level
+    import for sibling functions in the same file.
+    """
 
     imports: dict[str, str] = {}
     masked = rust_code_mask(text)
+    indented_uses: list[str] = []
     for match in USE_ITEM_RE.finditer(masked):
         line_start = masked.rfind("\n", 0, match.start()) + 1
         prefix_ws = match.group(0)[: len(match.group(0)) - len(match.group(0).lstrip(" \t"))]
@@ -1012,7 +1045,13 @@ def parse_module_imports(text: str) -> dict[str, str]:
         normalized = re.sub(r"\s*::\s*", "::", expression)
         normalized = re.sub(r"\{\s*", "{", normalized)
         normalized = re.sub(r"\s*\}", "}", normalized)
-        _expand_use_items("", normalized.lstrip(":"), imports, is_indented=is_indented)
+        cleaned = normalized.lstrip(":")
+        if is_indented:
+            indented_uses.append(cleaned)
+        else:
+            _expand_use_items("", cleaned, imports, is_indented=False, allow_overwrite=True)
+    for cleaned in indented_uses:
+        _expand_use_items("", cleaned, imports, is_indented=True, allow_overwrite=False)
     for alias_match in TYPE_ALIAS_RE.finditer(masked):
         alias_name = alias_match.group(1)
         rhs = _strip_angle_groups(alias_match.group(2)).strip().lstrip(":")
@@ -1934,21 +1973,46 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
+        for resolver_name in ("resolve_host_symbol_raw", "resolve_host_symbol_cached"):
+            if function.name == resolver_name:
+                continue
+            for val_ref in re.finditer(rf"(?<![\w.]){resolver_name}\b(?!\s*\()", line):
+                # Ignore `use ...::resolve_host_symbol_*` imports; flag actual value bindings/refs.
+                prefix_before = line[: val_ref.start()].lstrip()
+                if prefix_before.startswith(("use ", "pub use ")):
+                    continue
+                calls.append(
+                    HostCall(
+                        path=path,
+                        line=line_no,
+                        function=function.name,
+                        function_id=function.identity,
+                        delegation_kind="resolve_host_symbol_value_ref",
+                        host_symbol="<dynamic>",
+                        expression=expression,
+                        evidence=f"{path}:{line_no}",
+                    )
+                )
         static_needles = [
             ("delegate_to_host_libc_start_main", "__libc_start_main", "startup_host_delegate"),
-            ("host_dlsym(", "dlsym", "host_dlsym_helper"),
-            ("host_dlvsym(", "dlvsym", "host_dlvsym_helper"),
-            ("dlvsym_next(", "dlvsym", "rtld_next_host_dlvsym"),
-            ("host_dl_iterate_phdr_cached(", "dl_iterate_phdr", "cached_host_loader_symbol"),
-            ("host_dladdr_cached(", "dladdr", "cached_host_loader_symbol"),
-            ("host_malloc_raw(", "malloc", "cached_host_allocator_symbol"),
-            ("host_calloc_raw(", "calloc", "cached_host_allocator_symbol"),
-            ("host_realloc_raw(", "realloc", "cached_host_allocator_symbol"),
-            ("host_free_raw(", "free", "cached_host_allocator_symbol"),
-            ("host_errno_location_raw(", "__errno_location", "cached_host_errno_symbol"),
+            ("host_dlsym", "dlsym", "host_dlsym_helper"),
+            ("host_dlvsym", "dlvsym", "host_dlvsym_helper"),
+            ("dlvsym_next", "dlvsym", "rtld_next_host_dlvsym"),
+            ("host_dl_iterate_phdr_cached", "dl_iterate_phdr", "cached_host_loader_symbol"),
+            ("host_dladdr_cached", "dladdr", "cached_host_loader_symbol"),
+            ("host_malloc_raw", "malloc", "cached_host_allocator_symbol"),
+            ("host_calloc_raw", "calloc", "cached_host_allocator_symbol"),
+            ("host_realloc_raw", "realloc", "cached_host_allocator_symbol"),
+            ("host_free_raw", "free", "cached_host_allocator_symbol"),
+            ("host_errno_location_raw", "__errno_location", "cached_host_errno_symbol"),
         ]
         for needle, host_symbol, kind in static_needles:
-            if needle in line:
+            if function.name == needle:
+                continue
+            for hit in re.finditer(rf"(?<![\w.]){needle}\b", line):
+                prefix_before = line[: hit.start()].lstrip()
+                if prefix_before.startswith(("use ", "pub use ")):
+                    continue
                 calls.append(
                     HostCall(
                         path=path,
@@ -1961,6 +2025,7 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
+                break
     return calls
 
 
@@ -2172,9 +2237,15 @@ def resolve_function_calls(
             return candidates
         imported_expression = (module_imports or {}).get(module, {}).get(name)
         if imported_expression is not None:
-            imported_parts = imported_expression.split("::")
-            imported_module, claims_local = qualified_target_module(
+            eff_mod, imported_parts = expand_qualified_imports(
                 module,
+                imported_expression.split("::"),
+                known_modules,
+                module_aliases,
+                module_imports,
+            )
+            imported_module, claims_local = qualified_target_module(
+                eff_mod,
                 imported_parts,
                 known_modules,
                 module_aliases,
@@ -2185,17 +2256,31 @@ def resolve_function_calls(
                     imported_parts[-1],
                     visited,
                 )
-        glob_target = (module_imports or {}).get(module, {}).get("*")
-        if glob_target is not None:
-            glob_parts = [*glob_target.split("::"), name]
-            glob_module, glob_claims_local = qualified_target_module(
-                module,
-                glob_parts,
-                known_modules,
-                module_aliases,
-            )
-            if glob_claims_local and glob_module is not None:
-                return module_item_candidates(glob_module, name, visited)
+        glob_entry = (module_imports or {}).get(module, {}).get("*")
+        if glob_entry is not None:
+            glob_hits: list[str] = []
+            for glob_target in glob_entry.split(";"):
+                if not glob_target:
+                    continue
+                eff_mod, glob_parts = expand_qualified_imports(
+                    module,
+                    [*glob_target.split("::"), name],
+                    known_modules,
+                    module_aliases,
+                    module_imports,
+                )
+                glob_module, glob_claims_local = qualified_target_module(
+                    eff_mod,
+                    glob_parts,
+                    known_modules,
+                    module_aliases,
+                )
+                if glob_claims_local and glob_module is not None:
+                    for cid in module_item_candidates(glob_module, glob_parts[-1], visited):
+                        if cid not in glob_hits:
+                            glob_hits.append(cid)
+            if glob_hits:
+                return sorted(glob_hits)
         return []
 
     for line_no, raw_line, line in function_body_lines(function):
@@ -2733,10 +2818,15 @@ def module_declarations(
         module_name = match.group(1)
         explicit_path = None
         preceding = [span for span in attrs if span[1] <= match.start()]
-        if preceding and only_trivia(mask, preceding[-1][1], match.start()):
-            path_match = PATH_ATTRIBUTE_RE.search(text[preceding[-1][0] : preceding[-1][1]])
+        cursor = match.start()
+        for attr_start, attr_end in reversed(preceding):
+            if not only_trivia(mask, attr_end, cursor):
+                break
+            path_match = PATH_ATTRIBUTE_RE.search(text[attr_start:attr_end])
             if path_match is not None:
                 explicit_path = path_match.group(1)
+                break
+            cursor = attr_start
         if explicit_path is not None:
             source_path = path.parent / explicit_path
         else:
@@ -3231,14 +3321,42 @@ def build_semantic_export_surface(
 def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
     source_files = sorted(abi_source_dir.rglob("*.rs"))
     functions: list[FunctionInfo] = []
+    source_texts: dict[Path, str] = {}
     for path in source_files:
-        functions.extend(parse_functions(path))
+        text = path.read_text(encoding="utf-8")
+        source_texts[path] = text
+        functions.extend(parse_functions(path, text))
+
+    legacy_module_imports = {
+        path.stem: parse_module_imports(text) for path, text in source_texts.items()
+    }
+    legacy_declared_types = {
+        path.stem: parse_declared_types(text) for path, text in source_texts.items()
+    }
+    legacy_enum_constructors = {
+        (path.stem, enum_name, variant_name)
+        for path, text in source_texts.items()
+        for enum_name, variant_name in parse_enum_constructors(text)
+    }
+    legacy_generated_leaves = {
+        (path.stem, type_name, function_name)
+        for path, text in source_texts.items()
+        for type_name, function_name in parse_generated_associated_leaves(text)
+    }
+    _, legacy_module_aliases, _ = profile_source_view(
+        root, abi_source_dir, source_files, CFG_PROFILES[0]
+    )
 
     legacy = analyze_host_dependencies(
         functions,
         root,
         same_symbol_only=True,
         include_libc_calls=False,
+        module_aliases=legacy_module_aliases,
+        module_imports=legacy_module_imports,
+        declared_types_by_module=legacy_declared_types,
+        enum_constructors=legacy_enum_constructors,
+        generated_associated_leaves=legacy_generated_leaves,
     )
     symbol_rows = legacy["symbol_rows"]
     all_calls = legacy["calls"]
@@ -4068,6 +4186,61 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     require(
         v20_syms.get("exported_self_and_reexport") == {"dlopen", "dlsym"},
         f"Self::method or cross-module libc:: re-export missed: {v20_syms}",
+    )
+
+    # Regression checks for v21 soundness fixes: fn-value resolver aliasing,
+    # multi-glob `use ...::*;`, non-clobbering block-local `use`, and
+    # multi-attribute `#[path = "..."]` + multi-hop `pub use`.
+    multi_glob_imports = parse_module_imports(
+        "use crate::g1::*;\n"
+        "use crate::g2::*;\n"
+        "use crate::real_mod::target_fn;\n"
+        "fn local_shadow() {\n"
+        "    use crate::decoy_mod::target_fn;\n"
+        "    let _ = target_fn();\n"
+        "}\n"
+    )
+    require(
+        multi_glob_imports.get("*") == "crate::g1;crate::g2"
+        and multi_glob_imports.get("target_fn") == "crate::real_mod::target_fn",
+        f"multi-glob or non-clobbering block-local import regressed: {multi_glob_imports}",
+    )
+    fn_val_path = root / "crates/frankenlibc-abi/src/v21_val.rs"
+    fn_val_src = (
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_fn_value_alias() -> usize {\n'
+        "    let resolve = crate::host_resolve::resolve_host_symbol_raw;\n"
+        "    resolve(\"dlopen\").unwrap_or(0)\n"
+        "}\n"
+    )
+    fn_val_analysis = analyze_host_dependencies(
+        parse_functions(fn_val_path, fn_val_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    fn_val_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in fn_val_analysis["symbol_rows"]
+    }
+    require(
+        "<dynamic>" in fn_val_syms.get("exported_fn_value_alias", set()),
+        f"fn-value aliasing of resolve_host_symbol_raw missed: {fn_val_syms}",
+    )
+    multi_attr_src = (
+        '#[path = "custom_target.rs"]\n'
+        "#[allow(dead_code)]\n"
+        "mod aliased_mod;\n"
+    )
+    multi_attr_decls = module_declarations(
+        root / "crates/frankenlibc-abi/src/lib.rs",
+        multi_attr_src,
+        root / "crates/frankenlibc-abi/src",
+    )
+    require(
+        multi_attr_decls == [("aliased_mod", root / "crates/frankenlibc-abi/src/custom_target.rs")],
+        f"multi-attribute #[path] mod declaration missed: {multi_attr_decls}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0
