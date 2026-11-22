@@ -546,7 +546,7 @@ const TANHF_LN2_32: f64 = f64::from_bits(0x3f96_2e42_fefa_39ef);
 
 #[cold]
 #[inline(never)]
-extern "C" fn sinhf_overflow_or_special(x: f32) -> f32 {
+pub extern "C" fn sinhf_overflow_or_special(x: f32) -> f32 {
     if x.is_nan() {
         return core::hint::black_box(x) + 0.0;
     }
@@ -555,7 +555,7 @@ extern "C" fn sinhf_overflow_or_special(x: f32) -> f32 {
 
 #[cold]
 #[inline(never)]
-extern "C" fn coshf_overflow_or_special(x: f32) -> f32 {
+pub extern "C" fn coshf_overflow_or_special(x: f32) -> f32 {
     if x.is_nan() {
         return core::hint::black_box(x) + 0.0;
     }
@@ -570,7 +570,7 @@ pub fn sinhf(x: f32) -> f32 {
     // frameless baseline SSE2 leaf, bit-exact against glibc 2.43 across all
     // 2^32 binary32 inputs and all 4 IEEE-754 rounding modes (0 mismatches).
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax >= 0x42b2_d4fc {
+    if ax >= 0x42b2_d4fd {
         return sinhf_overflow_or_special(x);
     }
     let xd = f64::from(x);
@@ -619,7 +619,7 @@ pub fn coshf(x: f32) -> f32 {
     // SSE2 leaf, bit-exact against glibc 2.43 across all 2^32 binary32 inputs
     // and all 4 IEEE-754 rounding modes (0 mismatches).
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax >= 0x42b2_d4fc {
+    if ax >= 0x42b2_d4fd {
         return coshf_overflow_or_special(x);
     }
     let xd = f64::from(x);

@@ -1933,7 +1933,8 @@ pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
 #[inline(never)]
 extern "C" fn sinhf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::sinhf);
-    if out.is_infinite() && x.is_finite() {
+    let ax = x.to_bits() & 0x7fff_ffff;
+    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 && (out.is_infinite() || out.abs() == f32::MAX) {
         set_range_errno();
     }
     out
@@ -1943,7 +1944,8 @@ extern "C" fn sinhf_slow(x: f32) -> f32 {
 #[inline(never)]
 extern "C" fn coshf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::coshf);
-    if out.is_infinite() && x.is_finite() {
+    let ax = x.to_bits() & 0x7fff_ffff;
+    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 && (out.is_infinite() || out.abs() == f32::MAX) {
         set_range_errno();
     }
     out
@@ -1958,8 +1960,9 @@ extern "C" fn tanhf_slow(x: f32) -> f32 {
 #[cold]
 #[inline(never)]
 extern "C" fn sinhf_overflow_or_special_abi(x: f32) -> f32 {
-    let out = frankenlibc_core::math::sinhf(x);
-    if out.is_infinite() && x.is_finite() {
+    let out = frankenlibc_core::math::float32::sinhf_overflow_or_special(x);
+    let ax = x.to_bits() & 0x7fff_ffff;
+    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 {
         set_range_errno();
     }
     out
@@ -1968,8 +1971,9 @@ extern "C" fn sinhf_overflow_or_special_abi(x: f32) -> f32 {
 #[cold]
 #[inline(never)]
 extern "C" fn coshf_overflow_or_special_abi(x: f32) -> f32 {
-    let out = frankenlibc_core::math::coshf(x);
-    if out.is_infinite() && x.is_finite() {
+    let out = frankenlibc_core::math::float32::coshf_overflow_or_special(x);
+    let ax = x.to_bits() & 0x7fff_ffff;
+    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 {
         set_range_errno();
     }
     out
@@ -1980,8 +1984,8 @@ pub unsafe extern "C" fn sinhf(x: f32) -> f32 {
     if !runtime_policy::math_membrane_fastpath_inline() {
         return sinhf_slow(x);
     }
-    // Every finite |x| < 0x42b2_d4fc has |sinh(x)| < f32::MAX in all 4 rounding modes.
-    if (x.to_bits() & 0x7fff_ffff) >= 0x42b2_d4fc {
+    // Every finite |x| < 0x42b2_d4fd has |sinh(x)| < f32::MAX in all 4 rounding modes.
+    if (x.to_bits() & 0x7fff_ffff) >= 0x42b2_d4fd {
         return sinhf_overflow_or_special_abi(x);
     }
     frankenlibc_core::math::sinhf(x)
@@ -1992,8 +1996,8 @@ pub unsafe extern "C" fn coshf(x: f32) -> f32 {
     if !runtime_policy::math_membrane_fastpath_inline() {
         return coshf_slow(x);
     }
-    // Every finite |x| < 0x42b2_d4fc has cosh(x) < f32::MAX in all 4 rounding modes.
-    if (x.to_bits() & 0x7fff_ffff) >= 0x42b2_d4fc {
+    // Every finite |x| < 0x42b2_d4fd has cosh(x) < f32::MAX in all 4 rounding modes.
+    if (x.to_bits() & 0x7fff_ffff) >= 0x42b2_d4fd {
         return coshf_overflow_or_special_abi(x);
     }
     frankenlibc_core::math::coshf(x)
