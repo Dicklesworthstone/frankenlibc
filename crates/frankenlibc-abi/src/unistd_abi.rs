@@ -12200,9 +12200,8 @@ pub unsafe extern "C" fn _nss_files_setgrent(_stayopen: c_int) -> c_int {
 
 /// `_nss_files_setprotoent(stayopen)` — reset protocol database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _nss_files_setprotoent(stayopen: c_int) -> c_int {
-    unsafe { setprotoent(stayopen) };
-    NSS_STATUS_SUCCESS
+pub unsafe extern "C" fn _nss_files_setprotoent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(files_setprotoent)
 }
 
 /// `_nss_files_setservent(stayopen)` — reset service database iteration.
@@ -12794,9 +12793,39 @@ pub unsafe extern "C" fn _nss_files_getprotoent_r(
         unsafe { nss_set_errnop_enoent(errnop) };
         return NSS_STATUS_NOTFOUND;
     }
+    let saved_errno = current_abi_errno();
+    let capacity = tracked_output_capacity(buffer, buflen);
     let mut resolved = std::ptr::null_mut();
-    let rc = unsafe { getprotoent_r(result, buffer, buflen, &mut resolved) };
-    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+    // SAFETY: the common helper validates the complete caller-owned objects
+    // before advancing the same native cursor used by public enumeration.
+    let outcome = unsafe { protocol_next_result(result, buffer, capacity, &mut resolved) };
+    match outcome {
+        Ok(found) => {
+            unsafe { set_abi_errno(saved_errno) };
+            if found {
+                NSS_STATUS_SUCCESS
+            } else {
+                NSS_STATUS_NOTFOUND
+            }
+        }
+        Err(error) => {
+            // GNU's earliest buffer preflight writes only errnop. Restore
+            // ordinary errno first in case the optional error slot aliases it.
+            unsafe {
+                set_abi_errno(if error == libc::ERANGE && capacity < 2 {
+                    saved_errno
+                } else {
+                    error
+                });
+                nss_set_errnop(errnop, error);
+            }
+            if error == libc::ERANGE || error == libc::EAGAIN {
+                NSS_STATUS_TRYAGAIN
+            } else {
+                NSS_STATUS_UNAVAIL
+            }
+        }
+    }
 }
 
 /// `_nss_files_getservent_r(*result, *buf, buflen, *errnop)` —
@@ -12826,7 +12855,11 @@ pub unsafe extern "C" fn _nss_files_getservent_r(
     match outcome {
         Ok(found) => {
             unsafe { set_abi_errno(saved_errno) };
-            if found { NSS_STATUS_SUCCESS } else { NSS_STATUS_NOTFOUND }
+            if found {
+                NSS_STATUS_SUCCESS
+            } else {
+                NSS_STATUS_NOTFOUND
+            }
         }
         Err(error) => {
             // GNU's earliest buffer preflight only writes errnop. Restore
@@ -22127,7 +22160,10 @@ struct ServiceFilesCursor {
 impl ServiceFilesCursor {
     const fn new() -> Self {
         Self {
-            reader: None, source_path: None, line: Vec::new(), pending: None,
+            reader: None,
+            source_path: None,
+            line: Vec::new(),
+            pending: None,
         }
     }
 
@@ -22177,7 +22213,11 @@ impl ServiceFilesCursor {
         }
         while self.pending.is_none() {
             self.line.clear();
-            let read = self.reader.as_mut().unwrap().read_until(b'\n', &mut self.line)
+            let read = self
+                .reader
+                .as_mut()
+                .unwrap()
+                .read_until(b'\n', &mut self.line)
                 .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
             if read == 0 {
                 return Ok(false);
@@ -22187,7 +22227,10 @@ impl ServiceFilesCursor {
         // SAFETY: the ABI entry point checked the caller's complete objects.
         let result = unsafe {
             crate::inet_abi::pack_service_entry(
-                self.pending.as_ref().unwrap(), output, buffer, capacity,
+                self.pending.as_ref().unwrap(),
+                output,
+                buffer,
+                capacity,
             )
         };
         if result != 0 {
@@ -22210,19 +22253,25 @@ struct ServiceIteration {
 impl ServiceIteration {
     const fn new() -> Self {
         Self {
-            sources: None, source: 0, needs_set: false, stayopen: 0,
+            sources: None,
+            source: 0,
+            needs_set: false,
+            stayopen: 0,
         }
     }
 
     fn sources(&mut self) -> std::sync::Arc<Vec<frankenlibc_core::nss::Service>> {
-        self.sources.get_or_insert_with(|| {
-            crate::nss_module::services(frankenlibc_core::nss::Database::Services)
-        }).clone()
+        self.sources
+            .get_or_insert_with(|| {
+                crate::nss_module::services(frankenlibc_core::nss::Database::Services)
+            })
+            .clone()
     }
 
-    fn action(source: &frankenlibc_core::nss::Service, status: c_int)
-        -> frankenlibc_core::nss::Action
-    {
+    fn action(
+        source: &frankenlibc_core::nss::Service,
+        status: c_int,
+    ) -> frankenlibc_core::nss::Action {
         if status == 2 {
             source.return_action()
         } else {
@@ -22230,17 +22279,17 @@ impl ServiceIteration {
         }
     }
 
-    fn begin(
-        &mut self,
-        source: &frankenlibc_core::nss::Service,
-        stayopen: c_int,
-    ) -> Option<c_int> {
+    fn begin(&mut self, source: &frankenlibc_core::nss::Service, stayopen: c_int) -> Option<c_int> {
         if source.name() == b"files" {
             Some(match files_setservent() {
                 0 => NSS_STATUS_SUCCESS,
                 error => {
                     unsafe { set_abi_errno(error) };
-                    if error == libc::EAGAIN { NSS_STATUS_TRYAGAIN } else { NSS_STATUS_UNAVAIL }
+                    if error == libc::EAGAIN {
+                        NSS_STATUS_TRYAGAIN
+                    } else {
+                        NSS_STATUS_UNAVAIL
+                    }
                 }
             })
         } else {
@@ -22261,20 +22310,21 @@ impl ServiceIteration {
         let mut resolved = false;
         while let Some(source) = sources.get(self.source) {
             let Some(status) = self.begin(source, previous_stayopen) else {
-                if source.action(frankenlibc_core::nss::Status::Unavailable)
-                    != Action::Continue || self.source + 1 == sources.len()
+                if source.action(frankenlibc_core::nss::Status::Unavailable) != Action::Continue
+                    || self.source + 1 == sources.len()
                 {
                     // Only an initial lookup failure creates GNU's no-function
                     // sentinel. A later failure retains the current provider.
-                    if !resolved { self.source = sources.len(); }
+                    if !resolved {
+                        self.source = sources.len();
+                    }
                     break;
                 }
                 self.source += 1;
                 continue;
             };
             resolved = true;
-            if Self::action(source, status) != Action::Continue
-                || self.source + 1 == sources.len()
+            if Self::action(source, status) != Action::Continue || self.source + 1 == sources.len()
             {
                 break;
             }
@@ -22307,8 +22357,14 @@ impl ServiceIteration {
             first.get_or_insert(index);
             // GNU cleanup ignores each callback's status and traverses under
             // __nss_next2's all-values rule, including providers not yet read.
-            if [Status::TryAgain, Status::Unavailable, Status::NotFound, Status::Success]
-                .into_iter().all(|status| source.action(status) == Action::Return)
+            if [
+                Status::TryAgain,
+                Status::Unavailable,
+                Status::NotFound,
+                Status::Success,
+            ]
+            .into_iter()
+            .all(|status| source.action(status) == Action::Return)
             {
                 break;
             }
@@ -22343,10 +22399,12 @@ impl ServiceIteration {
                 let Some(module) = crate::nss_module::service_enumeration(source.name()) else {
                     // A missing function is a lookup failure, not a callback
                     // answer. Preserve the previous status if no source remains.
-                    if source.action(frankenlibc_core::nss::Status::Unavailable)
-                        != Action::Continue || self.source + 1 == sources.len()
+                    if source.action(frankenlibc_core::nss::Status::Unavailable) != Action::Continue
+                        || self.source + 1 == sources.len()
                     {
-                        if initial_lookup { self.source = sources.len(); }
+                        if initial_lookup {
+                            self.source = sources.len();
+                        }
                         return status;
                     }
                     self.source += 1;
@@ -22369,8 +22427,8 @@ impl ServiceIteration {
                         status = answer;
                         break;
                     }
-                    if source.action(frankenlibc_core::nss::Status::Unavailable)
-                        != Action::Continue || self.source + 1 == sources.len()
+                    if source.action(frankenlibc_core::nss::Status::Unavailable) != Action::Continue
+                        || self.source + 1 == sources.len()
                     {
                         return NSS_STATUS_NOTFOUND;
                     }
@@ -22405,7 +22463,11 @@ impl ServiceIteration {
                 match outcome {
                     Ok(found) => {
                         unsafe { set_abi_errno(saved_errno) };
-                        if found { NSS_STATUS_SUCCESS } else { NSS_STATUS_NOTFOUND }
+                        if found {
+                            NSS_STATUS_SUCCESS
+                        } else {
+                            NSS_STATUS_NOTFOUND
+                        }
                     }
                     Err(error) => {
                         unsafe { set_abi_errno(error) };
@@ -22448,8 +22510,10 @@ impl ServIterState {
             files: ServiceFilesCursor::new(),
             busy: false,
             entry: libc::servent {
-                s_name: std::ptr::null_mut(), s_aliases: std::ptr::null_mut(),
-                s_port: 0, s_proto: std::ptr::null_mut(),
+                s_name: std::ptr::null_mut(),
+                s_aliases: std::ptr::null_mut(),
+                s_port: 0,
+                s_proto: std::ptr::null_mut(),
             },
             buffer: Vec::new(),
         }
@@ -22472,7 +22536,9 @@ std::thread_local! {
 #[inline]
 fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
-    { SERV_ITER_OWNED_TLS.with(callback) }
+    {
+        SERV_ITER_OWNED_TLS.with(callback)
+    }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         if crate::owned_tls_cache::uses_owned_tls() {
@@ -22500,7 +22566,9 @@ struct ServiceIterationLease {
 impl ServiceIterationLease {
     fn acquire() -> Option<Self> {
         with_serv_iter_state(|state| {
-            if state.busy { return None; }
+            if state.busy {
+                return None;
+            }
             state.busy = true;
             Some(Self {
                 iteration: std::mem::replace(&mut state.iteration, ServiceIteration::new()),
@@ -22559,8 +22627,10 @@ pub unsafe extern "C" fn getservent() -> *mut c_void {
         return std::ptr::null_mut();
     };
     let mut output = libc::servent {
-        s_name: std::ptr::null_mut(), s_aliases: std::ptr::null_mut(),
-        s_port: 0, s_proto: std::ptr::null_mut(),
+        s_name: std::ptr::null_mut(),
+        s_aliases: std::ptr::null_mut(),
+        s_port: 0,
+        s_proto: std::ptr::null_mut(),
     };
     let mut capacity = lease.buffer.len().max(1024);
     loop {
@@ -22574,7 +22644,9 @@ pub unsafe extern "C" fn getservent() -> *mut c_void {
         }
         // SAFETY: output and the leased buffer remain live through callbacks.
         let status = unsafe {
-            lease.iteration.next_r(&mut output, lease.buffer.as_mut_ptr().cast(), capacity)
+            lease
+                .iteration
+                .next_r(&mut output, lease.buffer.as_mut_ptr().cast(), capacity)
         };
         if status == NSS_STATUS_SUCCESS {
             drop(lease);
@@ -22586,7 +22658,10 @@ pub unsafe extern "C" fn getservent() -> *mut c_void {
         if status != NSS_STATUS_TRYAGAIN || current_abi_errno() != libc::ERANGE {
             return std::ptr::null_mut();
         }
-        let Some(next) = capacity.checked_mul(2).filter(|&size| size <= isize::MAX as usize) else {
+        let Some(next) = capacity
+            .checked_mul(2)
+            .filter(|&size| size <= isize::MAX as usize)
+        else {
             unsafe { set_abi_errno(libc::ENOMEM) };
             return std::ptr::null_mut();
         };
@@ -22907,39 +22982,112 @@ pub unsafe extern "C" fn getnetbyaddr(net: u32, addr_type: c_int) -> *mut c_void
 // /etc/protocols iteration — native
 // ---------------------------------------------------------------------------
 
-const PROTOCOLS_PATH: &str = "/etc/protocols";
-
 struct ProtoIterState {
+    source_path: Option<std::path::PathBuf>,
     reader: Option<std::io::BufReader<std::fs::File>>,
     line_buf: Vec<u8>,
-    /// Thread-local protoent + string data for non-reentrant getprotoent.
-    entry_buf: [u8; 512],
-    /// NULL-terminated alias list. Sized 16 (15 aliases + terminator): this was
-    /// 2, i.e. room for a SINGLE alias, which silently truncated real
-    /// /etc/protocols lines — "rspf 73 RSPF CPHB" lost CPHB. The widest lines on
-    /// a stock Debian/Ubuntu /etc/protocols and /etc/services carry well under
-    /// 15, and entry_buf remains the real backstop.
-    aliases_ptrs: [*mut c_char; 16],
+    // Keep the complete parsed record until caller-buffer packing succeeds.
+    pending: Option<frankenlibc_core::resolv::ProtocolEntry>,
+    entry: libc::protoent,
+    entry_buf: Vec<u8>,
 }
 
 impl ProtoIterState {
     const fn new() -> Self {
         Self {
+            source_path: None,
             reader: None,
             line_buf: Vec::new(),
-            entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 16],
+            pending: None,
+            entry: libc::protoent {
+                p_name: std::ptr::null_mut(),
+                p_aliases: std::ptr::null_mut(),
+                p_proto: 0,
+            },
+            entry_buf: Vec::new(),
         }
+    }
+
+    fn open(&mut self, path: std::path::PathBuf) -> Result<(), c_int> {
+        // A failed reopen must not leave a pending record from another source.
+        self.reader = None;
+        self.pending = None;
+        self.line_buf.clear();
+        self.source_path = Some(path);
+        let file = std::fs::File::open(self.source_path.as_ref().unwrap())
+            .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+        self.reader = Some(std::io::BufReader::new(file));
+        Ok(())
+    }
+
+    fn ensure_entry(&mut self) -> Result<bool, c_int> {
+        use std::io::BufRead;
+
+        // Use the same secure source selection as keyed protocol lookups.
+        // Check it even while a short-buffer retry has a pending record.
+        let path = crate::resolv_abi::protocols_backend_path();
+        if self.reader.is_none() || self.source_path.as_ref() != Some(&path) {
+            self.open(path)?;
+        }
+        if self.pending.is_some() {
+            return Ok(true);
+        }
+        let reader = self.reader.as_mut().unwrap();
+        loop {
+            self.line_buf.clear();
+            match reader.read_until(b'\n', &mut self.line_buf) {
+                Ok(0) => return Ok(false),
+                Err(error) => return Err(error.raw_os_error().unwrap_or(libc::EIO)),
+                Ok(_) => {}
+            }
+            if let Some(entry) = frankenlibc_core::resolv::parse_protocols_line(&self.line_buf) {
+                self.pending = Some(entry);
+                return Ok(true);
+            }
+        }
+    }
+
+    unsafe fn next_r(
+        &mut self,
+        result_buf: *mut c_void,
+        buffer: *mut c_char,
+        capacity: usize,
+        result: *mut *mut c_void,
+    ) -> Result<bool, c_int> {
+        // GNU's files reader needs three bytes even when already at EOF.
+        if capacity < 3 {
+            return Err(libc::ERANGE);
+        }
+        if !self.ensure_entry()? {
+            return Ok(false);
+        }
+        let entry = self.pending.as_ref().unwrap();
+        // SAFETY: the caller validated output objects; the shared packer
+        // bounds every string and aligned, NULL-terminated alias pointer.
+        let rc = unsafe {
+            fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                result_buf,
+                buffer,
+                capacity,
+                result,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        self.pending = None;
+        Ok(true)
     }
 }
 
 // SAFETY: `ProtoIterState` is process-owned scratch state keyed by kernel
-// thread id under the owned-TLS experiment. Raw pointer arrays are rebuilt from
+// thread id for managed native callers. Raw pointer arrays are rebuilt from
 // the per-slot buffers before each returned `protoent` and never cross slots.
-#[cfg(feature = "owned-tls-cache")]
 unsafe impl Send for ProtoIterState {}
 
-#[cfg(feature = "owned-tls-cache")]
 static PROTO_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoIterState> =
     crate::owned_tls_cache::OwnedTlsCache::new(ProtoIterState::new);
 
@@ -22960,6 +23108,9 @@ fn with_proto_iter_state<R>(callback: impl FnOnce(&mut ProtoIterState) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return PROTO_ITER_OWNED_TLS.with(callback);
+        }
         PROTO_ITER.with(|slot| {
             slot.with_init(
                 || std::cell::UnsafeCell::new(ProtoIterState::new()),
@@ -22973,119 +23124,13 @@ fn with_proto_iter_state<R>(callback: impl FnOnce(&mut ProtoIterState) -> R) -> 
     }
 }
 
-/// Parse the next protocol entry from the reader into the entry_buf.
-///
-/// struct protoent layout (x86_64):
-///   p_name:    *mut c_char   (offset 0, 8 bytes)
-///   p_aliases: *mut *mut c_char (offset 8, 8 bytes)
-///   p_proto:   c_int         (offset 16, 4 bytes)
-///   [pad 4 bytes]
-///   Total: 24 bytes (with padding)
-unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
-    use std::io::BufRead;
-
-    let reader = match state.reader.as_mut() {
-        Some(r) => r,
-        None => return std::ptr::null_mut(),
-    };
-
-    loop {
-        state.line_buf.clear();
-        match reader.read_until(b'\n', &mut state.line_buf) {
-            Ok(0) => return std::ptr::null_mut(),
-            Err(_) => return std::ptr::null_mut(),
-            Ok(_) => {}
-        }
-
-        // Parse using the same logic as resolv_abi::parse_protocols_line
-        let line = &state.line_buf;
-        // Strip comments
-        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-            &line[..pos]
-        } else {
-            line
-        };
-
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
-            .filter(|f| !f.is_empty());
-
-        let name = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let num_str = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let proto_num: c_int = match std::str::from_utf8(num_str)
-            .ok()
-            .and_then(|s| s.parse().ok())
-        {
-            Some(n) => n,
-            None => continue,
-        };
-
-        // struct protoent is 24 bytes; strings packed after
-        let str_offset = 24usize;
-        let needed = str_offset + name.len() + 1;
-        if needed > state.entry_buf.len() {
-            continue;
-        }
-
-        // Everything after the protocol number is an alias. These were parsed
-        // and thrown away — the list was hardcoded empty ("empty for now") — so
-        // p_aliases never reported anything, the same defect the services
-        // iterator had. Collected before entry_buf is touched so the borrow of
-        // line_buf ends cleanly.
-        let mut alias_fields: [&[u8]; 8] = [&[]; 8];
-        let mut alias_n = 0usize;
-        for field in fields {
-            if alias_n == alias_fields.len().min(state.aliases_ptrs.len() - 1) {
-                break;
-            }
-            alias_fields[alias_n] = field;
-            alias_n += 1;
-        }
-
-        let buf = state.entry_buf.as_mut_ptr();
-
-        // Copy name string after struct
-        let name_ptr = unsafe { buf.add(str_offset) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
-            *buf.add(str_offset + name.len()) = 0;
-        }
-        let mut off = str_offset + name.len() + 1;
-
-        // NULL-terminated aliases list, bounded by both the pointer array and
-        // the scratch buffer.
-        let mut alias_count = 0usize;
-        for alias in alias_fields.iter().take(alias_n) {
-            if off + alias.len() + 1 > state.entry_buf.len() {
-                break;
-            }
-            let alias_ptr = unsafe { buf.add(off) } as *mut c_char;
-            unsafe {
-                std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
-                *buf.add(off + alias.len()) = 0;
-            }
-            off += alias.len() + 1;
-            state.aliases_ptrs[alias_count] = alias_ptr;
-            alias_count += 1;
-        }
-        state.aliases_ptrs[alias_count] = std::ptr::null_mut();
-
-        // Fill struct protoent
-        let ptrs = buf as *mut *mut c_char;
-        unsafe {
-            *ptrs = name_ptr; // p_name
-            *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // p_aliases
-            *(buf.add(16) as *mut c_int) = proto_num; // p_proto
-        }
-
-        return buf as *mut c_void;
-    }
+fn files_setprotoent() -> c_int {
+    with_proto_iter_state(|state| {
+        state
+            .open(crate::resolv_abi::protocols_backend_path())
+            .err()
+            .unwrap_or(0)
+    })
 }
 
 /// `setprotoent` — open /etc/protocols for iteration.
@@ -23093,10 +23138,7 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
 /// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
-    with_proto_iter_state(|state| match std::fs::File::open(PROTOCOLS_PATH) {
-        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-        Err(_) => state.reader = None,
-    });
+    let _ = nss_identity_setent(files_setprotoent);
 }
 
 /// `endprotoent` — close /etc/protocols iteration.
@@ -23104,9 +23146,15 @@ pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
 /// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endprotoent() {
+    let saved_errno = current_abi_errno();
     with_proto_iter_state(|state| {
         state.reader = None;
+        state.pending = None;
+        state.source_path = None;
+        state.line_buf.clear();
     });
+    // Closing the cursor does not invalidate the last non-reentrant answer.
+    unsafe { set_abi_errno(saved_errno) };
 }
 
 /// `getprotoent` — get next /etc/protocols entry.
@@ -23114,16 +23162,65 @@ pub unsafe extern "C" fn endprotoent() {
 /// Native implementation using thread-local iterator state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotoent() -> *mut c_void {
-    with_proto_iter_state(|state| {
-        if state.reader.is_none() {
-            // Auto-open on first call (glibc behavior)
-            match std::fs::File::open(PROTOCOLS_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return std::ptr::null_mut(),
-            }
+    let saved_errno = current_abi_errno();
+    let outcome = with_proto_iter_state(|state| -> Result<*mut c_void, c_int> {
+        if !state.ensure_entry()? {
+            return Ok(std::ptr::null_mut());
         }
-        unsafe { proto_iter_next(state) }
-    })
+        let entry = state.pending.as_ref().unwrap();
+        let bytes = entry
+            .aliases
+            .iter()
+            .try_fold(entry.name.len(), |size, alias| {
+                size.checked_add(alias.len())?.checked_add(1)
+            });
+        let pointer_bytes = entry
+            .aliases
+            .len()
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(core::mem::size_of::<*mut c_char>()));
+        let required = bytes
+            .and_then(|size| size.checked_add(1))
+            .and_then(|size| size.checked_add(pointer_bytes?))
+            .and_then(|size| size.checked_add(core::mem::align_of::<*mut c_char>() - 1))
+            .ok_or(libc::ENOMEM)?;
+        if state.entry_buf.len() < required {
+            state
+                .entry_buf
+                .try_reserve(required - state.entry_buf.len())
+                .map_err(|_| libc::ENOMEM)?;
+            state.entry_buf.resize(required, 0);
+        }
+        let mut result = std::ptr::null_mut();
+        // SAFETY: the typed record and all packed bytes belong to this stable
+        // per-owner state. Complete capacity was checked before allocation.
+        let rc = unsafe {
+            fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                (&raw mut state.entry).cast(),
+                state.entry_buf.as_mut_ptr().cast(),
+                state.entry_buf.len(),
+                &mut result,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        state.pending = None;
+        Ok(result)
+    });
+    match outcome {
+        Ok(result) => {
+            unsafe { set_abi_errno(saved_errno) };
+            result
+        }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -32823,9 +32920,29 @@ pub unsafe extern "C" fn getprotobynumber_r(
     }
 }
 
-/// `getprotoent_r` — reentrant sequential protocol entry read.
-///
-/// Native implementation using thread-local file iterator.
+unsafe fn protocol_next_result(
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<bool, c_int> {
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return Err(libc::EINVAL);
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if buf.is_null() || !tracked_object_fits::<libc::protoent>(result_buf.cast()) {
+        return Err(libc::EINVAL);
+    }
+    let capacity = tracked_output_capacity(buf, buflen);
+    with_proto_iter_state(|state| {
+        // SAFETY: result and protoent objects are valid, and capacity reflects
+        // the writable allocation rather than only the caller's claim.
+        unsafe { state.next_r(result_buf, buf, capacity, result) }
+    })
+}
+
+/// Reentrant sequential protocol read. ERANGE retains the complete record for
+/// retry through either the public API or the direct files-provider API.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotoent_r(
     result_buf: *mut c_void,
@@ -32833,68 +32950,18 @@ pub unsafe extern "C" fn getprotoent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    use std::io::BufRead;
-
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if result_buf.is_null()
-        || buf.is_null()
-        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
-    {
-        return libc::EINVAL;
-    }
-
-    with_proto_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(PROTOCOLS_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return libc::ENOENT,
-            }
+    let saved_errno = current_abi_errno();
+    // SAFETY: the helper checks all caller objects before consuming a record.
+    match unsafe { protocol_next_result(result_buf, buf, buflen, result) } {
+        Ok(found) => {
+            unsafe { set_abi_errno(saved_errno) };
+            if found { 0 } else { libc::ENOENT }
         }
-        let reader = match state.reader.as_mut() {
-            Some(reader) => reader,
-            None => return libc::ENOENT,
-        };
-
-        loop {
-            state.line_buf.clear();
-            match reader.read_until(b'\n', &mut state.line_buf) {
-                Ok(0) => return libc::ENOENT,
-                Err(_) => return libc::ENOENT,
-                Ok(_) => {}
-            }
-            let line = &state.line_buf;
-            let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-                &line[..pos]
-            } else {
-                line
-            };
-            let mut fields = line
-                .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
-                .filter(|f| !f.is_empty());
-            let pname = match fields.next() {
-                Some(f) => f,
-                None => continue,
-            };
-            let pnum_str = match fields.next() {
-                Some(f) => f,
-                None => continue,
-            };
-            if let Some(num) = std::str::from_utf8(pnum_str)
-                .ok()
-                .and_then(|s| s.parse::<c_int>().ok())
-            {
-                // Remaining fields on the line are the aliases (bd-870h4v: e634aff2a
-                // dropped these, so p_aliases came back as an empty list).
-                let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
-                return unsafe {
-                    fill_protoent_r(pname, num, &aliases, result_buf, buf, buflen, result)
-                };
-            }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            error
         }
-    })
+    }
 }
 
 /// Enumerate through NSS using the caller's exact buffer. ERANGE retains the

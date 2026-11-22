@@ -716,6 +716,10 @@ pub(crate) fn hosts_backend_path() -> PathBuf {
     configured_backend_path(HOSTS_PATH, HOSTS_PATH_ENV)
 }
 
+pub(crate) fn protocols_backend_path() -> PathBuf {
+    configured_backend_path(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)
+}
+
 #[inline]
 fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "owned-tls-cache")]
@@ -1265,16 +1269,16 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
         PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?
     } else {
         PROC_NET_ROUTE_TLS.with(|slot| {
-        slot.with_init(
-            || {
-                RefCell::new(BackendFileCache::new(
-                    PROC_NET_ROUTE_PATH,
-                    PROC_NET_ROUTE_PATH_ENV,
-                ))
-            },
-            |cell| cell.borrow_mut().read_snapshot().ok(),
-        )
-    })?
+            slot.with_init(
+                || {
+                    RefCell::new(BackendFileCache::new(
+                        PROC_NET_ROUTE_PATH,
+                        PROC_NET_ROUTE_PATH_ENV,
+                    ))
+                },
+                |cell| cell.borrow_mut().read_snapshot().ok(),
+            )
+        })?
     };
 
     #[cfg(feature = "owned-tls-cache")]
@@ -1284,16 +1288,16 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
         PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?
     } else {
         PROC_NET_IF_INET6_TLS.with(|slot| {
-        slot.with_init(
-            || {
-                RefCell::new(BackendFileCache::new(
-                    PROC_NET_IF_INET6_PATH,
-                    PROC_NET_IF_INET6_PATH_ENV,
-                ))
-            },
-            |cell| cell.borrow_mut().read_snapshot().ok(),
-        )
-    })?
+            slot.with_init(
+                || {
+                    RefCell::new(BackendFileCache::new(
+                        PROC_NET_IF_INET6_PATH,
+                        PROC_NET_IF_INET6_PATH_ENV,
+                    ))
+                },
+                |cell| cell.borrow_mut().read_snapshot().ok(),
+            )
+        })?
     };
 
     Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
@@ -4892,14 +4896,14 @@ struct ServentTlsStorage {
     proto: [c_char; 32],
     alias_buf: [c_char; NETDB_ALIAS_BYTES],
     aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
-    overflow: Option<ServentOverflow>,
+    overflow: Option<NetdbOverflow>,
     servent: libc::servent,
 }
 
-/// Reusable storage for service records that exceed the common inline case.
+/// Reusable storage for service/protocol records beyond the common inline case.
 /// Its two allocations grow only as needed, and no result is silently cut to
 /// the inline name, protocol, alias-count or alias-byte limits.
-struct ServentOverflow {
+struct NetdbOverflow {
     bytes: Vec<u8>,
     aliases: Vec<*mut c_char>,
 }
@@ -4983,7 +4987,7 @@ fn fill_servent_storage(
             unsafe { set_abi_errno(libc::ENOMEM) };
             return ptr::null_mut();
         };
-        let overflow = storage.overflow.get_or_insert_with(|| ServentOverflow {
+        let overflow = storage.overflow.get_or_insert_with(|| NetdbOverflow {
             bytes: Vec::new(),
             aliases: Vec::new(),
         });
@@ -5041,6 +5045,7 @@ struct ProtoentTlsStorage {
     name: [c_char; 256],
     alias_buf: [c_char; NETDB_ALIAS_BYTES],
     aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
+    overflow: Option<NetdbOverflow>,
     protoent: libc::protoent,
 }
 
@@ -5050,6 +5055,7 @@ impl ProtoentTlsStorage {
             name: [0; 256],
             alias_buf: [0; NETDB_ALIAS_BYTES],
             aliases: [ptr::null_mut(); NETDB_MAX_ALIASES + 1],
+            overflow: None,
             protoent: libc::protoent {
                 p_name: ptr::null_mut(),
                 p_aliases: ptr::null_mut(),
@@ -5102,6 +5108,57 @@ fn fill_protoent_storage(
     storage: &mut ProtoentTlsStorage,
     entry: &frankenlibc_core::resolv::ProtocolEntry,
 ) -> *mut c_void {
+    let alias_bytes = entry.aliases.iter().try_fold(0usize, |size, alias| {
+        size.checked_add(alias.len())?.checked_add(1)
+    });
+    if entry.name.len() >= storage.name.len()
+        || entry.aliases.len() >= storage.aliases.len()
+        || alias_bytes.is_none_or(|size| size > storage.alias_buf.len())
+    {
+        let Some(size) = alias_bytes
+            .and_then(|size| size.checked_add(entry.name.len()))
+            .and_then(|size| size.checked_add(1))
+        else {
+            // SAFETY: report allocation failure without publishing truncation.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        };
+        let Some(alias_count) = entry.aliases.len().checked_add(1) else {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        };
+        let overflow = storage.overflow.get_or_insert_with(|| NetdbOverflow {
+            bytes: Vec::new(),
+            aliases: Vec::new(),
+        });
+        overflow.bytes.clear();
+        overflow.aliases.clear();
+        if overflow.bytes.try_reserve(size).is_err()
+            || overflow.aliases.try_reserve(alias_count).is_err()
+        {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        }
+        overflow.bytes.extend_from_slice(&entry.name);
+        overflow.bytes.push(0);
+        let base = overflow.bytes.as_mut_ptr();
+        for alias in &entry.aliases {
+            // SAFETY: all bytes were reserved before taking base; appending
+            // complete aliases cannot reallocate or invalidate these pointers.
+            overflow
+                .aliases
+                .push(unsafe { base.add(overflow.bytes.len()).cast() });
+            overflow.bytes.extend_from_slice(alias);
+            overflow.bytes.push(0);
+        }
+        overflow.aliases.push(ptr::null_mut());
+        storage.protoent = libc::protoent {
+            p_name: base.cast(),
+            p_aliases: overflow.aliases.as_mut_ptr(),
+            p_proto: entry.number,
+        };
+        return (&mut storage.protoent as *mut libc::protoent).cast();
+    }
     copy_to_cchar_buf(&mut storage.name, &entry.name);
     fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
     storage.protoent = libc::protoent {
