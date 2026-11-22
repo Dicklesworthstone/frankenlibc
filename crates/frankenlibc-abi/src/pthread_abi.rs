@@ -423,6 +423,17 @@ thread_local! {
 #[thread_local]
 static PTHREAD_SELF_FAST_RAW: Cell<libc::pthread_t> = Cell::new(0);
 
+/// Single-threaded process-wide `pthread_self()` cache (valid only while
+/// `__libc_single_threaded != 0`). Cleared synchronously before the first
+/// thread is created (`latch_multi_threaded_before_thread_create`), avoiding
+/// the TLSDESC indirect call on every single-threaded `pthread_self`/`thrd_current`.
+static SINGLE_THREADED_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+pub(crate) fn clear_single_threaded_pthread_self_cache() {
+    SINGLE_THREADED_PTHREAD_SELF.store(0, Ordering::Release);
+}
+
 // Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
 //
 // `in_threading_policy_context()` is on the allocator's hot path: the allocator
@@ -539,6 +550,15 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
 
 #[inline]
 fn remember_current_pthread_self(value: libc::pthread_t) {
+    let single_threaded =
+        crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
+    if single_threaded
+        && !frankenlibc_core::pthread::tls::native_threads_may_exist()
+        && !crate::malloc_abi::native_thread_backend_active()
+        && !force_native_threading_enabled()
+    {
+        SINGLE_THREADED_PTHREAD_SELF.store(value as usize, Ordering::Release);
+    }
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     if !frankenlibc_core::pthread::tls::native_threads_may_exist()
         && !crate::malloc_abi::native_thread_backend_active()
@@ -1543,8 +1563,9 @@ extern "C" fn native_pthread_self_slow() -> libc::pthread_t {
     result
 }
 
-#[inline(always)]
-pub(crate) fn native_pthread_self() -> libc::pthread_t {
+#[cold]
+#[inline(never)]
+extern "C" fn native_pthread_self_mt_or_slow() -> libc::pthread_t {
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     {
         if !frankenlibc_core::pthread::tls::native_threads_may_exist() {
@@ -1555,6 +1576,17 @@ pub(crate) fn native_pthread_self() -> libc::pthread_t {
         }
     }
     native_pthread_self_slow()
+}
+
+#[inline(always)]
+pub(crate) fn native_pthread_self() -> libc::pthread_t {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        let cached = SINGLE_THREADED_PTHREAD_SELF.load(Ordering::Relaxed);
+        if cached != 0 {
+            return cached as libc::pthread_t;
+        }
+    }
+    native_pthread_self_mt_or_slow()
 }
 
 #[inline]
@@ -4372,6 +4404,7 @@ pub fn pthread_host_thread_handoff_futex_waits_for_tests() -> u64 {
 /// tripped the `Once`, and teardown_thread_tls never ran.
 #[doc(hidden)]
 pub fn pthread_threading_force_native_for_tests() {
+    clear_single_threaded_pthread_self_cache();
     frankenlibc_core::pthread::tls::disable_tid_cache();
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     PTHREAD_SELF_FAST_RAW.set(0);
@@ -4387,6 +4420,7 @@ pub fn pthread_threading_force_native_for_tests() {
 /// policy observed by an unrelated host-lifecycle test.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
+    clear_single_threaded_pthread_self_cache();
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     PTHREAD_SELF_FAST_RAW.set(0);
     with_pthread_tls(|tls| {

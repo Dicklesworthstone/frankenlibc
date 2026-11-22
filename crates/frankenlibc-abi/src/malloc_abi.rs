@@ -1101,6 +1101,7 @@ pub(crate) fn is_multi_threaded() -> bool {
 /// parent cannot race with the newly created child thread.
 pub(crate) fn latch_multi_threaded_before_thread_create() {
     crate::stdio_abi::drain_st_fast_mem_tls_on_mt_transition();
+    crate::pthread_abi::clear_single_threaded_pthread_self_cache();
     crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
     if !MULTI_THREADED.swap(true, Ordering::SeqCst) {
         refresh_strict_hot_mode();
@@ -8809,9 +8810,22 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
                         // segment's immortal allocator-private sidecar.
                         let meta =
                             unsafe { &*((arena_base + meta_offset) as *const SegmentSlotMeta) };
-                        let previous = meta
-                            .requested_size
-                            .swap(SEGMENT_SLOT_FREE, Ordering::AcqRel);
+                        // In `STRICT_HOT_MODE_ST`, `MULTI_THREADED` is false (no second
+                        // thread exists yet) and `slot.allocator_depth == 1` with the
+                        // `AcqRel` compiler fence above excludes signal-handler reentry,
+                        // so a plain load+store is linearisable without a `lock xchg`.
+                        let previous = if hot_mode == STRICT_HOT_MODE_ST {
+                            let prev = meta.requested_size.load(Ordering::Relaxed);
+                            if prev != 0 && prev != SEGMENT_SLOT_FREE && (prev as usize) <= class_size
+                            {
+                                meta.requested_size
+                                    .store(SEGMENT_SLOT_FREE, Ordering::Relaxed);
+                            }
+                            prev
+                        } else {
+                            meta.requested_size
+                                .swap(SEGMENT_SLOT_FREE, Ordering::AcqRel)
+                        };
                         let requested = previous as usize;
                         if previous == 0 || previous == SEGMENT_SLOT_FREE || requested > class_size
                         {
