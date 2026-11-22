@@ -513,11 +513,10 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        // All force-native entrypoints update the global flag before installing
-        // a TLS override. The deployed cache-hit path can therefore avoid
-        // borrowing the larger pthread TLS state unless the global flag is set.
-        if crate::malloc_abi::native_thread_backend_active()
+        if frankenlibc_core::pthread::tls::native_threads_may_exist()
+            || crate::malloc_abi::native_thread_backend_active()
             || global_force_native_threading_enabled()
+            || force_native_threading_enabled()
         {
             return None;
         }
@@ -527,10 +526,6 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
             if cached_self != 0 {
                 return Some(cached_self);
             }
-        }
-
-        if force_native_threading_enabled() {
-            return None;
         }
         let cached_self = try_with_pthread_tls(|tls| {
             (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
@@ -1047,18 +1042,6 @@ pub(crate) fn in_threading_policy_context() -> bool {
 pub(crate) fn reset_threading_policy_in_fork_child() -> u64 {
     NATIVE_LAST_THREAD_EXITING.store(false, Ordering::Release);
     PTHREAD_TLS_ACCESS_DEPTH.store(0, Ordering::Release);
-    #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
-    PTHREAD_SELF_FAST_RAW.set(0);
-    #[cfg(not(feature = "owned-tls-cache"))]
-    if !crate::malloc_abi::native_thread_backend_active()
-        && !global_force_native_threading_enabled()
-    {
-        let _ = PTHREAD_TLS.try_with(|tls| {
-            if let Ok(mut tls) = tls.try_borrow_mut() {
-                tls.current_pthread_self_cache = 0;
-            }
-        });
-    }
     crate::signal_abi::reset_native_sigcancel_state_in_fork_child();
     let active = if let Some(handle) = core_current_thread_handle() {
         // SAFETY: surviving native thread owns its handle across fork.
@@ -1540,9 +1523,18 @@ extern "C" fn native_pthread_self_slow() -> libc::pthread_t {
             // Fallback for threads not created via our managed pthread_create path.
             .unwrap_or_else(|| {
                 if tid == raw_syscall::sys_getpid() {
-                    MAIN_THREAD_FL_NAME.store(tid as usize, Ordering::Release);
+                    match MAIN_THREAD_FL_NAME.compare_exchange(
+                        0,
+                        tid as usize,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => tid as libc::pthread_t,
+                        Err(existing) => existing as libc::pthread_t,
+                    }
+                } else {
+                    tid as libc::pthread_t
                 }
-                tid as libc::pthread_t
             })
     } else {
         tid as libc::pthread_t
@@ -4380,6 +4372,9 @@ pub fn pthread_host_thread_handoff_futex_waits_for_tests() -> u64 {
 /// tripped the `Once`, and teardown_thread_tls never ran.
 #[doc(hidden)]
 pub fn pthread_threading_force_native_for_tests() {
+    frankenlibc_core::pthread::tls::disable_tid_cache();
+    #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+    PTHREAD_SELF_FAST_RAW.set(0);
     FORCE_NATIVE_THREADING.store(true, Ordering::Release);
     with_pthread_tls(|tls| tls.force_native_threading_override = Some(true));
 }
@@ -4392,6 +4387,8 @@ pub fn pthread_threading_force_native_for_tests() {
 /// policy observed by an unrelated host-lifecycle test.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
+    #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+    PTHREAD_SELF_FAST_RAW.set(0);
     with_pthread_tls(|tls| {
         let previous = tls
             .force_native_threading_override
@@ -5827,9 +5824,13 @@ pub unsafe extern "C" fn pthread_setspecific(
     rc
 }
 
+#[cfg(not(feature = "standalone"))]
 const HOST_KEY_TEARDOWN_UNCHECKED: u8 = 0;
+#[cfg(not(feature = "standalone"))]
 const HOST_KEY_TEARDOWN_DECIDED: u8 = 1;
+#[cfg(not(feature = "standalone"))]
 const HOST_KEY_TEARDOWN_REARM: u8 = 2;
+#[cfg(not(feature = "standalone"))]
 thread_local! {
     static HOST_KEY_TEARDOWN_STATE: Cell<u8> = const { Cell::new(HOST_KEY_TEARDOWN_UNCHECKED) };
 }
@@ -5847,56 +5848,61 @@ thread_local! {
 /// The owned-cache lane uses a real host POSIX key instead, so internal scratch
 /// mappings remain available until all host C++ TLS callbacks have finished.
 pub(crate) fn ensure_host_thread_key_teardown() {
-    // Native teardown owns its key callbacks. Do not read or set the creator's
-    // inherited compiler-TLS DECIDED flag on behalf of a native clone.
-    if core_current_thread_handle().is_some() {
-        return;
-    }
-    // Once per drain: the backend and main-thread checks cannot change for
-    // its lifetime, and they cost a gettid and a getpid syscall on every
-    // non-null pthread_setspecific when they ran first.
-    let previous = HOST_KEY_TEARDOWN_STATE
-        .try_with(|state| state.replace(HOST_KEY_TEARDOWN_DECIDED))
-        .unwrap_or(HOST_KEY_TEARDOWN_DECIDED);
-    if previous == HOST_KEY_TEARDOWN_DECIDED {
-        return;
-    }
-    if previous != HOST_KEY_TEARDOWN_REARM {
-        if current_threading_backend() != THREAD_BACKEND_HOST {
-            return;
-        }
-        let tid = frankenlibc_core::syscall::sys_gettid();
-        if tid == frankenlibc_core::syscall::sys_getpid() {
-            return;
-        }
-    }
-    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
+    #[cfg(not(feature = "standalone"))]
     {
-        let (key, set) = host_key_teardown_bridge();
-        // SAFETY: the host key and function belong to the same loaded libc.
-        // Its opaque non-null value merely requests the thread-exit callback.
-        if unsafe { set(key, std::ptr::dangling::<c_void>()) } != 0 {
-            std::process::abort();
+        // Native teardown owns its key callbacks. Do not read or set the creator's
+        // inherited compiler-TLS DECIDED flag on behalf of a live or exiting native clone.
+        if core_current_thread_handle().is_some()
+            || frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
+        {
+            return;
         }
-    }
-    crate::util::mark_thread_has_pending_key_destructors();
-    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle
-    // pins this callback's code until the host has finished invoking it.
-    #[cfg(not(feature = "owned-tls-cache"))]
-    unsafe {
-        // C/C-unwind share the callback ABI. The actual callback must permit
-        // cancellation or pthread_exit from an application key destructor.
-        let callback = std::mem::transmute::<
-            unsafe extern "C-unwind" fn(*mut c_void),
-            unsafe extern "C" fn(*mut c_void),
-        >(run_host_thread_key_destructors);
-        crate::startup_abi::__cxa_thread_atexit_impl(
-            callback,
-            std::ptr::null_mut(),
-            (&raw const crate::unistd_abi::__dso_handle)
-                .cast_mut()
-                .cast(),
-        );
+        // Once per drain: the backend and main-thread checks cannot change for
+        // its lifetime, and they cost a gettid and a getpid syscall on every
+        // non-null pthread_setspecific when they ran first.
+        let previous = HOST_KEY_TEARDOWN_STATE
+            .try_with(|state| state.replace(HOST_KEY_TEARDOWN_DECIDED))
+            .unwrap_or(HOST_KEY_TEARDOWN_DECIDED);
+        if previous == HOST_KEY_TEARDOWN_DECIDED {
+            return;
+        }
+        if previous != HOST_KEY_TEARDOWN_REARM {
+            if current_threading_backend() != THREAD_BACKEND_HOST {
+                return;
+            }
+            let tid = frankenlibc_core::syscall::sys_gettid();
+            if tid == frankenlibc_core::syscall::sys_getpid() {
+                return;
+            }
+        }
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            let (key, set) = host_key_teardown_bridge();
+            // SAFETY: the host key and function belong to the same loaded libc.
+            // Its opaque non-null value merely requests the thread-exit callback.
+            if unsafe { set(key, std::ptr::dangling::<c_void>()) } != 0 {
+                std::process::abort();
+            }
+        }
+        crate::util::mark_thread_has_pending_key_destructors();
+        // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle
+        // pins this callback's code until the host has finished invoking it.
+        #[cfg(not(feature = "owned-tls-cache"))]
+        unsafe {
+            // C/C-unwind share the callback ABI. The actual callback must permit
+            // cancellation or pthread_exit from an application key destructor.
+            let callback = std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut c_void),
+                unsafe extern "C" fn(*mut c_void),
+            >(run_host_thread_key_destructors);
+            crate::startup_abi::__cxa_thread_atexit_impl(
+                callback,
+                std::ptr::null_mut(),
+                (&raw const crate::unistd_abi::__dso_handle)
+                    .cast_mut()
+                    .cast(),
+            );
+        }
     }
 }
 
@@ -5983,9 +5989,9 @@ fn host_key_teardown_bridge() -> (libc::pthread_key_t, HostKeySetFn) {
     ((encoded - 1) as libc::pthread_key_t, set)
 }
 
-#[cfg(not(all(feature = "owned-tls-cache", feature = "standalone")))]
+#[cfg(not(feature = "standalone"))]
 unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
-    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
+    #[cfg(feature = "owned-tls-cache")]
     let (key, set) = {
         let (key, set) = host_key_teardown_bridge();
         // The host cleared this key before calling us. Re-arm it until core
@@ -6001,7 +6007,7 @@ unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
         frankenlibc_core::syscall::sys_gettid(),
     );
     crate::util::finish_thread_key_destructors_and_reclaim_tls_heap();
-    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
+    #[cfg(feature = "owned-tls-cache")]
     // SAFETY: successful teardown no longer needs another host destructor pass.
     if unsafe { set(key, std::ptr::null()) } != 0 {
         std::process::abort();

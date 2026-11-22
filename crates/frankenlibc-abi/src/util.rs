@@ -744,6 +744,7 @@ unsafe fn destroy_tls_heap_node(node: *mut TlsHeapHeader) {
 
 /// Mark that the current host thread has registered `pthread_key_create`
 /// teardown so `TlsHeapCell` defers reclamation until after all key destructors.
+#[cfg(not(feature = "standalone"))]
 #[cfg_attr(test, allow(dead_code))]
 #[inline]
 pub(crate) fn mark_thread_has_pending_key_destructors() {
@@ -751,6 +752,7 @@ pub(crate) fn mark_thread_has_pending_key_destructors() {
 }
 
 /// Complete host-thread key-destructor phase and reclaim all `TlsHeapCell`s.
+#[cfg(not(feature = "standalone"))]
 #[cfg_attr(test, allow(dead_code))]
 #[inline]
 pub(crate) fn finish_thread_key_destructors_and_reclaim_tls_heap() {
