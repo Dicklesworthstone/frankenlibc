@@ -160,8 +160,9 @@ if [[ -z "${LIB_PATH}" && "${FRANKENLIBC_UNWIND_COMPONENT:-0}" == 1 ]]; then
   COMPONENT_SOURCE="${OUT_DIR}/owned_unwind_component.rs"
   LIB_PATH="${OUT_DIR}/libowned_unwind_component.so"
   cat > "${COMPONENT_SOURCE}" <<EOF
-// Exact production module with the real host loader's public ABI catalog.
-// This does not build the standalone libc or substitute synthetic frame data.
+// Exact production unwinder with host boundaries for this component test.
+// Frame decoding, personalities, register recovery, and context installation
+// all execute the production module below. This does not build standalone libc.
 pub mod dlfcn_abi {
     use std::ffi::{c_int, c_void};
     unsafe extern "C-unwind" {
@@ -173,16 +174,102 @@ pub mod dlfcn_abi {
         ) -> c_int;
     }
 }
+pub mod pthread_abi {
+    pub fn address_is_inside_this_object(address: usize) -> bool {
+        // dladdr describes the actual loaded component, not a synthetic range.
+        unsafe {
+            let mut own: libc::Dl_info = std::mem::zeroed();
+            let mut target: libc::Dl_info = std::mem::zeroed();
+            libc::dladdr(address_is_inside_this_object as *const () as *const _, &mut own) != 0
+                && libc::dladdr(address as *const _, &mut target) != 0
+                && !own.dli_fbase.is_null()
+                && own.dli_fbase == target.dli_fbase
+        }
+    }
+}
+pub mod malloc_abi {
+    pub fn in_allocator_reentry_context() -> bool {
+        // This component uses the host allocator, which does not enter the
+        // full ABI crate's allocator reentry guard. No allocator is emulated.
+        false
+    }
+    pub fn known_remaining(_address: usize) -> Option<usize> {
+        // Host allocations have no entry in the standalone allocator's table.
+        // The unwinder calls copy_user_bytes_raw, which bypasses that table.
+        None
+    }
+}
+pub mod stdlib_abi {
+    pub unsafe fn native_getenv(name: &[u8]) -> *mut libc::c_char {
+        let Ok(name) = std::ffi::CString::new(name) else {
+            return std::ptr::null_mut();
+        };
+        unsafe { libc::getenv(name.as_ptr()) }
+    }
+}
+pub mod signal_abi {
+    // A real Linux restorer entry for this object's identity. Signals installed
+    // by the host fixture use their host restorer, recognized by the production
+    // unwinder's fault-checked instruction decoder.
+    #[unsafe(naked)]
+    unsafe extern "C" fn component_rt_sigreturn() -> ! {
+        std::arch::naked_asm!("mov rax, 15", "syscall");
+    }
+    pub fn signal_restorer_trampoline_addr() -> usize {
+        component_rt_sigreturn as *const () as usize
+    }
+}
+// Compile the actual production byte importer, including its bounded private
+// pipe fallback when a sandbox denies process_vm_readv. Its only core imports
+// here are Linux errno values and raw kernel calls; no copy behavior is stubbed.
+extern crate self as frankenlibc_core;
+pub mod errno {
+    pub use libc::{EACCES, EFAULT, EINVAL, EIO, ENOMEM, ENOSYS, EPERM};
+}
+pub mod syscall {
+    pub unsafe fn syscall6(nr: usize, a1: usize, a2: usize, a3: usize,
+                           a4: usize, a5: usize, a6: usize) -> usize {
+        let result;
+        unsafe {
+            std::arch::asm!(
+                "syscall", inlateout("rax") nr => result,
+                in("rdi") a1, in("rsi") a2, in("rdx") a3,
+                in("r10") a4, in("r8") a5, in("r9") a6,
+                lateout("rcx") _, lateout("r11") _, options(nostack),
+            );
+        }
+        result
+    }
+    pub unsafe fn syscall0(nr: usize) -> usize {
+        unsafe { syscall6(nr, 0, 0, 0, 0, 0, 0) }
+    }
+    pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
+        unsafe { syscall6(nr, a1, 0, 0, 0, 0, 0) }
+    }
+    pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
+        unsafe { syscall6(nr, a1, a2, 0, 0, 0, 0) }
+    }
+    pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
+        unsafe { syscall6(nr, a1, a2, a3, 0, 0, 0) }
+    }
+}
+pub mod io_abi {
+    #[allow(dead_code)]
+    #[path = "${REPO_ROOT}/crates/frankenlibc-abi/src/iov_snapshot.rs"]
+    pub mod iov_snapshot;
+}
 #[path = "${UNWIND_ABI}"]
 pub mod owned_unwind_abi;
 EOF
-  sha256sum "${UNWIND_ABI}" > "${OUT_DIR}/component-source-before.sha256"
+  sha256sum "${UNWIND_ABI}" "${REPO_ROOT}/crates/frankenlibc-abi/src/iov_snapshot.rs" \
+    > "${OUT_DIR}/component-source-before.sha256"
   "${RUSTC:-rustc}" --edition=2024 --crate-name owned_unwind_component --crate-type=cdylib \
-    -O -Zthreads=1 -Dwarnings -Cdebug-assertions=no -Cpanic=abort \
+    -O -Zthreads=1 -Ccodegen-units=1 -Dwarnings -Cdebug-assertions=no -Cpanic=abort \
     -Cforce-unwind-tables=yes -Clink-arg=-Wl,--as-needed \
     --cfg 'feature="standalone"' --cfg 'feature="owned-unwind-stub"' \
     "${LIBC_ARGS[@]}" "${COMPONENT_SOURCE}" -o "${LIB_PATH}"
-  sha256sum "${UNWIND_ABI}" > "${OUT_DIR}/component-source-after.sha256"
+  sha256sum "${UNWIND_ABI}" "${REPO_ROOT}/crates/frankenlibc-abi/src/iov_snapshot.rs" \
+    > "${OUT_DIR}/component-source-after.sha256"
   cmp "${OUT_DIR}/component-source-before.sha256" "${OUT_DIR}/component-source-after.sha256"
   sha256sum "${LIB_PATH}" > "${OUT_DIR}/component-artifact.sha256"
 fi
@@ -208,14 +295,39 @@ for variant in frame_pointer omit_frame_pointer; do
   fi
   OWNED_SO="${OUT_DIR}/minimal_throw_catch_${variant}.so"
   HOST_BIN="${OUT_DIR}/minimal_throw_catch_host_${variant}"
-  FIXTURE_FLAGS=(-std=c++17 -O2 "${FRAME_FLAG}" -DFRANKENLIBC_WRAP_CXA_THROW
+  FIXTURE_FLAGS=(-std=c++17 -O2 -fPIC "${FRAME_FLAG}" -DFRANKENLIBC_WRAP_CXA_THROW
                  -DFRANKENLIBC_WRAP_PERSONALITY -Wl,--wrap=__cxa_throw
                  -Wl,--wrap=__gxx_personality_v0)
   g++ "${FIXTURE_FLAGS[@]}" -static-libstdc++ "${FIXTURE_SRC}" -o "${HOST_BIN}"
-  g++ "${FIXTURE_FLAGS[@]}" -fPIC -shared -nodefaultlibs \
+  g++ "${FIXTURE_FLAGS[@]}" -shared -nodefaultlibs \
     -o "${OWNED_SO}" "${FIXTURE_SRC}" \
     -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lc -lm \
     -Wl,--exclude-libs,ALL -Wl,--allow-shlib-undefined
+
+  # Verify the compiler retained the call-site condition this regression needs.
+  readelf --debug-dump=frames "${OWNED_SO}" > "${OUT_DIR}/frames_${variant}.txt"
+  python3 - "${OWNED_SO}" "${OUT_DIR}/frames_${variant}.txt" <<'PY'
+import re
+import subprocess
+import sys
+
+symbols = subprocess.check_output(
+    ["nm", "--defined-only", "--demangle", sys.argv[1]], text=True)
+addresses = [int(fields[0], 16) for line in symbols.splitlines()
+             if len(fields := line.split(maxsplit=2)) == 3
+             and fields[2] == "(anonymous namespace)::stack_argument_frame(unsigned int)"]
+if len(addresses) != 1:
+    raise SystemExit("FAIL: expected one stack_argument_frame implementation")
+with open(sys.argv[2], encoding="utf-8") as stream:
+    frames = stream.read()
+for record in frames.split("\n\n"):
+    pc = re.search(r"FDE.*\bpc=([0-9a-f]+)\.\.([0-9a-f]+)", record)
+    if pc and int(pc[1], 16) <= addresses[0] < int(pc[2], 16):
+        if re.search(r"DW_CFA_GNU_args_size: [1-9][0-9]*", record):
+            break
+else:
+    raise SystemExit("FAIL: stack_argument_frame has no nonzero DW_CFA_GNU_args_size")
+PY
 
   if ldd "${OWNED_SO}" | grep -E 'libgcc_s|libunwind'; then
     echo "FAIL: owned shared fixture must not load libgcc_s or libunwind"
@@ -232,7 +344,7 @@ for variant in frame_pointer omit_frame_pointer; do
     exit 1
   fi
 
-  for case_name in ordinary forced rethrow signal signal_altstack end negative missing_fde boundary deep_ordinary deep_forced; do
+  for case_name in ordinary forced rethrow signal signal_altstack end negative missing_fde boundary deep_ordinary deep_forced stack_arguments_ordinary stack_arguments_forced; do
     if [[ "${case_name}" != missing_fde && "${case_name}" != boundary ]]; then
       echo "Running ${variant}/${case_name} host reference"
       "${HOST_BIN}" "${case_name}" > "${OUT_DIR}/host_${variant}_${case_name}.log"
@@ -312,6 +424,8 @@ entries = {
     "boundary": "owned_forced_unwind_boundary_entry",
     "deep_ordinary": "owned_deep_ordinary_entry",
     "deep_forced": "owned_deep_forced_entry",
+    "stack_arguments_ordinary": "owned_stack_arguments_ordinary_entry",
+    "stack_arguments_forced": "owned_stack_arguments_forced_entry",
 }
 entry_name = entries[case_name]
 entry = getattr(fixture, entry_name)
@@ -327,7 +441,8 @@ if result != 0:
 reject_host_unwinder("after executing fixture")
 PY
     cat "${OUT_DIR}/owned_${variant}_${case_name}.log"
-    if [[ "${case_name}" == deep_ordinary || "${case_name}" == deep_forced ]]; then
+    if [[ "${case_name}" == deep_ordinary || "${case_name}" == deep_forced ||
+          "${case_name}" == stack_arguments_ordinary || "${case_name}" == stack_arguments_forced ]]; then
       cmp "${OUT_DIR}/host_${variant}_${case_name}.log" \
           "${OUT_DIR}/owned_${variant}_${case_name}.log"
     fi
@@ -368,6 +483,9 @@ cat > "${SUMMARY_FILE}" <<EOF
     "owned_missing_fde_fails_without_false_terminal_callback": "pass",
     "owned_stop_can_finish_at_native_style_no_cfi_boundary": "pass",
     "owned_exception_cleanup_exactly_once": "pass",
+    "nonzero_gnu_args_size_cfi_present": "pass",
+    "owned_stack_arguments_cleanup_matches_host": "pass",
+    "owned_stack_arguments_forced_resume_matches_host": "pass",
     "all_used_unwind_symbols_owned": "pass",
     "no_host_unwinder_mapped": "pass",
     "host_reference_assertions": "pass",

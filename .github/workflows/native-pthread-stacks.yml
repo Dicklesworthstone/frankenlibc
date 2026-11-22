@@ -7,6 +7,7 @@ on:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
       - 'crates/frankenlibc-abi/src/dlfcn_abi.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn_thread_exit.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
@@ -61,6 +62,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'tests/integration/fixture_pthread_native_state.c'
+      - 'tests/integration/fixture_pthread_native_tls_dtors.cpp'
       - 'tests/integration/fixture_pthread_native_wait.c'
       - 'tests/integration/fixture_pthread_native_poll.c'
       - 'scripts/check_pthread_native_poll.py'
@@ -178,6 +180,13 @@ jobs:
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/signal-waits/build.log
+      - name: Verify public native TLS destructors and recovery after loader errors
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --public-tls-dtors-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/public-tls-dtors"
       - name: Preserve native signal ownership and nested critical sections
         if: always()
         env:

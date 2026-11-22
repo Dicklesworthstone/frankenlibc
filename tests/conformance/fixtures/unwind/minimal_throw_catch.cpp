@@ -750,7 +750,164 @@ extern "C" int owned_deep_forced_entry() {
     return report_deep("forced", passed);
 }
 
+namespace {
+
+// Dynamic frames with outgoing stack arguments require the call-site's
+// DW_CFA_GNU_args_size adjustment when entering a landing pad. CFA stepping
+// and stop callbacks must still see the suspended, unadjusted call frame.
+// Compare the relative SP observations with the same compiler's GNU unwinder;
+// frame allocation and alignment are compiler choices, not fixed constants.
+constexpr unsigned stack_argument_frames = 3;
+struct StackArgumentObservations {
+    unsigned events[stack_argument_frames], event_count, failures, deletes, stops;
+    intptr_t cleanup_offsets[stack_argument_frames];
+    intptr_t handler_offset;
+    uintptr_t target_sp;
+    bool forced, caught;
+};
+static StackArgumentObservations stack_arguments;
+static _Unwind_Exception stack_argument_exception;
+static std::jmp_buf stack_argument_destination;
+static volatile bool stack_argument_allow_return = false;
+
+struct StackArgumentGuard {
+    unsigned id;
+    uintptr_t frame_base;
+    __attribute__((always_inline)) ~StackArgumentGuard() noexcept {
+        const uintptr_t sp = stack_pointer();
+        stack_arguments.cleanup_offsets[id] =
+            static_cast<intptr_t>(sp) - static_cast<intptr_t>(frame_base);
+        if (stack_arguments.event_count < stack_argument_frames)
+            stack_arguments.events[stack_arguments.event_count++] = id;
+        else
+            ++stack_arguments.failures;
+    }
+};
+
+void stack_argument_deleted(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
+    if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT || exception != &stack_argument_exception)
+        ++stack_arguments.failures;
+    ++stack_arguments.deletes;
+}
+
+_Unwind_Reason_Code stack_argument_stop(
+    int version, _Unwind_Action actions, _Unwind_Exception_Class exception_class,
+    _Unwind_Exception* exception, _Unwind_Context* context, void* argument) {
+    if (version != 1 || actions != (_UA_FORCE_UNWIND | _UA_CLEANUP_PHASE) ||
+        exception_class != forced_class || exception != &stack_argument_exception ||
+        argument != &stack_arguments || context == nullptr) {
+        ++stack_arguments.failures;
+        return _URC_FATAL_PHASE2_ERROR;
+    }
+    ++stack_arguments.stops;
+    const uintptr_t sp = _Unwind_GetCFA(context);
+    if (sp == stack_arguments.target_sp) {
+        _Unwind_DeleteException(exception);
+        std::longjmp(stack_argument_destination, 1);
+    }
+    if (sp == 0 || sp > stack_arguments.target_sp) {
+        ++stack_arguments.failures;
+        return _URC_FATAL_PHASE2_ERROR;
+    }
+    return _URC_NO_REASON;
+}
+
+__attribute__((noinline)) void stack_argument_leaf(
+    uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e,
+    uintptr_t f, uintptr_t g, uintptr_t h, uintptr_t i) {
+    asm volatile("" : : "r"(a), "r"(b), "r"(c), "r"(d), "r"(e),
+                 "r"(f), "r"(g), "r"(h), "r"(i) : "memory");
+    if (b != a + 1 || c != a + 2 || d != a + 3 || e != a + 4 ||
+        f != a + 5 || g != a + 6 || h != a + 7 || i != a + 8)
+        ++stack_arguments.failures;
+    if (stack_argument_allow_return) return;
+    if (!stack_arguments.forced) throw TestException();
+    (void)_Unwind_ForcedUnwind(
+        &stack_argument_exception, stack_argument_stop, &stack_arguments);
+    ++stack_arguments.failures;
+}
+
+using StackArgumentCall = void (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+                                  uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+static StackArgumentCall volatile invoke_stack_arguments = stack_argument_leaf;
+
+__attribute__((noinline)) void stack_argument_frame(unsigned depth) {
+    // Keep a runtime-sized allocation live across the throwing call so the
+    // compiler cannot replace pushes with a permanent outgoing argument area.
+    void* allocation = __builtin_alloca((runtime_seed & 31U) + 32U);
+    asm volatile("" : : "r"(allocation) : "memory");
+    StackArgumentGuard guard{
+        depth, reinterpret_cast<uintptr_t>(__builtin_frame_address(0))};
+    const uintptr_t seed = runtime_seed;
+    if (depth != 0) {
+        stack_argument_frame(depth - 1);
+    } else {
+        invoke_stack_arguments(seed, seed + 1, seed + 2, seed + 3, seed + 4,
+                               seed + 5, seed + 6, seed + 7, seed + 8);
+    }
+    asm volatile("" : : "r"(allocation), "r"(&guard) : "memory");
+    ++stack_arguments.failures;
+}
+
+int report_stack_arguments(const char* mode) {
+    bool valid = stack_arguments.failures == 0 &&
+                 stack_arguments.event_count == stack_argument_frames;
+    for (unsigned id = 0; id < stack_argument_frames; ++id)
+        valid = valid && stack_arguments.events[id] == id;
+    valid = valid && (stack_arguments.forced
+        ? stack_arguments.deletes == 1 && stack_arguments.stops >= stack_argument_frames
+        : stack_arguments.caught && stack_arguments.deletes == 0);
+    std::printf("%s: stack arguments %s guards=%u offsets=%ld,%ld,%ld handler=%ld\n",
+                valid ? "PASS" : "FAIL", mode, stack_arguments.event_count,
+                static_cast<long>(stack_arguments.cleanup_offsets[0]),
+                static_cast<long>(stack_arguments.cleanup_offsets[1]),
+                static_cast<long>(stack_arguments.cleanup_offsets[2]),
+                static_cast<long>(stack_arguments.handler_offset));
+    return valid ? 0 : 1;
+}
+
+} // namespace
+
+extern "C" int owned_stack_arguments_ordinary_entry() {
+    reset_observations(false);
+    stack_arguments = {};
+    const uintptr_t frame = reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
+    try {
+        stack_argument_frame(stack_argument_frames - 1);
+    } catch (const TestException&) {
+        stack_arguments.caught = true;
+        stack_arguments.handler_offset =
+            static_cast<intptr_t>(stack_pointer()) - static_cast<intptr_t>(frame);
+    } catch (...) {
+        ++stack_arguments.failures;
+    }
+    return report_stack_arguments("ordinary");
+}
+
+extern "C" int owned_stack_arguments_forced_entry() {
+    reset_observations(false);
+    stack_arguments = {};
+    stack_arguments.forced = true;
+    stack_argument_exception = {};
+    stack_argument_exception.exception_class = forced_class;
+    stack_argument_exception.exception_cleanup = stack_argument_deleted;
+    stack_arguments.target_sp = stack_pointer();
+    if (setjmp(stack_argument_destination) == 0) {
+        stack_argument_frame(stack_argument_frames - 1);
+        ++stack_arguments.failures;
+    }
+    const int result = report_stack_arguments("forced");
+    if (stack_arguments.deletes == 0) _Unwind_DeleteException(&stack_argument_exception);
+    return result;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "stack_arguments_ordinary") == 0) {
+        return owned_stack_arguments_ordinary_entry();
+    }
+    if (argc == 2 && std::strcmp(argv[1], "stack_arguments_forced") == 0) {
+        return owned_stack_arguments_forced_entry();
+    }
     if (argc == 2 && std::strcmp(argv[1], "deep_ordinary") == 0) {
         return owned_deep_ordinary_entry();
     }

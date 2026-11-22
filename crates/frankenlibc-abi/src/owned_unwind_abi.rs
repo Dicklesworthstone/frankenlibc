@@ -1975,9 +1975,24 @@ fn owned_phase2_cleanup(
                     {
                         return URC_FATAL_PHASE2_ERROR;
                     }
+                    // DW_CFA_GNU_args_size describes outgoing arguments at the
+                    // throwing call site. CFA recovery already accounts for
+                    // them when stepping frames; discard them only when
+                    // transferring control to this frame's landing pad.
+                    let Some(stack_pointer) =
+                        context.stack_pointer.checked_add(state.gnu_args_size)
+                    else {
+                        return URC_FATAL_PHASE2_ERROR;
+                    };
+                    // The scan window alone cannot prove a page is mapped.
+                    // Validate the adjusted landing stack through the same
+                    // bounded, fault-safe read used for CFI register recovery.
+                    if read_stack_word(stack_pointer, bounds).is_err() {
+                        return URC_FATAL_PHASE2_ERROR;
+                    }
                     let install = OwnedLandingPadInstall {
                         ip: context.ip,
-                        stack_pointer: context.stack_pointer,
+                        stack_pointer,
                         frame_pointer: context.general_registers[X86_64_DWARF_RBP],
                         general_register_0: context.general_registers[0],
                         general_register_1: context.general_registers[1],
@@ -4339,6 +4354,13 @@ fn validate_cfi_program(
                 cursor = decode_sleb128(input, cursor)?.1;
             }
             0x13 => cursor = decode_sleb128(input, cursor)?.1,
+            DW_CFA_DEF_CFA_EXPRESSION => {
+                cursor = read_cfi_expression(input, cursor, end)?.1;
+            }
+            DW_CFA_EXPRESSION | DW_CFA_VAL_EXPRESSION => {
+                cursor = decode_uleb128(input, cursor)?.1;
+                cursor = read_cfi_expression(input, cursor, end)?.1;
+            }
             other => return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(other)),
         }
     }
