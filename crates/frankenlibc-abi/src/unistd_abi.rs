@@ -7,6 +7,7 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
+use frankenlibc_core::resolv::NetworkEntry;
 use frankenlibc_core::socket as socket_core;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 use frankenlibc_core::syscall;
@@ -12041,7 +12042,13 @@ macro_rules! nss_files_end_stub {
 
 nss_files_end_stub!(_nss_files_endaliasent);
 nss_files_end_stub!(_nss_files_endetherent);
-nss_files_end_stub!(_nss_files_endnetent);
+/// Close the native networks cursor, including any short-buffer retry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endnetent() -> c_int {
+    // SAFETY: this closes only the calling thread's native files cursor.
+    unsafe { endnetent() };
+    NSS_STATUS_SUCCESS
+}
 /// Close the native RPC enumeration source and discard any pending retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endrpcent() -> c_int {
@@ -12134,7 +12141,11 @@ macro_rules! nss_files_set_stayopen_stub {
 
 nss_files_set_void_stub!(_nss_files_setaliasent);
 nss_files_set_stayopen_stub!(_nss_files_setetherent);
-nss_files_set_stayopen_stub!(_nss_files_setnetent);
+/// Open or rewind the native networks source and report unavailable files.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setnetent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(files_setnetent)
+}
 /// Open or rewind the native RPC source, reporting an unavailable file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_setrpcent(_stayopen: c_int) -> c_int {
@@ -12860,15 +12871,22 @@ pub unsafe extern "C" fn _nss_files_gethostent_r(
 /// h_errno slots.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getnetent_r(
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if result.is_null() || buffer.is_null() {
+        // SAFETY: preserve the existing bounded null-output behavior.
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+    let saved_errno = current_abi_errno();
+    let mut resolved = std::ptr::null_mut();
+    // SAFETY: the shared reader validates result and buffer before packing.
+    let outcome = unsafe { network_next_result(result, buffer, buflen, &mut resolved) };
+    // SAFETY: optional NSS error outputs are writable when supplied.
+    unsafe { network_nss_result(outcome, buffer, buflen, errnop, h_errnop, saved_errno) }
 }
 
 // `_nss_files_getnetgrent_r(*result, *buf, buflen, *errnop)` —
@@ -13405,33 +13423,63 @@ pub unsafe extern "C" fn _nss_files_gethostbyaddr2_r(
 /// *errnop, *h_errnop)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getnetbyaddr_r(
-    _net: u32,
-    _type: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    net: u32,
+    addr_type: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if result.is_null() || buffer.is_null() {
+        // SAFETY: preserve the existing bounded null-output behavior.
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+    let saved_errno = current_abi_errno();
+    let mut resolved = std::ptr::null_mut();
+    // SAFETY: the shared lookup validates the complete caller output layout.
+    let outcome = unsafe {
+        network_lookup_result(
+            NetworkKey::Address(net, addr_type),
+            result,
+            buffer,
+            buflen,
+            &mut resolved,
+        )
+    };
+    // SAFETY: optional NSS error outputs are writable when supplied.
+    unsafe { network_nss_result(outcome, buffer, buflen, errnop, h_errnop, saved_errno) }
 }
 
 /// `_nss_files_getnetbyname_r(name, *result, *buf, buflen,
 /// *errnop, *h_errnop)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getnetbyname_r(
-    _name: *const c_char,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if name.is_null() || result.is_null() || buffer.is_null() {
+        // SAFETY: preserve the existing bounded null-output behavior.
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+    let saved_errno = current_abi_errno();
+    let mut resolved = std::ptr::null_mut();
+    // SAFETY: the shared lookup bounds the name and caller output layout.
+    let outcome = unsafe {
+        network_lookup_result(
+            NetworkKey::Name(name),
+            result,
+            buffer,
+            buflen,
+            &mut resolved,
+        )
+    };
+    // SAFETY: optional NSS error outputs are writable when supplied.
+    unsafe { network_nss_result(outcome, buffer, buflen, errnop, h_errnop, saved_errno) }
 }
 
 /// `_nss_files_getservbyname_r(name, proto, *result, *buf, buflen,
@@ -22242,32 +22290,46 @@ pub unsafe extern "C" fn getservent() -> *mut c_void {
 // ---------------------------------------------------------------------------
 
 const NETWORKS_PATH: &str = "/etc/networks";
+const NETWORKS_PATH_ENV: &str = "FRANKENLIBC_NETWORKS_PATH";
+
+fn networks_path() -> std::path::PathBuf {
+    crate::stdlib_abi::secure_var_os(NETWORKS_PATH_ENV)
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(NETWORKS_PATH))
+}
 
 struct NetIterState {
     reader: Option<std::io::BufReader<std::fs::File>>,
+    source_path: Option<std::path::PathBuf>,
     line_buf: Vec<u8>,
-    entry_buf: [u8; 512],
-    aliases_ptrs: [*mut c_char; 2],
+    pending_line: bool,
+    entry: NetEnt,
+    entry_buf: Vec<u8>,
 }
 
 impl NetIterState {
     const fn new() -> Self {
         Self {
             reader: None,
+            source_path: None,
             line_buf: Vec::new(),
-            entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 2],
+            pending_line: false,
+            entry: NetEnt {
+                n_name: std::ptr::null_mut(),
+                n_aliases: std::ptr::null_mut(),
+                n_addrtype: libc::AF_INET,
+                n_net: 0,
+            },
+            entry_buf: Vec::new(),
         }
     }
 }
 
-// SAFETY: `NetIterState` is process-owned scratch state keyed by kernel
-// thread id under the owned-TLS experiment. Raw pointer arrays are rebuilt from
-// the per-slot buffers before each returned `netent` and never cross slots.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: an owned slot is exclusively borrowed for the calling kernel thread.
+// The netent pointers refer only to that slot's stable answer allocation.
 unsafe impl Send for NetIterState {}
 
-#[cfg(feature = "owned-tls-cache")]
 static NET_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetIterState> =
     crate::owned_tls_cache::OwnedTlsCache::new(NetIterState::new);
 
@@ -22288,6 +22350,9 @@ fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return NET_ITER_OWNED_TLS.with(callback);
+        }
         NET_ITER.with(|slot| {
             slot.with_init(
                 || std::cell::UnsafeCell::new(NetIterState::new()),
@@ -22301,159 +22366,232 @@ fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
     }
 }
 
-/// Parse a /etc/networks line: "name number [aliases...]"
-/// Returns (name, network_number) or None.
-/// Adapter around frankenlibc_core::resolv::parse_networks_line that
-/// returns the canonical (name, number) tuple in the form the local
-/// netent fillers consume. Returns `None` for blank/comment/malformed
-/// lines.
-fn parse_networks_line(line: &[u8]) -> Option<(Vec<u8>, u32)> {
-    let entry = frankenlibc_core::resolv::parse_networks_line(line)?;
-    Some((entry.name, entry.number))
-}
-
-/// Fill a netent struct in the entry buffer.
-///
-/// struct netent (x86_64, 24 bytes):
-///   n_name:     *mut c_char    (offset 0)
-///   n_aliases:  *mut *mut c_char (offset 8)
-///   n_addrtype: c_int          (offset 16)
-///   n_net:      u32            (offset 20)
-unsafe fn fill_netent_buf(state: &mut NetIterState, name: &[u8], net: u32) -> *mut c_void {
-    let str_offset = 24usize;
-    let needed = str_offset + name.len() + 1;
-    if needed > state.entry_buf.len() {
-        return std::ptr::null_mut();
-    }
-    let buf = state.entry_buf.as_mut_ptr();
-    let name_ptr = unsafe { buf.add(str_offset) } as *mut c_char;
-    unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
-        *buf.add(str_offset + name.len()) = 0;
-    }
-    state.aliases_ptrs[0] = std::ptr::null_mut();
-
-    let ptrs = buf as *mut *mut c_char;
-    unsafe {
-        *ptrs = name_ptr;
-        *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr();
-        *(buf.add(16) as *mut c_int) = libc::AF_INET;
-        *(buf.add(20) as *mut u32) = net;
-    }
-    buf as *mut c_void
-}
-
-/// Parse the next networks entry from the reader.
-unsafe fn net_iter_next(state: &mut NetIterState) -> *mut c_void {
-    use std::io::BufRead;
-    loop {
-        let reader = match state.reader.as_mut() {
-            Some(r) => r,
-            None => return std::ptr::null_mut(),
-        };
+/// Keep source selection and cached enumeration under the same environment
+/// policy. Changing the selected path discards a pending record from the old
+/// source, including when startup evidence no longer permits an override.
+fn net_iter_open(state: &mut NetIterState) -> Result<(), c_int> {
+    let path = networks_path();
+    if state.source_path.as_ref() != Some(&path) {
+        state.reader = None;
+        state.source_path = None;
+        state.pending_line = false;
         state.line_buf.clear();
-        match reader.read_until(b'\n', &mut state.line_buf) {
-            Ok(0) => return std::ptr::null_mut(),
-            Err(_) => return std::ptr::null_mut(),
-            Ok(_) => {}
-        }
-        // Parse and extract values before passing state to fill_netent_buf
-        if let Some((name, net)) = parse_networks_line(&state.line_buf) {
-            // Copy name to stack to avoid borrowing state.line_buf through fill
-            let mut name_copy = [0u8; 256];
-            let nlen = name.len().min(255);
-            name_copy[..nlen].copy_from_slice(&name[..nlen]);
-            let result = unsafe { fill_netent_buf(state, &name_copy[..nlen], net) };
-            if !result.is_null() {
-                return result;
+    }
+    if state.reader.is_none() {
+        let file = std::fs::File::open(&path)
+            .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+        state.reader = Some(std::io::BufReader::new(file));
+        state.source_path = Some(path);
+    }
+    Ok(())
+}
+
+/// Read without consuming a valid record until its output has been published.
+/// Both public entrypoints and the NSS files provider use this cursor.
+fn net_iter_entry(state: &mut NetIterState) -> Result<Option<NetworkEntry>, c_int> {
+    use std::io::BufRead;
+    net_iter_open(state)?;
+    loop {
+        if !state.pending_line {
+            state.line_buf.clear();
+            let count = state
+                .reader
+                .as_mut()
+                .ok_or(libc::EIO)?
+                .read_until(b'\n', &mut state.line_buf)
+                .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+            if count == 0 {
+                return Ok(None);
             }
+            state.pending_line = true;
         }
+        if let Some(entry) = frankenlibc_core::resolv::parse_networks_line(&state.line_buf) {
+            return Ok(Some(entry));
+        }
+        state.pending_line = false;
     }
 }
 
-/// `setnetent` — open /etc/networks for iteration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setnetent(_stayopen: c_int) {
-    with_net_iter_state(|state| match std::fs::File::open(NETWORKS_PATH) {
-        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-        Err(_) => state.reader = None,
-    });
+fn network_output_layout(entry: &NetworkEntry, buf: *const c_char) -> Option<(usize, usize)> {
+    let mut strings = entry.name.len().checked_add(1)?;
+    for alias in &entry.aliases {
+        strings = strings.checked_add(alias.len().checked_add(1)?)?;
+    }
+    let table = aligned_output_offset(buf, strings, core::mem::align_of::<*mut c_char>())?;
+    let pointers = entry
+        .aliases
+        .len()
+        .checked_add(1)?
+        .checked_mul(core::mem::size_of::<*mut c_char>())?;
+    Some((table, table.checked_add(pointers)?))
 }
 
-/// `endnetent` — close /etc/networks iteration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endnetent() {
+/// Nonreentrant answers use a typed header and growable, per-thread storage.
+/// No fixed name length or alias count can silently truncate a valid record.
+unsafe fn store_network_entry(
+    state: &mut NetIterState,
+    entry: &NetworkEntry,
+) -> Result<*mut c_void, c_int> {
+    let (_, aligned_size) = network_output_layout(entry, std::ptr::null()).ok_or(libc::ERANGE)?;
+    let needed = aligned_size
+        .checked_add(core::mem::align_of::<*mut c_char>() - 1)
+        .ok_or(libc::ERANGE)?;
+    if state.entry_buf.len() < needed {
+        state
+            .entry_buf
+            .try_reserve(needed - state.entry_buf.len())
+            .map_err(|_| libc::ENOMEM)?;
+        state.entry_buf.resize(needed, 0);
+    }
+    let mut resolved = std::ptr::null_mut();
+    // SAFETY: entry is an aligned typed object and the buffer was sized for
+    // every string, alias pointer and possible alignment padding above.
+    let rc = unsafe {
+        fill_netent_r(
+            entry,
+            (&raw mut state.entry).cast(),
+            state.entry_buf.as_mut_ptr().cast(),
+            state.entry_buf.len(),
+            &mut resolved,
+        )
+    };
+    if rc == 0 { Ok(resolved) } else { Err(rc) }
+}
+
+fn files_setnetent() -> c_int {
     with_net_iter_state(|state| {
         state.reader = None;
-    });
-}
-
-/// `getnetent` — get next /etc/networks entry.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetent() -> *mut c_void {
-    with_net_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(NETWORKS_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return std::ptr::null_mut(),
-            }
-        }
-        unsafe { net_iter_next(state) }
+        state.source_path = None;
+        state.pending_line = false;
+        state.line_buf.clear();
+        net_iter_open(state).err().unwrap_or(0)
     })
 }
 
-/// `getnetbyname` — look up network by name in /etc/networks.
+/// `setnetent` — open or rewind the native networks source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
-    if name.is_null() {
-        return std::ptr::null_mut();
-    }
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return std::ptr::null_mut();
-    };
-    let content = match std::fs::read(NETWORKS_PATH) {
-        Ok(c) => c,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, net)) = parse_networks_line(line)
-            && pname.eq_ignore_ascii_case(&needle)
-        {
-            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, net) });
-        }
-    }
-    std::ptr::null_mut()
+pub unsafe extern "C" fn setnetent(_stayopen: c_int) {
+    let saved_errno = current_abi_errno();
+    let rc = files_setnetent();
+    // SAFETY: errno belongs to the calling thread.
+    unsafe { set_abi_errno(if rc == 0 { saved_errno } else { rc }) };
 }
 
-/// `getnetbyaddr` — look up network by address in /etc/networks.
+/// `endnetent` — close enumeration and discard any pending retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyaddr(net: u32, addr_type: c_int) -> *mut c_void {
-    // glibc's files backend matches when n_net == net AND
-    //     (type == AF_UNSPEC || n_addrtype == type)
-    // fill_netent_buf stamps every /etc/networks entry with n_addrtype =
-    // AF_INET, so AF_INET and AF_UNSPEC match while any other family finds
-    // nothing. The type argument used to be ignored outright (it was named
-    // `_type`), so fl matched EVERY family — getnetbyaddr(0xa9fe0000, AF_INET6)
-    // answered "link-local" where glibc returns NULL.
-    //
-    // AF_UNSPEC is a WILDCARD here, not a rejection. Measured against live
-    // glibc: getnetbyaddr(0xa9fe0000, 0) returns "link-local".
-    if addr_type != libc::AF_UNSPEC && addr_type != libc::AF_INET {
-        return std::ptr::null_mut();
-    }
-    let content = match std::fs::read(NETWORKS_PATH) {
-        Ok(c) => c,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, pnet)) = parse_networks_line(line)
-            && pnet == net
-        {
-            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, pnet) });
+pub unsafe extern "C" fn endnetent() {
+    let saved_errno = current_abi_errno();
+    with_net_iter_state(|state| {
+        state.reader = None;
+        state.source_path = None;
+        state.line_buf.clear();
+        state.pending_line = false;
+    });
+    // SAFETY: successful close must not leak a destructor's internal errno.
+    unsafe { set_abi_errno(saved_errno) };
+}
+
+/// `getnetent` — return a complete native network record without truncation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetent() -> *mut c_void {
+    let saved_errno = current_abi_errno();
+    let outcome = with_net_iter_state(|state| {
+        let Some(entry) = net_iter_entry(state)? else {
+            return Ok(std::ptr::null_mut());
+        };
+        // SAFETY: state owns the typed result and its growable answer storage.
+        let result = unsafe { store_network_entry(state, &entry) }?;
+        state.pending_line = false;
+        Ok(result)
+    });
+    match outcome {
+        Ok(result) => {
+            // SAFETY: enumeration preserves the caller's errno on success/EOF.
+            unsafe { set_abi_errno(saved_errno) };
+            result
+        }
+        Err(error) => {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(error) };
+            std::ptr::null_mut()
         }
     }
-    std::ptr::null_mut()
+}
+
+#[derive(Clone, Copy)]
+enum NetworkKey {
+    Name(*const c_char),
+    Address(u32, c_int),
+}
+
+unsafe fn network_entry(key: NetworkKey) -> Result<Option<NetworkEntry>, c_int> {
+    let name = match key {
+        // SAFETY: the caller grants a readable C name; tracked strings are bounded.
+        NetworkKey::Name(name) => Some(unsafe { read_c_string_bytes(name) }.ok_or(libc::EINVAL)?),
+        NetworkKey::Address(_, family) if family != libc::AF_INET && family != libc::AF_UNSPEC => {
+            return Ok(None);
+        }
+        NetworkKey::Address(..) => None,
+    };
+    let content = std::fs::read(networks_path())
+        .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+    Ok(match key {
+        NetworkKey::Name(_) => frankenlibc_core::resolv::lookup_network_by_name(
+            &content,
+            name.as_deref().unwrap_or(&[]),
+        ),
+        // Network numbers are host-order; AF_UNSPEC is the GNU wildcard.
+        NetworkKey::Address(number, _) => {
+            frankenlibc_core::resolv::lookup_network_by_number(&content, number)
+        }
+    })
+}
+
+unsafe fn network_lookup(key: NetworkKey) -> *mut c_void {
+    // SAFETY: the public caller supplies any name referenced by key.
+    let outcome = unsafe { network_entry(key) }.and_then(|entry| match entry {
+        Some(entry) => with_net_iter_state(|state| {
+            // SAFETY: state owns its complete typed header and answer storage.
+            unsafe { store_network_entry(state, &entry) }
+        }),
+        None => Ok(std::ptr::null_mut()),
+    });
+    // SAFETY: this is the calling thread's canonical h_errno cell.
+    let h_errnop = unsafe { crate::resolv_abi::__h_errno_location() };
+    match outcome {
+        Ok(result) => {
+            // SAFETY: GNU keyed lookups clear errno, but preserve h_errno on success.
+            unsafe {
+                set_abi_errno(0);
+                if result.is_null() {
+                    nss_set_herr_host_not_found(h_errnop);
+                }
+            }
+            result
+        }
+        Err(error) => {
+            // SAFETY: both error slots belong to this thread.
+            unsafe {
+                set_abi_errno(error);
+                nss_set_herr(h_errnop, NSS_NETDB_INTERNAL);
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// `getnetbyname` — match a canonical network name or any alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
+    // SAFETY: forward the public C-string contract to the shared native lookup.
+    unsafe { network_lookup(NetworkKey::Name(name)) }
+}
+
+/// `getnetbyaddr` — match a host-order network number and address family.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyaddr(net: u32, addr_type: c_int) -> *mut c_void {
+    // SAFETY: this key contains scalar values only.
+    unsafe { network_lookup(NetworkKey::Address(net, addr_type)) }
 }
 
 // ---------------------------------------------------------------------------
@@ -31999,8 +32137,7 @@ pub unsafe extern "C" fn gethostent_r(
 
 /// Helper: fill a netent struct in caller-supplied buffers.
 unsafe fn fill_netent_r(
-    name: &[u8],
-    net: u32,
+    entry: &NetworkEntry,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -32012,43 +32149,148 @@ unsafe fn fill_netent_r(
         return libc::EINVAL;
     }
 
-    let effective_buflen = tracked_output_capacity(buf, buflen);
-    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
-    let name_len = match name.len().checked_add(1) {
-        Some(len) => len,
+    let (alias_offset, needed) = match network_output_layout(entry, buf) {
+        Some(layout) => layout,
         None => return libc::ERANGE,
     };
-    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
-        Some(offset) => offset,
-        None => return libc::ERANGE,
-    };
-    let needed = match alias_offset.checked_add(alias_ptr_size) {
-        Some(needed) => needed,
-        None => return libc::ERANGE,
-    };
-    if needed > effective_buflen {
+    if buf.is_null() || needed > tracked_output_capacity(buf, buflen) {
         return libc::ERANGE;
     }
 
-    let buf_u8 = buf as *mut u8;
-    // Copy name
+    // SAFETY: the complete layout is checked before the first write. Strings
+    // precede a correctly aligned, NULL-terminated table; all pointers stay
+    // within the caller buffer, including when its start is unaligned.
     unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf_u8, name.len());
-        *buf_u8.add(name.len()) = 0;
+        let bytes = buf.cast::<u8>();
+        std::ptr::copy_nonoverlapping(entry.name.as_ptr(), bytes, entry.name.len());
+        *bytes.add(entry.name.len()) = 0;
+        let aliases = bytes.add(alias_offset).cast::<*mut c_char>();
+        let mut offset = entry.name.len() + 1;
+        for (index, alias) in entry.aliases.iter().enumerate() {
+            std::ptr::copy_nonoverlapping(alias.as_ptr(), bytes.add(offset), alias.len());
+            *bytes.add(offset + alias.len()) = 0;
+            aliases.add(index).write(buf.add(offset));
+            offset += alias.len() + 1;
+        }
+        aliases.add(entry.aliases.len()).write(std::ptr::null_mut());
+        result_buf.cast::<NetEnt>().write(NetEnt {
+            n_name: buf,
+            n_aliases: aliases,
+            n_addrtype: libc::AF_INET,
+            n_net: entry.number,
+        });
+        *result = result_buf;
     }
-    // NULL-terminated aliases
-    unsafe { *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut() };
-
-    let ent = result_buf.cast::<NetEnt>();
-    unsafe {
-        (*ent).n_name = buf;
-        (*ent).n_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
-        (*ent).n_addrtype = libc::AF_INET;
-        (*ent).n_net = net;
-    }
-    unsafe { *result = result_buf };
     0
+}
+
+unsafe fn network_prepare_output(
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    if !tracked_object_fits::<*mut c_void>(result) {
+        return Err(libc::EINVAL);
+    }
+    // SAFETY: this aligned result slot was checked before clearing it.
+    unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<NetEnt>(result_buf.cast()) || buf.is_null() {
+        return Err(libc::EINVAL);
+    }
+    if tracked_output_capacity(buf, buflen) < 3 {
+        return Err(libc::ERANGE);
+    }
+    Ok(())
+}
+
+unsafe fn network_lookup_result(
+    key: NetworkKey,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<bool, c_int> {
+    // SAFETY: validate all caller storage before looking up or packing a record.
+    unsafe { network_prepare_output(result_buf, buf, buflen, result) }?;
+    // SAFETY: any name is a caller-owned C string; the helper bounds its scan.
+    let Some(entry) = (unsafe { network_entry(key) })? else {
+        return Ok(false);
+    };
+    // SAFETY: the shared packer checks the full record's layout before writing.
+    let rc = unsafe { fill_netent_r(&entry, result_buf, buf, buflen, result) };
+    if rc == 0 { Ok(true) } else { Err(rc) }
+}
+
+unsafe fn network_next_result(
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<bool, c_int> {
+    // SAFETY: validate result and buffer before advancing the native cursor.
+    unsafe { network_prepare_output(result_buf, buf, buflen, result) }?;
+    with_net_iter_state(|state| {
+        let Some(entry) = net_iter_entry(state)? else {
+            return Ok(false);
+        };
+        // SAFETY: output objects were checked and the packer bounds all writes.
+        let rc = unsafe { fill_netent_r(&entry, result_buf, buf, buflen, result) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        state.pending_line = false;
+        Ok(true)
+    })
+}
+
+unsafe fn network_nss_result(
+    outcome: Result<bool, c_int>,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    saved_errno: c_int,
+) -> c_int {
+    let reported_errno = match outcome {
+        Err(libc::ERANGE) if tracked_output_capacity(buffer, buflen) < 2 => saved_errno,
+        Err(error) => error,
+        Ok(_) => saved_errno,
+    };
+    // SAFETY: restore global errno before optional error outputs, which may
+    // alias it. NSS success preserves both caller error slots; misses update
+    // only h_errno, and unavailable files remain distinct from absent records.
+    unsafe {
+        set_abi_errno(reported_errno);
+        nss_files_host_status(outcome, errnop, h_errnop)
+    }
+}
+
+unsafe fn network_public_lookup_result(
+    outcome: Result<bool, c_int>,
+    h_errnop: *mut c_int,
+) -> c_int {
+    match outcome {
+        Ok(found) => {
+            // SAFETY: GNU keyed lookups clear errno and preserve h_errno on
+            // success. The optional error slot is writable when supplied.
+            unsafe {
+                set_abi_errno(0);
+                if !found {
+                    nss_set_herr_host_not_found(h_errnop);
+                }
+            }
+            0
+        }
+        Err(error) => {
+            // SAFETY: report both the positive return code and resolver error.
+            unsafe {
+                set_abi_errno(error);
+                nss_set_herr(h_errnop, NSS_NETDB_INTERNAL);
+            }
+            error
+        }
+    }
 }
 
 /// `getnetbyaddr_r` — reentrant network lookup by address.
@@ -32060,33 +32302,20 @@ pub unsafe extern "C" fn getnetbyaddr_r(
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
-    _h_errnop: *mut c_int,
+    h_errnop: *mut c_int,
 ) -> c_int {
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
-        return libc::EINVAL;
-    }
-    // Same address-family rule as the non-reentrant getnetbyaddr: AF_UNSPEC is
-    // a wildcard, AF_INET matches, anything else finds nothing. Returns 0 with
-    // *result left NULL, which is this API's not-found contract.
-    if addr_type != libc::AF_UNSPEC && addr_type != libc::AF_INET {
-        return 0;
-    }
-    let content = match std::fs::read(NETWORKS_PATH) {
-        Ok(c) => c,
-        Err(_) => return 0,
+    // SAFETY: forward checked scalar key and caller-owned output objects.
+    let outcome = unsafe {
+        network_lookup_result(
+            NetworkKey::Address(net, addr_type),
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
     };
-    for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, pnet)) = parse_networks_line(line)
-            && pnet == net
-        {
-            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
-        }
-    }
-    0
+    // SAFETY: optional resolver error output is writable when supplied.
+    unsafe { network_public_lookup_result(outcome, h_errnop) }
 }
 
 /// `getnetbyname_r` — reentrant network lookup by name.
@@ -32097,34 +32326,13 @@ pub unsafe extern "C" fn getnetbyname_r(
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
-    _h_errnop: *mut c_int,
+    h_errnop: *mut c_int,
 ) -> c_int {
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if name.is_null()
-        || result_buf.is_null()
-        || buf.is_null()
-        || !tracked_object_fits::<NetEnt>(result_buf.cast())
-    {
-        return libc::EINVAL;
-    }
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
-        return libc::EINVAL;
-    };
-    let content = match std::fs::read(NETWORKS_PATH) {
-        Ok(c) => c,
-        Err(_) => return 0,
-    };
-    for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, pnet)) = parse_networks_line(line)
-            && pname.eq_ignore_ascii_case(needle.as_slice())
-        {
-            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
-        }
-    }
-    0
+    // SAFETY: the helper bounds the caller's C name and complete output layout.
+    let outcome =
+        unsafe { network_lookup_result(NetworkKey::Name(name), result_buf, buf, buflen, result) };
+    // SAFETY: optional resolver error output is writable when supplied.
+    unsafe { network_public_lookup_result(outcome, h_errnop) }
 }
 
 /// `getnetent_r` — reentrant sequential network entry read.
@@ -32136,39 +32344,21 @@ pub unsafe extern "C" fn getnetent_r(
     result: *mut *mut c_void,
     _h_errnop: *mut c_int,
 ) -> c_int {
-    use std::io::BufRead;
-
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
-        return libc::EINVAL;
-    }
-
-    with_net_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(NETWORKS_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return libc::ENOENT,
-            }
+    let saved_errno = current_abi_errno();
+    // SAFETY: validate all caller output before reading or publishing a record.
+    let outcome = unsafe { network_next_result(result_buf, buf, buflen, result) };
+    match outcome {
+        Ok(found) => {
+            // SAFETY: GNU enumeration preserves errno and h_errno on success/EOF.
+            unsafe { set_abi_errno(saved_errno) };
+            if found { 0 } else { libc::ENOENT }
         }
-        let reader = match state.reader.as_mut() {
-            Some(reader) => reader,
-            None => return libc::ENOENT,
-        };
-        loop {
-            state.line_buf.clear();
-            match reader.read_until(b'\n', &mut state.line_buf) {
-                Ok(0) => return libc::ENOENT,
-                Err(_) => return libc::ENOENT,
-                Ok(_) => {}
-            }
-            if let Some((pname, pnet)) = parse_networks_line(&state.line_buf) {
-                return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
-            }
+        Err(error) => {
+            // SAFETY: enumeration reports errno but preserves caller h_errno.
+            unsafe { set_abi_errno(error) };
+            error
         }
-    })
+    }
 }
 
 /// Helper: fill a protoent struct in caller-supplied buffers.
