@@ -12099,7 +12099,7 @@ pub unsafe extern "C" fn _nss_files_endprotoent() -> c_int {
 /// `_nss_files_endservent()` — close/reset service database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endservent() -> c_int {
-    unsafe { endservent() };
+    files_endservent();
     NSS_STATUS_SUCCESS
 }
 
@@ -12207,9 +12207,8 @@ pub unsafe extern "C" fn _nss_files_setprotoent(stayopen: c_int) -> c_int {
 
 /// `_nss_files_setservent(stayopen)` — reset service database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _nss_files_setservent(stayopen: c_int) -> c_int {
-    unsafe { setservent(stayopen) };
-    NSS_STATUS_SUCCESS
+pub unsafe extern "C" fn _nss_files_setservent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(files_setservent)
 }
 
 /// `_nss_files_setnetgrent(*group, *result) -> nss_status` — special
@@ -12813,9 +12812,40 @@ pub unsafe extern "C" fn _nss_files_getservent_r(
         unsafe { nss_set_errnop_enoent(errnop) };
         return NSS_STATUS_NOTFOUND;
     }
-    let mut resolved = std::ptr::null_mut();
-    let rc = unsafe { getservent_r(result, buffer, buflen, &mut resolved) };
-    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+    if !tracked_object_fits::<libc::servent>(result.cast()) {
+        unsafe { nss_set_errnop(errnop, libc::EINVAL) };
+        return NSS_STATUS_UNAVAIL;
+    }
+    let saved_errno = current_abi_errno();
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let outcome = with_serv_iter_state(|state| {
+        // SAFETY: both caller regions were checked; this files-only cursor
+        // cannot dispatch foreign callbacks while thread storage is borrowed.
+        unsafe { state.files.next_r(result.cast(), buffer, capacity) }
+    });
+    match outcome {
+        Ok(found) => {
+            unsafe { set_abi_errno(saved_errno) };
+            if found { NSS_STATUS_SUCCESS } else { NSS_STATUS_NOTFOUND }
+        }
+        Err(error) => {
+            // GNU's earliest buffer preflight only writes errnop. Restore
+            // ordinary errno first so an aliased error slot still receives it.
+            unsafe {
+                set_abi_errno(if error == libc::ERANGE && capacity < 2 {
+                    saved_errno
+                } else {
+                    error
+                });
+                nss_set_errnop(errnop, error);
+            }
+            if error == libc::ERANGE || error == libc::EAGAIN {
+                NSS_STATUS_TRYAGAIN
+            } else {
+                NSS_STATUS_UNAVAIL
+            }
+        }
+    }
 }
 
 /// `_nss_files_gethostent_r(*result, *buf, buflen, *errnop,
@@ -22086,41 +22116,355 @@ pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut 
 
 const SERVICES_PATH: &str = "/etc/services";
 
-struct ServIterState {
+/// Keep the selected files record until it has been copied successfully.
+struct ServiceFilesCursor {
     reader: Option<std::io::BufReader<std::fs::File>>,
-    line_buf: Vec<u8>,
-    /// Thread-local servent struct + string data for non-reentrant getservent.
-    /// struct servent is 32 bytes on x86_64; rest is string data.
-    entry_buf: [u8; 1024],
-    aliases_ptrs: [*mut c_char; 8], // NULL-terminated alias pointer list
+    source_path: Option<std::path::PathBuf>,
+    line: Vec<u8>,
+    pending: Option<frankenlibc_core::resolv::ServiceEntry>,
+}
+
+impl ServiceFilesCursor {
+    const fn new() -> Self {
+        Self {
+            reader: None, source_path: None, line: Vec::new(), pending: None,
+        }
+    }
+
+    fn close(&mut self) {
+        self.reader = None;
+        self.source_path = None;
+        self.pending = None;
+        self.line.clear();
+    }
+
+    fn open(&mut self) -> Result<(), c_int> {
+        let path = crate::stdlib_abi::secure_var_os("FRANKENLIBC_SERVICES_PATH")
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(SERVICES_PATH));
+        // Recheck secure environment policy before reusing a cached or pending
+        // record. A changed source must not replay bytes from the previous file.
+        if self.source_path.as_ref() != Some(&path) {
+            self.close();
+        }
+        if self.reader.is_none() {
+            let file = std::fs::File::open(&path)
+                .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+            self.reader = Some(std::io::BufReader::new(file));
+            self.source_path = Some(path);
+        }
+        Ok(())
+    }
+
+    fn rewind(&mut self) -> Result<(), c_int> {
+        self.close();
+        self.open()
+    }
+
+    /// # Safety
+    /// The complete output object and buffer are writable and disjoint.
+    unsafe fn next_r(
+        &mut self,
+        output: *mut libc::servent,
+        buffer: *mut c_char,
+        capacity: usize,
+    ) -> Result<bool, c_int> {
+        use std::io::BufRead;
+        self.open()?;
+        if capacity < 2 {
+            return Err(libc::ERANGE);
+        }
+        while self.pending.is_none() {
+            self.line.clear();
+            let read = self.reader.as_mut().unwrap().read_until(b'\n', &mut self.line)
+                .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+            if read == 0 {
+                return Ok(false);
+            }
+            self.pending = frankenlibc_core::resolv::parse_services_line(&self.line);
+        }
+        // SAFETY: the ABI entry point checked the caller's complete objects.
+        let result = unsafe {
+            crate::inet_abi::pack_service_entry(
+                self.pending.as_ref().unwrap(), output, buffer, capacity,
+            )
+        };
+        if result != 0 {
+            return Err(result);
+        }
+        self.pending = None;
+        Ok(true)
+    }
+}
+
+/// Public enumeration follows one immutable source-policy snapshot. Foreign
+/// callbacks run only after this state has been leased out of thread storage.
+struct ServiceIteration {
+    sources: Option<std::sync::Arc<Vec<frankenlibc_core::nss::Service>>>,
+    source: usize,
+    needs_set: bool,
+    stayopen: c_int,
+}
+
+impl ServiceIteration {
+    const fn new() -> Self {
+        Self {
+            sources: None, source: 0, needs_set: false, stayopen: 0,
+        }
+    }
+
+    fn sources(&mut self) -> std::sync::Arc<Vec<frankenlibc_core::nss::Service>> {
+        self.sources.get_or_insert_with(|| {
+            crate::nss_module::services(frankenlibc_core::nss::Database::Services)
+        }).clone()
+    }
+
+    fn action(source: &frankenlibc_core::nss::Service, status: c_int)
+        -> frankenlibc_core::nss::Action
+    {
+        if status == 2 {
+            source.return_action()
+        } else {
+            source.action(frankenlibc_core::nss::Status::from_raw(status))
+        }
+    }
+
+    fn begin(
+        &mut self,
+        source: &frankenlibc_core::nss::Service,
+        stayopen: c_int,
+    ) -> Option<c_int> {
+        if source.name() == b"files" {
+            Some(match files_setservent() {
+                0 => NSS_STATUS_SUCCESS,
+                error => {
+                    unsafe { set_abi_errno(error) };
+                    if error == libc::EAGAIN { NSS_STATUS_TRYAGAIN } else { NSS_STATUS_UNAVAIL }
+                }
+            })
+        } else {
+            crate::nss_module::service_setent(source.name(), stayopen)
+        }
+    }
+
+    fn rewind(&mut self, stayopen: c_int) {
+        use frankenlibc_core::nss::Action;
+        let sources = crate::nss_module::services(frankenlibc_core::nss::Database::Services);
+        self.sources = Some(sources.clone());
+        self.source = 0;
+        self.needs_set = false;
+        // GNU's setent helper stores the new flag after selecting the initial
+        // source. Subsequent source transitions use the newly supplied flag.
+        let previous_stayopen = self.stayopen;
+        self.stayopen = stayopen;
+        let mut resolved = false;
+        while let Some(source) = sources.get(self.source) {
+            let Some(status) = self.begin(source, previous_stayopen) else {
+                if source.action(frankenlibc_core::nss::Status::Unavailable)
+                    != Action::Continue || self.source + 1 == sources.len()
+                {
+                    // Only an initial lookup failure creates GNU's no-function
+                    // sentinel. A later failure retains the current provider.
+                    if !resolved { self.source = sources.len(); }
+                    break;
+                }
+                self.source += 1;
+                continue;
+            };
+            resolved = true;
+            if Self::action(source, status) != Action::Continue
+                || self.source + 1 == sources.len()
+            {
+                break;
+            }
+            self.source += 1;
+        }
+    }
+
+    fn end(&mut self) {
+        use frankenlibc_core::nss::{Action, Status};
+        // The public GNU wrapper is a no-op until a public set/get initialized
+        // enumeration. Direct files-provider calls do not initialize this state.
+        if self.sources.is_none() {
+            return;
+        }
+        let sources = crate::nss_module::services(frankenlibc_core::nss::Database::Services);
+        let mut first = None;
+        for (index, source) in sources.iter().enumerate() {
+            let found = if source.name() == b"files" {
+                files_endservent();
+                true
+            } else {
+                crate::nss_module::service_endent(source.name()).is_some()
+            };
+            if !found {
+                if source.action(Status::Unavailable) != Action::Continue {
+                    break;
+                }
+                continue;
+            }
+            first.get_or_insert(index);
+            // GNU cleanup ignores each callback's status and traverses under
+            // __nss_next2's all-values rule, including providers not yet read.
+            if [Status::TryAgain, Status::Unavailable, Status::NotFound, Status::Success]
+                .into_iter().all(|status| source.action(status) == Action::Return)
+            {
+                break;
+            }
+        }
+        // Keep the first resolved end provider as GNU's initialized startp.
+        // Repeated end calls repeat cleanup; a subsequent implicit get starts
+        // at this provider without an additional set callback.
+        self.source = first.unwrap_or(sources.len());
+        self.sources = Some(sources);
+        self.needs_set = false;
+    }
+
+    /// Return an NSS status while keeping the provider's errno observable.
+    /// ERANGE never traverses to a later source, regardless of policy actions.
+    ///
+    /// # Safety
+    /// The caller validated the result object and the exact buffer capacity.
+    unsafe fn next_r(
+        &mut self,
+        output: *mut libc::servent,
+        buffer: *mut c_char,
+        capacity: usize,
+    ) -> c_int {
+        use frankenlibc_core::nss::Action;
+        let mut initial_lookup = self.sources.is_none();
+        let sources = self.sources();
+        let mut status = NSS_STATUS_NOTFOUND;
+        while let Some(source) = sources.get(self.source) {
+            let module = if source.name() == b"files" {
+                None
+            } else {
+                let Some(module) = crate::nss_module::service_enumeration(source.name()) else {
+                    // A missing function is a lookup failure, not a callback
+                    // answer. Preserve the previous status if no source remains.
+                    if source.action(frankenlibc_core::nss::Status::Unavailable)
+                        != Action::Continue || self.source + 1 == sources.len()
+                    {
+                        if initial_lookup { self.source = sources.len(); }
+                        return status;
+                    }
+                    self.source += 1;
+                    // Initial symbol lookup skips missing providers without
+                    // starting enumeration. Preserve whether a real previous
+                    // provider transition already requires setservent.
+                    continue;
+                };
+                Some(module)
+            };
+            initial_lookup = false;
+            if self.needs_set {
+                self.needs_set = false;
+                // Set-symbol lookup can skip a provider independently of get
+                // lookup. GNU retains the already resolved get callback for
+                // this iteration while advancing the policy/source position.
+                loop {
+                    let source = &sources[self.source];
+                    if let Some(answer) = self.begin(source, self.stayopen) {
+                        status = answer;
+                        break;
+                    }
+                    if source.action(frankenlibc_core::nss::Status::Unavailable)
+                        != Action::Continue || self.source + 1 == sources.len()
+                    {
+                        return NSS_STATUS_NOTFOUND;
+                    }
+                    self.source += 1;
+                }
+                let source = &sources[self.source];
+                if status != NSS_STATUS_SUCCESS {
+                    if Self::action(source, status) == Action::Return
+                        || self.source + 1 == sources.len()
+                    {
+                        return status;
+                    }
+                    self.source += 1;
+                    self.needs_set = true;
+                    continue;
+                }
+            }
+            let source = &sources[self.source];
+            status = if let Some(module) = module {
+                // SAFETY: this leased state and caller storage survive the
+                // callback; no mutable TLS borrow or policy lock is retained.
+                unsafe { module.next_r(output, buffer, capacity) }
+            } else {
+                let saved_errno = current_abi_errno();
+                // The public files lane and direct provider share one cursor.
+                // Only native file I/O/packing runs during this short TLS borrow;
+                // module callbacks always execute with the lease outside TLS.
+                let outcome = with_serv_iter_state(|state| {
+                    // SAFETY: the complete caller objects were checked.
+                    unsafe { state.files.next_r(output, buffer, capacity) }
+                });
+                match outcome {
+                    Ok(found) => {
+                        unsafe { set_abi_errno(saved_errno) };
+                        if found { NSS_STATUS_SUCCESS } else { NSS_STATUS_NOTFOUND }
+                    }
+                    Err(error) => {
+                        unsafe { set_abi_errno(error) };
+                        if error == libc::ERANGE || error == libc::EAGAIN {
+                            NSS_STATUS_TRYAGAIN
+                        } else {
+                            NSS_STATUS_UNAVAIL
+                        }
+                    }
+                }
+            };
+            let action = Self::action(source, status);
+            if (status == NSS_STATUS_TRYAGAIN && current_abi_errno() == libc::ERANGE)
+                || action == Action::Return
+                || (status == NSS_STATUS_SUCCESS && action == Action::Merge)
+                || self.source + 1 == sources.len()
+            {
+                return status;
+            }
+            self.source += 1;
+            self.needs_set = true;
+        }
+        status
+    }
+}
+
+struct ServIterState {
+    iteration: ServiceIteration,
+    /// Direct _nss_files_* callers bypass public NSS source selection.
+    files: ServiceFilesCursor,
+    busy: bool,
+    entry: libc::servent,
+    buffer: Vec<u8>,
 }
 
 impl ServIterState {
     const fn new() -> Self {
         Self {
-            reader: None,
-            line_buf: Vec::new(),
-            entry_buf: [0u8; 1024],
-            aliases_ptrs: [std::ptr::null_mut(); 8],
+            iteration: ServiceIteration::new(),
+            files: ServiceFilesCursor::new(),
+            busy: false,
+            entry: libc::servent {
+                s_name: std::ptr::null_mut(), s_aliases: std::ptr::null_mut(),
+                s_port: 0, s_proto: std::ptr::null_mut(),
+            },
+            buffer: Vec::new(),
         }
     }
 }
 
-// SAFETY: `ServIterState` is process-owned scratch state keyed by kernel
-// thread id under the owned-TLS experiment. The raw alias pointers are
-// rebuilt from `entry_buf` on each successful parse and never transferred
-// between thread-keyed slots.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: the owned cache keys each state by its native thread owner. Published
+// pointers address that owner's output buffer and never migrate between slots.
 unsafe impl Send for ServIterState {}
 
-#[cfg(feature = "owned-tls-cache")]
 static SERV_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServIterState> =
     crate::owned_tls_cache::OwnedTlsCache::new(ServIterState::new);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
     static SERV_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<ServIterState>> =
         const { crate::util::TlsHeapCell::new() };
 }
@@ -22128,18 +22472,17 @@ std::thread_local! {
 #[inline]
 fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
-    {
-        SERV_ITER_OWNED_TLS.with(callback)
-    }
-
+    { SERV_ITER_OWNED_TLS.with(callback) }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return SERV_ITER_OWNED_TLS.with(callback);
+        }
         SERV_ITER.with(|slot| {
             slot.with_init(
                 || std::cell::UnsafeCell::new(ServIterState::new()),
                 |cell| {
-                    // SAFETY: SERV_ITER is per-thread storage and this callback keeps
-                    // the mutable reference scoped to the thread-local access.
+                    // SAFETY: no reference escapes this owner's short callback.
                     callback(unsafe { &mut *cell.get() })
                 },
             )
@@ -22147,142 +22490,108 @@ fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R 
     }
 }
 
-/// Parse the next service entry into the entry_buf.
-///
-/// struct servent layout (x86_64, 32 bytes):
-///   s_name:    *mut c_char    (offset 0)
-///   s_aliases: *mut *mut c_char (offset 8)
-///   s_port:    c_int          (offset 16, network byte order)
-///   [pad 4]
-///   s_proto:   *mut c_char    (offset 24)
-unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
-    use std::io::BufRead;
+/// Move all state needed by foreign callbacks out of TLS, including the
+/// non-reentrant buffer. Recursive public enumeration cannot alias it.
+struct ServiceIterationLease {
+    iteration: ServiceIteration,
+    buffer: Vec<u8>,
+}
 
-    let reader = match state.reader.as_mut() {
-        Some(r) => r,
-        None => return std::ptr::null_mut(),
-    };
-
-    loop {
-        state.line_buf.clear();
-        match reader.read_until(b'\n', &mut state.line_buf) {
-            Ok(0) => return std::ptr::null_mut(),
-            Err(_) => return std::ptr::null_mut(),
-            Ok(_) => {}
-        }
-
-        let entry = match frankenlibc_core::resolv::parse_services_line(&state.line_buf) {
-            Some(e) => e,
-            None => continue,
-        };
-
-        // Pack into entry_buf: struct servent (32 bytes) + strings
-        let str_offset = 32usize;
-        let needed = str_offset + entry.name.len() + 1 + entry.protocol.len() + 1;
-        if needed > state.entry_buf.len() {
-            continue;
-        }
-
-        let buf = state.entry_buf.as_mut_ptr();
-        let mut off = str_offset;
-
-        // Name
-        let name_ptr = unsafe { buf.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(entry.name.as_ptr(), buf.add(off), entry.name.len());
-            *buf.add(off + entry.name.len()) = 0;
-        }
-        off += entry.name.len() + 1;
-
-        // Protocol
-        let proto_ptr = unsafe { buf.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                entry.protocol.as_ptr(),
-                buf.add(off),
-                entry.protocol.len(),
-            );
-            *buf.add(off + entry.protocol.len()) = 0;
-        }
-        off += entry.protocol.len() + 1;
-
-        // Aliases. These were previously dropped on the floor — s_aliases was
-        // always an empty list — so every multi-name service enumerated wrong
-        // against glibc (discard/2304/tcp lost "sink" and "null"). The parser
-        // has always returned them; only this packing step ignored them.
-        //
-        // Copied into the same scratch buffer after the protocol string, then
-        // pointed at by the NULL-terminated aliases array. Both bounds are
-        // enforced: at most aliases_ptrs.len() - 1 entries (the last slot is the
-        // terminator), and nothing is copied that would overrun entry_buf.
-        let max_aliases = state.aliases_ptrs.len() - 1;
-        let mut alias_count = 0usize;
-        for alias in entry.aliases.iter().take(max_aliases) {
-            if off + alias.len() + 1 > state.entry_buf.len() {
-                break;
-            }
-            let alias_ptr = unsafe { buf.add(off) } as *mut c_char;
-            unsafe {
-                std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
-                *buf.add(off + alias.len()) = 0;
-            }
-            off += alias.len() + 1;
-            state.aliases_ptrs[alias_count] = alias_ptr;
-            alias_count += 1;
-        }
-        state.aliases_ptrs[alias_count] = std::ptr::null_mut();
-
-        // Fill struct servent
-        let ptrs = buf as *mut *mut c_char;
-        unsafe {
-            *ptrs = name_ptr; // s_name
-            *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // s_aliases
-            // s_port (NBO). Swap as u16 THEN widen: `(port as c_int).to_be()` is a
-            // 32-bit swap, which turns port 1 into 0x01000000 (16777216) instead of
-            // htons(1) = 0x0100 (256). See bd-5zait2.
-            *(buf.add(16) as *mut c_int) = entry.port.to_be() as c_int;
-            *(buf.add(24) as *mut *mut c_char) = proto_ptr; // s_proto
-        }
-
-        return buf as *mut c_void;
+impl ServiceIterationLease {
+    fn acquire() -> Option<Self> {
+        with_serv_iter_state(|state| {
+            if state.busy { return None; }
+            state.busy = true;
+            Some(Self {
+                iteration: std::mem::replace(&mut state.iteration, ServiceIteration::new()),
+                buffer: std::mem::take(&mut state.buffer),
+            })
+        })
     }
 }
 
-/// `setservent` — open /etc/services for iteration.
-///
-/// Native implementation.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setservent(_stayopen: c_int) {
-    with_serv_iter_state(|state| match std::fs::File::open(SERVICES_PATH) {
-        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-        Err(_) => state.reader = None,
-    });
+impl Drop for ServiceIterationLease {
+    fn drop(&mut self) {
+        let iteration = std::mem::replace(&mut self.iteration, ServiceIteration::new());
+        let buffer = std::mem::take(&mut self.buffer);
+        with_serv_iter_state(|state| {
+            state.iteration = iteration;
+            state.buffer = buffer;
+            state.busy = false;
+        });
+    }
 }
 
-/// `endservent` — close /etc/services iteration.
-///
-/// Native implementation.
+fn files_setservent() -> c_int {
+    with_serv_iter_state(|state| state.files.rewind().map_or_else(|error| error, |()| 0))
+}
+
+fn files_endservent() {
+    with_serv_iter_state(|state| state.files.close());
+}
+
+/// Select and rewind the first available configured NSS services source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setservent(stayopen: c_int) {
+    let Some(mut lease) = ServiceIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.rewind(stayopen);
+}
+
+/// Close configured providers once public enumeration has been initialized.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endservent() {
-    with_serv_iter_state(|state| {
-        state.reader = None;
-    });
+    let Some(mut lease) = ServiceIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.end();
 }
 
-/// `getservent` — get next /etc/services entry.
-///
-/// Native implementation using thread-local iterator state.
+/// Enumerate services through the configured sources, growing owned storage
+/// on ERANGE without truncating names, protocols, or aliases.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservent() -> *mut c_void {
-    with_serv_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(SERVICES_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return std::ptr::null_mut(),
+    let Some(mut lease) = ServiceIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return std::ptr::null_mut();
+    };
+    let mut output = libc::servent {
+        s_name: std::ptr::null_mut(), s_aliases: std::ptr::null_mut(),
+        s_port: 0, s_proto: std::ptr::null_mut(),
+    };
+    let mut capacity = lease.buffer.len().max(1024);
+    loop {
+        if capacity > lease.buffer.len() {
+            let additional = capacity - lease.buffer.len();
+            if lease.buffer.try_reserve_exact(additional).is_err() {
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return std::ptr::null_mut();
             }
+            lease.buffer.resize(capacity, 0);
         }
-        unsafe { serv_iter_next(state) }
-    })
+        // SAFETY: output and the leased buffer remain live through callbacks.
+        let status = unsafe {
+            lease.iteration.next_r(&mut output, lease.buffer.as_mut_ptr().cast(), capacity)
+        };
+        if status == NSS_STATUS_SUCCESS {
+            drop(lease);
+            return with_serv_iter_state(|state| {
+                state.entry = output;
+                (&raw mut state.entry).cast()
+            });
+        }
+        if status != NSS_STATUS_TRYAGAIN || current_abi_errno() != libc::ERANGE {
+            return std::ptr::null_mut();
+        }
+        let Some(next) = capacity.checked_mul(2).filter(|&size| size <= isize::MAX as usize) else {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return std::ptr::null_mut();
+        };
+        capacity = next;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -32588,10 +32897,8 @@ pub unsafe extern "C" fn getprotoent_r(
     })
 }
 
-/// `getservent_r` — reentrant sequential service entry read.
-///
-/// Native implementation using thread-local file iterator and
-/// `frankenlibc_core::resolv::parse_services_line`.
+/// Enumerate through NSS using the caller's exact buffer. ERANGE retains the
+/// current source/record for retry; it never falls through to another source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservent_r(
     result_buf: *mut c_void,
@@ -32599,108 +32906,28 @@ pub unsafe extern "C" fn getservent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    use std::io::BufRead;
-
     if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
-    if result_buf.is_null()
-        || buf.is_null()
-        || !tracked_object_fits::<libc::servent>(result_buf.cast())
-    {
+    if buf.is_null() || !tracked_object_fits::<libc::servent>(result_buf.cast()) {
         return libc::EINVAL;
     }
-
-    with_serv_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(SERVICES_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return libc::ENOENT,
-            }
-        }
-        let reader = match state.reader.as_mut() {
-            Some(reader) => reader,
-            None => return libc::ENOENT,
-        };
-
-        loop {
-            state.line_buf.clear();
-            match reader.read_until(b'\n', &mut state.line_buf) {
-                Ok(0) => return libc::ENOENT,
-                Err(_) => return libc::ENOENT,
-                Ok(_) => {}
-            }
-
-            let entry = match frankenlibc_core::resolv::parse_services_line(&state.line_buf) {
-                Some(e) => e,
-                None => continue,
-            };
-
-            // Pack into caller-supplied buffer: name + protocol + aligned NULL alias ptr.
-            let effective_buflen = tracked_output_capacity(buf, buflen);
-            let name_end = match entry.name.len().checked_add(1) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let proto_end = match name_end
-                .checked_add(entry.protocol.len())
-                .and_then(|offset| offset.checked_add(1))
-            {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            if proto_end > effective_buflen {
-                return libc::ERANGE;
-            }
-
-            let buf_u8 = buf as *mut u8;
-
-            let name_ptr = buf;
-            unsafe {
-                std::ptr::copy_nonoverlapping(entry.name.as_ptr(), buf_u8, entry.name.len());
-                *buf_u8.add(entry.name.len()) = 0;
-            }
-
-            let proto_ptr = unsafe { buf_u8.add(name_end) } as *mut c_char;
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    entry.protocol.as_ptr(),
-                    buf_u8.add(name_end),
-                    entry.protocol.len(),
-                );
-                *buf_u8.add(name_end + entry.protocol.len()) = 0;
-            }
-
-            // Pack the real aliases after the name/proto strings, the same way
-            // fill_protoent_r does. This previously wrote a bare NULL list, so
-            // s_aliases came back empty for every entry — glibc reports e.g.
-            // discard/tcp with ["sink", "null"] (bd-5zait2).
-            let aliases_ptr = match unsafe {
-                crate::inet_abi::pack_caller_aliases(
-                    buf,
-                    effective_buflen,
-                    proto_end,
-                    &entry.aliases,
-                )
-            } {
-                Some(p) => p,
-                None => return libc::ERANGE,
-            };
-
-            let ent = result_buf.cast::<libc::servent>();
-            unsafe {
-                (*ent).s_name = name_ptr;
-                (*ent).s_aliases = aliases_ptr;
-                // Swap as u16 THEN widen; see the note in `serv_iter_next` (bd-5zait2).
-                (*ent).s_port = entry.port.to_be() as c_int;
-                (*ent).s_proto = proto_ptr;
-            }
-
-            unsafe { *result = result_buf };
-            return 0;
-        }
-    })
+    let Some(mut lease) = ServiceIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return libc::EDEADLK;
+    };
+    let capacity = tracked_output_capacity(buf, buflen);
+    // SAFETY: the complete caller objects are valid and no TLS borrow survives.
+    let status = unsafe { lease.iteration.next_r(result_buf.cast(), buf, capacity) };
+    if status == NSS_STATUS_SUCCESS {
+        unsafe { *result = result_buf };
+        0
+    } else if status == NSS_STATUS_TRYAGAIN {
+        current_abi_errno()
+    } else {
+        libc::ENOENT
+    }
 }
 
 // ===========================================================================

@@ -156,6 +156,72 @@ enum nss_status FN(getservbyport_r)(int port, const char *proto,
                       ntohs((uint16_t)port), port == htons(4345), out, buf, len, errnop);
 }
 
+/* Sequential services exercise the same public module ABI as keyed lookups.
+ * The second entry requires buffer growth; a failed attempt must not advance. */
+static size_t service_enum_cursor;
+static int (*service_enum_reentry)(void);
+static int service_enum_callback_ran;
+
+void FN(set_service_enum_reentry)(int (*callback)(void)) {
+  service_enum_reentry = callback;
+}
+
+static enum nss_status service_enum_status(const char *phase, int *error) {
+  const char *scenario = getenv("FLTEST_SERVICE_ENUM");
+  if (!scenario || strcmp(STR(SERVICE), "fltest")) return NSS_STATUS_SUCCESS;
+  if (!strcmp(phase, "set")) {
+    if (!strcmp(scenario, "set-unavail")) { *error = EIO; return NSS_STATUS_UNAVAIL; }
+    if (!strcmp(scenario, "set-again")) { *error = EAGAIN; return NSS_STATUS_TRYAGAIN; }
+    if (!strcmp(scenario, "set-notfound")) return NSS_STATUS_NOTFOUND;
+    if (!strcmp(scenario, "set-return")) return NSS_STATUS_RETURN;
+  } else {
+    if (!strcmp(scenario, "get-unavail")) { *error = EIO; return NSS_STATUS_UNAVAIL; }
+    if (!strcmp(scenario, "get-again")) { *error = EAGAIN; return NSS_STATUS_TRYAGAIN; }
+    if (!strcmp(scenario, "get-quiet-again")) return NSS_STATUS_TRYAGAIN;
+    if (!strcmp(scenario, "get-notfound")) return NSS_STATUS_NOTFOUND;
+    if (!strcmp(scenario, "get-return")) return NSS_STATUS_RETURN;
+  }
+  return NSS_STATUS_SUCCESS;
+}
+
+#ifndef NO_SERVICE_SET
+enum nss_status FN(setservent)(int stayopen) {
+  (void)stayopen;
+  trace("setservent", "");
+  service_enum_cursor = 0;
+  service_enum_callback_ran = 0;
+  return service_enum_status("set", &errno);
+}
+
+#endif
+
+#ifndef NO_SERVICE_END
+enum nss_status FN(endservent)(void) {
+  trace("endservent", "");
+  service_enum_cursor = 0;
+  return NSS_STATUS_SUCCESS;
+}
+
+#endif
+
+enum nss_status FN(getservent_r)(struct servent *out, char *buf, size_t len,
+                                int *errnop) {
+  trace("getservent_r", "");
+  enum nss_status status = service_enum_status("get", errnop);
+  if (status != NSS_STATUS_SUCCESS) return status;
+  if (service_enum_cursor >= 2) return NSS_STATUS_NOTFOUND;
+  if (service_enum_reentry && !service_enum_callback_ran) {
+    service_enum_callback_ran = 1;
+    if (service_enum_reentry()) { *errnop = EIO; return NSS_STATUS_UNAVAIL; }
+  }
+  int large = service_enum_cursor != 0;
+  status = fill_service(large ? STR(SERVICE) "-enum-large" : STR(SERVICE) "-enum-small",
+                        large ? "udp" : "tcp", large ? 4502 : 4501,
+                        large, out, buf, len, errnop);
+  if (status == NSS_STATUS_SUCCESS) ++service_enum_cursor;
+  return status;
+}
+
 static const unsigned char host_v4[2][4] = {
     {192, 0, 2, 41}, {192, 0, 2, 42},
 };

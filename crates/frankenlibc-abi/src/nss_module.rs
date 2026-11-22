@@ -1052,6 +1052,50 @@ pub(crate) unsafe fn service_entry_r(
     unsafe { query.answer(out, buf, len) }
 }
 
+/// Resolved enumeration callback. Modules remain loaded in the process cache;
+/// invoking it requires no loader/configuration lock or thread-storage borrow.
+pub(crate) struct ServiceEnumeration {
+    next: GetEntFn<libc::servent>,
+}
+
+impl ServiceEnumeration {
+    /// # Safety
+    /// The output object and exact caller buffer are writable for the callback.
+    pub(crate) unsafe fn next_r(
+        &self,
+        output: *mut libc::servent,
+        buffer: *mut c_char,
+        capacity: usize,
+    ) -> c_int {
+        // Enumeration preserves the module's errno, including untouched
+        // success/miss slots, unlike the keyed services lookup adapter.
+        let error = unsafe { crate::errno_abi::__errno_location() };
+        unsafe { (self.next)(output, buffer, capacity, error) }
+    }
+}
+
+pub(crate) fn service_enumeration(service: &[u8]) -> Option<ServiceEnumeration> {
+    let address = module_function(service, "getservent_r")?;
+    // SAFETY: the resolved function has the documented NSS getservent_r ABI.
+    Some(ServiceEnumeration { next: unsafe { core::mem::transmute(address) } })
+}
+
+pub(crate) fn service_setent(service: &[u8], stayopen: c_int) -> Option<c_int> {
+    let address = module_function(service, "setservent")?;
+    // SAFETY: NSS setservent accepts one int and returns an nss_status.
+    let function: SetEntFn = unsafe { core::mem::transmute(address) };
+    Some(unsafe { function(stayopen) })
+}
+
+pub(crate) fn service_endent(service: &[u8]) -> Option<c_int> {
+    // GNU enumeration cleanup may visit a configured module before any get
+    // callback has loaded it. Preserve absence separately from callback status.
+    let address = module_function(service, "endservent")?;
+    // SAFETY: NSS endservent takes no arguments and returns an nss_status.
+    let function: EndEntFn = unsafe { core::mem::transmute(address) };
+    Some(unsafe { function() })
+}
+
 /// Every pointer returned by a hosts module is copied before its scratch
 /// buffer is released. The canonical-name extension is distinct from h_name.
 pub(crate) struct HostEntry {

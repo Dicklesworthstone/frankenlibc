@@ -18,6 +18,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
       - 'crates/frankenlibc-abi/src/stdlib_abi.rs'
@@ -36,6 +37,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
       - 'tests/integration/fixture_nss.c'
+      - 'tests/integration/fixture_nss_module_lib.c'
       - 'tests/integration/fixture_addrconfig.c'
       - 'tests/integration/fixture_native_dns_transport.c'
       - 'tests/integration/native_dns_fixture.py'
@@ -46,6 +48,48 @@ permissions:
   contents: read
 
 jobs:
+  services-enumeration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cache: [default, owned]
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Exercise service modules, cursor ownership, and buffer retries
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          # The tests compare independent GNU and candidate child processes.
+          # Candidate scenarios run in both strict and hardened modes.
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test services_enumeration_ \
+            -- --nocapture --test-threads=1 2>&1 | tee artifacts/services-enumeration/tests.log
+          grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
+            artifacts/services-enumeration/tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: services-enumeration-${{ matrix.cache }}
+          path: artifacts/services-enumeration/
+
   network-database:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

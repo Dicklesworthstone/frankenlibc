@@ -2418,3 +2418,536 @@ fn netgroup_modules_callback_reentry() {
         run_child(child, &format!("netgroup reentry {mode}"));
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+struct EnumeratedService {
+    name: Vec<u8>,
+    protocol: Vec<u8>,
+    port: u16,
+    aliases: Vec<Vec<u8>>,
+}
+
+struct ServiceEnumerationApi {
+    set: unsafe extern "C" fn(c_int),
+    get: unsafe extern "C" fn() -> *mut c_void,
+    get_r: unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int,
+    end: unsafe extern "C" fn(),
+    error: unsafe extern "C" fn() -> *mut c_int,
+    files_set: unsafe extern "C" fn(c_int) -> c_int,
+    files_get: unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut c_int) -> c_int,
+    files_end: unsafe extern "C" fn() -> c_int,
+}
+
+fn service_enumeration_api(host: bool) -> ServiceEnumerationApi {
+    unsafe extern "C" {
+        #[link_name = "setservent"]
+        fn host_set(stayopen: c_int);
+        #[link_name = "getservent"]
+        fn host_get() -> *mut c_void;
+        #[link_name = "getservent_r"]
+        fn host_get_r(out: *mut c_void, buf: *mut c_char, len: usize, result: *mut *mut c_void) -> c_int;
+        #[link_name = "endservent"]
+        fn host_end();
+        #[link_name = "_nss_files_setservent"]
+        fn host_files_set(stayopen: c_int) -> c_int;
+        #[link_name = "_nss_files_getservent_r"]
+        fn host_files_get(out: *mut c_void, buf: *mut c_char, len: usize, error: *mut c_int) -> c_int;
+        #[link_name = "_nss_files_endservent"]
+        fn host_files_end() -> c_int;
+    }
+    use frankenlibc_abi::{errno_abi as e, unistd_abi as u};
+    assert_ne!(host_get as *const (), u::getservent as *const ());
+    assert_ne!(host_get_r as *const (), u::getservent_r as *const ());
+    if host {
+        ServiceEnumerationApi {
+            set: host_set, get: host_get, get_r: host_get_r, end: host_end,
+            error: libc::__errno_location,
+            files_set: host_files_set, files_get: host_files_get, files_end: host_files_end,
+        }
+    } else {
+        ServiceEnumerationApi {
+            set: u::setservent, get: u::getservent, get_r: u::getservent_r,
+            end: u::endservent, error: e::__errno_location,
+            files_set: u::_nss_files_setservent, files_get: u::_nss_files_getservent_r,
+            files_end: u::_nss_files_endservent,
+        }
+    }
+}
+
+unsafe fn enumerated_service(
+    pointer: *mut c_void,
+    bounds: Option<(usize, usize)>,
+) -> Option<EnumeratedService> {
+    if pointer.is_null() { return None; }
+    // SAFETY: the selected API published a complete servent on success.
+    let entry = unsafe { &*pointer.cast::<libc::servent>() };
+    let string = |pointer: *const c_char| {
+        assert!(!pointer.is_null());
+        if let Some((start, end)) = bounds {
+            let address = pointer as usize;
+            assert!((start..end).contains(&address), "service string escaped caller buffer");
+            // SAFETY: bound every read before scanning for its terminator.
+            let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), end - address) };
+            let length = bytes.iter().position(|&byte| byte == 0).expect("unterminated service string");
+            bytes[..length].to_vec()
+        } else {
+            // SAFETY: the non-reentrant API owns terminated output strings.
+            unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec()
+        }
+    };
+    let mut aliases = Vec::new();
+    assert!(!entry.s_aliases.is_null());
+    for index in 0..4096 {
+        let slot = unsafe { entry.s_aliases.add(index) };
+        if let Some((start, end)) = bounds {
+            assert!((slot as usize) >= start && (slot as usize) + std::mem::size_of::<usize>() <= end);
+            assert_eq!((slot as usize) % std::mem::align_of::<usize>(), 0);
+        }
+        // SAFETY: the caller-buffer case was bounded above; non-reentrant
+        // output provides a terminated pointer table by the C API contract.
+        let alias = unsafe { *slot };
+        if alias.is_null() {
+            return Some(EnumeratedService {
+                name: string(entry.s_name), protocol: string(entry.s_proto),
+                port: u16::from_be(entry.s_port as u16), aliases,
+            });
+        }
+        aliases.push(string(alias));
+    }
+    panic!("service alias table was not terminated");
+}
+
+fn service_enumeration_read(
+    api: &ServiceEnumerationApi,
+    capacity: Option<usize>,
+    offset: usize,
+) -> (c_int, c_int, Option<EnumeratedService>) {
+    if let Some(capacity) = capacity {
+        let mut storage = vec![0x5au8; 16384 + 16];
+        assert!(capacity + offset <= storage.len());
+        let mut output: libc::servent = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::null_mut();
+        let buffer = unsafe { storage.as_mut_ptr().add(offset).cast::<c_char>() };
+        unsafe { *(api.error)() = 619 };
+        let rc = unsafe { (api.get_r)((&raw mut output).cast(), buffer, capacity, &mut result) };
+        let error = unsafe { *(api.error)() };
+        assert!(storage[capacity + offset..].iter().all(|&byte| byte == 0x5a));
+        if !result.is_null() {
+            assert_eq!(result, (&raw mut output).cast());
+            assert_eq!(rc, 0);
+        }
+        let observed = unsafe {
+            enumerated_service(result, Some((buffer as usize, buffer as usize + capacity)))
+        };
+        (rc, error, observed)
+    } else {
+        unsafe { *(api.error)() = 619 };
+        let result = unsafe { (api.get)() };
+        let error = unsafe { *(api.error)() };
+        (0, error, unsafe { enumerated_service(result, None) })
+    }
+}
+
+fn service_enumeration_transcript(api: &ServiceEnumerationApi, scenario: &str) -> String {
+    let mut output = String::new();
+    unsafe { (api.end)() };
+    // The first access intentionally has no setservent: GNU calls the first
+    // get callback directly, but calls set when traversing to a later source.
+    for capacity in [0, 1, 7] {
+        writeln!(output, "implicit {capacity} {:?}", service_enumeration_read(api, Some(capacity), 1)).unwrap();
+    }
+    for index in 0..6 {
+        let record = service_enumeration_read(api, Some(8192), index % 2);
+        let done = record.2.is_none();
+        writeln!(output, "implicit record {index} {record:?}").unwrap();
+        if done { break; }
+    }
+    unsafe { (api.end)(); (api.set)(1) };
+    for index in 0..6 {
+        let record = service_enumeration_read(api, None, 0);
+        let done = record.2.is_none();
+        writeln!(output, "owned record {index} {record:?}").unwrap();
+        if done { break; }
+    }
+    unsafe { (api.set)(0) };
+    writeln!(output, "rewind {:?}", service_enumeration_read(api, Some(1), 0)).unwrap();
+    writeln!(output, "retry {:?}", service_enumeration_read(api, Some(8192), 0)).unwrap();
+    unsafe { (api.end)() };
+
+    // Cleanup must reach configured later modules even when enumeration used
+    // only the first source, and a repeated end repeats the provider callbacks.
+    unsafe { (api.set)(0) };
+    writeln!(output, "early end {:?}", service_enumeration_read(api, Some(8192), 0)).unwrap();
+    unsafe { (api.end)(); (api.end)() };
+    writeln!(output, "after repeated end {:?}", service_enumeration_read(api, Some(8192), 1)).unwrap();
+    unsafe { (api.end)() };
+
+    if scenario == "mixed-files" {
+        // Public files traversal and direct provider calls must share their
+        // position, including a pending short-buffer record.
+        unsafe { (api.set)(0) };
+        writeln!(output, "mixed first {:?}", service_enumeration_read(api, Some(8192), 0)).unwrap();
+        let mut record: libc::servent = unsafe { std::mem::zeroed() };
+        let mut storage = [0 as c_char; 8192];
+        let mut error = 717;
+        unsafe { *(api.error)() = 619 };
+        let rc = unsafe {
+            (api.files_get)((&raw mut record).cast(), storage.as_mut_ptr(), 1, &mut error)
+        };
+        writeln!(output, "mixed range {rc} {error} {}", unsafe { *(api.error)() }).unwrap();
+        writeln!(output, "mixed retry {:?}", service_enumeration_read(api, Some(8192), 0)).unwrap();
+        error = 717;
+        unsafe { *(api.error)() = 619 };
+        let rc = unsafe {
+            (api.files_get)((&raw mut record).cast(), storage.as_mut_ptr(), storage.len(), &mut error)
+        };
+        let observed = if rc == 1 {
+            unsafe {
+                enumerated_service(
+                    (&raw mut record).cast(),
+                    Some((storage.as_ptr() as usize, storage.as_ptr() as usize + storage.len())),
+                )
+            }
+        } else { None };
+        writeln!(output, "mixed direct {rc} {error} {observed:?}").unwrap();
+        unsafe { (api.files_end)() };
+        writeln!(output, "mixed restart {:?}", service_enumeration_read(api, Some(8192), 0)).unwrap();
+        unsafe { (api.end)() };
+    }
+    output
+}
+
+#[test]
+fn services_enumeration_matches_glibc_module_policy() {
+    const TEST: &str = "services_enumeration_matches_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_SERVICE_PROVIDER").unwrap() == "host";
+        if host {
+            unsafe extern "C" {
+                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+            }
+            let sources = CString::new(std::env::var("FLTEST_SERVICE_SOURCES").unwrap()).unwrap();
+            assert_eq!(unsafe { __nss_configure_lookup(c"services".as_ptr(), sources.as_ptr()) }, 0);
+        }
+        unsafe { libc::alarm(15) };
+        let scenario = std::env::var("FLTEST_SERVICE_ENUM").unwrap();
+        let transcript = service_enumeration_transcript(&service_enumeration_api(host), &scenario);
+        unsafe { libc::alarm(0) };
+        println!("SERVICE_ENUM_BEGIN\n{transcript}SERVICE_ENUM_END");
+        return;
+    }
+    let dir = scratch_dir("service-enumeration");
+    build_modules(&dir);
+    // This provider deliberately has getservent_r but neither lifecycle
+    // callback. Missing symbols must not be treated as callback UNAVAIL.
+    let module = Command::new("cc")
+        .args(["-O2", "-fPIC", "-shared", "-DSERVICE=fltestgetonly",
+            "-DNO_SERVICE_SET", "-DNO_SERVICE_END"])
+        .arg(repo_root().join("tests/integration/fixture_nss_module_lib.c"))
+        .arg("-o").arg(dir.join("libnss_fltestgetonly.so.2"))
+        .output().expect("build get-only service enumeration module");
+    assert!(module.status.success(), "get-only module build failed: {}",
+        String::from_utf8_lossy(&module.stderr));
+    let cases = [
+        ("fltest", "normal"),
+        ("fltest fltestnoig", "normal"),
+        ("fltest [SUCCESS=continue] fltestnoig", "normal"),
+        ("fltest [SUCCESS=merge] fltestnoig", "normal"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "normal"),
+        ("fltest [NOTFOUND=return] fltestnoig", "normal"),
+        ("fltest [SUCCESS=return NOTFOUND=return UNAVAIL=return TRYAGAIN=return] fltestnoig", "normal"),
+        ("fltest [UNAVAIL=return] fltestnoig", "get-unavail"),
+        ("fltest [UNAVAIL=continue] fltestnoig", "get-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-quiet-again"),
+        ("fltest fltestnoig", "get-return"),
+        ("fltest [!SUCCESS=continue] fltestnoig", "get-return"),
+        ("fltest fltestnoig", "set-unavail"),
+        ("fltest [UNAVAIL=return] fltestnoig", "set-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "set-again"),
+        ("fltest [NOTFOUND=return] fltestnoig", "set-notfound"),
+        ("fltest fltestnoig", "set-return"),
+        ("flmissing fltest", "normal"),
+        ("flmissing fltest", "set-unavail"),
+        ("flmissing [UNAVAIL=return] files", "normal"),
+        ("fltestgetonly", "normal"),
+        ("fltestgetonly fltest", "normal"),
+        ("fltestgetonly [UNAVAIL=return] fltest", "normal"),
+        ("fltest fltestgetonly fltestnoig", "normal"),
+        ("fltest flmissing [UNAVAIL=return] fltestnoig", "normal"),
+        ("files", "mixed-files"),
+    ];
+    let mut compared = 0;
+    for (index, (sources, scenario)) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("service-enum-{index}-{provider}-{mode}");
+            let mut child = host_module_child(TEST, &dir, &format!("services: {sources}\n"), &label);
+            child.env("FLTEST_SERVICE_PROVIDER", provider)
+                .env("FLTEST_SERVICE_SOURCES", sources)
+                .env("FLTEST_SERVICE_ENUM", scenario)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode);
+            let result = run_child(child, &label);
+            let stdout = std::str::from_utf8(&result.stdout).unwrap();
+            let transcript = stdout.split_once("SERVICE_ENUM_BEGIN\n")
+                .and_then(|(_, rest)| rest.split_once("SERVICE_ENUM_END"))
+                .map(|(text, _)| text).expect("nonempty enumeration transcript").to_owned();
+            assert!(transcript.lines().count() >= 6);
+            if sources == "fltest" {
+                assert!(transcript.contains("4501") && transcript.contains("4502"),
+                    "module's small and large entries must both be observed");
+                assert!(String::from_utf8_lossy(&result.stderr).contains("fltest:getservent_r("));
+            }
+            let cleanup = String::from_utf8_lossy(&result.stderr).lines()
+                .filter(|line| line.contains(":endservent("))
+                .map(str::to_owned).collect::<Vec<_>>();
+            if sources == "fltest fltestnoig" && scenario == "normal" {
+                assert!(cleanup.iter().filter(|line| line.contains("fltestnoig:endservent(")).count() >= 4,
+                    "early and repeated cleanup must reach the second configured module");
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(&(transcript, cleanup), expected,
+                    "{label}: sources={sources}, scenario={scenario}");
+                compared += 1;
+            } else { oracle = Some((transcript, cleanup)); }
+        }
+    }
+    assert_eq!(compared, 56);
+    eprintln!("services enumeration: {compared} independent GNU/candidate process comparisons");
+}
+
+
+fn service_enumeration_native_isolation(first: &EnumeratedService) {
+    use frankenlibc_abi::{pthread_abi, unistd_abi as u};
+
+    unsafe extern "C" fn enumerate(argument: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        // SAFETY: the creator keeps these addresses alive through join. Each
+        // native result is inspected before its own state is closed or freed.
+        unsafe {
+            let creator = &*argument.cast::<[usize; 2]>();
+            let first = u::getservent().cast::<libc::servent>();
+            if first.is_null() || first as usize == creator[0] {
+                return 2usize as *mut c_void;
+            }
+            if (*first).s_name as usize == creator[1] {
+                return 3usize as *mut c_void;
+            }
+            let name = CStr::from_ptr((*first).s_name).to_bytes();
+            if name.len() != 1800 || !name.iter().all(|byte| *byte == b'n') {
+                return 4usize as *mut c_void;
+            }
+            if (*first).s_aliases.is_null() {
+                return 5usize as *mut c_void;
+            }
+            for index in 0..24 {
+                if (*(*first).s_aliases.add(index)).is_null() {
+                    return 6usize as *mut c_void;
+                }
+            }
+            if !(*(*first).s_aliases.add(24)).is_null() {
+                return 7usize as *mut c_void;
+            }
+            let second = u::getservent().cast::<libc::servent>();
+            if second.is_null() || CStr::from_ptr((*second).s_name).to_bytes() != b"second" {
+                return 8usize as *mut c_void;
+            }
+            if !u::getservent().is_null() {
+                return 9usize as *mut c_void;
+            }
+            u::endservent();
+        }
+        std::ptr::null_mut()
+    }
+
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+
+    // Preserve the creator's stable answer while the next files record is
+    // pending after ERANGE. Native workers must start their own cursor at zero.
+    let api = service_enumeration_api(false);
+    unsafe { (api.set)(0) };
+    let creator = unsafe { u::getservent().cast::<libc::servent>() };
+    assert!(!creator.is_null());
+    assert_eq!(unsafe { enumerated_service(creator.cast(), None) }.as_ref(), Some(first));
+    let mut addresses = [creator as usize, unsafe { (*creator).s_name } as usize];
+    let retry = service_enumeration_read(&api, Some(16), 1);
+    assert_eq!((retry.0, retry.1, retry.2), (libc::ERANGE, libc::ERANGE, None));
+    let _restore = RestoreBackend(pthread_abi::pthread_threading_swap_force_native_for_tests());
+    for _ in 0..3 {
+        let mut thread = 0;
+        assert_eq!(unsafe {
+            pthread_abi::pthread_create(
+                &mut thread, std::ptr::null(), Some(enumerate), (&raw mut addresses).cast(),
+            )
+        }, 0);
+        let mut result = std::ptr::null_mut();
+        assert_eq!(unsafe { pthread_abi::pthread_join(thread, &mut result) }, 0);
+        assert_eq!(result as usize, 0);
+        assert_eq!(
+            unsafe { enumerated_service(creator.cast(), None) }.as_ref(), Some(first),
+            "native enumeration must preserve the creator's published strings and alias table",
+        );
+    }
+    let second = unsafe { u::getservent().cast::<libc::servent>() };
+    assert_eq!(second, creator, "creator's answer storage must not migrate");
+    assert_eq!(unsafe { CStr::from_ptr((*second).s_name) }.to_bytes(), b"second");
+    assert!(unsafe { u::getservent() }.is_null());
+    unsafe { u::endservent() };
+}
+
+#[test]
+fn services_enumeration_files_retry_and_provider_isolation() {
+    const TEST: &str = "services_enumeration_files_retry_and_provider_isolation";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        use frankenlibc_abi::glibc_internal_abi as g;
+        unsafe { libc::alarm(30) };
+        let api = service_enumeration_api(false);
+        let mut raw: libc::servent = unsafe { std::mem::zeroed() };
+        let mut storage = vec![0 as c_char; 16384];
+        let mut error = 717;
+        assert_eq!(unsafe { (api.files_set)(0) }, 1);
+        assert_eq!(unsafe {
+            (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), storage.len(), &mut error)
+        }, 1);
+        assert_eq!(unsafe { enumerated_service((&raw mut raw).cast(), None) }.unwrap().name.len(), 1800);
+        // A public end before the first public set/get must not close a
+        // cursor opened only through the explicit files-provider interface.
+        unsafe { (api.end)() };
+        assert_eq!(unsafe {
+            (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), storage.len(), &mut error)
+        }, 1);
+        assert_eq!(unsafe { enumerated_service((&raw mut raw).cast(), None) }.unwrap().name, b"second");
+        unsafe { (api.files_end)(); (api.set)(0) };
+        let module = service_enumeration_read(&api, Some(8192), 0).2.unwrap();
+        assert_eq!(module.name, b"fltest-enum-small");
+        assert_eq!(unsafe { (api.files_set)(0) }, 1);
+        error = 717;
+        assert_eq!(unsafe { (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), 1, &mut error) }, -2);
+        assert_eq!(error, libc::ERANGE);
+        let module = service_enumeration_read(&api, None, 0).2.unwrap();
+        assert_eq!(module.name, b"fltest-enum-large");
+        assert_eq!(module.aliases[2].len(), 3072);
+        error = 717;
+        assert_eq!(unsafe {
+            (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), storage.len(), &mut error)
+        }, 1);
+        let first = unsafe { enumerated_service((&raw mut raw).cast(), None) }.unwrap();
+        assert_eq!(first.name.len(), 1800);
+        assert_eq!(first.aliases.len(), 24);
+        assert_eq!(error, 717);
+        unsafe { (api.end)() };
+        assert_eq!(unsafe { g::__nss_configure_lookup(c"services".as_ptr(), c"files".as_ptr()) }, 0);
+        unsafe { (api.set)(0) };
+        let small = service_enumeration_read(&api, Some(1), 1);
+        assert_eq!((small.0, small.1, small.2), (libc::ERANGE, libc::ERANGE, None));
+        assert_eq!(unsafe {
+            (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), storage.len(), &mut error)
+        }, 1);
+        assert_eq!(unsafe { enumerated_service((&raw mut raw).cast(), None) }.unwrap(), first);
+        let next = service_enumeration_read(&api, Some(8192), 0).2.unwrap();
+        assert_eq!(next.name, b"second");
+        assert!(service_enumeration_read(&api, Some(8192), 0).2.is_none());
+        unsafe { (api.set)(0) };
+        assert_eq!(service_enumeration_read(&api, None, 0).2.unwrap(), first);
+        unsafe { (api.end)(); (api.files_end)() };
+        service_enumeration_native_isolation(&first);
+
+        // An ERANGE retry belongs to the selected file. Replacing the selected
+        // path must discard that old pending record before the next read.
+        unsafe { (api.set)(0) };
+        let pending = service_enumeration_read(&api, Some(16), 0);
+        assert_eq!((pending.0, pending.1, pending.2), (libc::ERANGE, libc::ERANGE, None));
+        let replacement = std::env::var_os("FLTEST_SERVICES_REPLACEMENT").unwrap();
+        unsafe { std::env::set_var("FRANKENLIBC_SERVICES_PATH", replacement) };
+        let changed = service_enumeration_read(&api, Some(8192), 1).2.unwrap();
+        assert_eq!(changed.name, b"changed");
+        assert_eq!(changed.port, 4503);
+        assert_eq!(changed.aliases, vec![b"replacement-alias".to_vec()]);
+        assert!(service_enumeration_read(&api, Some(8192), 0).2.is_none());
+        unsafe { (api.end)(); (api.files_end)(); libc::alarm(0) };
+        return;
+    }
+    let dir = scratch_dir("service-files-retry");
+    build_modules(&dir);
+    let path = dir.join("services");
+    let aliases = (0..24).map(|index| format!("alias{index}")).collect::<Vec<_>>().join(" ");
+    let first = format!("{} 4501/tcp {aliases}\n", "n".repeat(1800));
+    std::fs::write(&path, format!("# comment\nbad record\n{first}second 4502/udp alias-last\n")).unwrap();
+    let replacement = dir.join("services-replacement");
+    std::fs::write(&replacement, "changed 4503/tcp replacement-alias\n").unwrap();
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(TEST, &dir, "services: fltest\n", mode);
+        child.env("FRANKENLIBC_SERVICES_PATH", &path)
+            .env("FLTEST_SERVICES_REPLACEMENT", &replacement)
+            .env("FRANKENLIBC_MODE", mode);
+        run_child(child, &format!("files service enumeration {mode}"));
+    }
+}
+
+static SERVICE_ENUM_REENTRY_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+unsafe extern "C" fn service_enumeration_reentry() -> c_int {
+    use frankenlibc_abi::{errno_abi as e, resolv_abi as r, unistd_abi as u};
+    SERVICE_ENUM_REENTRY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut output: libc::servent = unsafe { std::mem::zeroed() };
+    let mut storage = [0 as c_char; 1024];
+    let mut result = std::ptr::null_mut();
+    unsafe {
+        u::setservent(0);
+        if *e::__errno_location() != libc::EDEADLK { return 1; }
+        if !u::getservent().is_null() || *e::__errno_location() != libc::EDEADLK { return 2; }
+        if u::getservent_r((&raw mut output).cast(), storage.as_mut_ptr(), storage.len(), &mut result)
+            != libc::EDEADLK || !result.is_null()
+        { return 3; }
+        u::endservent();
+        if *e::__errno_location() != libc::EDEADLK { return 4; }
+        let other = r::getservbyname(c"http".as_ptr(), c"tcp".as_ptr()).cast::<libc::servent>();
+        if other.is_null() || CStr::from_ptr((*other).s_name).to_bytes() != b"module-http" { return 5; }
+    }
+    0
+}
+
+#[test]
+fn services_enumeration_callback_reentry() {
+    const TEST: &str = "services_enumeration_callback_reentry";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        unsafe {
+            libc::alarm(15);
+            let handle = libc::dlopen(c"libnss_fltest.so.2".as_ptr(), libc::RTLD_NOW);
+            assert!(!handle.is_null());
+            let symbol = libc::dlsym(handle, c"_nss_fltest_set_service_enum_reentry".as_ptr());
+            assert!(!symbol.is_null());
+            let install: unsafe extern "C" fn(Option<unsafe extern "C" fn() -> c_int>) =
+                std::mem::transmute(symbol);
+            install(Some(service_enumeration_reentry));
+            let api = service_enumeration_api(false);
+            (api.set)(0);
+            assert_eq!(service_enumeration_read(&api, None, 0).2.unwrap().name, b"fltest-enum-small");
+            assert_eq!(service_enumeration_read(&api, None, 0).2.unwrap().name, b"fltest-enum-large");
+            assert!(service_enumeration_read(&api, None, 0).2.is_none());
+            assert_eq!(SERVICE_ENUM_REENTRY_CALLS.load(std::sync::atomic::Ordering::Relaxed), 1);
+            (api.end)();
+            install(None);
+            libc::dlclose(handle);
+            libc::alarm(0);
+        }
+        return;
+    }
+    let dir = scratch_dir("service-enum-reentry");
+    build_modules(&dir);
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(TEST, &dir, "services: fltest\n", mode);
+        child.env("FRANKENLIBC_MODE", mode);
+        run_child(child, &format!("service enumeration callback {mode}"));
+    }
+}
