@@ -5,6 +5,7 @@
 #endif
 #include <atomic>
 #include <dlfcn.h>
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdint.h>
@@ -135,13 +136,69 @@ static void *worker(void *) {
     return (void *)(uintptr_t)17;
 }
 
+static bool prepare_runtime_pin_retry(bool consumed, bool native) {
+    // Save the complete error text before exercising the first native create.
+    // A second identical failure lets both pending and already-returned error
+    // cases compare the original message without relying on locale wording.
+    const char *missing = "/proc/self/fd/-1";
+    char expected_error[512];
+    (void)dlerror();
+    if (dlopen(missing, RTLD_NOW)) return false;
+    const char *sample = dlerror();
+    if (!sample || !strstr(sample, missing) ||
+        strlen(sample) >= sizeof(expected_error))
+        return false;
+    memcpy(expected_error, sample, strlen(sample) + 1);
+    if (dlerror() != nullptr) return false;
+
+    if (dlopen(missing, RTLD_NOW)) return false;
+    const char *retained = consumed ? dlerror() : nullptr;
+    if (consumed && (!retained || strcmp(retained, expected_error)))
+        return false;
+
+    // This first worker uses executable callbacks, which remain valid even
+    // when retaining the creator's error prevents a runtime-image pin.
+    errno = EDOM;
+    pthread_t first;
+    int created = pthread_create(&first, nullptr, worker, nullptr);
+    bool errno_preserved = errno == EDOM;
+    if (created) return false;
+    void *result = nullptr;
+    if (pthread_join(first, &result)) return false;
+    if (!retained) retained = dlerror();
+    bool ok = errno_preserved && retained &&
+              strcmp(retained, expected_error) == 0 &&
+              result == (void *)(uintptr_t)17 &&
+              !registration_failed.load() && !wrong_thread.load() &&
+              !creator_callbacks.load() && event_count.load() == 3 &&
+              events[0] == 2 && events[1] == 3 && events[2] == 1 &&
+              worker_tid != creator_tid &&
+              ((worker_tp == creator_tp) == native);
+    if (!ok) return false;
+
+    // A normal successful lookup is followed by an explicit public dlerror
+    // call. That next dlerror call retires the borrowed message even when it
+    // returns NULL, allowing the following native create to retry the pin.
+    // Do not dereference the previous error pointer after this lookup.
+    if (!dlsym(RTLD_DEFAULT, "__cxa_finalize") || dlerror() != nullptr)
+        return false;
+
+    ready.store(0);
+    release_worker.store(0);
+    event_count.store(0);
+    memset(events, 0, sizeof(events));
+    return true;
+}
+
 int main(int argc, char **argv) {
     exit_kind = argc >= 2 ? argv[1] : "return";
     bool native_module = !strcmp(exit_kind, "native-dso");
     bool host_owner = !strcmp(exit_kind, "host-owner");
     bool host_provider = !strcmp(exit_kind, "host-provider");
     bool use_module = native_module || host_owner || host_provider;
-    bool runtime_callback = !strcmp(exit_kind, "runtime-callback");
+    bool runtime_retry = !strcmp(exit_kind, "runtime-retry-pending") ||
+                         !strcmp(exit_kind, "runtime-retry-consumed");
+    bool runtime_callback = !strcmp(exit_kind, "runtime-callback") || runtime_retry;
     const char *native_setting = getenv("FRANKENLIBC_THREAD_NATIVE");
     bool native = getenv("FRANKENLIBC_TEST_LIBRARY") != nullptr &&
                   native_setting && !strcmp(native_setting, "1");
@@ -162,6 +219,11 @@ int main(int argc, char **argv) {
     creator_tid = syscall(SYS_gettid);
     creator_tp = (uintptr_t)__builtin_thread_pointer();
     if (__cxa_thread_atexit_impl(creator_callback, nullptr, __dso_handle)) return 3;
+    if (runtime_retry &&
+        !prepare_runtime_pin_retry(!strcmp(exit_kind, "runtime-retry-consumed"), native)) {
+        fprintf(stderr, "runtime pin retry precondition failed: %s\n", exit_kind);
+        return 18;
+    }
     if (runtime_callback) {
         check_provider("__cxa_finalize");
         if (__cxa_atexit(record, (void *)(uintptr_t)6, &runtime_owner_token)) return 15;

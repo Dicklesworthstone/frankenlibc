@@ -85,13 +85,29 @@ impl ProcessImage {
 
 struct ProcessTlsOwners {
     main: Option<ProcessImage>,
-    runtime: Option<ProcessImage>,
+    runtime: OnceLock<RuntimeTlsOwner>,
+}
+
+struct RuntimeTlsOwner {
+    image: ProcessImage,
     // Deliberately retained for the process lifetime: native thread entry,
     // teardown and queued runtime callbacks must all remain executable.
     _runtime_pin: usize,
 }
 
 static PROCESS_TLS_OWNERS: OnceLock<ProcessTlsOwners> = OnceLock::new();
+
+#[cfg(not(feature = "standalone"))]
+type HostDlclose = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+#[cfg(not(feature = "standalone"))]
+thread_local! {
+    // Only hosted creators access this cell. Loader callbacks may reenter
+    // pthread_create; they must not recursively resolve and pin the runtime.
+    static PREPARING_RUNTIME_OWNER: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
 
 fn executable_image() -> Option<ProcessImage> {
     // The startup auxv cache is seeded from the real kernel vector. This runs
@@ -118,7 +134,7 @@ fn executable_image() -> Option<ProcessImage> {
 }
 
 #[cfg(not(feature = "standalone"))]
-fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
+fn pin_runtime_image() -> Option<(RuntimeTlsOwner, HostDlclose)> {
     // A successful host dlopen/dlinfo may free an earlier host dlerror buffer.
     // pthread_create must preserve that public pending/returned pointer. If
     // one exists, leave the runtime unadmitted rather than invalidate it or
@@ -173,7 +189,6 @@ fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
     ) -> c_int;
     type Open = unsafe extern "C" fn(*const std::ffi::c_char, c_int) -> *mut c_void;
     type Info = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
-    type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
     let iterate = crate::host_resolve::host_dl_iterate_phdr_cached()?;
     let open = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
     let info = crate::host_resolve::resolve_host_symbol_raw("dlinfo")?;
@@ -185,7 +200,7 @@ fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
             std::mem::transmute::<usize, Iterate>(iterate),
             std::mem::transmute::<usize, Open>(open),
             std::mem::transmute::<usize, Info>(info),
-            std::mem::transmute::<usize, Close>(close),
+            std::mem::transmute::<usize, HostDlclose>(close),
         )
     };
     let mut scan = Scan {
@@ -218,7 +233,13 @@ fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
         unsafe { close(handle) };
         return None;
     }
-    Some((image, handle as usize))
+    Some((
+        RuntimeTlsOwner {
+            image,
+            _runtime_pin: handle as usize,
+        },
+        close,
+    ))
 }
 
 /// Called on a hosted creator before publishing a native child. Nested native
@@ -227,26 +248,45 @@ pub(crate) fn prepare_native_public_tls_destructors() {
     if current_thread_handle().is_some() {
         return;
     }
-    PROCESS_TLS_OWNERS.get_or_init(|| {
-        let main = executable_image();
-        let runtime_address = prepare_native_public_tls_destructors as *const () as usize;
-        let mut owners = ProcessTlsOwners {
-            main,
-            runtime: None,
-            _runtime_pin: 0,
-        };
-        if main
+    let owners = PROCESS_TLS_OWNERS.get_or_init(|| ProcessTlsOwners {
+        main: executable_image(),
+        runtime: OnceLock::new(),
+    });
+    let runtime_address = prepare_native_public_tls_destructors as *const () as usize;
+    if owners.runtime.get().is_some()
+        || owners
+            .main
             .as_ref()
             .is_some_and(|image| image.contains(runtime_address, true))
+    {
+        return;
+    }
+    #[cfg(not(feature = "standalone"))]
+    let _ = PREPARING_RUNTIME_OWNER.try_with(|preparing| {
+        if preparing.replace(true) {
+            return;
+        }
+        struct Reset<'a>(&'a std::cell::Cell<bool>);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        let _reset = Reset(preparing);
+        // A pending or previously returned dlerror pointer can temporarily
+        // prevent pinning. Cache only a successful pin so a later eligible
+        // creator can retry after the caller retires that pointer.
+        // Do not hold a shared initialization lock across host loader calls:
+        // callbacks and concurrent creators may enter this preparation again.
+        if let Some((owner, close)) = pin_runtime_image()
+            && let Err(redundant) = owners.runtime.set(owner)
         {
-            return owners;
+            // SAFETY: pin_runtime_image acquired this independent valid host
+            // handle and resolved its matching host dlclose. The published
+            // winner retains a separate reference, so closing ours cannot
+            // invalidate any admitted runtime callback.
+            unsafe { close(redundant._runtime_pin as *mut c_void) };
         }
-        #[cfg(not(feature = "standalone"))]
-        if let Some((image, pin)) = pin_runtime_image() {
-            owners.runtime = Some(image);
-            owners._runtime_pin = pin;
-        }
-        owners
     });
 }
 
@@ -261,8 +301,8 @@ fn process_lifetime_address(address: usize, executable: bool) -> bool {
                 .is_some_and(|image| image.contains(address, executable))
             || owners
                 .runtime
-                .as_ref()
-                .is_some_and(|image| image.contains(address, executable))
+                .get()
+                .is_some_and(|owner| owner.image.contains(address, executable))
     })
 }
 

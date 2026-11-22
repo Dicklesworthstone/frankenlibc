@@ -44,7 +44,7 @@ static DLERROR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<DlErrorState> =
 std::thread_local! {
     /// Pending error: pointer to static NUL-terminated error message, or null.
     static PENDING_PTR: Cell<*const u8> = const { Cell::new(std::ptr::null()) };
-    /// Stable pointer returned by dlerror() — valid until next dlfcn call.
+    /// Stable pointer returned by dlerror() — retired by the next dlerror call.
     static STABLE_PTR: Cell<*const u8> = const { Cell::new(std::ptr::null()) };
 }
 
@@ -183,8 +183,12 @@ fn clear_dlerror() {
 pub(super) fn hosted_dlerror_pointer_outstanding() -> bool {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        PENDING_PTR.try_with(|pointer| !pointer.get().is_null()).unwrap_or(true)
-            || STABLE_PTR.try_with(|pointer| !pointer.get().is_null()).unwrap_or(true)
+        PENDING_PTR
+            .try_with(|pointer| !pointer.get().is_null())
+            .unwrap_or(true)
+            || STABLE_PTR
+                .try_with(|pointer| !pointer.get().is_null())
+                .unwrap_or(true)
     }
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -520,9 +524,6 @@ fn close_main_program_handle() -> c_int {
 #[path = "dlfcn_native.rs"]
 mod native;
 pub(crate) use native::fork_prepare as native_fork_prepare;
-pub(crate) use native::{
-    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
-};
 #[cfg(not(feature = "standalone"))]
 use native::host_may_load_declined_object;
 #[cfg(feature = "standalone")]
@@ -533,6 +534,9 @@ pub(crate) use native::{
 };
 use native::{close_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol};
 pub(crate) use native::{native_address_info_extra, query_object_info};
+pub(crate) use native::{
+    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
+};
 
 #[doc(hidden)]
 pub use native::native_dso_handle_for_tests;
@@ -1374,20 +1378,19 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
         let ptr = PENDING_PTR
             .try_with(|cell| cell.replace(std::ptr::null()))
             .unwrap_or(std::ptr::null());
-        if !ptr.is_null() {
-            let _ = STABLE_PTR.try_with(|cell| cell.set(ptr));
-        }
+        // The next explicit dlerror call retires our previous returned-pointer
+        // marker, including when there is no new error. Other loader calls
+        // leave this conservative marker intact; internal preparation must
+        // not release it on the caller's behalf.
+        let _ = STABLE_PTR.try_with(|cell| cell.set(ptr));
         return ptr.cast::<c_char>();
     }
 
     DLERROR_OWNED_TLS.with(|state| {
         let ptr = state.pending;
         state.pending = 0;
-        if ptr != 0 {
-            state.stable = ptr;
-            return state.stable as *const c_char;
-        }
-        std::ptr::null()
+        state.stable = ptr;
+        ptr as *const c_char
     })
 }
 
