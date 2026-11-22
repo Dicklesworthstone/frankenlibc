@@ -8816,7 +8816,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
                         // so a plain load+store is linearisable without a `lock xchg`.
                         let previous = if hot_mode == STRICT_HOT_MODE_ST {
                             let prev = meta.requested_size.load(Ordering::Relaxed);
-                            if prev != 0 && prev != SEGMENT_SLOT_FREE && (prev as usize) <= class_size
+                            if prev != 0
+                                && prev != SEGMENT_SLOT_FREE
+                                && (prev as usize) <= class_size
                             {
                                 meta.requested_size
                                     .store(SEGMENT_SLOT_FREE, Ordering::Relaxed);
@@ -10026,9 +10028,8 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let out = unsafe { native_libc_memalign(alignment, size) };
         // SAFETY: publish before reporting success to the caller.
-        let out = unsafe {
-            register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1))
-        };
+        let out =
+            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1)) };
         if !out.is_null() {
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }
@@ -10141,9 +10142,8 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
         // SAFETY: publish before reporting success to the caller.
-        let out = unsafe {
-            register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1))
-        };
+        let out =
+            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1)) };
         if !out.is_null() {
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }
