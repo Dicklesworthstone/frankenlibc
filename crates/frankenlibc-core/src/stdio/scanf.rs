@@ -353,8 +353,7 @@ pub enum ScanDirective {
 pub struct ScanSpec {
     pub suppress: bool,
     pub width: Option<usize>,
-    /// One-based POSIX destination index (`%2$s`), recognized by the wide parser.
-    /// Narrow parsing leaves this unset until its ABI writers support indices.
+    /// One-based POSIX destination index (`%2$s`) for narrow or wide input.
     /// Fits the existing padding; POSIX destination limits are below u32::MAX.
     /// The parser rejects larger indices rather than truncating them.
     pub argument_index: Option<NonZeroU32>,
@@ -627,6 +626,7 @@ where
     let wide_input = WIDE_INPUT;
     let mut directives = ScanDirectives::default();
     let mut i = 0;
+    let mut numbered_arguments = None;
     let whitespace_len = |pos| {
         if wide_input {
             wide_character_at(fmt, pos)
@@ -668,9 +668,9 @@ where
                 route: ScanfRoute::invalid(),
             };
 
-            // Positional indices precede suppression and field width. Keeping
-            // this wide-only avoids changing narrow writers' argument order.
-            if wide_input && fmt[i].is_ascii_digit() {
+            // Positional indices precede suppression and field width. A digit
+            // sequence without a following '$' remains an ordinary width.
+            if fmt[i].is_ascii_digit() {
                 let mut end = i;
                 let mut index = Some(0u32);
                 while end < fmt.len() && fmt[end].is_ascii_digit() {
@@ -868,6 +868,19 @@ where
 
             if !spec.bind_route() {
                 break;
+            }
+
+            // POSIX allows numbered destinations together with %% and
+            // suppressed fields, but not with sequential destinations.
+            // Stop at the malformed directive before it can consume an
+            // argument or read input; earlier valid directives remain usable.
+            if !spec.suppress {
+                let numbered = spec.argument_index.is_some();
+                if numbered_arguments.is_some_and(|previous| previous != numbered) {
+                    directives.push(ScanDirective::Malformed);
+                    break;
+                }
+                numbered_arguments = Some(numbered);
             }
 
             directives.push(ScanDirective::Spec(spec));
@@ -5091,10 +5104,10 @@ mod wide_scan_tests {
         assert!(
             matches!(&directives[0], ScanDirective::Spec(spec) if spec.width == Some(23) && spec.argument_index.is_none())
         );
-        assert!(
-            parse_scanf_format(b"%2$s").is_empty(),
-            "narrow positional support is unchanged"
-        );
+        assert!(matches!(
+            &parse_scanf_format(b"%2$s")[0],
+            ScanDirective::Spec(spec) if spec.argument_index.unwrap().get() == 2 && !spec.wide_input
+        ));
         for malformed in [
             b"%0$s".as_slice(),
             b"%4294967296$s",
@@ -5131,6 +5144,80 @@ mod wide_scan_tests {
 #[cfg(test)]
 mod wide_stream_scan_tests {
     use super::*;
+
+    #[test]
+    fn positional_formats_keep_indices_widths_and_suppression() {
+        for (parse, wide) in [
+            (parse_scanf_format as fn(&[u8]) -> ScanDirectives, false),
+            (parse_scanf_format_wide as fn(&[u8]) -> ScanDirectives, true),
+        ] {
+            let directives = parse(b"%2$3ls %1$d %% %*d %3$n %*ms");
+            let specs: Vec<_> = directives
+                .iter()
+                .filter_map(|directive| match directive {
+                    ScanDirective::Spec(spec) => Some(spec),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(specs.len(), 5);
+            assert_eq!(
+                specs
+                    .iter()
+                    .map(|spec| spec.argument_index.map(NonZeroU32::get))
+                    .collect::<Vec<_>>(),
+                [Some(2), Some(1), None, Some(3), None]
+            );
+            assert_eq!(specs[0].width, Some(3));
+            assert_eq!(specs[0].length, LengthMod::L);
+            assert!(specs.iter().all(|spec| spec.wide_input == wide));
+            assert!(specs[2].suppress && specs[4].suppress);
+            assert!(
+                !directives
+                    .iter()
+                    .any(|directive| matches!(directive, ScanDirective::Malformed))
+            );
+            assert!(matches!(
+                &parse(b"%23s")[0],
+                ScanDirective::Spec(spec) if spec.width == Some(23) && spec.argument_index.is_none()
+            ));
+        }
+    }
+
+    #[test]
+    fn positional_formats_stop_at_invalid_indices_or_mixed_destinations() {
+        // Mixed numbered/sequential assigning formats have undefined POSIX
+        // behavior. Both parsers deterministically stop before the offending
+        // directive, without claiming a particular GNU result for that input.
+        for parse in [
+            parse_scanf_format as fn(&[u8]) -> ScanDirectives,
+            parse_scanf_format_wide as fn(&[u8]) -> ScanDirectives,
+        ] {
+            for format in [
+                b"%0$d".as_slice(),
+                b"%4294967296$d",
+                b"%999999999999999999999999999999$d",
+            ] {
+                let directives = parse(format);
+                assert!(matches!(directives.as_slice(), [ScanDirective::Malformed]));
+            }
+            for format in [b"%d %2$d %3$d".as_slice(), b"%2$d %d %3$d", b"%1$n %n %2$d"] {
+                let directives = parse(format);
+                assert!(matches!(
+                    directives.as_slice(),
+                    [
+                        ScanDirective::Spec(_),
+                        ScanDirective::Whitespace,
+                        ScanDirective::Malformed
+                    ]
+                ));
+            }
+        }
+        let (trace, encoding_error) = run_narrow("%2$d %d", b"7 X", None);
+        assert_eq!(trace.summary.count, 1);
+        assert!(matches!(trace.values.as_slice(), [ScanValue::SignedInt(7)]));
+        assert_eq!(trace.unread, [u32::from(b'X')]);
+        assert!(!encoding_error);
+    }
 
     struct Trace {
         summary: WideScanSummary,

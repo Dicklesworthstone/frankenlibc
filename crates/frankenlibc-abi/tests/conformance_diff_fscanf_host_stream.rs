@@ -384,6 +384,46 @@ int P##_string(void *fn, int is_v, const T *input, const T *format, \
 }
 BRIDGE(char, narrow)
 BRIDGE(wchar_t, wide)
+
+struct positional_values {
+    int first, second, consumed;
+    double number;
+    char text[32];
+    unsigned int unsigned_value;
+    long long wide_value;
+    char byte;
+    char *allocated;
+    int last;
+    wchar_t wide_text[16];
+    short short_value;
+    signed char small_value;
+    void *pointer;
+    int untouched;
+};
+#define POSITIONAL_ARGS \
+    &v->first, &v->second, &v->consumed, &v->number, v->text, \
+    &v->unsigned_value, &v->wide_value, &v->byte, &v->allocated, \
+    &v->last, v->wide_text, &v->short_value, &v->small_value, \
+    &v->pointer, &v->untouched
+int narrow_positional(void *fn, int kind, FILE *stream, const char *input,
+                      const char *format, struct positional_values *v) {
+    switch (kind) {
+    case 0:
+        return ((int (*)(FILE *, const char *, ...))fn)(stream, format, POSITIONAL_ARGS);
+    case 1:
+        return narrow_file_v(fn, stream, format, POSITIONAL_ARGS);
+    case 2:
+        return ((int (*)(const char *, ...))fn)(format, POSITIONAL_ARGS);
+    case 3:
+        return narrow_input_v(fn, format, POSITIONAL_ARGS);
+    case 4:
+        return ((int (*)(const char *, const char *, ...))fn)(input, format, POSITIONAL_ARGS);
+    case 5:
+        return narrow_string_v(fn, input, format, POSITIONAL_ARGS);
+    default:
+        return -999;
+    }
+}
 "#;
 
 type StreamBridge<T> =
@@ -1352,6 +1392,292 @@ mod streaming_narrow {
                 }
             }
         }
+    }
+
+    #[test]
+    fn positional_destinations_match_gnu_across_narrow_entrypoints() {
+        use frankenlibc_abi::dlfcn_abi as dl;
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::process::Command;
+
+        const WORKER: &str =
+            "streaming_narrow::positional_destinations_match_gnu_across_narrow_entrypoints";
+        const CHILD: &str = "FRANKENLIBC_SCANF_POSITIONAL_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // scanf/vscanf replace the provider's stdin cell only inside an
+            // isolated process, independently in strict and hardened modes.
+            for mode in ["strict", "hardened"] {
+                let output = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", WORKER, "--nocapture", "--test-threads=1"])
+                    .env(CHILD, "1")
+                    .env("FRANKENLIBC_MODE", mode)
+                    .output()
+                    .expect("start isolated positional scanf matrix");
+                assert!(
+                    output.status.success(),
+                    "{mode}: {}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("POSITIONAL_SCANF_OK"));
+                println!("{mode}: {}", String::from_utf8_lossy(&output.stdout));
+            }
+            return;
+        }
+
+        // Typed C arguments exercise actual register/stack va_list traversal;
+        // neither the Rust test nor C headers can redirect the selected symbol.
+        let directory = std::env::temp_dir().join(format!(
+            "frankenlibc-scanf-positional-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("bridge.c");
+        let library = directory.join("bridge.so");
+        std::fs::write(&source, super::DIALECT_BRIDGE).unwrap();
+        let output = Command::new("cc")
+            .args([
+                "-shared",
+                "-fPIC",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-nostdlib",
+            ])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .expect("compile typed positional va_list bridge");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        type Open = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type Symbol = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+        let open: Open = unsafe { host_fn(c"dlopen", dl::dlopen as *const ()) };
+        let symbol: Symbol = unsafe { host_fn(c"dlsym", dl::dlsym as *const ()) };
+        let close: Close = unsafe { host_fn(c"dlclose", dl::dlclose as *const ()) };
+        let path = CString::new(library.as_os_str().as_bytes()).unwrap();
+        let handle = unsafe { open(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        assert!(!handle.is_null(), "host dlopen of positional bridge failed");
+        let address = unsafe { symbol(handle, c"narrow_positional".as_ptr()) };
+        assert!(!address.is_null());
+
+        #[repr(C)]
+        #[derive(Debug, PartialEq)]
+        struct Values {
+            first: c_int,
+            second: c_int,
+            consumed: c_int,
+            number: f64,
+            text: [c_char; 32],
+            unsigned_value: libc::c_uint,
+            wide_value: libc::c_longlong,
+            byte: c_char,
+            allocated: *mut c_char,
+            last: c_int,
+            wide_text: [libc::wchar_t; 16],
+            short_value: libc::c_short,
+            small_value: libc::c_schar,
+            pointer: *mut c_void,
+            untouched: c_int,
+        }
+        type Bridge = unsafe extern "C" fn(
+            *mut c_void,
+            c_int,
+            *mut c_void,
+            *const c_char,
+            *const c_char,
+            *mut Values,
+        ) -> c_int;
+        // SAFETY: the C bridge defines the identical repr(C) layout and
+        // signature; the library remains loaded for every invocation below.
+        let bridge: Bridge = unsafe { std::mem::transmute(address) };
+        let native_stdin = std::ptr::addr_of_mut!(fl::stdin);
+        let host_stdin = unsafe {
+            crate::dlsym_oracle::host_addr(c"stdin", native_stdin.cast::<()>())
+                .cast::<*mut c_void>()
+        };
+        let (native, host) = (Api::native(), Api::host());
+        let _locale = Utf8Locale::select();
+        let run = |api: &Api,
+                   target: *mut c_void,
+                   kind: c_int,
+                   stdin_cell: *mut *mut c_void,
+                   input: &[u8],
+                   format: &CStr| {
+            let sentinel = std::ptr::without_provenance_mut::<c_char>(1);
+            let mut values = Values {
+                first: 917,
+                second: 917,
+                consumed: -1,
+                number: -777.0,
+                text: [0x5a; 32],
+                unsigned_value: 917,
+                wide_value: 917,
+                byte: b'?' as c_char,
+                allocated: sentinel,
+                last: 917,
+                wide_text: [0x5a; 16],
+                short_value: 917,
+                small_value: 77,
+                pointer: std::ptr::without_provenance_mut(0x123),
+                untouched: 917,
+            };
+            let mut bytes = input.to_vec();
+            let string = CString::new(input).unwrap();
+            let stream = if kind < 4 {
+                let stream =
+                    unsafe { (api.mem)(bytes.as_mut_ptr().cast(), bytes.len(), c"r".as_ptr()) };
+                assert!(!stream.is_null());
+                stream
+            } else {
+                std::ptr::null_mut()
+            };
+            let previous = if kind == 2 || kind == 3 {
+                Some(unsafe { std::ptr::replace(stdin_cell, stream) })
+            } else {
+                None
+            };
+            // SAFETY: all fifteen destinations have the exact C types used by
+            // their numbered conversions, including arguments beyond GP regs.
+            let result = unsafe {
+                *(api.errno)() = 0;
+                bridge(
+                    target,
+                    kind,
+                    stream,
+                    string.as_ptr(),
+                    format.as_ptr(),
+                    &mut values,
+                )
+            };
+            let error = unsafe { *(api.errno)() };
+            if let Some(previous) = previous {
+                unsafe { *stdin_cell = previous };
+            }
+            let stream_state = if stream.is_null() {
+                None
+            } else {
+                let (_, eof, error) = api.status(stream);
+                let position = unsafe { (api.tell)(stream) };
+                let next = unsafe { (api.getc)(stream) };
+                assert_eq!(unsafe { (api.close)(stream) }, 0);
+                Some((position, next, eof, error))
+            };
+            let allocation = if values.allocated == sentinel {
+                (0, Vec::new())
+            } else if values.allocated.is_null() {
+                (1, Vec::new())
+            } else {
+                let text = unsafe { CStr::from_ptr(values.allocated) }
+                    .to_bytes()
+                    .to_vec();
+                unsafe { (api.free)(values.allocated.cast()) };
+                (2, text)
+            };
+            values.allocated = std::ptr::null_mut();
+            (result, values, allocation, error, stream_state)
+        };
+
+        let entrypoints = [
+            (c"fscanf", fl::fscanf as *const (), 0),
+            (c"vfscanf", fl::vfscanf as *const (), 1),
+            (c"scanf", fl::scanf as *const (), 2),
+            (c"vscanf", fl::vscanf as *const (), 3),
+            (c"sscanf", fl::sscanf as *const (), 4),
+            (c"vsscanf", fl::vsscanf as *const (), 5),
+            (c"__isoc99_fscanf", fl::__isoc99_fscanf as *const (), 0),
+            (c"__isoc99_vfscanf", fl::__isoc99_vfscanf as *const (), 1),
+            (c"__isoc99_scanf", fl::__isoc99_scanf as *const (), 2),
+            (c"__isoc99_vscanf", fl::__isoc99_vscanf as *const (), 3),
+            (c"__isoc99_sscanf", fl::__isoc99_sscanf as *const (), 4),
+            (c"__isoc99_vsscanf", fl::__isoc99_vsscanf as *const (), 5),
+            (
+                c"__isoc23_fscanf",
+                isoc_abi::__isoc23_fscanf as *const (),
+                0,
+            ),
+            (
+                c"__isoc23_vfscanf",
+                isoc_abi::__isoc23_vfscanf as *const (),
+                1,
+            ),
+            (c"__isoc23_scanf", isoc_abi::__isoc23_scanf as *const (), 2),
+            (
+                c"__isoc23_vscanf",
+                isoc_abi::__isoc23_vscanf as *const (),
+                3,
+            ),
+            (
+                c"__isoc23_sscanf",
+                isoc_abi::__isoc23_sscanf as *const (),
+                4,
+            ),
+            (
+                c"__isoc23_vsscanf",
+                isoc_abi::__isoc23_vsscanf as *const (),
+                5,
+            ),
+        ];
+        let cases: &[(&[u8], &CStr)] = &[
+            (b"12 34X", c"%2$d %1$d%3$n"),
+            (b"12 34X", c"%2$d %1$d%3$n%8$c"),
+            (b"12 34X", c"%1$d %1$d%3$n%8$c"),
+            (b"1234X", c"%2$2d%1$2d%3$n"),
+            (b"7X", c"%3$n%1$d%3$n%8$c%3$n"),
+            (b"12 % 34X", c"%*d %% %2$d%1$n%8$c"),
+            (
+                b"3.5 42 9000000000 -12 -7 0x2a 19X",
+                c"%4$lf %6$u %7$lld %12$hd %13$hhd %14$p %10$d%3$n%8$c",
+            ),
+            (b"abc 45X", c"%5$3s %2$d%3$n%8$c"),
+            (b"abc xyX", c"%5$3s %5$2c%3$n%8$c"),
+            (b"abc:42X", c"%5$3[a-z]:%2$d%3$n%8$c"),
+            (b"alpha 23X", c"%9$ms %2$d%3$n%8$c"),
+            (b"alpha:23X", c"%9$m[a-z]:%2$d%3$n%8$c"),
+            (b"X", c"%9$m[0-9]%1$d"),
+            (b"7X", c"%1$d%9$m[0-9]%10$d"),
+            (b"X", c"%2$d%9$ms%10$d"),
+            (b"7", c"%1$d %2$d%3$n"),
+            (b"", c"%3$n%1$d"),
+            (b"   ", c"%3$n %2$d%1$n"),
+            ("é中X".as_bytes(), c"%11$2lc%3$n%8$c"),
+            ("é中 3X".as_bytes(), c"%11$2ls %2$d%3$n%8$c"),
+            (b"\xffX", c"%11$ls%10$d"),
+            (b"\xc3", c"%11$lc%3$n"),
+            (b"A\xffX", c"%11$2lc%3$n%10$d"),
+            (b"0b101X", c"%2$i%3$n%8$c"),
+            (b"101X", c"%6$b%3$n%8$c"),
+            (b"", c"%15$n"),
+        ];
+        let mut comparisons = 0usize;
+        for (name, native_scan, kind) in entrypoints {
+            let host_scan = unsafe { crate::dlsym_oracle::host_addr(name, native_scan) };
+            for &(input, format) in cases {
+                assert_eq!(
+                    run(
+                        &native,
+                        native_scan.cast_mut().cast(),
+                        kind,
+                        native_stdin,
+                        input,
+                        format
+                    ),
+                    run(&host, host_scan, kind, host_stdin, input, format),
+                    "{name:?}: {input:?} {format:?}"
+                );
+                comparisons += 1;
+            }
+        }
+        assert_eq!(comparisons, 18 * cases.len());
+        println!("POSITIONAL_SCANF_OK comparisons={comparisons}");
+        assert_eq!(unsafe { close(handle) }, 0);
     }
 
     #[test]

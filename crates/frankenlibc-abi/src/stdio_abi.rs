@@ -16969,19 +16969,74 @@ pub(crate) enum ScanfDialect {
     C23,
 }
 
-/// Core scanf logic: parse format, scan input, return result and directives.
-pub(crate) fn scanf_core(
-    input: &[u8],
-    format: *const c_char,
-    dialect: ScanfDialect,
-) -> Option<(ScanResult, ScanDirectives)> {
-    let directives = scanf_directives(format, None, dialect)?;
-    let result = if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
-        scan_input(input, directives.as_slice())
+/// Scan ordinary buffer formats through the existing collecting engine.
+fn scanf_core(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
+    if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+        scan_input(input, directives)
     } else {
-        scan_input_with_radix(input, directives.as_slice(), NumericLocale::current().radix)
+        scan_input_with_radix(input, directives, NumericLocale::current().radix)
+    }
+}
+
+/// Numbered buffer formats share the FILE scanner's lazy destination resolver,
+/// immediate stores, allocation cleanup, and multibyte destination codec.
+/// The ordinary buffer and strict fast paths retain their existing engine.
+unsafe fn scan_narrow_positional_buffer(
+    input: &[u8],
+    directives: &[ScanDirective],
+    ap: *mut c_void,
+) -> Option<c_int> {
+    if !directives.iter().any(
+        |directive| matches!(directive, ScanDirective::Spec(spec) if spec.argument_index.is_some()),
+    ) {
+        return None;
+    }
+
+    use frankenlibc_core::stdio::scanf::{WideScanInput, WideScanProgress, WideScanSession};
+    let locale = NumericLocale::current();
+    let mut session = WideScanSession::new_narrow(
+        directives,
+        locale.radix,
+        crate::locale_abi::active_multibyte_codec(),
+    );
+    let mut writer = crate::wchar_abi::WideScanWriter::new_narrow(ap);
+    let mut source = input.iter().copied();
+    let mut supplied = None;
+    let summary = loop {
+        match session.resume(
+            supplied.take(),
+            &mut |spec, event, context| {
+                // SAFETY: each reached directive describes a destination in
+                // the caller's live va_list, including every skipped index.
+                unsafe { writer.write_stream_event(spec, event, context) }
+            },
+            &|byte| locale.byte_is_space(byte as u8),
+        ) {
+            WideScanProgress::Complete(summary) => break summary,
+            WideScanProgress::NeedInput(_) => {
+                supplied = Some(source.next().map_or(WideScanInput::Eof, |byte| {
+                    WideScanInput::Character(u32::from(byte))
+                }));
+            }
+        }
     };
-    Some((result, directives))
+    let error = writer.error.unwrap_or_else(|| {
+        if session.encoding_error() {
+            errno::EILSEQ
+        } else {
+            // SAFETY: the current thread owns its errno slot.
+            unsafe { *crate::errno_abi::__errno_location() }
+        }
+    });
+    let result = if writer.allocation_failure || (summary.input_failure && summary.count == 0) {
+        libc::EOF
+    } else {
+        summary.count
+    };
+    drop(writer);
+    // SAFETY: preserve the scan's errno across partial-field cleanup.
+    unsafe { set_abi_errno(error) };
+    Some(result)
 }
 
 /// Parse the wide scanf language independently of executing its assignments.
@@ -17236,10 +17291,23 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return libc::EOF;
     }
     let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
-    let Some((result, directives)) = scanf_core(input, format, ScanfDialect::Legacy) else {
+    let Some(directives) = scanf_directives(format, None, ScanfDialect::Legacy) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
+    // SAFETY: the untouched Rust variadic state has the C va_list layout used
+    // by the FILE path; all scanf destination arguments are pointers.
+    if let Some(result) = unsafe {
+        scan_narrow_positional_buffer(
+            input,
+            directives.as_slice(),
+            std::ptr::addr_of_mut!(args).cast(),
+        )
+    } {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+        return result;
+    }
+    let result = scanf_core(input, directives.as_slice());
 
     // Stores happen even when the call returns EOF: glibc has already written
     // any `%n` counts by then, and NULL through a `%m` conversion that failed.
@@ -17456,10 +17524,17 @@ pub(crate) unsafe fn vsscanf_with_dialect(
         return libc::EOF;
     }
     let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
-    let Some((result, directives)) = scanf_core(input, format, dialect) else {
+    let Some(directives) = scanf_directives(format, None, dialect) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
+    // SAFETY: `ap` is the caller's live, unconsumed va_list.
+    if let Some(result) = unsafe { scan_narrow_positional_buffer(input, directives.as_slice(), ap) }
+    {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+        return result;
+    }
+    let result = scanf_core(input, directives.as_slice());
 
     // Stores happen even when the call returns EOF: glibc has already written
     // any `%n` counts by then, and NULL through a `%m` conversion that failed.
