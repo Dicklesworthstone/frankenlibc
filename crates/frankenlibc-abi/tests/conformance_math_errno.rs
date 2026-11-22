@@ -467,3 +467,78 @@ fn math_errno_matches_glibc() {
         div.join("\n  ")
     );
 }
+
+#[test]
+fn sinhf_coshf_directed_rounding_erange_matches_glibc() {
+    use frankenlibc_abi::fenv_abi;
+
+    let saved = unsafe { fenv_abi::fegetround() };
+    let modes = [
+        ("FE_TONEAREST", 0x0000),
+        ("FE_DOWNWARD", 0x0400),
+        ("FE_UPWARD", 0x0800),
+        ("FE_TOWARDZERO", 0x0c00),
+    ];
+
+    for (mode_name, mode) in modes {
+        assert_eq!(unsafe { fenv_abi::fesetround(mode) }, 0, "{mode_name}");
+
+        // ±0x42b2_d4fc stays strictly finite (< f32::MAX) with errno == 0 in all 4 modes.
+        for bits in [0x42b2_d4fcu32, 0xc2b2_d4fcu32] {
+            let x = f32::from_bits(bits);
+            clr();
+            let ys = unsafe { fa::sinhf(x) };
+            assert!(
+                ys.is_finite() && ys.abs() < f32::MAX,
+                "sinhf {mode_name} {bits:#x}"
+            );
+            assert_eq!(rd(), 0, "sinhf({bits:#x}) {mode_name} must not set ERANGE");
+
+            clr();
+            let yc = unsafe { fa::coshf(x) };
+            assert!(
+                yc.is_finite() && yc < f32::MAX,
+                "coshf {mode_name} {bits:#x}"
+            );
+            assert_eq!(rd(), 0, "coshf({bits:#x}) {mode_name} must not set ERANGE");
+        }
+
+        // ±0x42b2_d4fd and ±90.0 overflow in all 4 modes (rounding to ±Inf or ±f32::MAX),
+        // and glibc sets ERANGE in every rounding mode.
+        for bits in [
+            0x42b2_d4fdu32,
+            0xc2b2_d4fdu32,
+            90.0f32.to_bits(),
+            (-90.0f32).to_bits(),
+        ] {
+            let x = f32::from_bits(bits);
+            clr();
+            let ys = unsafe { fa::sinhf(x) };
+            assert!(
+                ys.is_infinite() || ys.abs() == f32::MAX,
+                "sinhf {mode_name} {bits:#x} -> {ys}"
+            );
+            assert_eq!(rd(), ERANGE, "sinhf({bits:#x}) {mode_name} must set ERANGE");
+
+            clr();
+            let yc = unsafe { fa::coshf(x) };
+            assert!(
+                yc.is_infinite() || yc == f32::MAX,
+                "coshf {mode_name} {bits:#x} -> {yc}"
+            );
+            assert_eq!(rd(), ERANGE, "coshf({bits:#x}) {mode_name} must set ERANGE");
+        }
+
+        // ±Inf never sets ERANGE.
+        for x in [f32::INFINITY, f32::NEG_INFINITY] {
+            clr();
+            let _ = unsafe { fa::sinhf(x) };
+            assert_eq!(rd(), 0, "sinhf({x}) {mode_name} must not set ERANGE");
+            clr();
+            let _ = unsafe { fa::coshf(x) };
+            assert_eq!(rd(), 0, "coshf({x}) {mode_name} must not set ERANGE");
+        }
+    }
+
+    assert_eq!(unsafe { fenv_abi::fesetround(saved) }, 0);
+}
