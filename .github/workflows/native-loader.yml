@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
       - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
       - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
@@ -35,6 +37,53 @@ defaults:
     shell: bash
 
 jobs:
+  public-dynamic-tls-resolver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - storage: default
+            features: conformance-testing
+          - storage: owned
+            features: conformance-testing,owned-tls-cache
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      ABI_FEATURES: ${{ matrix.features }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: public-dynamic-tls-${{ matrix.storage }}
+      - name: Execute public dispatch and owned resolver component regressions
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/public-dynamic-tls
+          # Each case runs strict and hardened subprocesses. The conformance
+          # hook exercises the same body used by standalone public dispatch;
+          # this hosted job does not bypass standalone admission.
+          cargo test -p frankenlibc-abi --features "$ABI_FEATURES" \
+            --test dlfcn_native_tls_test public_dynamic_tls_resolver_ \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/public-dynamic-tls/execution.log
+          grep -F 'test result: ok. 3 passed; 0 failed; 0 ignored;' \
+            artifacts/public-dynamic-tls/execution.log
+      - name: Preserve public TLS execution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-dynamic-tls-${{ matrix.storage }}
+          path: artifacts/public-dynamic-tls/
+          if-no-files-found: error
+
   native-dso-groups:
     runs-on: ubuntu-latest
     timeout-minutes: 45

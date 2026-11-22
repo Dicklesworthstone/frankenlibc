@@ -42,14 +42,19 @@ mod initialization;
 #[path = "dlfcn_tls.rs"]
 mod tls;
 
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+pub(super) fn tls_address(module_id: usize, offset: usize) -> *mut c_void {
+    tls::module_address(module_id, offset)
+}
+
 #[path = "dlfcn_thread_exit.rs"]
 mod thread_exit;
-pub(crate) use thread_exit::{
-    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
-};
 #[cfg(not(test))]
 pub(crate) use thread_exit::{
     ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,
+};
+pub(crate) use thread_exit::{
+    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
 };
 
 #[path = "dlfcn_ifunc.rs"]

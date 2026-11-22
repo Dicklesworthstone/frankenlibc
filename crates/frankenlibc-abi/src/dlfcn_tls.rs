@@ -402,7 +402,11 @@ impl Block {
         };
         Some(Self {
             id: module.id,
-            module: if native { None } else { Some(Arc::downgrade(module)) },
+            module: if native {
+                None
+            } else {
+                Some(Arc::downgrade(module))
+            },
             allocation,
             data,
             layout: module.layout,
@@ -442,7 +446,10 @@ pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void
             });
         } else {
             blocks.retain(|block| {
-                block.module.as_ref().is_some_and(|module| module.strong_count() != 0)
+                block
+                    .module
+                    .as_ref()
+                    .is_some_and(|module| module.strong_count() != 0)
             });
         }
         let index = match blocks.iter().position(|block| block.id == module.id) {
@@ -484,18 +491,24 @@ unsafe extern "C" fn get_addr(index: *const TlsIndex) -> *mut c_void {
     }
     // SAFETY: native compiler-emitted TLS sequences pass a readable GOT pair.
     let index = unsafe { std::ptr::read_unaligned(index) };
+    module_address(index.module, index.offset)
+}
+
+/// Resolve only an owned loader module. Host module IDs share the same integer
+/// namespace and must never enter this path through an interposed public call.
+pub(super) fn module_address(module_id: usize, offset: usize) -> *mut c_void {
     let _operation = OPERATIONS.lock();
     // The loading thread may use its own TLS from an IFUNC resolver before
     // registry publication. This private scope never exposes a partial handle.
-    let module = super::ifunc::temporary_tls_module(index.module).or_else(|| {
+    let module = super::ifunc::temporary_tls_module(module_id).or_else(|| {
         registry().lock().ok().and_then(|dsos| {
             dsos.iter()
-                .find(|dso| dso.id == index.module)
+                .find(|dso| dso.id == module_id)
                 .and_then(|dso| dso.tls.clone())
         })
     });
     module
-        .and_then(|module| address(&module, index.offset))
+        .and_then(|module| address(&module, offset))
         .unwrap_or(std::ptr::null_mut())
 }
 

@@ -3,7 +3,9 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -11,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use frankenlibc_abi::dlfcn_abi::{
     dlclose, dlerror, dlopen, dlsym, dlvsym, native_dso_handle_for_tests,
 };
+use frankenlibc_abi::glibc_internal_abi::{__tls_get_addr, TlsIndex, dlinfo};
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 
@@ -103,6 +106,16 @@ impl Loader {
             unsafe { std::mem::transmute(self.symbol(handle, name)) };
         unsafe { function() }
     }
+    fn tls_info(self, handle: *mut c_void) -> (usize, *mut c_void) {
+        let mut module = 0usize;
+        let mut base = std::ptr::null_mut();
+        unsafe {
+            assert_eq!(dlinfo(handle, 9, (&raw mut module).cast()), 0);
+            assert_eq!(dlinfo(handle, 10, (&raw mut base).cast()), 0);
+        }
+        assert_ne!(module, 0);
+        (module, base)
+    }
 }
 
 struct Fixture {
@@ -179,6 +192,361 @@ fn child_case(name: &str) -> bool {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn public_resolver_child(name: &str) -> bool {
+    if std::env::var("FL_PUBLIC_TLS_CHILD").as_deref() == Ok(name) {
+        return true;
+    }
+    for mode in ["strict", "hardened"] {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture", "--test-threads=1"])
+            .env("FL_PUBLIC_TLS_CHILD", name)
+            .env("FRANKENLIBC_MODE", mode)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "public TLS child {name} ({mode}) timed out: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "public TLS child {name} ({mode}) did not execute successfully: {stdout} {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    false
+}
+
+const PUBLIC_TLS_SOURCE: &str = r#"
+    struct payload { long prefix; long value; unsigned char zeroes[48]; };
+    __thread struct payload tls_value __attribute__((aligned(64))) = {11, 41, {0}};
+    long value(void) { return tls_value.value; }
+    void *pointer(void) { return &tls_value.value; }
+"#;
+
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+type TlsResolver = unsafe extern "C" fn(*const TlsIndex) -> *mut c_void;
+
+#[cfg(feature = "standalone")]
+const OWNED_TLS_RESOLVER: TlsResolver = __tls_get_addr;
+#[cfg(all(not(feature = "standalone"), feature = "conformance-testing"))]
+const OWNED_TLS_RESOLVER: TlsResolver =
+    frankenlibc_abi::glibc_internal_abi::tls_get_addr_owned_for_conformance;
+
+#[cfg(not(feature = "standalone"))]
+#[test]
+fn public_dynamic_tls_resolver_preserves_host_namespace() {
+    if !public_resolver_child("public_dynamic_tls_resolver_preserves_host_namespace") {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = Fixture::new();
+    let host_path = f.compile("public_host", PUBLIC_TLS_SOURCE, &[], &[]);
+    let host = Loader::Host.open(&host_path, libc::RTLD_NOW);
+    assert!(!host.is_null());
+    let (host_module, host_base) = Loader::Host.tls_info(host);
+    assert!(host_base.is_null());
+
+    // Native IDs start at one in this isolated child. Keep the objects loaded
+    // until a live native module has the SAME numeric ID as the host module.
+    let native_path = f.compile(
+        "public_native",
+        &PUBLIC_TLS_SOURCE.replace("11, 41", "11, 777"),
+        &[],
+        &[],
+    );
+    let mut handles = Vec::new();
+    let colliding_native = loop {
+        let path = f.dir.join(format!("native_copy_{}.so", handles.len()));
+        std::fs::copy(&native_path, &path).unwrap();
+        let handle = Loader::Native.open(&path, libc::RTLD_NOW);
+        assert!(!handle.is_null());
+        handles.push(handle);
+        let (native_module, _) = Loader::Native.tls_info(handle);
+        assert!(
+            native_module <= host_module,
+            "missed host/native ID collision"
+        );
+        if native_module == host_module {
+            break handle;
+        }
+    };
+    let index = TlsIndex {
+        ti_module: host_module as u64,
+        ti_offset: 8,
+    };
+    assert!(unsafe { __tls_get_addr(std::ptr::null()) }.is_null());
+    let resolved = unsafe { __tls_get_addr(&index) }.cast::<i64>();
+    assert!(!resolved.is_null());
+    assert_eq!(unsafe { *resolved }, 41);
+    assert_eq!(resolved.cast(), Loader::Host.pointer(host, "pointer"));
+    let native = Loader::Native
+        .pointer(colliding_native, "pointer")
+        .cast::<i64>();
+    assert_eq!(unsafe { *native }, 777);
+    assert_ne!(resolved, native);
+    assert_eq!(unsafe { __tls_get_addr(&index) }, resolved.cast());
+    for handle in handles {
+        Loader::Native.close(handle);
+    }
+    assert_eq!(unsafe { *resolved }, 41);
+    Loader::Host.close(host);
+}
+
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+#[test]
+fn public_dynamic_tls_resolver_uses_live_owned_registry() {
+    if !public_resolver_child("public_dynamic_tls_resolver_uses_live_owned_registry") {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = Fixture::new();
+    let path = f.compile("public_owned", PUBLIC_TLS_SOURCE, &[], &[]);
+    assert!(f.relocations(&path).contains("DTPMOD64"));
+    let handle = Loader::Native.open(&path, libc::RTLD_NOW);
+    assert!(!handle.is_null());
+    let (module, base) = Loader::Native.tls_info(handle);
+    assert!(
+        base.is_null(),
+        "TLS must remain lazy until first valid access"
+    );
+    assert!(unsafe { OWNED_TLS_RESOLVER(std::ptr::null()) }.is_null());
+    for (id, offset) in [
+        (0, 0),
+        (u64::MAX, 0),
+        (module as u64, u64::MAX),
+        (module as u64, 65),
+    ] {
+        let invalid = TlsIndex {
+            ti_module: id,
+            ti_offset: offset,
+        };
+        assert!(unsafe { OWNED_TLS_RESOLVER(&invalid) }.is_null());
+    }
+    assert!(Loader::Native.tls_info(handle).1.is_null());
+    let index = TlsIndex {
+        ti_module: module as u64,
+        ti_offset: 8,
+    };
+    let resolved = unsafe { OWNED_TLS_RESOLVER(&index) }.cast::<i64>();
+    assert!(!resolved.is_null());
+    let base = Loader::Native.tls_info(handle).1.cast::<u8>();
+    assert_eq!(base as usize % 64, 0);
+    assert_eq!(resolved.cast::<u8>(), unsafe { base.add(8) });
+    assert_eq!(resolved.cast(), Loader::Native.pointer(handle, "pointer"));
+    assert_eq!(unsafe { *resolved }, 41);
+    assert_eq!(unsafe { *base.cast::<i64>() }, 11);
+    assert!(
+        unsafe { std::slice::from_raw_parts(base.add(16), 48) }
+            .iter()
+            .all(|byte| *byte == 0)
+    );
+    let end = TlsIndex {
+        ti_module: module as u64,
+        ti_offset: 64,
+    };
+    assert_eq!(unsafe { OWNED_TLS_RESOLVER(&end) }.cast::<u8>(), unsafe {
+        base.add(64)
+    });
+    unsafe { *resolved = 91 };
+    let handle_address = handle as usize;
+    let other_address = std::thread::spawn(move || {
+        let handle = handle_address as *mut c_void;
+        assert!(Loader::Native.tls_info(handle).1.is_null());
+        let index = TlsIndex {
+            ti_module: module as u64,
+            ti_offset: 8,
+        };
+        let pointer = unsafe { OWNED_TLS_RESOLVER(&index) }.cast::<i64>();
+        assert!(!pointer.is_null());
+        assert_eq!(unsafe { *pointer }, 41);
+        assert_eq!(pointer.cast(), Loader::Native.pointer(handle, "pointer"));
+        unsafe { *pointer = 88 };
+        assert_eq!(Loader::Native.value(handle, "value"), 88);
+        pointer as usize
+    })
+    .join()
+    .unwrap();
+    assert_ne!(other_address, resolved as usize);
+    assert_eq!(Loader::Native.value(handle, "value"), 91);
+    assert_eq!(unsafe { OWNED_TLS_RESOLVER(&index) }, resolved.cast());
+    Loader::Native.close(handle);
+    assert!(
+        unsafe { OWNED_TLS_RESOLVER(&index) }.is_null(),
+        "retired ID stayed live"
+    );
+    let reloaded = Loader::Native.open(&path, libc::RTLD_NOW);
+    assert!(!reloaded.is_null());
+    let (new_module, base) = Loader::Native.tls_info(reloaded);
+    assert_ne!(new_module, module, "TLS module IDs must never be reused");
+    assert!(base.is_null());
+    assert!(unsafe { OWNED_TLS_RESOLVER(&index) }.is_null());
+    let fresh = TlsIndex {
+        ti_module: new_module as u64,
+        ti_offset: 8,
+    };
+    let fresh = unsafe { OWNED_TLS_RESOLVER(&fresh) }.cast::<i64>();
+    assert!(!fresh.is_null());
+    assert_eq!(unsafe { *fresh }, 41);
+    Loader::Native.close(reloaded);
+}
+
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+#[test]
+fn public_dynamic_tls_resolver_isolates_native_threads() {
+    if !public_resolver_child("public_dynamic_tls_resolver_isolates_native_threads") {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = Fixture::new();
+    let source = format!(
+        r#"{PUBLIC_TLS_SOURCE}
+        #include <stddef.h>
+        #include <stdint.h>
+        #include <stdatomic.h>
+        struct tls_index {{ size_t module; size_t offset; }};
+        typedef void *(*resolve_fn)(const struct tls_index *);
+        struct worker_case {{
+            resolve_fn resolve; size_t module; long value;
+            _Atomic int ready; _Atomic int release;
+            uintptr_t address; long observed; int errors;
+        }};
+        void *worker(void *argument) {{
+            struct worker_case *c = argument;
+            struct tls_index index = {{c->module, offsetof(struct payload, value)}};
+            long *p = c->resolve(&index);
+            int errors = 0;
+            if (!p) errors |= 1;
+            else {{
+                if (*p != 41) errors |= 2;
+                if (p != &tls_value.value) errors |= 4;
+                if (tls_value.prefix != 11 || ((uintptr_t)&tls_value % 64)) errors |= 8;
+                for (size_t i=0; i<sizeof(tls_value.zeroes); ++i)
+                    if (tls_value.zeroes[i]) errors |= 16;
+                *p = c->value;
+                c->address = (uintptr_t)p;
+            }}
+            atomic_store_explicit(&c->ready, 1, memory_order_release);
+            while (!atomic_load_explicit(&c->release, memory_order_acquire))
+                __asm__ volatile("pause");
+            if (p) {{
+                if (c->resolve(&index) != p) errors |= 32;
+                c->observed = *p;
+                if (*p != c->value) errors |= 64;
+            }}
+            c->errors = errors;
+            return (void *)(uintptr_t)errors;
+        }}
+    "#
+    );
+    let path = f.compile("public_native_threads", &source, &[], &[]);
+    let handle = Loader::Native.open(&path, libc::RTLD_NOW);
+    assert!(!handle.is_null());
+    let (module, _) = Loader::Native.tls_info(handle);
+    type Worker = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+    let worker: Worker = unsafe { std::mem::transmute(Loader::Native.symbol(handle, "worker")) };
+    let index = TlsIndex {
+        ti_module: module as u64,
+        ti_offset: 8,
+    };
+    let creator = unsafe { OWNED_TLS_RESOLVER(&index) }.cast::<i64>();
+    assert!(!creator.is_null());
+    unsafe { *creator = 303 };
+    frankenlibc_abi::pthread_abi::pthread_threading_force_native_for_tests();
+
+    #[repr(C)]
+    struct WorkerCase {
+        resolve: TlsResolver,
+        module: usize,
+        value: i64,
+        ready: AtomicI32,
+        release: AtomicI32,
+        address: usize,
+        observed: i64,
+        errors: c_int,
+    }
+    // Repeated rounds also require new native workers to start from the TLS
+    // template after the preceding workers' thread-exit cleanup has run.
+    for _ in 0..2 {
+        let mut cases = [101, 202].map(|value| WorkerCase {
+            resolve: OWNED_TLS_RESOLVER,
+            module,
+            value,
+            ready: AtomicI32::new(0),
+            release: AtomicI32::new(0),
+            address: 0,
+            observed: 0,
+            errors: 0,
+        });
+        let mut threads = [0; 2];
+        for i in 0..2 {
+            assert_eq!(
+                unsafe {
+                    frankenlibc_abi::pthread_abi::pthread_create(
+                        &mut threads[i],
+                        std::ptr::null(),
+                        Some(worker),
+                        (&raw mut cases[i]).cast(),
+                    )
+                },
+                0
+            );
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let ready = loop {
+            if cases
+                .iter()
+                .all(|case| case.ready.load(Ordering::Acquire) == 1)
+            {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        for case in &cases {
+            case.release.store(1, Ordering::Release);
+        }
+        for thread in threads {
+            let mut returned = std::ptr::null_mut();
+            assert_eq!(
+                unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut returned) },
+                0
+            );
+            assert!(
+                returned.is_null(),
+                "native TLS worker reported {returned:p}"
+            );
+        }
+        assert!(ready, "native TLS workers did not both reach the barrier");
+        assert_ne!(cases[0].address, cases[1].address);
+        for case in &cases {
+            assert_eq!(case.errors, 0);
+            assert_eq!(case.observed, case.value);
+            assert_ne!(case.address, creator as usize);
+        }
+        assert_eq!(unsafe { *creator }, 303);
+        assert_eq!(unsafe { OWNED_TLS_RESOLVER(&index) }, creator.cast());
+    }
+    Loader::Native.close(handle);
 }
 
 #[test]

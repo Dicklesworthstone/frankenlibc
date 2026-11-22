@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# check_loader_tls_e2e.sh — E2E test for loader TLS support (bd-73h55.2.4)
+# check_loader_tls_e2e.sh — loader TLS source-structure check (bd-73h55.2.4)
 #
 # Verifies that:
 # 1. TlsSegment struct exists in loader
 # 2. TlsModuleRegistry exists for module ID allocation
-# 3. __tls_get_addr is implemented in ABI
+# 3. __tls_get_addr is declared in ABI
 # 4. PT_TLS parsing is integrated into LoadedObject
+# This checks source presence only. Runtime behavior is exercised separately by
+# dlfcn_native_tls_test, including its public_dynamic_tls_resolver_* cases.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -13,7 +15,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "=== Loader TLS E2E Test (bd-73h55.2.4) ==="
+echo "=== Loader TLS Source-Structure Check (bd-73h55.2.4) ==="
 echo ""
 
 # Test 1: TlsSegment struct exists
@@ -58,11 +60,11 @@ else
 fi
 echo ""
 
-# Test 5: __tls_get_addr implemented
-echo "--- Test 5: __tls_get_addr implemented ---"
+# Test 5: __tls_get_addr declared
+echo "--- Test 5: __tls_get_addr declared ---"
 GLIBC_ABI="${REPO_ROOT}/crates/frankenlibc-abi/src/glibc_internal_abi.rs"
 if grep -q "pub unsafe extern \"C\" fn __tls_get_addr" "${GLIBC_ABI}"; then
-  echo "PASS: __tls_get_addr implemented"
+  echo "PASS: __tls_get_addr declaration present"
 else
   echo "FAIL: __tls_get_addr missing"
   exit 1
@@ -79,12 +81,19 @@ else
 fi
 echo ""
 
-# Test 7: DTV management implemented
-echo "--- Test 7: DTV management implemented ---"
-if grep -q "fn with_dtv" "${GLIBC_ABI}" && grep -q "allocate_tls_block" "${GLIBC_ABI}"; then
-  echo "PASS: DTV management functions present"
+# Test 7: public owned resolver shares the native loader registry
+echo "--- Test 7: owned resolver registry bridge present ---"
+DLFCN_ABI="${REPO_ROOT}/crates/frankenlibc-abi/src/dlfcn_abi.rs"
+DLFCN_NATIVE="${REPO_ROOT}/crates/frankenlibc-abi/src/dlfcn_native.rs"
+DLFCN_TLS="${REPO_ROOT}/crates/frankenlibc-abi/src/dlfcn_tls.rs"
+if grep -q "fn owned_tls_get_addr" "${GLIBC_ABI}" \
+  && grep -q "crate::dlfcn_abi::native_tls_address(module, offset)" "${GLIBC_ABI}" \
+  && grep -q "native::tls_address(module_id, offset)" "${DLFCN_ABI}" \
+  && grep -q "tls::module_address(module_id, offset)" "${DLFCN_NATIVE}" \
+  && grep -q "fn module_address" "${DLFCN_TLS}"; then
+  echo "PASS: owned resolver registry bridge present in source"
 else
-  echo "FAIL: DTV management functions missing"
+  echo "FAIL: owned resolver registry bridge missing from source"
   exit 1
 fi
 echo ""
@@ -106,6 +115,7 @@ cat > "${SUMMARY_FILE}" <<EOF
 {
   "schema_version": "loader_tls_e2e.v1",
   "bead_id": "bd-73h55.2.4",
+  "evidence_kind": "source_structure_only",
   "generated_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "tests": {
     "tls_segment_struct": "pass",
@@ -119,10 +129,10 @@ cat > "${SUMMARY_FILE}" <<EOF
   },
   "implementation_status": {
     "pt_tls_parsing": "integrated into LoadedObject.tls_segment",
-    "module_id_allocation": "TlsModuleRegistry with register()",
-    "dtv_management": "with_dtv() accessor + allocate_tls_block()",
-    "tls_get_addr": "__tls_get_addr with DTV lookup",
-    "tls_relocations": "DtpMod64/DtpOff64/TpOff64/TlsGd/TlsLd defined (application deferred)"
+    "module_id_allocation": "core TlsModuleRegistry declaration present",
+    "dtv_management": "native loader module_address() registry lookup",
+    "tls_get_addr": "standalone owned registry bridge; interpose host dispatch",
+    "tls_relocations": "core TLS relocation variants present (execution not checked)"
   },
   "overall_status": "pass"
 }
@@ -130,5 +140,5 @@ EOF
 
 echo "Summary: ${SUMMARY_FILE}"
 echo ""
-echo "PASS: Loader TLS E2E verified"
+echo "PASS: Loader TLS source structure verified (runtime execution not checked)"
 exit 0

@@ -10897,16 +10897,19 @@ pub unsafe extern "C" fn __call_tls_dtors() {
 /// TLS index structure for `__tls_get_addr`.
 #[repr(C)]
 pub struct TlsIndex {
-    /// TLS module ID (1-based for dynamically loaded modules).
+    /// Nonzero TLS module ID assigned by the owning loader.
     pub ti_module: u64,
     /// Offset within the module's TLS block.
     pub ti_offset: u64,
 }
 
+#[cfg(not(feature = "standalone"))]
 type HostTlsGetAddr = unsafe extern "C" fn(*const TlsIndex) -> *mut c_void;
 
+#[cfg(not(feature = "standalone"))]
 static HOST_TLS_GET_ADDR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+#[cfg(not(feature = "standalone"))]
 fn host_tls_get_addr() -> Option<HostTlsGetAddr> {
     let cached = HOST_TLS_GET_ADDR.load(std::sync::atomic::Ordering::Acquire);
     let addr = if cached == 0 {
@@ -10921,141 +10924,66 @@ fn host_tls_get_addr() -> Option<HostTlsGetAddr> {
     Some(unsafe { core::mem::transmute::<usize, HostTlsGetAddr>(addr) })
 }
 
-/// Per-thread DTV (Dynamic Thread Vector) for dynamically loaded TLS.
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+unsafe fn owned_tls_get_addr(ti: *const TlsIndex) -> *mut c_void {
+    if ti.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the caller supplies a readable module/offset pair. Reading it
+    // unaligned also permits the GOT representation used by native TLS calls.
+    let index = unsafe { std::ptr::read_unaligned(ti) };
+    let (Ok(module), Ok(offset)) = (
+        usize::try_from(index.ti_module),
+        usize::try_from(index.ti_offset),
+    ) else {
+        return std::ptr::null_mut();
+    };
+    crate::dlfcn_abi::native_tls_address(module, offset)
+}
+
+/// Exercise the standalone resolver body in hosted component conformance tests.
+/// This deliberately accepts only native loader module IDs and does not qualify
+/// the surrounding hosted process as a standalone runtime.
 ///
-/// Slot 0 is the generation counter; slots 1..N point to TLS blocks.
-#[cfg(feature = "owned-tls-cache")]
-struct DtvStorage(Vec<*mut u8>);
-
-#[cfg(feature = "owned-tls-cache")]
-impl DtvStorage {
-    const fn new() -> Self {
-        Self(Vec::new())
-    }
-}
-
-// SAFETY: OwnedTlsCache isolates DtvStorage to its owning thread and rejects
-// overlapping mutable borrows. These TLS block addresses are only accessed
-// by that thread after lookup.
-#[cfg(feature = "owned-tls-cache")]
-unsafe impl Send for DtvStorage {}
-
-#[cfg(feature = "owned-tls-cache")]
-static DTV_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<DtvStorage> =
-    crate::owned_tls_cache::OwnedTlsCache::new(DtvStorage::new);
-
-#[cfg(not(feature = "owned-tls-cache"))]
-std::thread_local! {
-    static DTV_THREAD_LOCAL: crate::util::TlsHeapCell<std::cell::RefCell<Vec<*mut u8>>> =
-        const { crate::util::TlsHeapCell::new() };
-}
-
-/// Access the per-thread DTV.
-#[inline]
-fn with_dtv<R>(f: impl FnOnce(&mut Vec<*mut u8>) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        DTV_OWNED_TLS.with(|storage| f(&mut storage.0))
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        DTV_THREAD_LOCAL.with(|slot| {
-            slot.with_init(
-                || std::cell::RefCell::new(Vec::new()),
-                |dtv| f(&mut dtv.borrow_mut()),
-            )
-        })
-    }
+/// # Safety
+/// `ti` must be null or point to a readable [`TlsIndex`]. The returned address
+/// belongs to the calling thread and must not outlive its owning module.
+#[cfg(feature = "conformance-testing")]
+#[doc(hidden)]
+pub unsafe extern "C" fn tls_get_addr_owned_for_conformance(ti: *const TlsIndex) -> *mut c_void {
+    unsafe { owned_tls_get_addr(ti) }
 }
 
 /// `__tls_get_addr` — resolve TLS address for dynamic modules (bd-73h55.2.4).
 ///
-/// Given a `tls_index` containing module ID and offset, returns a pointer to
-/// the thread-local storage for that module. The DTV is grown on first access
-/// for a new module.
-///
-/// Module ID 0 refers to the executable's TLS; modules 1..N are dynamically
-/// loaded shared objects.
+/// Given a loader-assigned module ID and module-relative offset, resolves that
+/// module's storage for the calling thread. Standalone builds share the native
+/// loader's live registry, lazy template initialization and thread-exit cleanup.
+/// Zero, unknown and retired native IDs, or offsets beyond the block's one-past
+/// address, return null.
+/// This does not establish an executable's static TLS or a new hardware TCB.
 ///
 /// Exported only by the standalone build. glibc defines `__tls_get_addr` in
 /// ld.so, not libc.so.6; with the host loader present this body is a pure
-/// forward to it, and exporting it made every general-dynamic TLS access in the
-/// process -- including this library's own, bound here by -Bsymbolic-functions
-/// -- pay a second call (~19% of a malloc/free pair).
+/// forward to it: host and native module IDs can overlap. Exporting it made
+/// every general-dynamic TLS access in the process -- including this library's
+/// own, bound here by -Bsymbolic-functions -- pay a second call (~19% of a
+/// malloc/free pair).
 #[cfg_attr(all(not(debug_assertions), feature = "standalone"), unsafe(no_mangle))]
 pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut c_void {
     if ti.is_null() {
         return std::ptr::null_mut();
     }
-    if let Some(host_fn) = host_tls_get_addr() {
-        return unsafe { host_fn(ti) };
+    #[cfg(feature = "standalone")]
+    {
+        unsafe { owned_tls_get_addr(ti) }
     }
-    let module = unsafe { (*ti).ti_module } as usize;
-    let offset = unsafe { (*ti).ti_offset } as usize;
-
-    // Module 0 is the executable — delegate to host __tls_get_addr if available
-    // or use the static TLS region.
-    if module == 0 {
-        // For module 0 (executable), the offset is relative to the thread pointer.
-        // On x86_64, TLS is below TP (negative offset from fs:0).
-        // This is a simplified implementation; real code should use the TP register.
-        return std::ptr::null_mut();
+    #[cfg(not(feature = "standalone"))]
+    {
+        host_tls_get_addr()
+            .map(|host_fn| unsafe { host_fn(ti) })
+            .unwrap_or(std::ptr::null_mut())
     }
-
-    with_dtv(|dtv| {
-        // Ensure DTV is large enough for this module.
-        if module >= dtv.len() {
-            dtv.resize(module + 1, std::ptr::null_mut());
-        }
-
-        let block = dtv[module];
-        if block.is_null() {
-            // TLS block not yet allocated for this thread.
-            // In a full implementation, we would allocate and initialize it here.
-            std::ptr::null_mut()
-        } else {
-            unsafe { block.add(offset) as *mut c_void }
-        }
-    })
-}
-
-/// Allocate and initialize a TLS block for a dynamically loaded module.
-///
-/// Called by the loader when a module with PT_TLS is loaded after thread creation.
-pub fn allocate_tls_block(
-    module_id: usize,
-    size: usize,
-    align: usize,
-    init: Option<&[u8]>,
-) -> bool {
-    with_dtv(|dtv| {
-        // Grow DTV if needed.
-        if module_id >= dtv.len() {
-            dtv.resize(module_id + 1, std::ptr::null_mut());
-        }
-
-        // Allocate aligned memory for the TLS block.
-        let layout = match std::alloc::Layout::from_size_align(size.max(1), align.max(1)) {
-            Ok(l) => l,
-            Err(_) => return false,
-        };
-
-        let block = unsafe { std::alloc::alloc_zeroed(layout) };
-        if block.is_null() {
-            return false;
-        }
-
-        // Copy initialization data if provided.
-        if let Some(data) = init {
-            let copy_len = data.len().min(size);
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), block, copy_len);
-            }
-        }
-
-        dtv[module_id] = block;
-        true
-    })
 }
 
 /// `__abort_msg` — pointer to abort message (data symbol).

@@ -538,6 +538,11 @@ pub(crate) use native::{
     prepare_native_public_tls_destructors, register_native_public_tls_destructor,
 };
 
+#[cfg(any(feature = "standalone", feature = "conformance-testing"))]
+pub(crate) fn native_tls_address(module_id: usize, offset: usize) -> *mut c_void {
+    native::tls_address(module_id, offset)
+}
+
 #[doc(hidden)]
 pub use native::native_dso_handle_for_tests;
 
