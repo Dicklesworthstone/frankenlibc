@@ -6017,6 +6017,21 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
 // memrchr
 // ---------------------------------------------------------------------------
 
+avx2_dispatch! {
+    /// `frankenlibc_core::string::mem::memrchr` over `n` readable bytes at `s`,
+    /// compiled with AVX2 on CPUs that have it so 32-lane panels and folds run
+    /// at full width without bloating the baseline `memrchr` prologue.
+    #[inline(always)]
+    unsafe fn core_memrchr(s: *const u8, needle: u8, n: usize) -> Option<usize> => core_memrchr_body;
+}
+
+#[inline(always)]
+unsafe fn core_memrchr_body(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    // SAFETY: the caller guarantees `n` readable bytes at `s`.
+    let bytes = unsafe { std::slice::from_raw_parts(s, n) };
+    frankenlibc_core::string::mem::memrchr(bytes, needle, n)
+}
+
 /// POSIX `memrchr` (GNU extension) -- locates last occurrence of byte `c` in first `n` bytes of `s`.
 ///
 /// Returns pointer to the matching byte, or null if not found.
@@ -6034,8 +6049,7 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
             return std::ptr::null_mut();
         }
         return unsafe {
-            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
-            match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+            match core_memrchr(s.cast::<u8>(), c as u8, n) {
                 Some(idx) => (s as *mut u8).add(idx).cast(),
                 None => std::ptr::null_mut(),
             }
@@ -6053,8 +6067,9 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
     unsafe { memrchr_validating(s, c, n) }
 }
 
+#[cold]
 #[inline(never)]
-unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     if n == 0 || s.is_null() {
         if s.is_null() {
             let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);

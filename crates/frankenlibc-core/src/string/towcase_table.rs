@@ -13,22 +13,123 @@
 //!   `cargo test -p frankenlibc-abi --test towcase_table_gen -- --ignored --nocapture`
 //! then replace the arrays below.
 
-/// Glibc UTF-8-locale `towupper(wc)`: maps `wc` to its uppercase form, or
-/// returns `wc` unchanged when no single-character mapping exists.
-#[inline]
-pub(crate) fn towupper(wc: u32) -> u32 {
+struct BmpCaseTable<const PAGES: usize> {
+    /// Page directory for `wc >> 6` (`0..1024`). `0` means identity (no mappings
+    /// on that 64-codepoint page); `idx > 0` selects `pages[idx - 1]`.
+    dir: [u8; 1024],
+    /// Non-empty 64-codepoint BMP pages (`0` marks an identity entry).
+    pages: [[u16; 64]; PAGES],
+}
+
+const fn build_bmp_case_table<const N: usize, const PAGES: usize>(
+    deltas: &[(u32, u32); N],
+) -> BmpCaseTable<PAGES> {
+    let mut dir = [0u8; 1024];
+    let mut pages = [[0u16; 64]; PAGES];
+    let mut next_page = 0usize;
+    let mut i = 0usize;
+    while i < N {
+        let (cp, mapped) = deltas[i];
+        if cp < 0x1_0000 {
+            assert!(mapped != 0 && mapped < 0x1_0000);
+            let p = (cp >> 6) as usize;
+            let mut slot = dir[p] as usize;
+            if slot == 0 {
+                assert!(next_page < PAGES);
+                next_page += 1;
+                slot = next_page;
+                dir[p] = slot as u8;
+            }
+            pages[slot - 1][(cp & 63) as usize] = mapped as u16;
+        }
+        i += 1;
+    }
+    assert!(next_page == PAGES);
+    BmpCaseTable { dir, pages }
+}
+
+static TOUPPER_BMP: BmpCaseTable<50> = build_bmp_case_table(&TOUPPER_DELTAS);
+static TOLOWER_BMP: BmpCaseTable<46> = build_bmp_case_table(&TOLOWER_DELTAS);
+
+#[cold]
+#[inline(never)]
+fn towupper_non_bmp(wc: u32) -> u32 {
     match TOUPPER_DELTAS.binary_search_by_key(&wc, |&(k, _)| k) {
         Ok(i) => TOUPPER_DELTAS[i].1,
         Err(_) => wc,
     }
 }
 
-/// Glibc UTF-8-locale `towlower(wc)`.
-#[inline]
-pub(crate) fn towlower(wc: u32) -> u32 {
+#[cold]
+#[inline(never)]
+fn towlower_non_bmp(wc: u32) -> u32 {
     match TOLOWER_DELTAS.binary_search_by_key(&wc, |&(k, _)| k) {
         Ok(i) => TOLOWER_DELTAS[i].1,
         Err(_) => wc,
+    }
+}
+
+/// Glibc UTF-8-locale `towupper(wc)`: maps `wc` to its uppercase form, or
+/// returns `wc` unchanged when no single-character mapping exists.
+#[inline(always)]
+pub(crate) fn towupper(wc: u32) -> u32 {
+    if wc < 128 {
+        return if wc.wrapping_sub(b'a' as u32) < 26 {
+            wc - 32
+        } else {
+            wc
+        };
+    }
+    if wc < 0x1_0000 {
+        let page = TOUPPER_BMP.dir[(wc >> 6) as usize] as usize;
+        if page == 0 {
+            return wc;
+        }
+        let mapped = TOUPPER_BMP.pages[page - 1][(wc & 63) as usize];
+        return if mapped == 0 { wc } else { u32::from(mapped) };
+    }
+    towupper_non_bmp(wc)
+}
+
+/// Glibc UTF-8-locale `towlower(wc)`.
+#[inline(always)]
+pub(crate) fn towlower(wc: u32) -> u32 {
+    if wc < 128 {
+        return if wc.wrapping_sub(b'A' as u32) < 26 {
+            wc + 32
+        } else {
+            wc
+        };
+    }
+    if wc < 0x1_0000 {
+        let page = TOLOWER_BMP.dir[(wc >> 6) as usize] as usize;
+        if page == 0 {
+            return wc;
+        }
+        let mapped = TOLOWER_BMP.pages[page - 1][(wc & 63) as usize];
+        return if mapped == 0 { wc } else { u32::from(mapped) };
+    }
+    towlower_non_bmp(wc)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bmp_case_tables_match_binary_search_exhaustively() {
+        for wc in 0u32..=0x10_FFFF {
+            let want_up = match TOUPPER_DELTAS.binary_search_by_key(&wc, |&(k, _)| k) {
+                Ok(i) => TOUPPER_DELTAS[i].1,
+                Err(_) => wc,
+            };
+            let want_lo = match TOLOWER_DELTAS.binary_search_by_key(&wc, |&(k, _)| k) {
+                Ok(i) => TOLOWER_DELTAS[i].1,
+                Err(_) => wc,
+            };
+            assert_eq!(towupper(wc), want_up, "towupper({wc:#x})");
+            assert_eq!(towlower(wc), want_lo, "towlower({wc:#x})");
+        }
     }
 }
 
