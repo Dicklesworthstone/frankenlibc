@@ -41,6 +41,8 @@ mod g {
             funcs: CookieIoFuncs,
         ) -> *mut c_void;
         pub fn __errno_location() -> *mut c_int;
+        pub fn ftrylockfile(f: *mut c_void) -> c_int;
+        pub fn funlockfile(f: *mut c_void);
     }
     // Declared C-unwind to match fl's stdio entry points, which let a
     // fopencookie callback unwind through them (as glibc's do).
@@ -55,6 +57,9 @@ mod g {
         pub fn fgetc(f: *mut c_void) -> c_int;
         pub fn ungetc(c: c_int, f: *mut c_void) -> c_int;
         pub fn clearerr(f: *mut c_void);
+        pub fn fileno(f: *mut c_void) -> c_int;
+        pub fn fputc(byte: c_int, f: *mut c_void) -> c_int;
+        pub fn fseeko(f: *mut c_void, offset: i64, whence: c_int) -> c_int;
         pub fn getdelim(p: *mut *mut c_char, n: *mut usize, d: c_int, f: *mut c_void) -> isize;
         pub fn getline(p: *mut *mut c_char, n: *mut usize, f: *mut c_void) -> isize;
     }
@@ -757,4 +762,403 @@ fn null_hooks_never_set_ebadf() {
         libc::EBADF,
         "fl set EBADF flushing a NULL write hook"
     );
+}
+
+#[derive(Debug, PartialEq)]
+struct ReentrantObservation {
+    callback: &'static str,
+    error: bool,
+    eof: bool,
+    descriptor: c_int,
+    descriptor_errno: c_int,
+    lock_result: c_int,
+    cleared_error: bool,
+    cleared_eof: bool,
+}
+
+struct ReentrantCookie {
+    native: bool,
+    stream: *mut c_void,
+    position: i64,
+    output: Vec<u8>,
+    observations: Vec<ReentrantObservation>,
+    write_limit: usize,
+    recursive_output: u8,
+    panic_on_write: bool,
+}
+
+fn reentrant_errno_slot(native: bool) -> *mut c_int {
+    // SAFETY: both providers return the calling thread's writable errno slot.
+    unsafe {
+        if native {
+            frankenlibc_abi::errno_abi::__errno_location()
+        } else {
+            g::__errno_location()
+        }
+    }
+}
+
+fn observe_reentrant_callback(state: &mut ReentrantCookie, callback: &'static str) {
+    let error = if state.native { fl::ferror } else { g::ferror };
+    let eof = if state.native { fl::feof } else { g::feof };
+    let descriptor = if state.native { fl::fileno } else { g::fileno };
+    let try_lock = if state.native {
+        fl::ftrylockfile
+    } else {
+        g::ftrylockfile
+    };
+    let unlock = if state.native {
+        fl::funlockfile
+    } else {
+        g::funlockfile
+    };
+    let clear = if state.native {
+        fl::clearerr
+    } else {
+        g::clearerr
+    };
+    // SAFETY: the outer operation keeps this FILE and cookie live. These
+    // callbacks deliberately reenter its status operations and recursive lock.
+    let observation = unsafe {
+        let error_before = error(state.stream) != 0;
+        let eof_before = eof(state.stream) != 0;
+        *reentrant_errno_slot(state.native) = SENTINEL_ERRNO;
+        let fd = descriptor(state.stream);
+        let descriptor_errno = *reentrant_errno_slot(state.native);
+        let lock_result = try_lock(state.stream);
+        if lock_result == 0 {
+            unlock(state.stream);
+        }
+        clear(state.stream);
+        ReentrantObservation {
+            callback,
+            error: error_before,
+            eof: eof_before,
+            descriptor: fd,
+            descriptor_errno,
+            lock_result,
+            cleared_error: error(state.stream) != 0,
+            cleared_eof: eof(state.stream) != 0,
+        }
+    };
+    state.observations.push(observation);
+}
+
+unsafe extern "C-unwind" fn reentrant_cookie_read(
+    cookie: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> isize {
+    // SAFETY: the test keeps the cookie alive through the corresponding close.
+    let state = unsafe { &mut *cookie.cast::<ReentrantCookie>() };
+    observe_reentrant_callback(state, "read");
+    if capacity == 0 || state.position != 0 {
+        return 0;
+    }
+    // SAFETY: the callback was supplied at least one writable byte.
+    unsafe { *buffer = b'R' as c_char };
+    state.position = 1;
+    1
+}
+
+unsafe extern "C-unwind" fn reentrant_cookie_write(
+    cookie: *mut c_void,
+    buffer: *const c_char,
+    length: usize,
+) -> isize {
+    // End this borrow before any nested output callback borrows the same
+    // cookie. Recursion is limited to one additional write/flush operation.
+    let (native, stream, recursive, panic_on_write) = {
+        // SAFETY: the caller keeps the cookie alive for the complete operation.
+        let state = unsafe { &mut *cookie.cast::<ReentrantCookie>() };
+        observe_reentrant_callback(state, "write");
+        let recursive = std::mem::take(&mut state.recursive_output);
+        (state.native, state.stream, recursive, state.panic_on_write)
+    };
+    let put = if native { fl::fputc } else { g::fputc };
+    let flush = if native { fl::fflush } else { g::fflush };
+    // SAFETY: the public FILE lock is recursive and the stream is still live.
+    unsafe {
+        if recursive & 1 != 0 {
+            assert_eq!(put(b'Z' as c_int, stream), b'Z' as c_int);
+        }
+        if recursive & 2 != 0 {
+            assert_eq!(flush(stream), 0);
+        }
+    }
+    if panic_on_write {
+        // SAFETY: this is the callback provider's current-thread errno slot.
+        unsafe { *reentrant_errno_slot(native) = SENTINEL_ERRNO };
+        std::panic::panic_any("cookie callback unwind");
+    }
+    // SAFETY: nested callbacks have returned; no earlier cookie borrow remains.
+    let state = unsafe { &mut *cookie.cast::<ReentrantCookie>() };
+    let bytes = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), length) };
+    let accepted = length.min(state.write_limit);
+    state.output.extend_from_slice(&bytes[..accepted]);
+    state.position += accepted as i64;
+    // Callbacks are allowed to set errno, including when accepting a short
+    // prefix. Reacquiring libc's private lock must not replace that value.
+    unsafe {
+        *reentrant_errno_slot(native) = if accepted < length {
+            libc::ENOSPC
+        } else {
+            SENTINEL_ERRNO
+        };
+    }
+    accepted as isize
+}
+
+unsafe extern "C-unwind" fn reentrant_cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: the selected provider supplies the live cookie and offset slot.
+    let state = unsafe { &mut *cookie.cast::<ReentrantCookie>() };
+    observe_reentrant_callback(state, "seek");
+    unsafe {
+        if whence == libc::SEEK_CUR {
+            *offset += state.position;
+        }
+        state.position = *offset;
+    }
+    0
+}
+
+unsafe extern "C-unwind" fn reentrant_cookie_close(cookie: *mut c_void) -> c_int {
+    // SAFETY: the cookie remains live until this close callback returns.
+    let state = unsafe { &mut *cookie.cast::<ReentrantCookie>() };
+    observe_reentrant_callback(state, "close");
+    0
+}
+
+fn reentrant_cookie_transcript(native: bool, phase: &str) -> String {
+    let mut state = ReentrantCookie {
+        native,
+        stream: std::ptr::null_mut(),
+        position: 0,
+        output: Vec::new(),
+        observations: Vec::new(),
+        write_limit: if phase.ends_with("-short") {
+            1
+        } else if phase.ends_with("-fail") || phase == "retry" {
+            0
+        } else {
+            usize::MAX
+        },
+        recursive_output: match phase {
+            "recursive-write" => 1,
+            "recursive-flush" => 2,
+            "recursive-both" => 3,
+            _ => 0,
+        },
+        panic_on_write: phase == "unwind",
+    };
+    let hooks = CookieIoFuncs {
+        read: Some(reentrant_cookie_read),
+        write: Some(reentrant_cookie_write),
+        seek: Some(reentrant_cookie_seek),
+        close: Some(reentrant_cookie_close),
+    };
+    let open = if native {
+        fl::fopencookie
+    } else {
+        g::fopencookie
+    };
+    let configure = if native { fl::setvbuf } else { g::setvbuf };
+    let write = if native { fl::fwrite } else { g::fwrite };
+    let flush = if native { fl::fflush } else { g::fflush };
+    let seek = if native { fl::fseeko } else { g::fseeko };
+    let read = if native { fl::fgetc } else { g::fgetc };
+    let close = if native { fl::fclose } else { g::fclose };
+    let error = if native { fl::ferror } else { g::ferror };
+    let mut results = Vec::new();
+    // SAFETY: all inputs and callback storage outlive the stream; every branch
+    // closes through its creator. The subprocess timer bounds a lock regression.
+    unsafe {
+        state.stream = open((&raw mut state).cast(), c"r+".as_ptr(), hooks);
+        assert!(!state.stream.is_null());
+        assert_eq!(
+            configure(
+                state.stream,
+                std::ptr::null_mut(),
+                if phase.starts_with("write") || phase == "retry" {
+                    libc::_IONBF
+                } else {
+                    libc::_IOFBF
+                },
+                0
+            ),
+            0
+        );
+        let stream = state.stream;
+        *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+        let mut record = |result: isize| {
+            let error_number = *reentrant_errno_slot(native);
+            results.push((result, error_number, error(stream) != 0));
+        };
+        if phase == "read" {
+            assert_eq!(read(state.stream), b'R' as c_int);
+        } else {
+            let written = write(c"abc".as_ptr().cast(), 1, 3, stream);
+            record(written as isize);
+            if phase.starts_with("write") || phase == "retry" {
+                assert_eq!(written, state.write_limit.min(3));
+            } else {
+                assert_eq!(written, 3);
+            }
+            match phase {
+                "write" | "write-short" | "write-fail" | "flush" | "flush-short" | "flush-fail"
+                | "recursive-write" | "recursive-flush" | "recursive-both" => {
+                    record(flush(stream) as isize)
+                }
+                "seek" | "seek-fail" => record(seek(stream, 0, libc::SEEK_SET) as isize),
+                "global" => record(flush(std::ptr::null_mut()) as isize),
+                "rebuffer" => {
+                    record(configure(stream, std::ptr::null_mut(), libc::_IONBF, 0) as isize)
+                }
+                "close" | "close-fail" => {}
+                "retry" => {
+                    state.write_limit = usize::MAX;
+                    record(write(c"xy".as_ptr().cast(), 1, 2, stream) as isize);
+                    assert_eq!(error(stream), 0, "callback clearerr must remain effective");
+                }
+                "unwind" => {
+                    std::panic::set_hook(Box::new(|_| {}));
+                    let unwound = std::panic::catch_unwind(|| flush(stream));
+                    assert!(unwound.is_err());
+                    assert_eq!(*reentrant_errno_slot(native), SENTINEL_ERRNO);
+                    // A different thread proves the outer recursive FILE lock
+                    // was released, not merely reacquirable by its old owner.
+                    let address = stream as usize;
+                    assert_eq!(
+                        std::thread::spawn(move || {
+                            let stream = address as *mut c_void;
+                            let lock = if native {
+                                fl::ftrylockfile
+                            } else {
+                                g::ftrylockfile
+                            };
+                            let unlock = if native {
+                                fl::funlockfile
+                            } else {
+                                g::funlockfile
+                            };
+                            let result = lock(stream);
+                            if result == 0 {
+                                unlock(stream);
+                            }
+                            result
+                        })
+                        .join()
+                        .unwrap(),
+                        0
+                    );
+                    state.panic_on_write = false;
+                    record(flush(stream) as isize);
+                }
+                _ => panic!("unknown callback phase"),
+            }
+        }
+        let closed = close(stream);
+        assert_eq!(closed, if phase == "close-fail" { libc::EOF } else { 0 });
+        results.push((closed as isize, *reentrant_errno_slot(native), false));
+    }
+    assert!(!state.observations.is_empty());
+    assert_eq!(state.observations.last().unwrap().callback, "close");
+    for observation in &state.observations {
+        assert_eq!(
+            (observation.descriptor, observation.descriptor_errno),
+            (-1, libc::EBADF)
+        );
+        assert_eq!(observation.lock_result, 0);
+        assert!(!observation.cleared_error && !observation.cleared_eof);
+    }
+    match phase {
+        "recursive-write" => assert_eq!(state.output, b"abc"),
+        "recursive-flush" => assert_eq!(state.output, b"abcabc"),
+        "recursive-both" => assert_eq!(state.output, b"abcZabc"),
+        "retry" => {
+            assert_eq!(state.output, b"xy");
+            assert!(
+                state
+                    .observations
+                    .iter()
+                    .any(|entry| entry.callback == "write" && entry.error)
+            );
+        }
+        "close-fail" => assert!(state.observations.last().unwrap().error),
+        "unwind" => assert_eq!(state.output, b"abc"),
+        _ => {}
+    }
+    format!("{:?} {:?} {results:?}", state.output, state.observations)
+}
+
+#[test]
+fn cookie_callbacks_can_query_and_clear_their_stream() {
+    const TEST: &str = "cookie_callbacks_can_query_and_clear_their_stream";
+    const CHILD: &str = "FRANKENLIBC_COOKIE_REENTRY_CHILD";
+    const PHASE: &str = "FRANKENLIBC_COOKIE_REENTRY_PHASE";
+    if let Some(provider) = std::env::var_os(CHILD) {
+        assert_ne!(fl::fopencookie as *const (), g::fopencookie as *const ());
+        let phase = std::env::var(PHASE).unwrap();
+        // SAFETY: only this selected test runs in the isolated process.
+        unsafe { libc::alarm(5) };
+        let transcript = reentrant_cookie_transcript(provider == "native", &phase);
+        unsafe { libc::alarm(0) };
+        println!("\nCOOKIE_REENTRY={transcript}");
+        return;
+    }
+    for phase in [
+        "write",
+        "flush",
+        "seek",
+        "close",
+        "read",
+        "global",
+        "rebuffer",
+        "write-short",
+        "write-fail",
+        "flush-short",
+        "flush-fail",
+        "seek-fail",
+        "close-fail",
+        "retry",
+        "recursive-write",
+        "recursive-flush",
+        "recursive-both",
+        "unwind",
+    ] {
+        let mut oracle = None;
+        for provider in ["host", "native"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+                .env(CHILD, provider)
+                .env(PHASE, phase)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "{phase}/{provider}: {:?}\n{stdout}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                stdout.contains("1 passed"),
+                "child must execute the regression"
+            );
+            let transcript = stdout
+                .lines()
+                .find_map(|line| line.strip_prefix("COOKIE_REENTRY="))
+                .expect("callback transcript")
+                .to_owned();
+            if let Some(expected) = &oracle {
+                assert_eq!(&transcript, expected, "{phase}");
+            } else {
+                oracle = Some(transcript);
+            }
+        }
+    }
 }

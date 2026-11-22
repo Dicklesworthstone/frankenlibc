@@ -27,6 +27,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs'
       - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/stdio_locking_stress_test.rs'
@@ -62,6 +63,47 @@ defaults:
     shell: bash
 
 jobs:
+  cookie-callbacks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cache: [default, owned]
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Exercise callback reentry, errors, buffering, and unwinding
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/cookie-callbacks
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          for mode in strict hardened; do
+            log="artifacts/cookie-callbacks/$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_fopencookie -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 9 passed; 0 failed; 0 ignored;' "$log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cookie-callbacks-${{ matrix.cache }}
+          path: artifacts/cookie-callbacks/
+
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

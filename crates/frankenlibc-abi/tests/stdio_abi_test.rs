@@ -2403,7 +2403,6 @@ fn freopen_reopens_stream_with_new_file() {
     let _ = fs::remove_file(path2);
 }
 
-
 type FreopenEntry =
     unsafe extern "C-unwind" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
 
@@ -2440,7 +2439,10 @@ fn freopen_preserves_descriptor_number_and_close_on_exec() {
                         0
                     }
                 );
-                assert_eq!(unsafe { frankenlibc_abi::wchar_abi::fwide(reopened, 0) }, 0);
+                assert_eq!(
+                    unsafe { frankenlibc_abi::glibc_internal_abi::fwide(reopened, 0) },
+                    0
+                );
                 assert_eq!(unsafe { fclose(reopened) }, 0);
             }
         }
@@ -2479,7 +2481,10 @@ fn freopen_failed_open_and_mode_close_the_old_descriptor() {
     let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     assert!(reopened.is_null());
     assert_eq!(error, libc::ENOENT);
-    assert_eq!(unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD) }, -1);
+    assert_eq!(
+        unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD) },
+        -1
+    );
     assert_eq!(unsafe { *libc::__errno_location() }, libc::EBADF);
 }
 
@@ -2497,7 +2502,10 @@ fn freopen_reports_descriptor_replacement_failure_without_leaking_the_new_fd() {
             rlim_cur: 0,
             rlim_max: 0,
         };
-        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut saved) }, 0);
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut saved) },
+            0
+        );
         let limited = libc::rlimit {
             rlim_cur: 32,
             rlim_max: saved.rlim_max,
@@ -2520,7 +2528,10 @@ fn freopen_reports_descriptor_replacement_failure_without_leaking_the_new_fd() {
             libc::FD_CLOEXEC
         );
         let next = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
-        assert_eq!(next, probe, "failed freopen leaked its temporary descriptor");
+        assert_eq!(
+            next, probe,
+            "failed freopen leaked its temporary descriptor"
+        );
         assert_eq!(unsafe { libc::close(next) }, 0);
         assert_eq!(unsafe { libc::close(descriptor) }, 0);
     }

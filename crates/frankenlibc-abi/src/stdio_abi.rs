@@ -2087,6 +2087,39 @@ struct StreamGuard<'a> {
     flags_word: usize,
 }
 
+impl StreamGuard<'_> {
+    /// Publish the current state before entering user code, retaining the
+    /// caller's recursive FILE lock but releasing the private Rust-state lock.
+    /// No reference into the stream or its buffers may span this callback.
+    fn with_callback<R>(&mut self, callback: impl FnOnce() -> R) -> R {
+        let handle = resolve_flags_word(self.flags_word);
+        if handle != 0 {
+            mirror_stream_flags(handle, &self.guard);
+        }
+
+        // Capture the callback's errno before MutexGuard::unlocked reacquires
+        // its mutex. Keeping the captured guard outside that operation also
+        // restores errno after the mandatory relock on unwinding.
+        struct CaptureErrno<'a>(&'a mut Option<runtime_policy::ErrnoTransparencyGuard>);
+        impl Drop for CaptureErrno<'_> {
+            fn drop(&mut self) {
+                *self.0 = Some(runtime_policy::ErrnoTransparencyGuard::capture());
+            }
+        }
+        let mut callback_errno = None;
+        let result = parking_lot::MutexGuard::unlocked(&mut self.guard, || {
+            let _capture = CaptureErrno(&mut callback_errno);
+            callback()
+        });
+        // A callback may use the published GNU windows or reenter clearerr and
+        // other stream operations. Continue from that live state, not a copy
+        // taken before calling out.
+        absorb_read_window(&mut self.guard);
+        drop(callback_errno);
+        result
+    }
+}
+
 impl std::ops::Deref for StreamGuard<'_> {
     type Target = StdioStream;
     #[inline]
@@ -5697,15 +5730,17 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
     // the close callback.  `fclose` still performs the close on a flush error,
     // but reports that error to the caller as glibc does.
     if is_cookie_stream(id) {
-        let flushed = unsafe { flush_cookie_stream(id, s) };
-        retire_read_window(s);
+        let flushed = unsafe { flush_cookie_stream(id, &mut s_guard) };
+        retire_read_window(&mut s_guard);
         unregister_fast_fixed_mem_read(id);
         drop(s_guard);
+        // Keep status queries usable from the close callback as well. The
+        // public FILE lock and local Arc retain the association until it ends.
+        let rc = unsafe { cookie_stream_close(id) };
         registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove_stream(id);
-        let rc = unsafe { cookie_stream_close(id) };
         drop(file_lock);
         maybe_unregister_dynamic_native_stream(stream);
         return if flushed && rc == 0 { 0 } else { libc::EOF };
@@ -5826,7 +5861,7 @@ unsafe fn flush_native_streams(caller: usize, only_line_buffered: bool) -> bool 
         }
         let ok = if is_cookie_stream(id) {
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-            unsafe { flush_cookie_stream(id, s) }
+            unsafe { flush_cookie_stream(id, &mut s_guard.stream) }
         } else if s.is_mem_backed() {
             let flush_ok = s.mem_flush();
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
@@ -6302,7 +6337,7 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
             }
             let _ = s.set_orientation(-1);
         }
-        if unsafe { cookie_buffer_write(id, s, &[byte]) } == 1 {
+        if unsafe { cookie_buffer_write(id, &mut s_guard, &[byte]) } == 1 {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
             return c;
         }
@@ -7939,7 +7974,7 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
             let mut s_guard = cell.lock();
             let s = &mut *s_guard;
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-            if !unsafe { flush_cookie_stream(id, s) } {
+            if !unsafe { flush_cookie_stream(id, &mut s_guard) } {
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
                 return -1;
             }
@@ -14953,7 +14988,7 @@ pub unsafe extern "C-unwind" fn fprintf(
             // Keep their output on the callback path and out of fd-only caches.
             // SAFETY: the locked stream and rendered bytes remain live through
             // the synchronous callback, just as in fwrite/fputs.
-            let written = unsafe { cookie_buffer_write(id, s, bytes) };
+            let written = unsafe { cookie_buffer_write(id, s_guard.as_mut().unwrap(), bytes) };
             let adverse = written < total_len;
             runtime_policy::observe(
                 ApiFamily::Stdio,
@@ -16516,7 +16551,7 @@ pub(crate) unsafe fn vfprintf_for_caller(
             // must never be treated as an fd merely because it owns a buffer.
             // SAFETY: the locked stream and rendered bytes remain live through
             // the synchronous callback, just as in fwrite/fputs.
-            let written = unsafe { cookie_buffer_write(id, s, bytes) };
+            let written = unsafe { cookie_buffer_write(id, s_guard.as_mut().unwrap(), bytes) };
             let adverse = written < total_len;
             runtime_policy::observe(
                 ApiFamily::Stdio,
@@ -18355,6 +18390,19 @@ pub unsafe extern "C-unwind" fn freopen(
     // while replacing the stream underneath it, including failure paths.
     // Resolve and acquire before taking the stream registry mutex.
     let file_lock = unsafe { StdioLockGuard::acquire(stream) };
+    if is_cookie_stream(id)
+        && let Some(old_cell) = stream_cell(id)
+    {
+        // Flush and close user cookies while their old association is still
+        // visible. Neither registry may be held across callbacks that query
+        // this FILE or open another one. Descriptor replacement below remains
+        // protected by the same public FILE lock.
+        let mut old_guard = old_cell.lock();
+        let _ = unsafe { flush_cookie_stream(id, &mut old_guard) };
+        unregister_fast_fixed_mem_read(id);
+        drop(old_guard);
+        let _ = unsafe { cookie_stream_close(id) };
+    }
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
 
     // Close the old stream under registry → cell. The public FILE lock above
@@ -18363,16 +18411,10 @@ pub unsafe extern "C-unwind" fn freopen(
     // and BYCALLER operations require equivalent caller synchronization.
     let mut target_fd = -1;
     let mut process_child = None;
-    let mut deferred_cookie_close = false;
     let removed_old_stream = if let Some(old_cell) = reg.remove_stream(id) {
         let mut old_guard = old_cell.lock();
         let old = &mut *old_guard;
         retire_read_window(old);
-        if is_cookie_stream(id) {
-            let _ = unsafe { flush_cookie_stream(id, old) };
-            unregister_fast_fixed_mem_read(id);
-            deferred_cookie_close = true;
-        }
         if old.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, old);
             unsafe {
@@ -18415,14 +18457,6 @@ pub unsafe extern "C-unwind" fn freopen(
     } else {
         false
     };
-
-    // Release the stream registry lock before running user close callbacks.
-    // Process children are reaped after replacement closes their old pipe.
-    if deferred_cookie_close {
-        drop(reg);
-        let _ = unsafe { cookie_stream_close(id) };
-        reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    }
 
     // `freopen(NULL, mode, stream)` changes a stream's mode without naming the
     // file. glibc implements it by reopening the descriptor's own
@@ -18497,7 +18531,11 @@ pub unsafe extern "C-unwind" fn freopen(
         // dup2 would silently clear FD_CLOEXEC for mode 'e'. Keep both the
         // descriptor number and requested inheritance flags, and never report
         // success after a failed replacement (e.g. a lowered RLIMIT_NOFILE).
-        let flags = if open_flags.cloexec { libc::O_CLOEXEC } else { 0 };
+        let flags = if open_flags.cloexec {
+            libc::O_CLOEXEC
+        } else {
+            0
+        };
         let replacement;
         (process_child, replacement) =
             replace_stream_descriptor(id, fd, target_fd, flags, !pathname.is_null());
@@ -20278,7 +20316,7 @@ unsafe fn cookie_write_once(id: usize, bytes: &[u8]) -> usize {
 /// write reaches the callback immediately.  The logical offset advances when
 /// the caller's bytes are accepted into that buffer, matching stdio's visible
 /// write progress rather than callback timing.
-unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8]) -> usize {
+unsafe fn cookie_buffer_write(id: usize, stream: &mut StreamGuard<'_>, bytes: &[u8]) -> usize {
     let fixed_memory = fixed_mem_cookie(id);
     let bounded_printf = extension_bounded_writer(id as *mut c_void).is_some();
     if stream.is_appending()
@@ -20287,7 +20325,8 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     {
         let end = inner.cursor.content_end();
         drop(inner);
-        stream.set_offset(end.saturating_add(stream.pending_flush().len()) as i64);
+        let offset = end.saturating_add(stream.pending_flush().len()) as i64;
+        stream.set_offset(offset);
     }
     let Some(result) = stream.buffer_write(bytes) else {
         // The core marks a read-only stream's error flag. Cookie-backed
@@ -20298,40 +20337,40 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     };
     let flush_needed = result.flush_needed;
     let flushed_from_buffer = result.flushed_from_buffer;
-    let flush_data = if bounded_printf {
-        result.flush_data
-    } else {
-        // Arbitrary user callbacks retain the existing owned staging: they
-        // never observe bytes borrowed from a mutable FILE buffer.
-        std::borrow::Cow::Owned(result.flush_data.into_owned())
-    };
-
     if !flush_needed {
-        drop(flush_data);
-        stream.set_offset(
-            stream
-                .offset()
-                .saturating_add(bytes.len().min(i64::MAX as usize) as i64),
-        );
+        drop(result);
+        let offset = stream
+            .offset()
+            .saturating_add(bytes.len().min(i64::MAX as usize) as i64);
+        stream.set_offset(offset);
         return bytes.len();
     }
 
     // Only the private snprintf hook can receive a borrowed span. It copies
     // into the bounded destination synchronously and invokes no user code, so
     // even a huge callback fwrite needs no full-size intermediate allocation.
-    let flush_length = flush_data.len();
-    let flushed = unsafe { cookie_write_once(id, &flush_data) };
-    drop(flush_data);
+    let (flush_length, flushed) = if bounded_printf {
+        let flush_data = result.flush_data;
+        let length = flush_data.len();
+        let written = unsafe { cookie_write_once(id, &flush_data) };
+        (length, written)
+    } else {
+        // End the mutable stream borrow before releasing its mutex. The
+        // callback owns a stable input span even if it reenters this FILE.
+        let flush_data = result.flush_data.into_owned();
+        let length = flush_data.len();
+        let written = stream.with_callback(|| unsafe { cookie_write_once(id, &flush_data) });
+        (length, written)
+    };
     if flushed == flush_length {
         // StreamBuffer consumed the emitted prefix and retained any suffix
         // after the full block or final newline. That suffix still belongs
         // to every cookie stream until a later write, fflush, or fclose;
         // clearing it here would silently discard bytes already accepted.
-        stream.set_offset(
-            stream
-                .offset()
-                .saturating_add(bytes.len().min(i64::MAX as usize) as i64),
-        );
+        let offset = stream
+            .offset()
+            .saturating_add(bytes.len().min(i64::MAX as usize) as i64);
+        stream.set_offset(offset);
         return bytes.len();
     }
 
@@ -20347,16 +20386,15 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
         }
         return current;
     }
-    stream.set_offset(
-        stream
-            .offset()
-            .saturating_add(current.min(i64::MAX as usize) as i64),
-    );
+    let offset = stream
+        .offset()
+        .saturating_add(current.min(i64::MAX as usize) as i64);
+    stream.set_offset(offset);
     current
 }
 
 /// Flush pending cookie output through its callback.
-unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
+unsafe fn flush_cookie_stream(id: usize, stream: &mut StreamGuard<'_>) -> bool {
     let pending = stream.pending_flush();
     if pending.is_empty() {
         return true;
@@ -20365,9 +20403,13 @@ unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
     // to retry. A short result is an error; discard the pending span even on
     // failure so a later fflush/fclose cannot replay an accepted prefix.
     let expected = pending.len();
-    // SAFETY: pending remains readable for the synchronous callback, and id
-    // identifies the live cookie owned by this locked stream.
-    let written = unsafe { cookie_stream_write(id, pending.as_ptr(), expected) };
+    // User callbacks can query or mutate their FILE. Keep their input owned,
+    // not borrowed from the buffer protected by the mutex being released.
+    let pending = pending.to_vec();
+    // SAFETY: pending remains readable until the callback returns, and the
+    // caller retains the FILE lock and its stream Arc throughout this call.
+    let written =
+        stream.with_callback(|| unsafe { cookie_stream_write(id, pending.as_ptr(), expected) });
     stream.mark_flushed();
     if let Some(memory) = fixed_mem_cookie(id)
         && let Some(inner) = memory.try_lock_inner()
