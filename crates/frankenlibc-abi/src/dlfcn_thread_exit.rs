@@ -642,8 +642,12 @@ fn use_tid_keyed_thread_exit() -> bool {
     {
         #[cfg(not(test))]
         {
-            crate::malloc_abi::native_thread_backend_active()
-                || frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+            // Hosted TLS blocks and destructor queues remain attached to
+            // their original cleanup hook after any thread creates a clone.
+            // Switching every hosted owner to the TID map would replace its
+            // live block and overwrite the reclaimer for its original queue.
+            current_thread_handle().is_some()
+                || frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
         }
         #[cfg(test)]
         {
@@ -677,22 +681,6 @@ fn insert_native_state(tid: i32, ptr: *mut ThreadState) {
 fn remove_native_state_ptr(ptr: *mut ThreadState) {
     let mut guard = NATIVE_THREAD_STATES.lock();
     guard.retain(|&(_, stored)| stored != ptr as usize);
-}
-
-#[cfg(not(test))]
-pub(crate) fn migrate_creator_thread_exit_for_native_threads() {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        let existing = STATE
-            .try_with(|slot| slot.replace(std::ptr::null_mut()))
-            .unwrap_or(std::ptr::null_mut());
-        if !existing.is_null() {
-            insert_native_state(current_exit_tid(), existing);
-        }
-        if PROCESS_EXIT.try_with(Cell::get).unwrap_or(false) {
-            NATIVE_PROCESS_EXIT.store(true, Ordering::Release);
-        }
-    }
 }
 
 pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {

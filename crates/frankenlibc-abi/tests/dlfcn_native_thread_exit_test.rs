@@ -258,6 +258,157 @@ fn native_cpp_tls_destructors_read_tls_and_run_once_in_lifo_order() {
 }
 
 #[test]
+#[cfg(not(feature = "standalone"))]
+fn hosted_loader_tls_survives_first_native_thread_creation() {
+    const CHILD: &str = "FL_MIXED_LOADER_TLS_CHILD";
+    const NAME: &str = "hosted_loader_tls_survives_first_native_thread_creation";
+    let provider = match std::env::var(CHILD) {
+        Ok(provider) => provider,
+        Err(_) => {
+            // Each provider gets a fresh process: native admission is sticky,
+            // so running GNU first in the same child would hide the transition
+            // from the subsequent native-loader owner.
+            for mode in ["strict", "hardened"] {
+                for provider in ["host", "native"] {
+                    let mut child = Command::new(std::env::current_exe().unwrap())
+                        .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+                        .env(CHILD, provider)
+                        .env("FRANKENLIBC_MODE", mode)
+                        .env("FRANKENLIBC_RUNTIME_MATH", "off")
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    let mut timed_out = false;
+                    while child.try_wait().unwrap().is_none() {
+                        if Instant::now() >= deadline {
+                            timed_out = true;
+                            let _ = child.kill();
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    let output = child.wait_with_output().unwrap();
+                    assert!(
+                        !timed_out
+                            && output.status.success()
+                            && String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+                        "mixed loader {provider}/{mode} timeout={timed_out} status={}\n{}\n{}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr),
+                    );
+                }
+            }
+            return;
+        }
+    };
+    let loader = match provider.as_str() {
+        "host" => Loader::Host,
+        "native" => Loader::Native,
+        _ => panic!("unexpected loader provider {provider}"),
+    };
+    assert!(
+        !frankenlibc_core::pthread::tls::native_threads_may_exist(),
+        "the fixture must precede the first native admission"
+    );
+    let fixture = Fixture::new();
+    let sink = fixture.sink(loader);
+    let source = format!(
+        "{CPP}\n\
+         extern \"C\" void *first_address(void){{return &first;}}\n\
+         extern \"C\" void set_first(long value){{first.value=value;}}\n"
+    );
+    let path = fixture.compile("mixed_hosted_cpp", &source, true);
+    let handle = loader.open(&path, libc::RTLD_NOW);
+    assert!(!handle.is_null(), "mixed hosted C++ fixture rejected");
+    let touch: unsafe extern "C" fn() -> i64 =
+        unsafe { std::mem::transmute(loader.symbol(handle, "touch")) };
+    let address: unsafe extern "C" fn() -> *mut c_void =
+        unsafe { std::mem::transmute(loader.symbol(handle, "first_address")) };
+    let set_first: unsafe extern "C" fn(i64) =
+        unsafe { std::mem::transmute(loader.symbol(handle, "set_first")) };
+    let gate = Arc::new(Barrier::new(2));
+    let hosted_gate = Arc::clone(&gate);
+    let hosted = std::thread::spawn(move || {
+        // This is a real hosted thread, different from the native creator. Its
+        // compiler-generated TLS constructors and destructor queue already
+        // exist when the process admits its first managed clone.
+        let first = unsafe { touch() };
+        let before = unsafe { address() } as usize;
+        unsafe { set_first(41) };
+        hosted_gate.wait();
+        hosted_gate.wait();
+        let retained = unsafe { touch() };
+        let after = unsafe { address() } as usize;
+        (first, retained, before, after)
+    });
+    gate.wait();
+
+    unsafe extern "C" fn native_worker(_: *mut c_void) -> *mut c_void {
+        // No fixture or host allocation is needed in the clone; the regression
+        // concerns the live hosted owner when this production admission occurs.
+        usize::from(frankenlibc_core::pthread::thread::current_thread_handle().is_none())
+            as *mut c_void
+    }
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let restore = RestoreBackend(pthread_abi::pthread_threading_swap_force_native_for_tests());
+    REJECT_NATIVE_HEAP.store(true, Ordering::Release);
+    let mut native = 0;
+    let created = unsafe {
+        pthread_abi::pthread_create(
+            &mut native,
+            std::ptr::null(),
+            Some(native_worker),
+            std::ptr::null_mut(),
+        )
+    };
+    let mut worker_result = usize::MAX as *mut c_void;
+    let joined = if created == 0 {
+        unsafe { pthread_abi::pthread_join(native, &mut worker_result) }
+    } else {
+        -1
+    };
+    REJECT_NATIVE_HEAP.store(false, Ordering::Release);
+    drop(restore);
+    gate.wait();
+    let observed = hosted.join().expect("hosted TLS owner panicked");
+    let before_close = fixture.events(loader, sink);
+    loader.close(handle);
+    let after_close = fixture.events(loader, sink);
+    loader.close(sink);
+
+    assert_eq!(created, 0, "public native pthread_create");
+    assert_eq!(joined, 0, "public native pthread_join");
+    assert!(
+        worker_result.is_null(),
+        "worker must be an actual native clone"
+    );
+    assert_eq!(observed.0, 3, "initial C++ TLS constructor values");
+    assert!(
+        observed.1 == 43 && observed.2 != 0 && observed.2 == observed.3,
+        "{provider}: hosted TLS address/value changed across native admission: \
+         {observed:?}; destructor events={before_close:?}; final events={after_close:?}"
+    );
+    assert_eq!(
+        before_close,
+        [1, 2, -2, 73, -41, 73],
+        "constructors and original TLS destructors must run once in LIFO order"
+    );
+    assert_eq!(
+        after_close,
+        [1, 2, -2, 73, -41, 73, 99],
+        "completed hosted teardown must release loader pins and permit FINI"
+    );
+}
+
+#[test]
 fn native_cpp_tls_pending_destructors_pin_closed_library() {
     if !child_case("native_cpp_tls_pending_destructors_pin_closed_library") {
         return;

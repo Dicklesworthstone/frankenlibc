@@ -529,9 +529,7 @@ use native::host_may_load_declined_object;
 #[cfg(feature = "standalone")]
 use native::load_native_dso;
 #[cfg(not(test))]
-pub(crate) use native::{
-    ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,
-};
+pub(crate) use native::{ThreadExitForkGuard, lock_thread_exit_for_fork};
 use native::{close_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol};
 pub(crate) use native::{native_address_info_extra, query_object_info};
 pub(crate) use native::{

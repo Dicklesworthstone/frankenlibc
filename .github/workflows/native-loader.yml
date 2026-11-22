@@ -6,6 +6,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
       - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
@@ -19,6 +20,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
       - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
@@ -76,6 +78,20 @@ jobs:
             2>&1 | tee artifacts/public-dynamic-tls/execution.log
           grep -F 'test result: ok. 3 passed; 0 failed; 0 ignored;' \
             artifacts/public-dynamic-tls/execution.log
+      - name: Preserve hosted loader TLS across first native thread admission
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/public-dynamic-tls
+          # Each exact test executes independent GNU/native providers in
+          # strict and hardened children, checking real C++ TLS destructors.
+          cargo test -p frankenlibc-abi --features "$ABI_FEATURES" \
+            --test dlfcn_native_thread_exit_test \
+            hosted_loader_tls_survives_first_native_thread_creation \
+            -- --exact --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/public-dynamic-tls/mixed-hosted-owner.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/public-dynamic-tls/mixed-hosted-owner.log
       - name: Preserve public TLS execution logs
         if: always()
         uses: actions/upload-artifact@v4

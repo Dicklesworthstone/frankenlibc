@@ -50,9 +50,7 @@ pub(super) fn tls_address(module_id: usize, offset: usize) -> *mut c_void {
 #[path = "dlfcn_thread_exit.rs"]
 mod thread_exit;
 #[cfg(not(test))]
-pub(crate) use thread_exit::{
-    ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,
-};
+pub(crate) use thread_exit::{ThreadExitForkGuard, lock_thread_exit_for_fork};
 pub(crate) use thread_exit::{
     drain_current as drain_current_thread_tls_destructors, prepare_native_public_tls_destructors,
     register_native_public_tls_destructor,
