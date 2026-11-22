@@ -40,6 +40,10 @@ static LAST_UCONTEXT_NONNULL: AtomicUsize = AtomicUsize::new(0);
 static LAST_SIGINFO_CODE: AtomicUsize = AtomicUsize::new(0);
 static LAST_SIGINFO_SIGNO: AtomicUsize = AtomicUsize::new(0);
 static LAST_SIGINFO_VALUE_BITS: AtomicUsize = AtomicUsize::new(0);
+static REPLAY_BATCH_TRACE_LEN: AtomicUsize = AtomicUsize::new(0);
+static REPLAY_BATCH_TRACE: [AtomicUsize; 8] = [const { AtomicUsize::new(0) }; 8];
+static REPLAY_BATCH_MASK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static REPLAY_BATCH_ERRORS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const SA_RESTORER_FLAG: c_int = 0x04000000;
@@ -69,6 +73,151 @@ unsafe extern "C" fn siginfo_counting_handler(
         LAST_SIGINFO_SIGNO.store(info_ref.si_signo as usize, Ordering::Relaxed);
         LAST_SIGINFO_VALUE_BITS.store(value.sival_ptr as usize, Ordering::Relaxed);
     }
+}
+
+unsafe extern "C" fn replay_batch_handler(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    _: *mut std::ffi::c_void,
+) {
+    let mut mask = 0u64;
+    // SAFETY: query one kernel sigset word into live stack storage.
+    if unsafe {
+        frankenlibc_core::syscall::sys_rt_sigprocmask(
+            libc::SIG_BLOCK,
+            std::ptr::null(),
+            (&raw mut mask).cast(),
+            std::mem::size_of::<u64>(),
+        )
+    }
+    .is_err()
+        || mask != REPLAY_BATCH_MASK.load(Ordering::Relaxed)
+    {
+        REPLAY_BATCH_ERRORS.fetch_add(1, Ordering::Relaxed);
+    }
+    let value = if info.is_null() {
+        // The nested test-hook delivery deliberately has no siginfo snapshot.
+        3
+    } else {
+        // SAFETY: real queued delivery or its replay owns this live snapshot.
+        unsafe { (*info).si_value().sival_ptr as usize }
+    };
+    let index = REPLAY_BATCH_TRACE_LEN.fetch_add(1, Ordering::Relaxed);
+    if let Some(slot) = REPLAY_BATCH_TRACE.get(index) {
+        slot.store(value, Ordering::Relaxed);
+    }
+    if signum == libc::SIGUSR1 {
+        let nested =
+            enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+        // SAFETY: exercise reentry through the same trampoline as delivery.
+        // This must not consume or overwrite the older SIGUSR2 batch records.
+        unsafe { invoke_signal_handler_for_test(libc::SIGUSR2) };
+        drop(nested);
+    }
+}
+
+#[test]
+fn signal_deferred_batch_preserves_snapshots_on_reentry_and_restores_mask() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    REPLAY_BATCH_TRACE_LEN.store(0, Ordering::Relaxed);
+    REPLAY_BATCH_ERRORS.store(0, Ordering::Relaxed);
+    let mut previous_mask = 0u64;
+    // SAFETY: query the calling thread's kernel signal mask.
+    assert!(
+        unsafe {
+            frankenlibc_core::syscall::sys_rt_sigprocmask(
+                libc::SIG_BLOCK,
+                std::ptr::null(),
+                (&raw mut previous_mask).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_ok()
+    );
+    struct RestoreMask(u64);
+    impl Drop for RestoreMask {
+        fn drop(&mut self) {
+            // SAFETY: restore the exact saved kernel sigset word.
+            let _ = unsafe {
+                frankenlibc_core::syscall::sys_rt_sigprocmask(
+                    libc::SIG_SETMASK,
+                    (&raw const self.0).cast(),
+                    std::ptr::null_mut(),
+                    std::mem::size_of::<u64>(),
+                )
+            };
+        }
+    }
+    let _restore_mask = RestoreMask(previous_mask);
+    let mask = (previous_mask | (1u64 << (libc::SIGWINCH - 1)))
+        & !((1u64 << (libc::SIGUSR1 - 1)) | (1u64 << (libc::SIGUSR2 - 1)));
+    REPLAY_BATCH_MASK.store(mask, Ordering::Relaxed);
+    // SAFETY: install the test mask without changing another thread's mask.
+    assert!(
+        unsafe {
+            frankenlibc_core::syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                (&raw const mask).cast(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_ok()
+    );
+
+    struct RestoreActions {
+        previous: [libc::sigaction; 2],
+        installed: usize,
+    }
+    impl Drop for RestoreActions {
+        fn drop(&mut self) {
+            for (index, signum) in [libc::SIGUSR1, libc::SIGUSR2]
+                .into_iter()
+                .take(self.installed)
+                .enumerate()
+            {
+                // SAFETY: each saved action was installed by this test.
+                let _ = unsafe { sigaction(signum, &self.previous[index], std::ptr::null_mut()) };
+            }
+        }
+    }
+    let mut restore = RestoreActions {
+        // SAFETY: sigaction accepts an all-zero action storage buffer.
+        previous: unsafe { std::mem::zeroed() },
+        installed: 0,
+    };
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = replay_batch_handler as *const () as usize;
+    action.sa_flags = libc::SA_SIGINFO;
+    for (index, signum) in [libc::SIGUSR1, libc::SIGUSR2].into_iter().enumerate() {
+        assert_eq!(
+            unsafe { sigaction(signum, &action, &mut restore.previous[index]) },
+            0
+        );
+        restore.installed += 1;
+    }
+    let critical = enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+    let caller = unsafe { libc::pthread_self() };
+    for (signum, value) in [
+        (libc::SIGUSR2, 2usize),
+        (libc::SIGUSR2, 2),
+        (libc::SIGUSR1, 1),
+    ] {
+        let payload = libc::sigval {
+            sival_ptr: value as *mut std::ffi::c_void,
+        };
+        assert_eq!(
+            unsafe { libc::pthread_sigqueue(caller, signum, payload) },
+            0
+        );
+    }
+    assert_eq!(REPLAY_BATCH_TRACE_LEN.load(Ordering::Relaxed), 0);
+    drop(critical);
+    assert_eq!(REPLAY_BATCH_TRACE_LEN.load(Ordering::Relaxed), 4);
+    for (slot, expected) in REPLAY_BATCH_TRACE.iter().zip([1, 3, 2, 2]) {
+        assert_eq!(slot.load(Ordering::Relaxed), expected);
+    }
+    assert_eq!(REPLAY_BATCH_ERRORS.load(Ordering::Relaxed), 0);
 }
 
 // ---------------------------------------------------------------------------

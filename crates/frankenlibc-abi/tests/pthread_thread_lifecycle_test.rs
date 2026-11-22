@@ -107,6 +107,125 @@ fn scoped_native_override_does_not_change_another_test_worker() {
         .expect("native override worker must not panic");
 }
 
+#[cfg(all(
+    not(feature = "standalone"),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[test]
+fn native_thread_admission_preserves_creator_pthread_state() {
+    use frankenlibc_abi::pthread_abi::{pthread_setcancelstate, pthread_setcanceltype};
+    use frankenlibc_core::pthread::thread::current_thread_handle;
+    use std::process::Command;
+    use std::time::Instant;
+
+    const CHILD: &str = "FRANKENLIBC_PTHREAD_STATE_ADMISSION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // This must exercise the process's first native admission: another
+        // lifecycle test must not preinitialize the owned storage for us.
+        let mut child = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "native_thread_admission_preserves_creator_pthread_state",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .spawn()
+            .expect("spawn isolated pthread state probe");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = child.try_wait().expect("poll pthread state probe") {
+                assert!(status.success(), "pthread state probe failed: {status}");
+                return;
+            }
+            if Instant::now() >= deadline {
+                child.kill().expect("terminate stuck pthread state probe");
+                let status = child.wait().expect("reap pthread state probe");
+                panic!("pthread state probe timed out: {status}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    // Record only scalar observations in the native worker. It must not use
+    // Rust allocation, assert, or unwind through inherited compiler TLS.
+    unsafe extern "C" fn inspect_native_state(_: *mut c_void) -> *mut c_void {
+        let mut failures = 0usize;
+        match current_thread_handle() {
+            Some(handle) => {
+                // SAFETY: pthread_self has no pointer arguments.
+                if unsafe { pthread_self() } as usize != handle as usize {
+                    failures |= 1 << 1;
+                }
+            }
+            None => failures |= 1,
+        }
+        let mut previous = -1;
+        // New native threads start ENABLED and DEFERRED, independently of
+        // the creator's DISABLED and ASYNCHRONOUS settings below.
+        if unsafe { pthread_setcancelstate(1, &mut previous) } != 0 || previous != 0 {
+            failures |= 1 << 2;
+        }
+        if unsafe { pthread_setcanceltype(0, &mut previous) } != 0 || previous != 0 {
+            failures |= 1 << 3;
+        }
+        if __test_threading_force_native_override_state() != (false, 0) {
+            failures |= 1 << 4;
+        }
+        failures as *mut c_void
+    }
+
+    let _guard = lock_and_force_native();
+    let mut original_state = -1;
+    let mut original_type = -1;
+    // SAFETY: all output pointers name live local integers; no cancellation
+    // request is issued anywhere in this isolated process.
+    assert_eq!(unsafe { pthread_setcancelstate(1, &mut original_state) }, 0);
+    assert_eq!(unsafe { pthread_setcanceltype(1, &mut original_type) }, 0);
+    let creator = unsafe { pthread_self() };
+
+    for attempt in 0..3 {
+        let mut worker: libc::pthread_t = 0;
+        // SAFETY: output storage is live through create, the callback has the
+        // required ABI, and the null argument is unused by the worker.
+        assert_eq!(
+            unsafe {
+                pthread_create(
+                    &mut worker,
+                    std::ptr::null(),
+                    Some(inspect_native_state),
+                    std::ptr::null_mut(),
+                )
+            },
+            0,
+            "native create {attempt}"
+        );
+        let mut result = std::ptr::null_mut();
+        // SAFETY: worker is the live joinable handle returned by create.
+        assert_eq!(unsafe { pthread_join(worker, &mut result) }, 0);
+        assert_eq!(
+            result as usize, 0,
+            "native worker {attempt} lost its identity or inherited creator state"
+        );
+    }
+
+    assert_eq!(__test_threading_force_native_override_state(), (true, 1));
+    assert_eq!(unsafe { pthread_self() }, creator);
+    let mut previous = -1;
+    assert_eq!(unsafe { pthread_setcancelstate(1, &mut previous) }, 0);
+    assert_eq!(previous, 1, "native admission reset creator cancel state");
+    assert_eq!(unsafe { pthread_setcanceltype(1, &mut previous) }, 0);
+    assert_eq!(previous, 1, "native admission reset creator cancel type");
+    assert_eq!(
+        unsafe { pthread_setcanceltype(original_type, std::ptr::null_mut()) },
+        0
+    );
+    assert_eq!(
+        unsafe { pthread_setcancelstate(original_state, std::ptr::null_mut()) },
+        0
+    );
+}
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod policy_context_tests {
     use super::lock_only;

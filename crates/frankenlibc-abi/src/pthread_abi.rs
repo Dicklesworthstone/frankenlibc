@@ -461,9 +461,10 @@ fn with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        if crate::malloc_abi::native_thread_backend_active()
-            || global_force_native_threading_enabled()
-        {
+        // Native admission changes allocation routing for the process, not
+        // ownership of a hosted creator's existing cancellation/cleanup state.
+        // Only a native caller (or standalone startup) needs owned storage.
+        if cfg!(feature = "standalone") || crate::owned_tls_cache::uses_owned_tls() {
             return with_owned_pthread_tls(f);
         }
         PTHREAD_TLS.with(|tls| {
@@ -481,9 +482,7 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        if crate::malloc_abi::native_thread_backend_active()
-            || global_force_native_threading_enabled()
-        {
+        if cfg!(feature = "standalone") || crate::owned_tls_cache::uses_owned_tls() {
             return Some(with_owned_pthread_tls(f));
         }
         PTHREAD_TLS

@@ -24,7 +24,8 @@ use frankenlibc_core::syscall;
 /// Select storage by the caller's actual lifecycle, not its inherited compiler
 /// thread pointer. Default hosted callers retain their original TLS values and
 /// returned addresses after native-thread admission, including late host TLS
-/// callbacks. Native clones must never read or mutate their creator's values.
+/// callbacks. Native clones must never read or mutate their creator's values,
+/// including the final exit tail after their handle has been withdrawn.
 #[cfg(not(feature = "owned-tls-cache"))]
 #[inline]
 pub(crate) fn uses_owned_tls() -> bool {
@@ -37,6 +38,7 @@ pub(crate) fn uses_owned_tls() -> bool {
         std::process::abort();
     }
     frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some()
+        || tls::current_thread_is_exiting_native()
 }
 
 pub(crate) struct OwnedTlsCache<T> {

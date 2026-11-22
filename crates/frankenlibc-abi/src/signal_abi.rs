@@ -452,6 +452,89 @@ struct DeferredSignalReplay {
     siginfo: Option<libc::siginfo_t>,
 }
 
+// Only four signals can retain metadata, so keep the counts separate from
+// those snapshots. A full [DeferredSignalReplay; 64] would consume roughly
+// nine KiB of a small native stack; a Vec would reenter hardened malloc while
+// the owned signal cache is borrowed.
+struct DeferredSignalBatch {
+    pending: u64,
+    counts: [u16; MAX_TRACKED_SIGNAL + 1],
+    siginfos: [Option<(c_int, libc::siginfo_t)>; DEFERRED_SIGINFO_SLOTS],
+}
+
+impl DeferredSignalBatch {
+    const fn empty() -> Self {
+        Self {
+            pending: 0,
+            counts: [0; MAX_TRACKED_SIGNAL + 1],
+            siginfos: [const { None }; DEFERRED_SIGINFO_SLOTS],
+        }
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<DeferredSignalBatch>() <= 1024);
+
+impl Iterator for DeferredSignalBatch {
+    type Item = DeferredSignalReplay;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pending == 0 {
+            return None;
+        }
+        let signum = self.pending.trailing_zeros() as c_int + 1;
+        self.pending &= self.pending - 1;
+        let siginfo = self.siginfos.iter_mut().find_map(|slot| {
+            if slot.as_ref().is_some_and(|(signal, _)| *signal == signum) {
+                slot.take().map(|(_, info)| info)
+            } else {
+                None
+            }
+        });
+        Some(DeferredSignalReplay {
+            signum,
+            count: u32::from(self.counts[signum as usize]),
+            siginfo,
+        })
+    }
+}
+
+struct DeferredSnapshotMask(u64);
+
+impl DeferredSnapshotMask {
+    fn block() -> Option<Self> {
+        let all = u64::MAX;
+        let mut previous = 0u64;
+        // SAFETY: Linux consumes one kernel sigset word and writes the old
+        // word into live stack storage. SIGKILL and SIGSTOP remain unblocked.
+        unsafe {
+            raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_BLOCK,
+                (&raw const all).cast(),
+                (&raw mut previous).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .ok()?;
+        Some(Self(previous))
+    }
+}
+
+impl Drop for DeferredSnapshotMask {
+    fn drop(&mut self) {
+        // SAFETY: restore the exact caller mask after all cache borrows have
+        // ended. A signal delivered by this syscall can safely start a new
+        // batch without modifying the detached snapshots on our stack.
+        let _ = unsafe {
+            raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                (&raw const self.0).cast(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        };
+    }
+}
+
 static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
     [const { SignalHandlerSlot::new() }; MAX_TRACKED_SIGNAL + 1];
 
@@ -983,11 +1066,17 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
     SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
 }
 
-fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
-    // Only this thread and its own signal handlers touch the mask and slots. A
-    // plain load first keeps the common nothing-pending exit free of a locked
-    // RMW; a handler that defers after the swap leaves its bit for the next
-    // flush, and one that ran before it is in `bits`.
+fn take_deferred_signals() -> DeferredSignalBatch {
+    // Initialize the result before borrowing the cache: large compiler-emitted
+    // copies must not execute under OwnedTlsCache's exclusive access marker.
+    let mut batch = DeferredSignalBatch::empty();
+    // Drain counts and metadata as one bounded operation. Blocking delivery
+    // also prevents a nested handler from reusing a cleared siginfo slot while
+    // its 128-byte snapshot is being copied. Never invoke user code masked.
+    let Some(_mask) = DeferredSnapshotMask::block() else {
+        // Leave the complete queue intact if the kernel rejects the mask.
+        return batch;
+    };
     let mut bits = with_deferred_pending(|mask| {
         if mask.load(Ordering::Relaxed) == 0 {
             0
@@ -996,40 +1085,34 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
         }
     });
     if bits == 0 {
-        return Vec::new();
+        return batch;
     }
     with_deferred_signals(|pending| {
-        let mut out = Vec::new();
         while bits != 0 {
-            let signum = bits.trailing_zeros() as c_int + 1;
+            let signum = bits.trailing_zeros() as usize + 1;
             bits &= bits - 1;
-            let count = u32::from(pending.counts[signum as usize].swap(0, Ordering::Relaxed));
+            let count = pending.counts[signum].swap(0, Ordering::Relaxed);
             if count != 0 {
-                let sig_u8 = signum as u8;
-                let mut siginfo = None;
-                for slot in &pending.siginfos {
-                    if slot
-                        .signum
-                        .compare_exchange(sig_u8, 0, Ordering::Acquire, Ordering::Relaxed)
-                        .is_ok()
-                    {
-                        // SAFETY: the slot was populated before `signum` was
-                        // published, and clearing `signum` gives the caller
-                        // exclusive ownership of this snapshot.
-                        siginfo =
-                            Some(unsafe { slot.siginfo.get().cast::<libc::siginfo_t>().read() });
-                        break;
-                    }
-                }
-                out.push(DeferredSignalReplay {
-                    signum,
-                    count,
-                    siginfo,
-                });
+                batch.counts[signum] = count;
+                batch.pending |= 1u64 << (signum - 1);
             }
         }
-        out
-    })
+        for (snapshot, slot) in batch.siginfos.iter_mut().zip(&pending.siginfos) {
+            let signum = slot.signum.load(Ordering::Acquire);
+            if !(1..=MAX_TRACKED_SIGNAL as u8).contains(&signum)
+                || batch.counts[signum as usize] == 0
+            {
+                continue;
+            }
+            // SAFETY: publication initialized this slot; the calling thread
+            // owns it and delivery stays blocked until the entire batch is
+            // detached. No handler can overwrite the snapshot during copying.
+            let info = unsafe { slot.siginfo.get().cast::<libc::siginfo_t>().read() };
+            slot.signum.store(0, Ordering::Relaxed);
+            *snapshot = Some((c_int::from(signum), info));
+        }
+    });
+    batch
 }
 
 unsafe fn dispatch_registered_handler(
@@ -1199,6 +1282,9 @@ fn exit_signal_critical_section(classification: u8) {
 #[cold]
 #[inline(never)]
 fn flush_deferred_signals_slow() {
+    // Cover collection as well as callbacks: compiler/runtime helpers used
+    // while taking a snapshot must obey the signal-safe allocation path too.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     for deferred in take_deferred_signals() {
         for _ in 0..deferred.count {
             SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -1222,11 +1308,6 @@ fn flush_deferred_signals_slow() {
                     8,
                 )
             };
-            // Replayed callbacks are user signal handlers too. They can call
-            // allocator and evidence entrypoints while the flush originates
-            // from a critical-section exit, so give them the same lock-free
-            // allocation/signal marker as immediate trampoline delivery.
-            let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
             // SAFETY: deferred delivery replays the previously registered handler on the same thread.
             unsafe {
                 dispatch_registered_handler(
