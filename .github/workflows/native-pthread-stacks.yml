@@ -42,6 +42,7 @@ on:
       - 'crates/frankenlibc-abi/tests/signal_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/time_abi_test.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
+      - 'crates/frankenlibc-core/src/pwd/**'
       - 'crates/frankenlibc-core/src/signal/**'
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
@@ -426,6 +427,29 @@ jobs:
               failed=1
             fi
             if ! grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$guard_log"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Preserve native NSS account parser records and buffer boundaries
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/runtime-startup/account-parsers
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          failed=0
+          for mode in strict hardened; do
+            log="artifacts/runtime-startup/account-parsers/$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${args[@]}" \
+                --test pwd_abi_test nss_account_parser \
+                -- --nocapture --test-threads=1 2>&1 | tee "$log"; then
+              failed=1
+            fi
+            if ! grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"; then
               failed=1
             fi
           done

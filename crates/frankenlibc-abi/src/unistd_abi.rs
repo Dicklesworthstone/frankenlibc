@@ -13537,13 +13537,296 @@ macro_rules! nss_files_parse_stub {
 }
 
 nss_files_parse_stub!(_nss_files_parse_etherent);
-nss_files_parse_stub!(_nss_files_parse_grent);
 nss_files_parse_stub!(_nss_files_parse_netent);
 nss_files_parse_stub!(_nss_files_parse_protoent);
-nss_files_parse_stub!(_nss_files_parse_pwent);
 nss_files_parse_stub!(_nss_files_parse_rpcent);
 nss_files_parse_stub!(_nss_files_parse_servent);
-nss_files_parse_stub!(_nss_files_parse_sgent);
+
+/// The four account parsers share the caller's writable text storage. Only
+/// group and gshadow need additional aligned pointer arrays in parser_data.
+#[repr(C)]
+struct NssParsedSgrp {
+    sg_namp: *mut c_char,
+    sg_passwd: *mut c_char,
+    sg_adm: *mut *mut c_char,
+    sg_mem: *mut *mut c_char,
+}
+
+unsafe fn nss_account_parse_result(
+    result: c_int,
+    saved_errno: c_int,
+    overflowed: bool,
+    errnop: *mut c_int,
+) -> c_int {
+    // Restore ordinary errno before errnop: a module may pass its errno cell
+    // as the error output. Numeric conversion overflow independently sets it.
+    unsafe {
+        set_abi_errno(if overflowed {
+            libc::ERANGE
+        } else {
+            saved_errno
+        })
+    };
+    if result == -1 {
+        // SAFETY: the NSS caller supplies a writable error slot when non-null.
+        unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+    }
+    result
+}
+
+fn nss_account_array_start(
+    line: *mut c_char,
+    text_len: usize,
+    data: *mut c_void,
+    buflen: usize,
+    slots: usize,
+) -> Option<*mut *mut c_char> {
+    if data.is_null() {
+        return None;
+    }
+    let capacity = tracked_output_capacity(data.cast(), buflen);
+    let data_start = data as usize;
+    let end = data_start.checked_add(capacity)?;
+    let text_start = line as usize;
+    let text_end = text_start.checked_add(text_len)?.checked_add(1)?;
+    // NSS database modules may supply a separately owned line. In that case
+    // the entire parser_data extent is available for pointer tables.
+    let available_start = if (data_start..end).contains(&text_start) {
+        text_end
+    } else {
+        data_start
+    };
+    let align = core::mem::align_of::<*mut c_char>();
+    let start = available_start.checked_add(align - 1)? & !(align - 1);
+    let bytes = slots.checked_mul(core::mem::size_of::<*mut c_char>())?;
+    let table_end = start.checked_add(bytes)?;
+    if table_end > end || (start < text_end && text_start < table_end) {
+        return None;
+    }
+    Some(start as *mut *mut c_char)
+}
+
+fn nss_account_string(
+    text: &mut [u8],
+    base: *mut c_char,
+    field: Option<core::ops::Range<usize>>,
+) -> *mut c_char {
+    let Some(field) = field else {
+        return core::ptr::null_mut();
+    };
+    text[field.end] = 0;
+    // SAFETY: safe-core field offsets belong to this live caller text extent.
+    unsafe { base.add(field.start) }
+}
+
+unsafe fn nss_account_list(
+    text: &mut [u8],
+    base: *mut c_char,
+    field: core::ops::Range<usize>,
+    table: *mut *mut c_char,
+) {
+    let mut count = 0;
+    frankenlibc_core::pwd::split_nss_account_list(text, field, |offset| {
+        // SAFETY: the count was computed from the same unmodified field.
+        // The validated table is aligned and disjoint from the text slice.
+        unsafe { table.add(count).write(base.add(offset)) };
+        count += 1;
+    });
+    // SAFETY: the checked layout includes the terminating pointer and GNU's
+    // extra spare pointer, which remains untouched.
+    unsafe { table.add(count).write(core::ptr::null_mut()) };
+}
+
+unsafe fn nss_parse_account_line(
+    kind: frankenlibc_core::pwd::NssAccountKind,
+    line: *mut c_char,
+    result: *mut c_void,
+    data: *mut c_void,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    use frankenlibc_core::pwd::{NssAccountKind, NssAccountRecord};
+
+    let saved_errno = current_abi_errno();
+    let result_fits = match kind {
+        NssAccountKind::Passwd => tracked_object_fits(result.cast::<libc::passwd>()),
+        NssAccountKind::Group => tracked_object_fits(result.cast::<libc::group>()),
+        NssAccountKind::Shadow => tracked_object_fits(result.cast::<libc::spwd>()),
+        NssAccountKind::Gshadow => tracked_object_fits(result.cast::<NssParsedSgrp>()),
+    };
+    if line.is_null() || !result_fits {
+        // Null outputs are invalid caller input; preserve the previous bounded
+        // skip behavior instead of dereferencing them.
+        return unsafe { nss_account_parse_result(0, saved_errno, false, errnop) };
+    }
+    // SAFETY: the caller owns a mutable C string. Known allocation bounds
+    // prevent a tracked unterminated string from escaping its extent.
+    let (text_len, terminated) = unsafe { scan_c_string(line, known_remaining(line as usize)) };
+    if !terminated || text_len >= isize::MAX as usize {
+        return unsafe { nss_account_parse_result(-1, saved_errno, false, errnop) };
+    }
+    // SAFETY: scanning established text_len readable bytes. Parsing returns
+    // offsets only, so this shared borrow ends before any text mutation.
+    let parsed = frankenlibc_core::pwd::parse_nss_account_line(kind, unsafe {
+        core::slice::from_raw_parts(line.cast::<u8>(), text_len)
+    });
+    let Some(record) = parsed.record else {
+        return unsafe { nss_account_parse_result(0, saved_errno, parsed.overflowed, errnop) };
+    };
+    let slots = match &record {
+        NssAccountRecord::Group { member_count, .. } => member_count.checked_add(2),
+        NssAccountRecord::Gshadow {
+            admins,
+            admin_count,
+            member_count,
+            ..
+        } => admin_count
+            .checked_add(usize::from(admins.is_some()))
+            .and_then(|count| count.checked_add(*member_count))
+            .and_then(|count| count.checked_add(2)),
+        _ => Some(0),
+    };
+    let Some(slots) = slots else {
+        return unsafe { nss_account_parse_result(-1, saved_errno, parsed.overflowed, errnop) };
+    };
+    let table = if slots == 0 {
+        core::ptr::null_mut()
+    } else {
+        let Some(table) = nss_account_array_start(line, text_len, data, buflen, slots) else {
+            return unsafe { nss_account_parse_result(-1, saved_errno, parsed.overflowed, errnop) };
+        };
+        table
+    };
+
+    // SAFETY: the caller grants mutable access to its C string, including its
+    // NUL. All immutable parsing borrows are gone; pointer arrays are disjoint
+    // from the complete text extent, including any tail after its first newline.
+    let text = unsafe { core::slice::from_raw_parts_mut(line.cast::<u8>(), text_len + 1) };
+    text[parsed.line_end] = 0;
+    match record {
+        NssAccountRecord::Passwd { strings, uid, gid } => {
+            let [name, password, gecos, directory, shell] =
+                strings.map(|field| nss_account_string(text, line, field));
+            // SAFETY: the caller's complete aligned output object was checked.
+            unsafe {
+                result.cast::<libc::passwd>().write(libc::passwd {
+                    pw_name: name,
+                    pw_passwd: password,
+                    pw_uid: uid,
+                    pw_gid: gid,
+                    pw_gecos: gecos,
+                    pw_dir: directory,
+                    pw_shell: shell,
+                })
+            };
+        }
+        NssAccountRecord::Group {
+            name,
+            password,
+            gid,
+            members,
+            ..
+        } => {
+            let name = nss_account_string(text, line, Some(name));
+            let password = nss_account_string(text, line, password);
+            // SAFETY: both the text and complete list layout were checked.
+            unsafe {
+                nss_account_list(text, line, members, table);
+                result.cast::<libc::group>().write(libc::group {
+                    gr_name: name,
+                    gr_passwd: password,
+                    gr_gid: gid,
+                    gr_mem: table,
+                });
+            }
+        }
+        NssAccountRecord::Shadow {
+            name,
+            password,
+            aging,
+            flag,
+        } => {
+            let name = nss_account_string(text, line, Some(name));
+            let password = nss_account_string(text, line, password);
+            // SAFETY: the caller's complete aligned output object was checked.
+            unsafe {
+                result.cast::<libc::spwd>().write(libc::spwd {
+                    sp_namp: name,
+                    sp_pwdp: password,
+                    sp_lstchg: aging[0] as c_long,
+                    sp_min: aging[1] as c_long,
+                    sp_max: aging[2] as c_long,
+                    sp_warn: aging[3] as c_long,
+                    sp_inact: aging[4] as c_long,
+                    sp_expire: aging[5] as c_long,
+                    sp_flag: flag as c_ulong,
+                })
+            };
+        }
+        NssAccountRecord::Gshadow {
+            name,
+            password,
+            admins,
+            members,
+            admin_count,
+            ..
+        } => {
+            let name = nss_account_string(text, line, Some(name));
+            let password = nss_account_string(text, line, password);
+            let (admin_table, member_table) = if let Some(admins) = admins {
+                // SAFETY: the first list and its terminating slot fit before
+                // the separately checked member list in the same array tail.
+                unsafe {
+                    nss_account_list(text, line, admins, table);
+                    (table, table.add(admin_count + 1))
+                }
+            } else {
+                (core::ptr::null_mut(), table)
+            };
+            // SAFETY: the second list and output object were fully checked.
+            unsafe {
+                nss_account_list(text, line, members, member_table);
+                result.cast::<NssParsedSgrp>().write(NssParsedSgrp {
+                    sg_namp: name,
+                    sg_passwd: password,
+                    sg_adm: admin_table,
+                    sg_mem: member_table,
+                });
+            }
+        }
+    }
+    unsafe { nss_account_parse_result(1, saved_errno, parsed.overflowed, errnop) }
+}
+
+macro_rules! nss_files_parse_account {
+    ($name:ident, $kind:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(
+            line: *mut c_char,
+            result: *mut c_void,
+            data: *mut c_void,
+            buflen: usize,
+            errnop: *mut c_int,
+        ) -> c_int {
+            // SAFETY: forward the NSS parser's mutable line/output contract.
+            unsafe {
+                nss_parse_account_line(
+                    frankenlibc_core::pwd::NssAccountKind::$kind,
+                    line,
+                    result,
+                    data,
+                    buflen,
+                    errnop,
+                )
+            }
+        }
+    };
+}
+
+nss_files_parse_account!(_nss_files_parse_pwent, Passwd);
+nss_files_parse_account!(_nss_files_parse_grent, Group);
+nss_files_parse_account!(_nss_files_parse_spent, Shadow);
+nss_files_parse_account!(_nss_files_parse_sgent, Gshadow);
 
 // ---------------------------------------------------------------------------
 // _nss_dns_* NSS DNS plugin lookup stubs
@@ -14334,9 +14617,6 @@ pub unsafe extern "C" fn __libc_alloc_buffer_create_failure(
 /// don't need anything additional from the dynamic loader).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_early_init(_initial: c_int) {}
-
-// Two NSS line parsers we missed in the earlier batch.
-nss_files_parse_stub!(_nss_files_parse_spent);
 
 /// `_nss_netgroup_parseline(*cursor, *result, *buf, buflen, *errnop)
 /// -> int` — parses the next netgroup triple from a backing line.

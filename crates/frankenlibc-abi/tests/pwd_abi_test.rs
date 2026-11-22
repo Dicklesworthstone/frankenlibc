@@ -3430,3 +3430,679 @@ fn nss_files_shadow_reader_capacity_matches_host_fgetspent() {
         },
     );
 }
+
+// The private NSS parser ABI is used by native NSS modules. Resolve GNU's
+// definitions independently: an exported always-skip body must fail this gate.
+type NssAccountParser = unsafe extern "C" fn(
+    *mut c_char,
+    *mut c_void,
+    *mut c_void,
+    usize,
+    *mut libc::c_int,
+) -> libc::c_int;
+
+#[derive(Debug, PartialEq, Eq)]
+struct NssParserString {
+    offset: usize,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NssParserList {
+    offset: usize,
+    names: Vec<NssParserString>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NssParserObservation {
+    status: libc::c_int,
+    error: libc::c_int,
+    errno: libc::c_int,
+    strings: Vec<Option<NssParserString>>,
+    numbers: Vec<i128>,
+    lists: Vec<Option<NssParserList>>,
+}
+
+fn nss_parser_definitions() -> [(&'static CStr, NssAccountParser); 4] {
+    use frankenlibc_abi::unistd_abi;
+    [
+        (
+            c"_nss_files_parse_pwent",
+            unistd_abi::_nss_files_parse_pwent,
+        ),
+        (
+            c"_nss_files_parse_grent",
+            unistd_abi::_nss_files_parse_grent,
+        ),
+        (
+            c"_nss_files_parse_spent",
+            unistd_abi::_nss_files_parse_spent,
+        ),
+        (
+            c"_nss_files_parse_sgent",
+            unistd_abi::_nss_files_parse_sgent,
+        ),
+    ]
+}
+
+unsafe fn nss_parser_string_snapshot(
+    pointer: *const c_char,
+    data: *const u8,
+    line_start: usize,
+    text_end: usize,
+) -> Option<NssParserString> {
+    if pointer.is_null() {
+        return None;
+    }
+    let offset = (pointer as usize)
+        .checked_sub(data as usize)
+        .expect("parser string precedes caller storage");
+    assert!(
+        (line_start..=text_end).contains(&offset),
+        "parser string escaped original text: {offset}, {line_start}..={text_end}"
+    );
+    // SAFETY: the normalized pointer was checked against this live text
+    // extent. Find NUL within it before making the owned observation.
+    let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), text_end - offset + 1) };
+    let length = bytes
+        .iter()
+        .position(|&byte| byte == 0)
+        .expect("unterminated parser string");
+    Some(NssParserString {
+        offset,
+        bytes: bytes[..length].to_vec(),
+    })
+}
+
+unsafe fn nss_parser_list_snapshot(
+    pointer: *mut *mut c_char,
+    data: *const u8,
+    text: *const u8,
+    line_start: usize,
+    text_end: usize,
+    capacity: usize,
+) -> Option<NssParserList> {
+    if pointer.is_null() {
+        return None;
+    }
+    let offset = (pointer as usize)
+        .checked_sub(data as usize)
+        .expect("parser list precedes caller storage");
+    let width = std::mem::size_of::<*mut c_char>();
+    assert_eq!((pointer as usize) % std::mem::align_of::<*mut c_char>(), 0);
+    let mut names = Vec::new();
+    loop {
+        let end = offset + (names.len() + 1) * width;
+        assert!(
+            end <= capacity,
+            "parser pointer array exceeds caller capacity"
+        );
+        let slot_start = pointer as usize + names.len() * width;
+        let slot_end = slot_start + width;
+        assert!(
+            slot_end <= text as usize + line_start || slot_start > text as usize + text_end,
+            "pointer array overlaps original text"
+        );
+        // SAFETY: this aligned pointer slot is within the supplied allocation
+        // and disjoint from the independently bounded original text.
+        let name = unsafe { pointer.add(names.len()).read() };
+        if name.is_null() {
+            break;
+        }
+        // SAFETY: the string helper validates the original text range.
+        names
+            .push(unsafe { nss_parser_string_snapshot(name, text, line_start, text_end) }.unwrap());
+    }
+    Some(NssParserList { offset, names })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_nss_account_parser(
+    parser: NssAccountParser,
+    family: usize,
+    input: &[u8],
+    data_offset: usize,
+    line_offset: usize,
+    capacity: usize,
+    host: bool,
+    alias_error: bool,
+    external_line: bool,
+) -> NssParserObservation {
+    #[repr(align(16))]
+    struct Storage([u8; 512]);
+    let mut backing = Storage([0xa5; 512]);
+    let mut separate_text = Storage([0xa5; 512]);
+    assert!(data_offset + capacity <= backing.0.len());
+    let start = if external_line {
+        line_offset
+    } else {
+        data_offset + line_offset
+    };
+    let text_storage = if external_line {
+        &mut separate_text.0
+    } else {
+        &mut backing.0
+    };
+    assert!(start + input.len() < text_storage.len());
+    if !external_line {
+        assert!(line_offset + input.len() < capacity);
+    }
+    text_storage[start..start + input.len()].copy_from_slice(input);
+    text_storage[start + input.len()] = 0;
+    let line = unsafe { text_storage.as_mut_ptr().add(start).cast() };
+    let mut output = [0xa5a5_a5a5_a5a5_a5a5u64; 16];
+    let mut error = 717;
+    // SAFETY: both accessors return initialized per-thread errno slots.
+    let errno_slot = unsafe {
+        if host {
+            libc::__errno_location()
+        } else {
+            __errno_location()
+        }
+    };
+    // SAFETY: the slots and all parser buffers remain live through observation.
+    let status = unsafe {
+        *libc::__errno_location() = 619;
+        *__errno_location() = 619;
+        parser(
+            line,
+            output.as_mut_ptr().cast(),
+            backing.0.as_mut_ptr().add(data_offset).cast(),
+            capacity,
+            if alias_error { errno_slot } else { &mut error },
+        )
+    };
+    // Capture errno before any assertion or allocation can change it.
+    let observed_errno = unsafe { *errno_slot };
+    if alias_error {
+        error = observed_errno;
+    }
+    assert!(
+        backing.0[data_offset + capacity..]
+            .iter()
+            .all(|&byte| byte == 0xa5),
+        "parser wrote beyond the declared buffer capacity"
+    );
+    if external_line {
+        assert!(
+            separate_text.0[..line_offset]
+                .iter()
+                .all(|&byte| byte == 0xa5)
+                && separate_text.0[line_offset + input.len() + 1..]
+                    .iter()
+                    .all(|&byte| byte == 0xa5),
+            "parser wrote outside the independently allocated text"
+        );
+    }
+    let mut observed = NssParserObservation {
+        status,
+        error,
+        errno: observed_errno,
+        strings: Vec::new(),
+        numbers: Vec::new(),
+        lists: Vec::new(),
+    };
+    if status != 1 {
+        return observed;
+    }
+    let data = unsafe { backing.0.as_ptr().add(data_offset) };
+    let text = if external_line {
+        separate_text.0.as_ptr()
+    } else {
+        data
+    };
+    let text_end = line_offset + input.len();
+    let mut string = |pointer| {
+        // SAFETY: helper bounds every published string before inspecting it.
+        observed
+            .strings
+            .push(unsafe { nss_parser_string_snapshot(pointer, text, line_offset, text_end) });
+    };
+    // SAFETY: success must initialize the matching complete ABI record.
+    // output is large enough and aligned for all four C structures.
+    unsafe {
+        match family {
+            0 => {
+                let record = output.as_ptr().cast::<libc::passwd>().read();
+                for pointer in [
+                    record.pw_name,
+                    record.pw_passwd,
+                    record.pw_gecos,
+                    record.pw_dir,
+                    record.pw_shell,
+                ] {
+                    string(pointer);
+                }
+                observed.numbers = vec![record.pw_uid.into(), record.pw_gid.into()];
+            }
+            1 => {
+                let record = output.as_ptr().cast::<libc::group>().read();
+                string(record.gr_name);
+                string(record.gr_passwd);
+                observed.numbers = vec![record.gr_gid.into()];
+                observed.lists.push(nss_parser_list_snapshot(
+                    record.gr_mem,
+                    data,
+                    text,
+                    line_offset,
+                    text_end,
+                    capacity,
+                ));
+            }
+            2 => {
+                let record = output.as_ptr().cast::<libc::spwd>().read();
+                string(record.sp_namp);
+                string(record.sp_pwdp);
+                observed.numbers = vec![
+                    record.sp_lstchg.into(),
+                    record.sp_min.into(),
+                    record.sp_max.into(),
+                    record.sp_warn.into(),
+                    record.sp_inact.into(),
+                    record.sp_expire.into(),
+                    record.sp_flag.into(),
+                ];
+            }
+            3 => {
+                let record = output.as_ptr().cast::<TestSgrp>().read();
+                string(record.sg_namp);
+                string(record.sg_passwd);
+                for pointer in [record.sg_adm, record.sg_mem] {
+                    observed.lists.push(nss_parser_list_snapshot(
+                        pointer,
+                        data,
+                        text,
+                        line_offset,
+                        text_end,
+                        capacity,
+                    ));
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    observed
+}
+
+#[test]
+fn nss_account_parser_records_match_gnu_and_upstream_numeric_contract() {
+    let corpora: [&[&[u8]]; 4] = [
+        &[
+            b"alice:x:1000:1001:Name:/home/a:/bin/sh",
+            b"a:x:1:2",
+            b"a:x:\x0b+1:\x0c2:g:d:s",
+            b":x:0:0:::",
+            b"  a:x:1:2:g:d:s",
+            b"#a:x:1:2:g:d:s",
+            b"a:x:1:2:g:d:s:tail",
+            b"a:x:1:2:g:d:s\r\n",
+            b"a:x:1:2:g:d:s\nignored",
+            b"+alice",
+            b"+alice:",
+            b"+alice::::::",
+            b"a:x::2",
+            b"invalid",
+            b"",
+            b"a:x:4294967295:2:g:d:s",
+            b"a:x:-18446744073709551615:2:g:d:s",
+        ],
+        &[
+            b"crew:x:1000:alice,bob",
+            b"crew:x:1000",
+            b"crew:x:1000:",
+            b"crew:x:1000: a, b ,c",
+            b"crew:x:1000:\x0ba,\x0cb",
+            b"crew:x:1000:a,,b,",
+            b"crew:x:1000: , ,a, ,b, ",
+            b"crew:x:1000:a b,c\td",
+            b"crew:x:1000:a\r\n",
+            b"crew:x:1000:a\nignored",
+            b"+crew",
+            b"+crew:",
+            b"+crew:::",
+            b"+crew::",
+            b"invalid",
+            b"",
+            b"crew:x:4294967295:a",
+        ],
+        &[
+            b"alice:!:18000:0:99999:7:::",
+            b"alice:!:::::::",
+            b"alice:!:1:2:3",
+            b"alice:!:1:2:3:",
+            b"alice:!:1:2:3: \t",
+            b"alice:!:1:2:3: \t:5:6:7",
+            b"alice:!:1:2:3:4:5:6",
+            b"alice:!:1:2:3:4:5:6:7",
+            b"alice:!:\x0b1:2:3:4:5:6:7",
+            b"alice:!:1:2:3:4:5:6:7\nignored",
+            b"+alice",
+            b"+alice:",
+            b"+alice:::::",
+            b"alice:!",
+            b"alice:!:1:2:3:4",
+            b"alice:!:1:2:3:4:5",
+            b"alice:!:2147483648:2:3:4:5:6:7",
+            b"alice:!:4294967295:2:3:4:5:6:7",
+            b"alice:!:1:2:3:4:5:6:7#tail",
+            b"alice:!:1:2:3:4:5:6:7\r\n",
+        ],
+        &[
+            b"crew:!:alice:bob,carl",
+            b"crew:!::",
+            b"crew:!: a, b :c,d",
+            b"crew:!:a,,b:,c,,d,",
+            b"crew:!:\x0ba:\x0cb",
+            b"crew:!:a:b:c",
+            b"crew:!:a:b\r\n",
+            b"crew:!:a:b\nignored",
+            b"+crew",
+            b"",
+            b"crew",
+            b"crew:",
+            b"crew:!",
+            b"crew:!:",
+            b"  crew:!:a:b",
+            b"#crew:!:a:b",
+        ],
+    ];
+    let mut comparisons = 0;
+    for (family, ((symbol, candidate), inputs)) in nss_parser_definitions()
+        .into_iter()
+        .zip(corpora)
+        .enumerate()
+    {
+        // SAFETY: the independently resolved symbol has this exact NSS ABI.
+        let host: NssAccountParser =
+            unsafe { dlsym_oracle::host_fn(symbol, candidate as *const ()) };
+        for &input in inputs {
+            for data_offset in 0..8 {
+                for line_offset in [0, 3] {
+                    let expected = observe_nss_account_parser(
+                        host,
+                        family,
+                        input,
+                        data_offset,
+                        line_offset,
+                        384,
+                        true,
+                        false,
+                        false,
+                    );
+                    let actual = observe_nss_account_parser(
+                        candidate,
+                        family,
+                        input,
+                        data_offset,
+                        line_offset,
+                        384,
+                        false,
+                        false,
+                        false,
+                    );
+                    assert_eq!(
+                        actual, expected,
+                        "{symbol:?}, input={input:?}, data_offset={data_offset}, line_offset={line_offset}"
+                    );
+                    comparisons += 1;
+                }
+            }
+        }
+    }
+    assert!(comparisons > 500);
+    eprintln!("NSS account parser records: {comparisons} independent GNU comparisons");
+
+    // Upstream GNU files-parse.c strtou32 saturates to UINT32_MAX after
+    // strtoul, including signed unsigned-long conversion. The Debian
+    // 2.41-12+deb13u4 host instead rejects values with high 32 bits set.
+    // Pin the upstream contract explicitly for these inputs; all ordinary
+    // records above still compare complete results against the independent
+    // GNU provider. Keep overflow errno distinct from 32-bit saturation.
+    let numeric_cases: &[(usize, &[u8], &[i128], libc::c_int)] = &[
+        (0, b"a:x:-1:2:g:d:s", &[4294967295, 2], 619),
+        (0, b"a:x:4294967296:2:g:d:s", &[4294967295, 2], 619),
+        (
+            0,
+            b"a:x:18446744073709551615:2:g:d:s",
+            &[4294967295, 2],
+            619,
+        ),
+        (
+            0,
+            b"a:x:18446744073709551616:2:g:d:s",
+            &[4294967295, 2],
+            libc::ERANGE,
+        ),
+        (
+            0,
+            b"a:x:999999999999999999999999999999:2:g:d:s",
+            &[4294967295, 2],
+            libc::ERANGE,
+        ),
+        (0, b"a:x:1:-1:g:d:s", &[1, 4294967295], 619),
+        (1, b"crew:x:-1:a", &[4294967295], 619),
+        (1, b"crew:x:4294967296:a", &[4294967295], 619),
+        (
+            1,
+            b"crew:x:18446744073709551616:a",
+            &[4294967295],
+            libc::ERANGE,
+        ),
+        (2, b"alice:!:-1:2:3:4:5:6:7", &[-1, 2, 3, 4, 5, 6, 7], 619),
+        (
+            2,
+            b"alice:!:4294967296:2:3:4:5:6:7",
+            &[-1, 2, 3, 4, 5, 6, 7],
+            619,
+        ),
+        (
+            2,
+            b"alice:!:999999999999999999999999999:2:3:4:5:6:7",
+            &[-1, 2, 3, 4, 5, 6, 7],
+            libc::ERANGE,
+        ),
+        (
+            2,
+            b"alice:!:1:2:3:4:5:6:-1",
+            &[1, 2, 3, 4, 5, 6, 4294967295],
+            619,
+        ),
+        (
+            2,
+            b"alice:!:1:2:3:4:5:6:4294967296",
+            &[1, 2, 3, 4, 5, 6, 4294967295],
+            619,
+        ),
+        (
+            2,
+            b"alice:!:1:2:3:4:5:6:18446744073709551616",
+            &[1, 2, 3, 4, 5, 6, 4294967295],
+            libc::ERANGE,
+        ),
+    ];
+    let definitions = nss_parser_definitions();
+    for &(family, input, numbers, expected_errno) in numeric_cases {
+        let (_, candidate) = definitions[family];
+        for alias_error in [false, true] {
+            let actual = observe_nss_account_parser(
+                candidate,
+                family,
+                input,
+                3,
+                2,
+                384,
+                false,
+                alias_error,
+                false,
+            );
+            assert_eq!(actual.status, 1, "upstream numeric record: {input:?}");
+            assert_eq!(
+                actual.numbers, numbers,
+                "upstream numeric fields: {input:?}"
+            );
+            assert_eq!(actual.errno, expected_errno, "numeric errno: {input:?}");
+            assert_eq!(actual.error, if alias_error { expected_errno } else { 717 });
+        }
+    }
+    let (_, passwd) = definitions[0];
+    let rejected = observe_nss_account_parser(
+        passwd,
+        0,
+        b"a:x:18446744073709551616x:2:g:d:s",
+        0,
+        0,
+        384,
+        false,
+        false,
+        false,
+    );
+    assert_eq!(
+        (rejected.status, rejected.error, rejected.errno),
+        (0, 717, libc::ERANGE)
+    );
+    eprintln!(
+        "NSS account parser numbers: {} explicit upstream-contract cases",
+        numeric_cases.len() * 2 + 1
+    );
+}
+
+#[test]
+fn nss_account_parser_pointer_tail_boundaries_and_numeric_overflow() {
+    let cases: &[(usize, &[u8])] = &[
+        (1, b"g:x:1:"),
+        (1, b"g:x:1:a"),
+        (1, b"g:x:1:a,b"),
+        (1, b"g:x:18446744073709551616:a,b"),
+        (1, b"+g"),
+        (3, b"g:x:a:b,c"),
+        (3, b"g:x::"),
+        (3, b"+g"),
+    ];
+    let definitions = nss_parser_definitions();
+    let mut comparisons = 0;
+    for &(family, input) in cases {
+        let (symbol, candidate) = definitions[family];
+        let numeric_overflow = input == b"g:x:18446744073709551616:a,b";
+        // This same-width ordinary ID preserves every text/table offset.
+        // GNU supplies the independent layout oracle; numeric overflow uses
+        // the explicit upstream saturation/errno contract documented above.
+        let reference_input: &[u8] = if numeric_overflow {
+            b"g:x:00000000000000000001:a,b"
+        } else {
+            input
+        };
+        assert_eq!(reference_input.len(), input.len());
+        // SAFETY: independently resolved function has the declared parser ABI.
+        let host: NssAccountParser =
+            unsafe { dlsym_oracle::host_fn(symbol, candidate as *const ()) };
+        for data_offset in 0..8 {
+            for line_offset in [0, 3] {
+                for external_line in [false, true] {
+                    let first = if external_line {
+                        0
+                    } else {
+                        line_offset + input.len() + 1
+                    };
+                    for capacity in first..first + 80 {
+                        for alias_error in [false, true] {
+                            let mut expected = observe_nss_account_parser(
+                                host,
+                                family,
+                                reference_input,
+                                data_offset,
+                                line_offset,
+                                capacity,
+                                true,
+                                alias_error,
+                                external_line,
+                            );
+                            if numeric_overflow {
+                                assert!(matches!(expected.status, -1 | 1));
+                                expected.errno = libc::ERANGE;
+                                if alias_error {
+                                    expected.error = libc::ERANGE;
+                                }
+                                if expected.status == 1 {
+                                    expected.numbers = vec![i128::from(u32::MAX)];
+                                }
+                            }
+                            let actual = observe_nss_account_parser(
+                                candidate,
+                                family,
+                                input,
+                                data_offset,
+                                line_offset,
+                                capacity,
+                                false,
+                                alias_error,
+                                external_line,
+                            );
+                            assert_eq!(
+                                actual, expected,
+                                "{symbol:?}, input={input:?}, offsets={data_offset}/{line_offset}, capacity={capacity}, alias_error={alias_error}, external_line={external_line}"
+                            );
+                            comparisons += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(comparisons > 10_000);
+    eprintln!(
+        "NSS account parser capacity boundaries: {comparisons} GNU-layout and explicit-overflow comparisons"
+    );
+}
+
+#[test]
+fn nss_account_parser_rejects_tracked_underallocation_without_writing() {
+    use frankenlibc_abi::unistd_abi::_nss_files_parse_grent;
+    // SAFETY: the tracked allocation remains live through both calls.
+    unsafe {
+        let allocation = malloc(24).cast::<u8>();
+        assert!(!allocation.is_null());
+        let actual_capacity = malloc_known_remaining_for_tests(allocation.cast()).unwrap();
+        std::ptr::write_bytes(allocation, 0xa5, actual_capacity);
+        let input = b"g:x:1:a,b,c,d,e,f,g,h\0";
+        assert!(input.len() <= actual_capacity);
+        std::ptr::copy_nonoverlapping(input.as_ptr(), allocation, input.len());
+        let mut output: libc::group = std::mem::zeroed();
+        let mut error = 717;
+        let before = std::slice::from_raw_parts(allocation, actual_capacity).to_vec();
+        assert_eq!(
+            _nss_files_parse_grent(
+                allocation.cast(),
+                (&raw mut output).cast(),
+                allocation.cast(),
+                usize::MAX,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::ERANGE);
+        assert_eq!(
+            std::slice::from_raw_parts(allocation, actual_capacity),
+            before
+        );
+        assert!(output.gr_name.is_null() && output.gr_mem.is_null());
+        std::ptr::write_bytes(allocation, b'x', actual_capacity);
+        error = 717;
+        assert_eq!(
+            _nss_files_parse_grent(
+                allocation.cast(),
+                (&raw mut output).cast(),
+                allocation.cast(),
+                actual_capacity,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::ERANGE);
+        assert!(
+            std::slice::from_raw_parts(allocation, actual_capacity)
+                .iter()
+                .all(|&byte| byte == b'x')
+        );
+        free(allocation.cast());
+    }
+}

@@ -419,6 +419,333 @@ pub fn parse_all_with_stats(content: &[u8]) -> (Vec<Passwd>, ParseStats) {
     (entries, stats)
 }
 
+fn nss_account_whitespace(byte: u8) -> bool {
+    byte == b' ' || (b'\t'..=b'\r').contains(&byte)
+}
+
+/// Field offsets for the GNU NSS account-parser ABI.
+///
+/// These parsers operate on one mutable caller-owned line. Unlike the public
+/// files readers, they preserve leading whitespace and comment characters in
+/// names, and remove only the first newline. Keeping offsets in the safe core
+/// lets the ABI layer publish pointers without copying or reallocating text.
+pub struct NssAccountFields<'a> {
+    line: &'a [u8],
+    position: usize,
+    overflowed: bool,
+}
+
+impl<'a> NssAccountFields<'a> {
+    pub fn new(line: &'a [u8]) -> Self {
+        let end = line
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .unwrap_or(line.len());
+        Self {
+            line: &line[..end],
+            position: 0,
+            overflowed: false,
+        }
+    }
+
+    pub fn line_end(&self) -> usize {
+        self.line.len()
+    }
+
+    pub fn at_end(&self) -> bool {
+        self.position == self.line.len()
+    }
+
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    pub fn skip_whitespace(&mut self) {
+        while self.position < self.line.len() && nss_account_whitespace(self.line[self.position]) {
+            self.position += 1;
+        }
+    }
+
+    /// Take one colon-delimited field, retaining its offset in the input.
+    /// Missing optional string fields point to the existing final NUL.
+    pub fn field(&mut self) -> core::ops::Range<usize> {
+        let start = self.position;
+        let end = self.line[start..]
+            .iter()
+            .position(|&byte| byte == b':')
+            .map_or(self.line.len(), |offset| start + offset);
+        self.position = end + usize::from(end < self.line.len());
+        start..end
+    }
+
+    pub fn remainder(&mut self) -> core::ops::Range<usize> {
+        let start = self.position;
+        self.position = self.line.len();
+        start..self.line.len()
+    }
+
+    /// GNU NSS account IDs use an unsigned-long conversion, then saturate to
+    /// UINT32_MAX. Empty fields are accepted only before a colon and only when
+    /// the caller supplies their default. Unsigned-long overflow still
+    /// supplies that saturated value while separately changing errno.
+    pub fn number(&mut self, empty: Option<u32>) -> Option<u32> {
+        if self.at_end() {
+            return None;
+        }
+        let field = self.field();
+        let mut bytes = &self.line[field];
+        if bytes.is_empty() {
+            return empty;
+        }
+        while bytes
+            .first()
+            .is_some_and(|&byte| nss_account_whitespace(byte))
+        {
+            bytes = &bytes[1..];
+        }
+        let negative = match bytes.first() {
+            Some(b'-') => {
+                bytes = &bytes[1..];
+                true
+            }
+            Some(b'+') => {
+                bytes = &bytes[1..];
+                false
+            }
+            _ => false,
+        };
+        let mut value: core::ffi::c_ulong = 0;
+        let mut digits = 0;
+        let mut overflow = false;
+        for &byte in bytes {
+            if !byte.is_ascii_digit() {
+                break;
+            }
+            digits += 1;
+            if !overflow {
+                match value
+                    .checked_mul(10)
+                    .and_then(|value| value.checked_add((byte - b'0').into()))
+                {
+                    Some(next) => value = next,
+                    None => {
+                        value = core::ffi::c_ulong::MAX;
+                        overflow = true;
+                    }
+                }
+            }
+        }
+        self.overflowed |= overflow;
+        if digits == 0 || digits != bytes.len() {
+            return None;
+        }
+        if negative && !overflow {
+            value = value.wrapping_neg();
+        }
+        Some(value.min(u32::MAX.into()) as u32)
+    }
+
+    /// Nonempty comma-list elements; GNU skips leading whitespace for each
+    /// element but keeps whitespace inside or at the end of a name.
+    pub fn list_count(&self, field: core::ops::Range<usize>) -> usize {
+        self.line[field]
+            .split(|&byte| byte == b',')
+            .filter(|name| name.iter().any(|&byte| !nss_account_whitespace(byte)))
+            .count()
+    }
+}
+
+/// Split a previously validated NSS list in place, emitting each name's
+/// starting offset. The caller includes the terminating byte in the mutable
+/// text slice; pointer-array storage must be disjoint from that slice.
+pub fn split_nss_account_list(
+    line: &mut [u8],
+    field: core::ops::Range<usize>,
+    mut emit: impl FnMut(usize),
+) {
+    let mut start = field.start;
+    for end in field.start..=field.end {
+        if end != field.end && line[end] != b',' {
+            continue;
+        }
+        while start < end && nss_account_whitespace(line[start]) {
+            start += 1;
+        }
+        line[end] = 0;
+        if start < end {
+            emit(start);
+        }
+        start = end + 1;
+    }
+}
+
+/// Account families exposed by the GNU NSS in-place parser ABI.
+#[derive(Clone, Copy, Debug)]
+pub enum NssAccountKind {
+    Passwd,
+    Group,
+    Shadow,
+    Gshadow,
+}
+
+/// A parsed account's offsets into the original line. No string or pointer
+/// table is allocated by parsing; the ABI layer owns the eventual writes.
+pub enum NssAccountRecord {
+    Passwd {
+        strings: [Option<core::ops::Range<usize>>; 5],
+        uid: u32,
+        gid: u32,
+    },
+    Group {
+        name: core::ops::Range<usize>,
+        password: Option<core::ops::Range<usize>>,
+        gid: u32,
+        members: core::ops::Range<usize>,
+        member_count: usize,
+    },
+    Shadow {
+        name: core::ops::Range<usize>,
+        password: Option<core::ops::Range<usize>>,
+        aging: [i64; 6],
+        flag: u64,
+    },
+    Gshadow {
+        name: core::ops::Range<usize>,
+        password: Option<core::ops::Range<usize>>,
+        admins: Option<core::ops::Range<usize>>,
+        members: core::ops::Range<usize>,
+        admin_count: usize,
+        member_count: usize,
+    },
+}
+
+/// A malformed line is a skip, not a buffer failure. Numeric overflow remains
+/// observable through errno even when the line is skipped.
+pub struct NssAccountParse {
+    pub record: Option<NssAccountRecord>,
+    pub line_end: usize,
+    pub overflowed: bool,
+}
+
+pub fn parse_nss_account_line(kind: NssAccountKind, line: &[u8]) -> NssAccountParse {
+    let mut fields = NssAccountFields::new(line);
+    let record = (|| {
+        let name = fields.field();
+        let compat = matches!(line.get(name.start), Some(b'+') | Some(b'-'));
+        match kind {
+            NssAccountKind::Passwd => {
+                if compat && fields.at_end() {
+                    return Some(NssAccountRecord::Passwd {
+                        strings: [Some(name), None, None, None, None],
+                        uid: 0,
+                        gid: 0,
+                    });
+                }
+                let password = fields.field();
+                let empty = compat.then_some(0);
+                let uid = fields.number(empty)?;
+                let gid = fields.number(empty)?;
+                Some(NssAccountRecord::Passwd {
+                    strings: [
+                        Some(name),
+                        Some(password),
+                        Some(fields.field()),
+                        Some(fields.field()),
+                        Some(fields.remainder()),
+                    ],
+                    uid,
+                    gid,
+                })
+            }
+            NssAccountKind::Group => {
+                let (password, gid) = if compat && fields.at_end() {
+                    (None, 0)
+                } else {
+                    let password = fields.field();
+                    let gid = fields.number(compat.then_some(0))?;
+                    (Some(password), gid)
+                };
+                let members = fields.remainder();
+                let member_count = fields.list_count(members.clone());
+                Some(NssAccountRecord::Group {
+                    name,
+                    password,
+                    gid,
+                    members,
+                    member_count,
+                })
+            }
+            NssAccountKind::Shadow => {
+                if compat && fields.at_end() {
+                    return Some(NssAccountRecord::Shadow {
+                        name,
+                        password: None,
+                        aging: [0, 0, 0, -1, -1, -1],
+                        flag: u64::MAX,
+                    });
+                }
+                let password = fields.field();
+                let mut aging = [-1; 6];
+                for value in &mut aging[..3] {
+                    *value = fields.number(Some(u32::MAX))? as i32 as i64;
+                }
+                let mut flag = u64::MAX;
+                fields.skip_whitespace();
+                // The old five-field shadow format ends after max. Once a
+                // nonempty warn field follows, the complete aging suffix is
+                // required (expire may still be the final field).
+                if !fields.at_end() {
+                    for value in &mut aging[3..] {
+                        *value = fields.number(Some(u32::MAX))? as i32 as i64;
+                    }
+                    let flag_field = fields.remainder();
+                    if !flag_field.is_empty() {
+                        let bytes = &line[flag_field];
+                        let mut numeric = NssAccountFields::new(bytes);
+                        let value = numeric.number(None);
+                        fields.overflowed |= numeric.overflowed();
+                        if bytes.contains(&b':') {
+                            return None;
+                        }
+                        flag = u64::from(value?);
+                    }
+                }
+                Some(NssAccountRecord::Shadow {
+                    name,
+                    password: Some(password),
+                    aging,
+                    flag,
+                })
+            }
+            NssAccountKind::Gshadow => {
+                let (password, admins) = if compat && fields.at_end() {
+                    (None, None)
+                } else {
+                    (Some(fields.field()), Some(fields.field()))
+                };
+                let members = fields.remainder();
+                let admin_count = admins
+                    .as_ref()
+                    .map_or(0, |range| fields.list_count(range.clone()));
+                let member_count = fields.list_count(members.clone());
+                Some(NssAccountRecord::Gshadow {
+                    name,
+                    password,
+                    admins,
+                    members,
+                    admin_count,
+                    member_count,
+                })
+            }
+        }
+    })();
+    NssAccountParse {
+        record,
+        line_end: fields.line_end(),
+        overflowed: fields.overflowed(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
