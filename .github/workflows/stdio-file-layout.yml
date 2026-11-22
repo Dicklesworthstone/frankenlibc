@@ -24,6 +24,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
       - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
@@ -141,6 +142,38 @@ jobs:
           localedef --no-archive -i ps_AF -f UTF-8 "$locale_path/ps_AF.UTF-8"
           localedef --no-archive -i de_DE -f UTF-8 "$locale_path/de_DE.UTF-8"
           printf 'FRANKENLIBC_TEST_LOCALE_PATH=%s\n' "$locale_path" >> "$GITHUB_ENV"
+      - name: Preserve original wide input across scanf destinations and dialects
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          test -n "${FRANKENLIBC_TEST_LOCALE_PATH:-}"
+          localedef --no-archive -i fr_FR -f ISO-8859-1 "$FRANKENLIBC_TEST_LOCALE_PATH/fr_FR"
+          status=0
+          for feature in default owned; do
+            feature_args=()
+            if [[ "$feature" == owned ]]; then
+              feature_args+=(--features owned-tls-cache)
+            fi
+            log="artifacts/stdio-layout/swscanf-locale-$feature.log"
+            # Each isolated test executes both strict and hardened subprocesses.
+            if ! cargo test -p frankenlibc-abi "${feature_args[@]}" \
+              --test conformance_diff_swscanf locale_scanning:: \
+              -- --test-threads=1 --nocapture 2>&1 | tee "$log"; then
+              status=1
+            fi
+            if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"; then
+              status=1
+            fi
+            for regression in \
+              wide_buffer_preserves_raw_wchar_values \
+              wide_buffer_encodes_original_extended_characters \
+              wide_buffer_raw_positional_allocations; do
+              if ! grep -Eq "^test locale_scanning::$regression \\.\\.\\. ok$" "$log"; then
+                status=1
+              fi
+            done
+          done
+          exit "$status"
       - name: Preserve numeric radix widths and unread scanf input
         if: always() && steps.build.outcome == 'success'
         run: |

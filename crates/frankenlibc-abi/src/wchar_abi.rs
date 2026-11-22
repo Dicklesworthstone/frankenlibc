@@ -5842,9 +5842,8 @@ const WEOF_VALUE: u32 = u32::MAX;
 
 use frankenlibc_core::stdio::printf::LengthMod;
 use frankenlibc_core::stdio::scanf::{
-    InlineVec, ScanSpec, ScanValue, ScanWriteContext, ScanWriteError, WideScanContext,
-    WideScanEvent, WideScanInput, WideScanProgress, WideScanReadPurpose, WideScanSession,
-    WideScanWriteError,
+    InlineVec, ScanSpec, WideScanContext, WideScanEvent, WideScanInput, WideScanProgress,
+    WideScanReadPurpose, WideScanSession, WideScanWriteError,
 };
 
 /// Extract variadic args for wide printf — mirrors extract_va_args from stdio_abi.
@@ -6049,34 +6048,6 @@ impl WideScanWriter {
             self.arguments.push(argument);
         }
         self.arguments[index]
-    }
-
-    fn encoding_failure(
-        &mut self,
-        spec: &ScanSpec,
-        context: ScanWriteContext,
-        consumed: usize,
-    ) -> ScanWriteError {
-        self.error = Some(libc::EILSEQ);
-        ScanWriteError {
-            consumed: context.token_start.saturating_add(consumed),
-            // GNU treats a failing %c as input failure; %s/%[ instead return
-            // the preceding assignment count, including zero.
-            input_failure: spec.writes_char_buffer(),
-        }
-    }
-
-    unsafe fn allocation_failed(
-        &mut self,
-        destination: *mut c_void,
-        context: ScanWriteContext,
-    ) -> ScanWriteError {
-        // SAFETY: previous allocations and the receiving pointer remain live.
-        unsafe { self.release_failed_allocations(destination) };
-        ScanWriteError {
-            consumed: context.token_start,
-            input_failure: true,
-        }
     }
 
     unsafe fn release_failed_allocations(&mut self, destination: *mut c_void) {
@@ -6300,152 +6271,6 @@ impl WideScanWriter {
                 Ok(())
             }
         }
-    }
-
-    unsafe fn write(
-        &mut self,
-        spec: &ScanSpec,
-        value: Option<&ScanValue>,
-        context: ScanWriteContext,
-    ) -> Result<(), ScanWriteError> {
-        // SAFETY: the scanner invokes this writer only for a reached,
-        // nonsuppressed directive whose destination the caller supplied.
-        let destination = unsafe { self.destination(spec) };
-        let Some(value) = value else {
-            // A reached %m may fail to match before producing any value.
-            // SAFETY: the core only sends this notification for %m pointers.
-            unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
-            return Ok(());
-        };
-        match value {
-            ScanValue::Char(bytes) | ScanValue::String(bytes) => {
-                // SAFETY: the parsed directive specifies the destination's
-                // element type and allocation form; input bytes are borrowed.
-                unsafe { self.write_text(spec, bytes, destination, context) }
-            }
-            _ => {
-                // Numeric, pointer, %n, and long-double stores are identical
-                // for narrow and wide scanners. The core counts wide %n in
-                // wide characters, before handing that value to this store.
-                // SAFETY: destination has the type required by the directive.
-                unsafe { super::stdio_abi::vscanf_write_one(value, spec, destination) };
-                Ok(())
-            }
-        }
-    }
-
-    unsafe fn write_text(
-        &mut self,
-        spec: &ScanSpec,
-        bytes: &[u8],
-        destination: *mut c_void,
-        context: ScanWriteContext,
-    ) -> Result<(), ScanWriteError> {
-        let wide = matches!(spec.length, LengthMod::L);
-        let string = spec.writes_string_buffer();
-        // A string needs one terminator in its destination encoding. Do not
-        // duplicate the reset NUL: callers may provide exactly width times
-        // MB_CUR_MAX plus one byte. Character fields have no terminator.
-        let terminator_bytes = if !string {
-            0
-        } else if wide {
-            size_of::<libc::wchar_t>()
-        } else {
-            1
-        };
-        let mut scratch = [0u8; 6];
-        let output = if spec.alloc {
-            // Failed %m conversions leave NULL, without exposing a partially
-            // converted allocation. Validate and size using the same codec as
-            // the write pass, then allocate exactly the complete output.
-            // SAFETY: an assignment-allocation destination is a live pointer.
-            unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
-            let mut needed = terminator_bytes;
-            let mut offset = 0usize;
-            while offset < bytes.len() {
-                let Some((wc, advance)) = wchar_core::mbtowc(&bytes[offset..]) else {
-                    return Err(self.encoding_failure(spec, context, offset));
-                };
-                let width = if wide {
-                    size_of::<libc::wchar_t>()
-                } else {
-                    let Some(width) = codec::wctomb_with(self.codec, wc, &mut scratch) else {
-                        return Err(self.encoding_failure(spec, context, offset + advance));
-                    };
-                    width
-                };
-                let Some(total) = needed.checked_add(width) else {
-                    // SAFETY: no current allocation exists yet; previous
-                    // allocations and the receiving pointer remain live.
-                    return Err(unsafe { self.allocation_failed(destination, context) });
-                };
-                needed = total;
-                offset += advance;
-            }
-            // SAFETY: the requested size was checked for overflow. malloc
-            // supplies alignment sufficient for either char or wchar_t.
-            let buffer = unsafe { crate::malloc_abi::malloc(needed.max(1)).cast::<u8>() };
-            if buffer.is_null() {
-                // SAFETY: prior allocations and destination remain live.
-                return Err(unsafe { self.allocation_failed(destination, context) });
-            }
-            buffer
-        } else {
-            destination.cast::<u8>()
-        };
-
-        let mut offset = 0usize;
-        let mut written = 0usize;
-        while offset < bytes.len() {
-            let step = wchar_core::mbtowc(&bytes[offset..]);
-            let encoded = step.and_then(|(wc, advance)| {
-                let width = if wide {
-                    Some(size_of::<libc::wchar_t>())
-                } else {
-                    codec::wctomb_with(self.codec, wc, &mut scratch)
-                }?;
-                Some((wc, advance, width))
-            });
-            let Some((wc, advance, width)) = encoded else {
-                if spec.alloc {
-                    // SAFETY: output is this conversion's unpublished malloc
-                    // allocation; the caller's receiving pointer is still NULL.
-                    unsafe { crate::malloc_abi::free(output.cast()) };
-                }
-                let consumed = offset + step.map_or(0, |(_, advance)| advance);
-                return Err(self.encoding_failure(spec, context, consumed));
-            };
-            // SAFETY: a fixed destination has space for the converted field;
-            // a %m destination was sized with this same stateless codec. Each
-            // store contains one complete character, leaving failures' prefix.
-            unsafe {
-                if wide {
-                    output
-                        .add(written)
-                        .cast::<libc::wchar_t>()
-                        .write(wc as libc::wchar_t);
-                } else {
-                    std::ptr::copy_nonoverlapping(scratch.as_ptr(), output.add(written), width);
-                }
-            }
-            offset += advance;
-            written += width;
-        }
-        if terminator_bytes != 0 {
-            // SAFETY: the conversion's destination includes its terminators;
-            // %m reserves these bytes explicitly before allocation.
-            unsafe { std::ptr::write_bytes(output.add(written), 0, terminator_bytes) };
-        }
-        if spec.alloc {
-            // SAFETY: output is now a complete caller-owned allocation and the
-            // receiving argument is a live char ** or wchar_t **.
-            unsafe { *destination.cast::<*mut u8>() = output };
-            self.allocations.push(WideScanAllocation {
-                destination: destination.cast(),
-                buffer: output,
-            });
-        }
-        Ok(())
     }
 }
 
@@ -6969,43 +6794,6 @@ unsafe fn swprintf_direct_wide_string(
 // and can FAIL. Re-importing it would make it easy to reintroduce the
 // substitute-U+FFFD-for-EILSEQ behaviour that this file measured as a
 // divergence from glibc in both the C and C.UTF-8 locales.
-
-/// Read a NUL-terminated wide string into a Vec of bytes (each wchar treated as byte value).
-/// Used for swscanf input: converts wide input to narrow for the scanf engine.
-unsafe fn wide_input_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
-    if wcs.is_null() {
-        return Vec::new();
-    }
-    let mut buf = Vec::new();
-    let mut p = wcs;
-    loop {
-        let wc = unsafe { *p } as u32;
-        if wc == 0 {
-            break;
-        }
-        // For scanf input, encode as UTF-8 so the narrow scanf engine
-        // can process it correctly.
-        if wc < 0x80 {
-            buf.push(wc as u8);
-        } else if wc < 0x800 {
-            buf.push(0xC0 | (wc >> 6) as u8);
-            buf.push(0x80 | (wc & 0x3F) as u8);
-        } else if wc < 0x10000 {
-            buf.push(0xE0 | (wc >> 12) as u8);
-            buf.push(0x80 | ((wc >> 6) & 0x3F) as u8);
-            buf.push(0x80 | (wc & 0x3F) as u8);
-        } else if wc < 0x110000 {
-            buf.push(0xF0 | (wc >> 18) as u8);
-            buf.push(0x80 | ((wc >> 12) & 0x3F) as u8);
-            buf.push(0x80 | ((wc >> 6) & 0x3F) as u8);
-            buf.push(0x80 | (wc & 0x3F) as u8);
-        } else {
-            buf.extend_from_slice(&[0xEF, 0xBF, 0xBD]);
-        }
-        p = unsafe { p.add(1) };
-    }
-    buf
-}
 
 // Host FILE objects own their conversion state as well as their buffers.
 // Calling a byte operation on one after fwide(..., 1) loses that state and is
@@ -8239,36 +8027,55 @@ impl WideScanOutcome {
     }
 }
 
-/// Scan and assign together, so a failed destination encoding terminates the
-/// scan before any later assignment or stream consumption is committed.
+/// Scan the original wchar_t elements on demand. Wide destinations copy raw
+/// values, including GNU's extended wchar_t range; only narrow destinations
+/// encode through LC_CTYPE. A UTF-8 intermediate would replace valid values
+/// above U+10FFFF and reject surrogate-valued wide input before assignment.
 unsafe fn scan_wide_buffer(
-    input: &[u8],
+    input: *const libc::wchar_t,
     format: *const c_char,
     ap: *mut c_void,
     dialect: ScanfDialect,
 ) -> Option<WideScanOutcome> {
     let locale = NumericLocale::current();
     let directives = super::stdio_abi::scanf_wide_directives(format, dialect, locale)?;
+    let mut session = WideScanSession::new(directives.as_slice(), locale.wide_radix);
     let mut writer = WideScanWriter::new(ap);
-    let mut radix_bytes = [0u8; 4];
-    let radix = char::from_u32(locale.wide_radix)
-        .unwrap_or('.')
-        .encode_utf8(&mut radix_bytes);
-    let result = frankenlibc_core::stdio::scanf::scan_input_wide_with_radix(
-        input,
-        directives.as_slice(),
-        radix.as_bytes(),
-        |spec, value, context| {
-            // SAFETY: this call owns the live va_list and the parsed format
-            // describes each reached destination supplied by the caller.
-            unsafe { writer.write(spec, value, context) }
-        },
-    );
+    let mut cursor = input;
+    let mut supplied = None;
+    let summary = loop {
+        match session.resume(
+            supplied.take(),
+            &mut |spec, event, context| {
+                // SAFETY: the live va_list describes each reached destination.
+                // The shared writer preserves positional and %m ownership.
+                unsafe { writer.write_stream_event(spec, event, context) }
+            },
+            &|wc| locale.wide_is_space(wc),
+        ) {
+            WideScanProgress::Complete(summary) => break summary,
+            WideScanProgress::NeedInput(_) => {
+                // SAFETY: swscanf's input is a terminated wchar_t string.
+                // Read only at the scanner's request and never beyond NUL.
+                let wc = unsafe { *cursor } as u32;
+                supplied = Some(if wc == 0 || wc == WEOF_VALUE {
+                    WideScanInput::Eof
+                } else {
+                    // SAFETY: this non-NUL element precedes the terminator.
+                    cursor = unsafe { cursor.add(1) };
+                    WideScanInput::Character(wc)
+                });
+            }
+        }
+    };
+    // SAFETY: the current thread owns its errno slot.
+    let error = writer.error.unwrap_or_else(|| unsafe { *crate::errno_abi::__errno_location() });
     let outcome = WideScanOutcome {
-        count: result.count,
-        input_failure: result.input_failure,
+        count: summary.count,
+        input_failure: summary.input_failure,
         allocation_failure: writer.allocation_failure,
-        error: writer.error,
+        // Preserve conversion errno across partial-field and parser cleanup.
+        error: Some(error),
     };
     Some(outcome)
 }
@@ -8430,9 +8237,7 @@ pub(crate) unsafe fn vswscanf_with_dialect(
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
         return 0;
     };
-    let input = unsafe { wide_input_to_narrow(s) };
-    let Some(outcome) = (unsafe { scan_wide_buffer(&input, fmt_cstr.as_ptr(), ap, dialect) })
-    else {
+    let Some(outcome) = (unsafe { scan_wide_buffer(s, fmt_cstr.as_ptr(), ap, dialect) }) else {
         return libc::EOF;
     };
     outcome.return_value()

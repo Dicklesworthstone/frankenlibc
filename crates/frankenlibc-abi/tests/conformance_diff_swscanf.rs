@@ -304,6 +304,156 @@ mod locale_scanning {
         ]
     }
 
+    #[test]
+    fn wide_buffer_preserves_raw_wchar_values() {
+        if !isolated("wide_buffer_preserves_raw_wchar_values") {
+            return;
+        }
+        // Wide destinations copy wchar_t values, independently of whether
+        // LC_CTYPE can encode them. GNU's wchar_t range also exceeds Unicode.
+        for locale in [c"C", c"C.UTF-8"] {
+            select(locale);
+            for character in [
+                0x41u32,
+                0xd800,
+                0xdfff,
+                0x10ffff,
+                0x110000,
+                0x1fffff,
+                0x3ffffff,
+                0x7fffffff,
+                0xfffffffe,
+                0xffffffff,
+            ] {
+                let input = [character as Wc, b'X' as Wc, b' ' as Wc, 0];
+                for format in ["%lc%n", "%C%n", "%2lc%n", "%ls%n", "%S%n", "%l[^ ]%n"] {
+                    let format = w(format);
+                    let mut expected = None;
+                    for engine in engines() {
+                        let mut output = [SENTINEL as Wc; 5];
+                        let mut consumed = SENTINEL;
+                        let result = unsafe {
+                            *(engine.errno)() = 0;
+                            let count = (engine.scan)(
+                                input.as_ptr(),
+                                format.as_ptr(),
+                                output.as_mut_ptr(),
+                                &mut consumed,
+                            );
+                            (count, output, consumed, *(engine.errno)())
+                        };
+                        if let Some(expected) = expected {
+                            assert_eq!(
+                                result, expected,
+                                "{} locale={locale:?} wchar={character:#x} format={format:?}",
+                                engine.name
+                            );
+                        } else {
+                            if character != u32::MAX {
+                                assert_eq!(result.0, 1, "GNU accepts raw wchar_t input");
+                                assert_eq!(result.1[0] as u32, character);
+                            } else {
+                                assert_eq!(result.0, libc::EOF, "WEOF is input failure");
+                            }
+                            expected = Some(result);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_buffer_encodes_original_extended_characters() {
+        if !isolated("wide_buffer_encodes_original_extended_characters") {
+            return;
+        }
+        for locale in [c"C", c"C.UTF-8"] {
+            select(locale);
+            for character in [
+                0xd800u32,
+                0x10ffff,
+                0x110000,
+                0x1fffff,
+                0x3ffffff,
+                0x7fffffff,
+                0xfffffffe,
+            ] {
+                // The valid ASCII prefix must survive an encoding error, but
+                // the later %n and integer assignment must remain untouched.
+                let input = [b'A' as Wc, character as Wc, b'7' as Wc, 0];
+                let format = w("%2c%n%d");
+                let mut expected = None;
+                for engine in engines() {
+                    let mut output = [0xa5u8; 16];
+                    let (mut consumed, mut number) = (SENTINEL, SENTINEL);
+                    let result = unsafe {
+                        *(engine.errno)() = libc::EDOM;
+                        let count = (engine.scan)(
+                            input.as_ptr(),
+                            format.as_ptr(),
+                            output.as_mut_ptr(),
+                            &mut consumed,
+                            &mut number,
+                        );
+                        (count, output, consumed, number, *(engine.errno)())
+                    };
+                    if let Some(expected) = expected {
+                        assert_eq!(
+                            result, expected,
+                            "{} locale={locale:?} wchar={character:#x}",
+                            engine.name
+                        );
+                    } else {
+                        assert_eq!(result.1[0], b'A', "GNU preserves the prefix");
+                        expected = Some(result);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_buffer_raw_positional_allocations() {
+        if !isolated("wide_buffer_raw_positional_allocations") {
+            return;
+        }
+        let input = [0x110000 as Wc, 0xd800 as Wc, b' ' as Wc, 0];
+        for locale in [c"C", c"C.UTF-8"] {
+            select(locale);
+            for (format, terminated) in [
+                ("%2$2mlc%1$n", false),
+                ("%2$mls%1$n", true),
+                ("%2$ml[^ ]%1$n", true),
+            ] {
+                let format = w(format);
+                for engine in engines() {
+                    let mut consumed = SENTINEL;
+                    let mut output: *mut Wc = std::ptr::null_mut();
+                    let count = unsafe {
+                        (engine.scan)(
+                            input.as_ptr(),
+                            format.as_ptr(),
+                            &mut consumed,
+                            &mut output,
+                        )
+                    };
+                    assert_eq!((count, consumed), (1, 2), "{} {locale:?}", engine.name);
+                    assert!(!output.is_null(), "{} allocated destination", engine.name);
+                    // SAFETY: one completed %m assignment owns its two wchar_t
+                    // elements and, for string conversions, a NUL terminator.
+                    unsafe {
+                        let units = if terminated { 3 } else { 2 };
+                        let actual = std::slice::from_raw_parts(output, units);
+                        let expected = [0x110000 as Wc, 0xd800 as Wc, 0];
+                        assert_eq!(actual, &expected[..units], "{}", engine.name);
+                        (engine.free)(output.cast());
+                    }
+                }
+            }
+        }
+    }
+
     type OpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
     type FdopenFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void;
     type StreamFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
