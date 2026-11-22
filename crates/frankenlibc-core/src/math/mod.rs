@@ -44,7 +44,16 @@ pub(crate) fn detect_avx2_fma() -> bool {
 }
 
 macro_rules! avx2_fma_dispatch {
+    ($(#[$attr:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> f64 => $body:ident;) => {
+        crate::math::avx2_fma_dispatch!(@impl [extern "C"] $(#[$attr])* $vis fn $name($($arg: $ty),*) -> f64 => $body;);
+    };
+    ($(#[$attr:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> f32 => $body:ident;) => {
+        crate::math::avx2_fma_dispatch!(@impl [extern "C"] $(#[$attr])* $vis fn $name($($arg: $ty),*) -> f32 => $body;);
+    };
     ($(#[$attr:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
+        crate::math::avx2_fma_dispatch!(@impl [] $(#[$attr])* $vis fn $name($($arg: $ty),*) -> $ret => $body;);
+    };
+    (@impl [$($abi:tt)*] $(#[$attr:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
         $(#[$attr])*
         #[allow(unsafe_code, unreachable_code)]
         $vis fn $name($($arg: $ty),*) -> $ret {
@@ -54,16 +63,16 @@ macro_rules! avx2_fma_dispatch {
             ))]
             {
                 #[target_feature(enable = "avx2,fma")]
-                fn avx2_fma_twin($($arg: $ty),*) -> $ret {
+                $($abi)* fn avx2_fma_twin($($arg: $ty),*) -> $ret {
                     $body($($arg),*)
                 }
                 #[inline(never)]
-                fn baseline($($arg: $ty),*) -> $ret {
+                $($abi)* fn baseline($($arg: $ty),*) -> $ret {
                     $body($($arg),*)
                 }
                 #[cold]
                 #[inline(never)]
-                fn init($($arg: $ty),*) -> $ret {
+                $($abi)* fn init($($arg: $ty),*) -> $ret {
                     if crate::math::detect_avx2_fma() {
                         // SAFETY: the CPU supports AVX2 and FMA, checked just above.
                         unsafe { avx2_fma_twin($($arg),*) }

@@ -912,11 +912,7 @@ pub fn fpclassify(x: f64) -> i32 {
         return if u == 0 { FP_ZERO } else { FP_SUBNORMAL };
     }
     // `exp == 2047`: bits 1..=52 of `u` hold the mantissa, so `u << 11 == 0` iff Inf.
-    if (u << 11) == 0 {
-        FP_INFINITE
-    } else {
-        FP_NAN
-    }
+    if (u << 11) == 0 { FP_INFINITE } else { FP_NAN }
 }
 
 /// Return non-zero if sign bit is set (glibc `__signbit`).

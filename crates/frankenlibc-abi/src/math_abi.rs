@@ -509,6 +509,18 @@ fn is_integral_f32(x: f32) -> bool {
 
 #[cold]
 #[inline(never)]
+extern "C" fn quiet_nan_f64(x: f64) -> f64 {
+    std::hint::black_box(x) + 0.0
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn quiet_nan_f32(x: f32) -> f32 {
+    std::hint::black_box(x) + 0.0
+}
+
+#[cold]
+#[inline(never)]
 fn unary_entry_slow(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     if runtime_policy::math_membrane_fastpath() {
         return f(x);
@@ -602,7 +614,7 @@ fn unary_infallible_entry_slow<F: FnOnce(f64) -> f64>(x: f64, base_cost_ns: u64,
 #[inline(always)]
 fn unary_infallible_entry<F: FnOnce(f64) -> f64>(x: f64, base_cost_ns: u64, f: F) -> f64 {
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f64(x);
     }
     if runtime_policy::math_membrane_fastpath_inline() {
         return f(x);
@@ -662,7 +674,7 @@ fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f6
 
 #[cold]
 #[inline(never)]
-fn trig_inf_f64(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+extern "C" fn trig_inf_f64(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     let out = unary_entry(x, base_cost_ns, f);
     set_domain_errno();
     out
@@ -692,16 +704,26 @@ pub unsafe extern "C" fn tan(x: f64) -> f64 {
     unary_infallible_entry(x, 6, frankenlibc_core::math::tan)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asin(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn asin_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::asin);
-    // Infinities are outside the domain too. Only NaN propagation leaves
-    // errno unchanged; excluding every non-finite input loses EDOM at ±inf.
     if !x.is_nan() && x.abs() > 1.0 {
         set_domain_errno();
     }
-    // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
-    // the x86 default NaN. FE_INVALID was raised by the kernel either way.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
+    }
+    out
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn acos_slow(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::acos);
+    if !x.is_nan() && x.abs() > 1.0 {
+        set_domain_errno();
+    }
     if out.is_nan() && !x.is_nan() {
         return f64::NAN;
     }
@@ -709,17 +731,25 @@ pub unsafe extern "C" fn asin(x: f64) -> f64 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn asin(x: f64) -> f64 {
+    // Every |x| <= 1.0 (bits & abs <= 0x3ff0_0000_0000_0000) is strictly in domain.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) <= 0x3ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::asin(x);
+    }
+    asin_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acos(x: f64) -> f64 {
-    let out = unary_entry(x, 6, frankenlibc_core::math::acos);
-    if !x.is_nan() && x.abs() > 1.0 {
-        set_domain_errno();
+    // Every |x| <= 1.0 (bits & abs <= 0x3ff0_0000_0000_0000) is strictly in domain.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) <= 0x3ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::acos(x);
     }
-    // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
-    // the x86 default NaN. FE_INVALID was raised by the kernel either way.
-    if out.is_nan() && !x.is_nan() {
-        return f64::NAN;
-    }
-    out
+    acos_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -801,8 +831,9 @@ pub unsafe extern "C" fn atanh(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn exp_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::exp);
     if x.is_finite() && (out.is_infinite() || out == 0.0) {
         set_range_errno();
@@ -810,8 +841,9 @@ pub unsafe extern "C" fn exp(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn exp2_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::exp2);
     if x.is_finite() && (out.is_infinite() || out == 0.0) {
         set_range_errno();
@@ -819,8 +851,9 @@ pub unsafe extern "C" fn exp2(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn expm1(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn expm1_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::expm1);
     if x.is_finite() && out.is_infinite() {
         set_range_errno();
@@ -828,8 +861,9 @@ pub unsafe extern "C" fn expm1(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn log_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log);
     if !x.is_nan() {
         if x < 0.0 {
@@ -841,8 +875,9 @@ pub unsafe extern "C" fn log(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn log2_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log2);
     if !x.is_nan() {
         if x < 0.0 {
@@ -854,8 +889,9 @@ pub unsafe extern "C" fn log2(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn log10_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log10);
     if !x.is_nan() {
         if x < 0.0 {
@@ -871,8 +907,9 @@ pub unsafe extern "C" fn log10(x: f64) -> f64 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log1p(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn log1p_slow(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log1p);
     if !x.is_nan() {
         if x < -1.0 {
@@ -882,6 +919,98 @@ pub unsafe extern "C" fn log1p(x: f64) -> f64 {
         }
     }
     out
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn sqrt_slow(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::sqrt);
+    if x < 0.0 {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn exp(x: f64) -> f64 {
+    // |x| < 708.0 guarantees exp(x) is strictly normal and finite in all 4 rounding modes.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) < 0x4086_2000_0000_0000
+    {
+        return frankenlibc_core::math::exp(x);
+    }
+    exp_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn exp2(x: f64) -> f64 {
+    // |x| < 1022.0 guarantees 2^x is strictly normal and finite in all 4 rounding modes.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) < 0x408f_f000_0000_0000
+    {
+        return frankenlibc_core::math::exp2(x);
+    }
+    exp2_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn expm1(x: f64) -> f64 {
+    // |x| < 708.0 guarantees expm1(x) never overflows in any rounding mode.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) < 0x4086_2000_0000_0000
+    {
+        return frankenlibc_core::math::expm1(x);
+    }
+    expm1_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log(x: f64) -> f64 {
+    let bits = x.to_bits();
+    // Positive finite x (> 0.0 and < +inf): strictly in domain, never sets errno.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (bits as i64) > 0
+        && bits < 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::log(x);
+    }
+    log_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log2(x: f64) -> f64 {
+    let bits = x.to_bits();
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (bits as i64) > 0
+        && bits < 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::log2(x);
+    }
+    log2_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log10(x: f64) -> f64 {
+    let bits = x.to_bits();
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (bits as i64) > 0
+        && bits < 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::log10(x);
+    }
+    log10_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log1p(x: f64) -> f64 {
+    let bits = x.to_bits();
+    // Every finite x > -1.0 (including ±0.0): strictly in domain, never sets errno.
+    let in_domain = bits < 0x7ff0_0000_0000_0000
+        || (bits >= 0x8000_0000_0000_0000 && bits < 0xbff0_0000_0000_0000);
+    if runtime_policy::math_membrane_fastpath_inline() && in_domain {
+        return frankenlibc_core::math::log1p(x);
+    }
+    log1p_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -910,16 +1039,14 @@ pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrt(x: f64) -> f64 {
-    let out = unary_entry(x, 6, frankenlibc_core::math::sqrt);
-    // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error and
-    // glibc sets EDOM for it. The comparison is already false for NaN and -0.0,
-    // so the finiteness guard only excluded infinity. Found at f128 width by
-    // conformance_diff_f128_round_sqrt once that gate had a real glibc oracle;
-    // the same predicate was copied to all three widths.
-    if x < 0.0 {
-        set_domain_errno();
+    let bits = x.to_bits();
+    // Non-negative finite/+inf or -0.0: strictly in domain, never sets EDOM.
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (bits <= 0x7ff0_0000_0000_0000 || bits == 0x8000_0000_0000_0000)
+    {
+        return frankenlibc_core::math::sqrt(x);
     }
-    out
+    sqrt_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1681,7 +1808,7 @@ fn unary_entry_f32_slow<F: FnOnce(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) 
 fn unary_entry_f32<F: FnOnce(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
     // NaN in, quieted NaN out; see `unary_entry`.
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f32(x);
     }
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath_inline() {
@@ -1750,7 +1877,7 @@ fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -
 
 #[cold]
 #[inline(never)]
-fn trig_inf_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
+extern "C" fn trig_inf_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
     let out = unary_entry_f32(x, base_cost_ns, f);
     set_domain_errno();
     out
@@ -1780,8 +1907,9 @@ pub unsafe extern "C" fn tanf(x: f32) -> f32 {
     unary_entry_f32(x, 5, frankenlibc_core::math::tanf)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn asinf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::asinf);
     if !x.is_nan() && !(-1.0..=1.0).contains(&x) {
         set_domain_errno();
@@ -1789,13 +1917,32 @@ pub unsafe extern "C" fn asinf(x: f32) -> f32 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acosf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn acosf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::acosf);
     if !x.is_nan() && !(-1.0..=1.0).contains(&x) {
         set_domain_errno();
     }
     out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn asinf(x: f32) -> f32 {
+    if runtime_policy::math_membrane_fastpath_inline() && (x.to_bits() & 0x7fff_ffff) <= 0x3f80_0000
+    {
+        return frankenlibc_core::math::asinf(x);
+    }
+    asinf_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn acosf(x: f32) -> f32 {
+    if runtime_policy::math_membrane_fastpath_inline() && (x.to_bits() & 0x7fff_ffff) <= 0x3f80_0000
+    {
+        return frankenlibc_core::math::acosf(x);
+    }
+    acosf_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1810,8 +1957,9 @@ pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
 
 // --- Exponential / logarithmic f32 ---
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn expf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn expf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::expf);
     if x.is_finite() && (out.is_infinite() || out == 0.0) {
         set_range_errno();
@@ -1819,8 +1967,9 @@ pub unsafe extern "C" fn expf(x: f32) -> f32 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn logf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::logf);
     if !x.is_nan() {
         if x < 0.0 {
@@ -1832,8 +1981,9 @@ pub unsafe extern "C" fn logf(x: f32) -> f32 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2f(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn log2f_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::log2f);
     if !x.is_nan() {
         if x < 0.0 {
@@ -1845,8 +1995,9 @@ pub unsafe extern "C" fn log2f(x: f32) -> f32 {
     out
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10f(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn log10f_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::log10f);
     if !x.is_nan() {
         if x < 0.0 {
@@ -1856,6 +2007,53 @@ pub unsafe extern "C" fn log10f(x: f32) -> f32 {
         }
     }
     out
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn sqrtf_slow(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 3, frankenlibc_core::math::sqrtf);
+    if x < 0.0 {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn expf(x: f32) -> f32 {
+    // |x| < 87.0 guarantees expf(x) is strictly normal and finite in all 4 rounding modes.
+    if runtime_policy::math_membrane_fastpath_inline() && (x.to_bits() & 0x7fff_ffff) < 0x42ae_0000
+    {
+        return frankenlibc_core::math::expf(x);
+    }
+    expf_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn logf(x: f32) -> f32 {
+    let bits = x.to_bits();
+    if runtime_policy::math_membrane_fastpath_inline() && (bits as i32) > 0 && bits < 0x7f80_0000 {
+        return frankenlibc_core::math::logf(x);
+    }
+    logf_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log2f(x: f32) -> f32 {
+    let bits = x.to_bits();
+    if runtime_policy::math_membrane_fastpath_inline() && (bits as i32) > 0 && bits < 0x7f80_0000 {
+        return frankenlibc_core::math::log2f(x);
+    }
+    log2f_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log10f(x: f32) -> f32 {
+    let bits = x.to_bits();
+    if runtime_policy::math_membrane_fastpath_inline() && (bits as i32) > 0 && bits < 0x7f80_0000 {
+        return frankenlibc_core::math::log10f(x);
+    }
+    log10f_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1878,16 +2076,13 @@ pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrtf(x: f32) -> f32 {
-    let out = unary_entry_f32(x, 3, frankenlibc_core::math::sqrtf);
-    // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error and
-    // glibc sets EDOM for it. The comparison is already false for NaN and -0.0,
-    // so the finiteness guard only excluded infinity. Found at f128 width by
-    // conformance_diff_f128_round_sqrt once that gate had a real glibc oracle;
-    // the same predicate was copied to all three widths.
-    if x < 0.0 {
-        set_domain_errno();
+    let bits = x.to_bits();
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (bits <= 0x7f80_0000 || bits == 0x8000_0000)
+    {
+        return frankenlibc_core::math::sqrtf(x);
     }
-    out
+    sqrtf_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
