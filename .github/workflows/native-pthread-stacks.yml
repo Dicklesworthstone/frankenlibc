@@ -410,6 +410,25 @@ jobs:
               --library "$PWD/target/release/libfrankenlibc_abi.so" \
               --out-dir "$root/native-waits"
           fi
+      - name: Preserve hosted policy across first native thread admission
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/runtime-startup
+          features=conformance-testing
+          if [[ "$FEATURE" != default ]]; then features+=",$FEATURE"; fi
+          # The production pthread_create boundary executes in fresh strict
+          # and hardened children with two live hosted policy scopes.
+          cargo test -p frankenlibc-abi --features "$features" \
+            --test pthread_host_thread_handoff_test \
+            first_native_create_preserves_live_hosted_policy_scopes \
+            -- --exact --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/runtime-startup/mixed-policy.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/runtime-startup/mixed-policy.log
       - name: Preserve native identity records and pending enumeration
         if: always()
         env:

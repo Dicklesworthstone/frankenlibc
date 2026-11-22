@@ -1816,21 +1816,10 @@ fn try_with_runtime_policy_tls<R>(callback: impl FnOnce(&mut RuntimePolicyTls) -
 
 #[inline(always)]
 fn use_owned_runtime_policy_tls() -> bool {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        true
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        #[cfg(not(test))]
-        {
-            crate::malloc_abi::native_thread_backend_active()
-        }
-        #[cfg(test)]
-        {
-            false
-        }
-    }
+    // A process-wide native-admission flag cannot change a live hosted
+    // guard's storage. Default builds select host/native cells by the actual
+    // caller below; the opt-in feature uses owned storage from the outset.
+    cfg!(feature = "owned-tls-cache")
 }
 
 #[cfg(not(test))]
@@ -1839,48 +1828,6 @@ pub(crate) fn reclaim_native_thread_policy_tls(tid: i32) {
         RUNTIME_POLICY_OWNED_TLS.release_tid(tid);
     }
     crate::glibc_internal_abi::reclaim_native_thread_resolv_context(tid);
-}
-
-#[cfg(not(test))]
-pub(crate) fn migrate_creator_runtime_policy_tls_for_native_threads() {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        let migrated = RUNTIME_POLICY_TLS
-            .try_with(|tls| {
-                let trace_context = if tls.trace_active.replace(false) {
-                    Some(tls.trace_context.replace(TraceContext::EMPTY))
-                } else {
-                    None
-                };
-                let last_explainability = tls
-                    .last_explainability
-                    .try_borrow_mut()
-                    .ok()
-                    .and_then(|mut slot| slot.take());
-                RuntimePolicyTls {
-                    mode_cache: tls.mode_cache.replace(MODE_UNRESOLVED),
-                    mode_switch_counter: tls.mode_switch_counter.replace(0),
-                    trace_counter: tls.trace_counter.replace(0),
-                    decision_counter: tls.decision_counter.replace(0),
-                    trace_context,
-                    last_explainability_kind: tls
-                        .last_explainability_kind
-                        .replace(EXPLAINABILITY_KIND_NONE),
-                    last_pcc_explainability: tls
-                        .last_pcc_explainability
-                        .replace(RecordedPccExplainability::EMPTY),
-                    last_explainability,
-                    policy_reentry_depth: tls.policy_reentry_depth.replace(0),
-                    decision_contract_machine: tls.decision_contract_machine.replace(
-                        DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD),
-                    ),
-                }
-            })
-            .ok();
-        if let Some(snapshot) = migrated {
-            let _ = try_with_runtime_policy_tls(|state| *state = snapshot);
-        }
-    }
 }
 
 pub(crate) struct PolicyTlsForkGuard {
@@ -2065,7 +2012,10 @@ fn native_runtime_policy_state_required() -> Result<bool, ()> {
     if tid <= 0 {
         return Err(());
     }
-    Ok(frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some())
+    Ok(
+        frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some()
+            || frankenlibc_core::pthread::tls::current_thread_is_exiting_native(),
+    )
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -5030,6 +4980,109 @@ pub mod conformance_testing {
         } else {
             "strict"
         }
+    }
+
+    /// Observations from the production policy accessors, without exposing a
+    /// reference to their compiler-TLS or lifecycle-owned storage.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct PolicyStateSnapshot {
+        pub mode_cache: Option<u8>,
+        pub reentry_depth: Option<u32>,
+        pub trace_counter: Option<u64>,
+        pub decision_counter: Option<u64>,
+        pub trace: Option<(u64, &'static str, u64, u8)>,
+        pub record: Option<(u64, u64, &'static str, u32, usize)>,
+    }
+
+    pub fn policy_state_snapshot() -> PolicyStateSnapshot {
+        PolicyStateSnapshot {
+            mode_cache: super::with_mode_cache(|value| *value),
+            reentry_depth: super::with_policy_reentry_depth(|value| *value),
+            trace_counter: super::with_trace_counter(|value| *value),
+            decision_counter: super::with_decision_counter(|value| *value),
+            trace: super::with_trace_context(|value| {
+                value.map(|trace| {
+                    (
+                        trace.trace_seq,
+                        trace.symbol,
+                        trace.parent_span_seq,
+                        trace.pcc_index,
+                    )
+                })
+            })
+            .flatten(),
+            record: super::peek_last_explainability().map(|record| {
+                (
+                    record.trace_seq,
+                    record.span_seq,
+                    record.symbol,
+                    record.policy_id,
+                    record.addr_hint,
+                )
+            }),
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct PolicyScopeObservation {
+        pub before: PolicyStateSnapshot,
+        pub after: PolicyStateSnapshot,
+        pub after_drop: PolicyStateSnapshot,
+        pub borrowed_record_unchanged: bool,
+    }
+
+    /// Hold a real policy guard, trace scope, and explainability borrow while
+    /// the caller exercises a production boundary such as pthread_create.
+    pub fn with_policy_scope<R>(
+        symbol: &'static str,
+        marker: u32,
+        callback: impl FnOnce() -> R,
+    ) -> Option<(R, PolicyScopeObservation)> {
+        let _ = super::mode();
+        let _ = super::runtime_math_enabled();
+        let guard = super::enter_policy_reentry_guard()?;
+        let trace = super::entrypoint_scope_active(symbol, super::FFI_PCC_NO_INDEX);
+        super::record_last_explainability(
+            super::SafetyLevel::Hardened,
+            super::RuntimeContext {
+                family: super::ApiFamily::Socket,
+                addr_hint: marker as usize,
+                requested_bytes: 64,
+                is_write: false,
+                contention_hint: 0,
+                bloom_negative: false,
+            },
+            super::RuntimeDecision {
+                action: super::MembraneAction::Allow,
+                profile: super::ValidationProfile::Fast,
+                policy_id: marker,
+                risk_upper_bound_ppm: 0,
+                evidence_seqno: 9,
+            },
+            super::DECISION_GATE_RUNTIME_POLICY,
+        );
+        let before = policy_state_snapshot();
+        let (result, borrowed_record_unchanged) = super::with_last_explainability(|record| {
+            let before = *record;
+            let result = callback();
+            (result, *record == before)
+        })?;
+        let after = policy_state_snapshot();
+        drop(trace);
+        drop(guard);
+        Some((
+            result,
+            PolicyScopeObservation {
+                before,
+                after,
+                after_drop: policy_state_snapshot(),
+                borrowed_record_unchanged,
+            },
+        ))
+    }
+
+    pub fn active_policy_guard_count() -> u32 {
+        super::ACTIVE_POLICY_REENTRY_CONTEXTS.load(AtomicOrdering::Acquire)
     }
 }
 

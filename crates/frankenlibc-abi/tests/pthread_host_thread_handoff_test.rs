@@ -75,6 +75,191 @@ use frankenlibc_abi::pthread_abi::{
 const SENTINEL: libc::pthread_t = 0x5A5A_5A5A_0000_1234;
 
 #[test]
+#[cfg(all(
+    feature = "conformance-testing",
+    debug_assertions,
+    not(feature = "standalone")
+))]
+fn first_native_create_preserves_live_hosted_policy_scopes() {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use frankenlibc_abi::{conformance_testing as policy, pthread_abi};
+
+    const CHILD: &str = "FRANKENLIBC_MIXED_POLICY_CHILD";
+    const NAME: &str = "first_native_create_preserves_live_hosted_policy_scopes";
+    if std::env::var_os(CHILD).is_none() {
+        for mode in ["strict", "hardened"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FRANKENLIBC_RUNTIME_MATH", "off")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start mixed hosted/native policy child");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                !timed_out
+                    && output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+                "mixed policy {mode} timeout={timed_out} status={}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        return;
+    }
+
+    unsafe extern "C" fn native_worker(_: *mut c_void) -> *mut c_void {
+        // Keep the actual clone worker allocation-free: no assertions,
+        // formatting, host thread APIs or borrowed creator TLS.
+        let mut failures = 0usize;
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            failures |= 1;
+        }
+        let fresh = policy::policy_state_snapshot();
+        if fresh.reentry_depth != Some(0) || fresh.trace.is_some() || fresh.record.is_some() {
+            failures |= 2;
+        }
+        let observed = policy::with_policy_scope("mixed-native-policy", 33, || ());
+        if !observed.is_some_and(|(_, state)| {
+            state.before.reentry_depth == Some(1)
+                && state.before == state.after
+                && state.borrowed_record_unchanged
+                && state.after_drop.reentry_depth == Some(0)
+                && state.after_drop.trace.is_none()
+        }) {
+            failures |= 4;
+        }
+        failures as *mut c_void
+    }
+
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+
+    assert!(
+        !frankenlibc_core::pthread::tls::native_threads_may_exist(),
+        "the child must exercise the first native admission"
+    );
+    let _ = policy::current_mode_debug();
+    let baseline_guards = policy::active_policy_guard_count();
+    let hosted_ready = AtomicBool::new(false);
+    let release_hosted = AtomicBool::new(false);
+    let (creator, hosted, create_result, join_result, worker_result) =
+        std::thread::scope(|threads| {
+            let hosted = threads.spawn(|| {
+                policy::with_policy_scope("mixed-hosted-policy", 11, || {
+                    hosted_ready.store(true, Ordering::Release);
+                    while !release_hosted.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
+                    }
+                })
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !hosted_ready.load(Ordering::Acquire) && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            if !hosted_ready.load(Ordering::Acquire) {
+                release_hosted.store(true, Ordering::Release);
+                let _ = hosted.join();
+                panic!("hosted thread did not enter its live policy scope");
+            }
+
+            let _restore =
+                RestoreBackend(pthread_abi::pthread_threading_swap_force_native_for_tests());
+            let mut create_result = -1;
+            let mut join_result = -1;
+            let mut worker_result = usize::MAX;
+            let creator = policy::with_policy_scope("mixed-creator-policy", 22, || {
+                let mut native = 0;
+                // SAFETY: native is writable, the callback has the pthread C
+                // ABI, and no argument storage is needed by the worker.
+                create_result = unsafe {
+                    pthread_abi::pthread_create(
+                        &mut native,
+                        std::ptr::null(),
+                        Some(native_worker),
+                        std::ptr::null_mut(),
+                    )
+                };
+                if create_result == 0 {
+                    let mut result = std::ptr::null_mut();
+                    // SAFETY: this is the live joinable native handle and
+                    // result remains writable until the join completes.
+                    join_result = unsafe { pthread_abi::pthread_join(native, &mut result) };
+                    worker_result = result as usize;
+                }
+            });
+            release_hosted.store(true, Ordering::Release);
+            let hosted = hosted.join().expect("hosted policy thread panicked");
+            (creator, hosted, create_result, join_result, worker_result)
+        });
+
+    assert_eq!(create_result, 0, "actual public native pthread_create");
+    assert_eq!(join_result, 0, "actual public native pthread_join");
+    assert_eq!(worker_result, 0, "native policy isolation bitmask");
+    let (_, creator) = creator.expect("creator's live policy scope");
+    let (_, hosted) = hosted.expect("other hosted thread's live policy scope");
+    for (name, state, marker) in [("creator", creator, 22), ("hosted", hosted, 11)] {
+        assert_eq!(state.before.reentry_depth, Some(1), "{name} entered");
+        assert_eq!(state.after.reentry_depth, Some(1), "{name} retained guard");
+        assert_eq!(
+            state.after.trace, state.before.trace,
+            "{name} retained trace"
+        );
+        assert_eq!(
+            state.after.record, state.before.record,
+            "{name} retained record"
+        );
+        assert_eq!(
+            state.after.mode_cache, state.before.mode_cache,
+            "{name} retained mode"
+        );
+        assert_eq!(state.before.record.map(|record| record.3), Some(marker));
+        assert!(
+            state.borrowed_record_unchanged,
+            "{name} lost live record borrow"
+        );
+        assert_eq!(
+            state.after_drop.reentry_depth,
+            Some(0),
+            "{name} balanced guard"
+        );
+        assert!(
+            state.after_drop.trace.is_none(),
+            "{name} restored outer trace"
+        );
+        assert!(state.after.trace_counter >= state.before.trace_counter);
+        assert!(state.after.decision_counter >= state.before.decision_counter);
+    }
+    // This thread made no policy calls while waiting; none of its counters or
+    // records may reset just because a different hosted thread created a clone.
+    assert_eq!(hosted.after, hosted.before, "inactive hosted state changed");
+    assert_eq!(
+        policy::active_policy_guard_count(),
+        baseline_guards,
+        "transition leaked an active guard into process-wide policy accounting"
+    );
+}
+
+#[test]
 #[cfg(all(debug_assertions, not(feature = "standalone")))]
 fn host_tls_late_callback_repopulates_owned_cache() {
     const CHILD: &str = "FRANKENLIBC_HOST_TLS_REARM_CHILD";
