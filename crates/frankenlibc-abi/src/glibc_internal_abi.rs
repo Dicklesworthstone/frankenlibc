@@ -10060,14 +10060,10 @@ fn use_owned_resolv_context_tls() -> bool {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        #[cfg(not(test))]
-        {
-            crate::malloc_abi::native_thread_backend_active()
-        }
-        #[cfg(test)]
-        {
-            false
-        }
+        // Native admission cannot move another hosted thread's live context
+        // stack. Keep hosted heads in their original compiler TLS and route
+        // only native owners, including their final exit tail, to owned slots.
+        crate::owned_tls_cache::uses_owned_tls()
     }
 }
 
@@ -10154,23 +10150,6 @@ fn with_resolv_context_head<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
         });
     }
     RESOLV_CONTEXT_HEAD_OWNED_TLS.with(callback)
-}
-
-#[cfg(not(test))]
-pub(crate) fn migrate_creator_resolv_context_for_native_threads() {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        let existing = RESOLV_CONTEXT_HEAD
-            .try_with(|head| head.replace(std::ptr::null_mut()) as usize)
-            .unwrap_or(0);
-        if existing != 0 {
-            RESOLV_CONTEXT_HEAD_OWNED_TLS.with(|head| {
-                if *head == 0 {
-                    *head = existing;
-                }
-            });
-        }
-    }
 }
 
 #[cfg(not(test))]

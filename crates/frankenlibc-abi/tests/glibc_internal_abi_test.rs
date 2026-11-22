@@ -5695,6 +5695,167 @@ fn resolv_context_override_rejects_null_state() {
     );
 }
 
+#[test]
+fn resolv_context_survives_native_thread_admission() {
+    const CHILD: &str = "FRANKENLIBC_RESOLV_CONTEXT_ADMISSION_CHILD";
+    const NAME: &str = "resolv_context_survives_native_thread_admission";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("start isolated resolver-context admission test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "resolver-context admission status={}\n{stdout}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    // Native admission changes process-wide dispatch irreversibly. Bound this
+    // isolated child, including a failed synchronization or native join.
+    unsafe { libc::alarm(15) };
+
+    struct NativeProbe {
+        creator: usize,
+        hosted: usize,
+        creator_state: usize,
+    }
+    unsafe extern "C" fn native_worker(raw: *mut libc::c_void) -> *mut libc::c_void {
+        let probe = unsafe { &*raw.cast::<NativeProbe>() };
+        let mut failures = 0usize;
+        if frankenlibc_core::pthread::thread::handle_for_tid(
+            frankenlibc_core::syscall::sys_gettid(),
+        )
+        .is_none()
+        {
+            failures |= 1;
+        }
+        let base = unsafe { __resolv_context_get() };
+        if base.is_null() || base as usize == probe.creator || base as usize == probe.hosted {
+            return (failures | 2) as *mut libc::c_void;
+        }
+        if unsafe { __res_state() } as usize == probe.creator_state {
+            failures |= 4;
+        }
+        let second = unsafe { __resolv_context_get_preinit() };
+        if second != base {
+            failures |= 8;
+        }
+        let mut state = [0usize; 80];
+        let override_ctx = unsafe { __resolv_context_get_override(state.as_mut_ptr().cast()) };
+        if override_ctx.is_null() || override_ctx == base {
+            failures |= 16;
+        }
+        unsafe {
+            *__errno_location() = libc::EINTR;
+            *frankenlibc_abi::resolv_abi::__h_errno_location() = 71;
+            __resolv_context_put(override_ctx);
+        }
+        if unsafe { *__errno_location() } != libc::EINTR
+            || unsafe { *frankenlibc_abi::resolv_abi::__h_errno_location() } != 71
+        {
+            failures |= 32;
+        }
+        let restored = unsafe { __resolv_context_get() };
+        if restored != base {
+            failures |= 64;
+        }
+        unsafe {
+            __resolv_context_put(restored);
+            __resolv_context_put(second);
+            __resolv_context_put(base);
+        }
+        failures as *mut libc::c_void
+    }
+
+    // This hosted thread predates admission but does not create the native
+    // worker. Migrating only the creator's TLS head cannot preserve its stack.
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let hosted = std::thread::spawn(move || {
+        let base = unsafe { __resolv_context_get() };
+        assert!(!base.is_null());
+        let mut state = [0usize; 80];
+        let override_ctx = unsafe { __resolv_context_get_override(state.as_mut_ptr().cast()) };
+        assert!(!override_ctx.is_null());
+        ready_tx.send(base as usize).unwrap();
+        release_rx.recv().unwrap();
+        unsafe {
+            *__errno_location() = libc::EAGAIN;
+            *frankenlibc_abi::resolv_abi::__h_errno_location() = 73;
+            __resolv_context_put(override_ctx);
+        }
+        let errors = unsafe {
+            (
+                *__errno_location(),
+                *frankenlibc_abi::resolv_abi::__h_errno_location(),
+            )
+        };
+        let restored = unsafe { __resolv_context_get_preinit() };
+        let retained = restored == base;
+        unsafe {
+            __resolv_context_put(restored);
+            __resolv_context_put(base);
+        }
+        (retained, errors)
+    });
+    let hosted_base = ready_rx.recv().unwrap();
+    let creator = unsafe { __resolv_context_get() };
+    assert!(!creator.is_null());
+    let mut creator_state = [0usize; 80];
+    let creator_override =
+        unsafe { __resolv_context_get_override(creator_state.as_mut_ptr().cast()) };
+    assert!(!creator_override.is_null());
+    let mut probe = NativeProbe {
+        creator: creator as usize,
+        hosted: hosted_base,
+        creator_state: unsafe { __res_state() } as usize,
+    };
+    let previous = frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests();
+    let mut thread = 0;
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::pthread_abi::pthread_create(
+                &mut thread,
+                std::ptr::null(),
+                Some(native_worker),
+                (&raw mut probe).cast(),
+            )
+        },
+        0
+    );
+    let mut native_result = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut native_result) },
+        0
+    );
+    frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(previous);
+    release_tx.send(()).unwrap();
+    let (hosted_retained, hosted_errors) = hosted.join().unwrap();
+
+    unsafe { __resolv_context_put(creator_override) };
+    let restored_creator = unsafe { __resolv_context_get() };
+    let creator_retained = restored_creator == creator;
+    unsafe {
+        __resolv_context_put(restored_creator);
+        __resolv_context_put(creator);
+        libc::alarm(0);
+    }
+    assert!(
+        native_result.is_null(),
+        "native context failures={native_result:p}"
+    );
+    assert!(creator_retained, "native creator lost its context stack");
+    assert_eq!(hosted_errors, (libc::EAGAIN, 73));
+    assert!(
+        hosted_retained,
+        "another thread's native admission orphaned the hosted resolver-context stack"
+    );
+}
+
 // ===========================================================================
 // Session 19: __shm_get_name (native)
 // ===========================================================================

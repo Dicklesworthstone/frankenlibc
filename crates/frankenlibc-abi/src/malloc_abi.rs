@@ -1200,7 +1200,6 @@ pub(crate) fn note_native_thread_backend() {
     frankenlibc_core::pthread::tls::disable_tid_cache();
     let first_native = !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst);
     if first_native {
-        crate::glibc_internal_abi::migrate_creator_resolv_context_for_native_threads();
         crate::dlfcn_abi::migrate_creator_thread_exit_for_native_threads();
         refresh_strict_hot_mode();
     }
