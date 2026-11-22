@@ -362,6 +362,41 @@ fn locale_native_tls_separates_numeric_formatting_and_render_errors() {
     clear_thread_numeric();
 }
 
+#[test]
+fn locale_native_tls_does_not_replay_a_superseded_render_error() {
+    if run_native_locale_test_in_child(
+        "locale_native_tls_does_not_replay_a_superseded_render_error",
+    ) {
+        return;
+    }
+    use frankenlibc_core::stdio::printf::{note_render_failure, take_render_failure};
+
+    unsafe extern "C" fn check_empty(_: *mut c_void) -> *mut c_void {
+        // Native workers must not consume their creator's pending error.
+        take_render_failure() as usize as *mut c_void
+    }
+
+    let _locale = LocaleStateGuard::acquire();
+    let _backend = RestoreThreadBackend::native();
+    note_render_failure(libc::ENOMEM);
+    let thread = unsafe { start_native_locale_worker(check_empty, ptr::null_mut()) };
+    assert_eq!(join_native_locale_worker(thread), 0);
+
+    // Replacing the error after the compiler-TLS-to-native transition must
+    // also retire the old TLS value. Otherwise a second take replays ENOMEM.
+    note_render_failure(libc::EINVAL);
+    assert_eq!(take_render_failure(), libc::EINVAL);
+    assert_eq!(take_render_failure(), 0);
+
+    // A subsequent worker must likewise start with an empty latch while the
+    // creator keeps a newly recorded TID-table error until it consumes it.
+    note_render_failure(libc::EOVERFLOW);
+    let thread = unsafe { start_native_locale_worker(check_empty, ptr::null_mut()) };
+    assert_eq!(join_native_locale_worker(thread), 0);
+    assert_eq!(take_render_failure(), libc::EOVERFLOW);
+    assert_eq!(take_render_failure(), 0);
+}
+
 fn reset_gettext_state() {
     locale_reset_gettext_state_for_tests();
 }

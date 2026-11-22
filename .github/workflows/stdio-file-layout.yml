@@ -252,7 +252,7 @@ jobs:
               FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
                 "${feature_args[@]}" --test locale_abi_test locale_native_tls_ \
                 -- --test-threads=1 --nocapture 2>&1 | tee "$log"
-              grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' "$log"
+              grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"
             done
           done
       - name: Isolate native resolver caches and returned buffers

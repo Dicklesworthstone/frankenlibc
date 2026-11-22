@@ -3098,6 +3098,16 @@ pub fn note_render_failure(errno: i32) {
     if crate::pthread::tls::native_threads_may_exist() {
         let tid = crate::syscall::raw_gettid_nocancel();
         if tid > 0 {
+            // The first native clone switches future errors to the TID table.
+            // A newer hosted error must supersede any earlier compiler-TLS
+            // value, rather than replaying it after the table entry is taken.
+            // Native children may share the creator's compiler TLS, including
+            // during teardown, and must never touch that fallback.
+            if crate::pthread::thread::handle_for_tid(tid).is_none()
+                && !crate::pthread::tls::current_thread_is_exiting_native()
+            {
+                let _ = RENDER_FAILURE.try_with(|failure| failure.set(0));
+            }
             let self_claiming = printf_slot_claiming_for_tid(tid);
             let start = (tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
             'retry: for _ in 0..8 {
@@ -3305,6 +3315,16 @@ pub fn take_render_failure() -> i32 {
                     .is_ok()
             {
                 return (packed as u32) as i32;
+            }
+            // An error recorded before the first native clone still belongs
+            // to its hosted creator. Only that owner may consume the old TLS
+            // cell; a native child must not inherit or clear its pending error.
+            if crate::pthread::thread::handle_for_tid(tid).is_none()
+                && !crate::pthread::tls::current_thread_is_exiting_native()
+            {
+                return RENDER_FAILURE
+                    .try_with(|failure| failure.replace(0))
+                    .unwrap_or(0);
             }
         }
         return 0;
