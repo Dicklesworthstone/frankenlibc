@@ -155,9 +155,9 @@ jobs:
               feature_args+=(--features owned-tls-cache)
             fi
             log="artifacts/stdio-layout/swscanf-locale-$feature.log"
-            # Each isolated test executes both strict and hardened subprocesses.
+            # The isolated locale tests execute strict and hardened subprocesses.
             if ! cargo test -p frankenlibc-abi "${feature_args[@]}" \
-              --test conformance_diff_swscanf locale_scanning:: \
+              --test conformance_diff_swscanf \
               -- --test-threads=1 --nocapture 2>&1 | tee "$log"; then
               status=1
             fi

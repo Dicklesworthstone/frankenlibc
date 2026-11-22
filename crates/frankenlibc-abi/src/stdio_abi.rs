@@ -4920,17 +4920,19 @@ unsafe fn stream_write_fd(caller: usize, fd: c_int, buf: *const c_void, count: u
 /// Global `stdin` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static mut stdin: *mut c_void = core::ptr::addr_of_mut!(IO_2_1_STDIN).cast();
+pub static mut stdin: *mut c_void = core::ptr::addr_of_mut!(io_internal_abi::_IO_2_1_stdin_).cast();
 
 /// Global `stdout` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static mut stdout: *mut c_void = core::ptr::addr_of_mut!(IO_2_1_STDOUT).cast();
+pub static mut stdout: *mut c_void =
+    core::ptr::addr_of_mut!(io_internal_abi::_IO_2_1_stdout_).cast();
 
 /// Global `stderr` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static mut stderr: *mut c_void = core::ptr::addr_of_mut!(IO_2_1_STDERR).cast();
+pub static mut stderr: *mut c_void =
+    core::ptr::addr_of_mut!(io_internal_abi::_IO_2_1_stderr_).cast();
 
 // ELF data symbols remain interposable even with -Bsymbolic-functions. A
 // locally dlopened copy must initialize its own cells, not the host's cells
@@ -4947,15 +4949,6 @@ core::arch::global_asm!(
     ".globl __frankenlibc_stderr_storage",
     ".hidden __frankenlibc_stderr_storage",
     ".set __frankenlibc_stderr_storage, stderr",
-    ".globl __frankenlibc_stdin_object",
-    ".hidden __frankenlibc_stdin_object",
-    ".set __frankenlibc_stdin_object, _IO_2_1_stdin_",
-    ".globl __frankenlibc_stdout_object",
-    ".hidden __frankenlibc_stdout_object",
-    ".set __frankenlibc_stdout_object, _IO_2_1_stdout_",
-    ".globl __frankenlibc_stderr_object",
-    ".hidden __frankenlibc_stderr_object",
-    ".set __frankenlibc_stderr_object, _IO_2_1_stderr_",
 );
 
 #[cfg(not(debug_assertions))]
@@ -4966,12 +4959,6 @@ unsafe extern "C" {
     static mut OWNED_STDOUT: *mut c_void;
     #[link_name = "__frankenlibc_stderr_storage"]
     static mut OWNED_STDERR: *mut c_void;
-    #[link_name = "__frankenlibc_stdin_object"]
-    static mut OWNED_STDIN_OBJECT: io_internal_abi::StandardFile;
-    #[link_name = "__frankenlibc_stdout_object"]
-    static mut OWNED_STDOUT_OBJECT: io_internal_abi::StandardFile;
-    #[link_name = "__frankenlibc_stderr_object"]
-    static mut OWNED_STDERR_OBJECT: io_internal_abi::StandardFile;
 }
 
 #[inline]
@@ -4996,19 +4983,10 @@ fn owned_stdio_cell(fd: c_int) -> *mut *mut c_void {
 /// COPY relocation when present. A local dlopen must instead use this DSO's
 /// hidden storage and leave the host's objects untouched.
 pub(crate) fn standard_stdio_object(fd: c_int) -> *mut io_internal_abi::StandardFile {
-    #[cfg(not(debug_assertions))]
-    if !stdio_symbols_are_interposed() {
-        return [
-            core::ptr::addr_of_mut!(OWNED_STDIN_OBJECT),
-            core::ptr::addr_of_mut!(OWNED_STDOUT_OBJECT),
-            core::ptr::addr_of_mut!(OWNED_STDERR_OBJECT),
-        ][fd as usize];
-    }
-    [
-        core::ptr::addr_of_mut!(IO_2_1_STDIN),
-        core::ptr::addr_of_mut!(IO_2_1_STDOUT),
-        core::ptr::addr_of_mut!(IO_2_1_STDERR),
-    ][fd as usize]
+    // Registry state and public pointer cells must use the same owner/GOT
+    // resolution. The exported 224-byte object holds the complete ABI header;
+    // only private native state remains in the separate registry slot.
+    io_internal_abi::visible_stdio_stream_ptr(fd).cast()
 }
 
 /// True only when the native stdio functions own process-wide lookup. A
@@ -5063,20 +5041,6 @@ pub(crate) fn stdio_symbols_are_interposed() -> bool {
         interposed
     }
 }
-
-// `_IO_2_1_{stdin,stdout,stderr}_` 224-byte `_IO_FILE_plus` objects are defined
-// and exported in `io_internal_abi` (`GLIBC_2.2.5`).
-// GNU's standard stream symbols are FILE-plus-vtable objects, never FILE*
-// pointer cells. Private native state lives in registry slots, so copying the
-// exact 224-byte exported object into an executable cannot truncate it.
-#[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDIN: io_internal_abi::StandardFile = io_internal_abi::StandardFile::new(0);
-
-#[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDOUT: io_internal_abi::StandardFile = io_internal_abi::StandardFile::new(1);
-
-#[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDERR: io_internal_abi::StandardFile = io_internal_abi::StandardFile::new(2);
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 #[cfg_attr(feature = "standalone", allow(dead_code))]

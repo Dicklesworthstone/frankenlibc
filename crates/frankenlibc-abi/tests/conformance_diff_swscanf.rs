@@ -314,16 +314,8 @@ mod locale_scanning {
         for locale in [c"C", c"C.UTF-8"] {
             select(locale);
             for character in [
-                0x41u32,
-                0xd800,
-                0xdfff,
-                0x10ffff,
-                0x110000,
-                0x1fffff,
-                0x3ffffff,
-                0x7fffffff,
-                0xfffffffe,
-                0xffffffff,
+                0x41u32, 0xd800, 0xdfff, 0x10ffff, 0x110000, 0x1fffff, 0x3ffffff, 0x7fffffff,
+                0xfffffffe, 0xffffffff,
             ] {
                 let input = [character as Wc, b'X' as Wc, b' ' as Wc, 0];
                 for format in ["%lc%n", "%C%n", "%2lc%n", "%ls%n", "%S%n", "%l[^ ]%n"] {
@@ -371,13 +363,7 @@ mod locale_scanning {
         for locale in [c"C", c"C.UTF-8"] {
             select(locale);
             for character in [
-                0xd800u32,
-                0x10ffff,
-                0x110000,
-                0x1fffff,
-                0x3ffffff,
-                0x7fffffff,
-                0xfffffffe,
+                0xd800u32, 0x10ffff, 0x110000, 0x1fffff, 0x3ffffff, 0x7fffffff, 0xfffffffe,
             ] {
                 // The valid ASCII prefix must survive an encoding error, but
                 // the later %n and integer assignment must remain untouched.
@@ -431,12 +417,7 @@ mod locale_scanning {
                     let mut consumed = SENTINEL;
                     let mut output: *mut Wc = std::ptr::null_mut();
                     let count = unsafe {
-                        (engine.scan)(
-                            input.as_ptr(),
-                            format.as_ptr(),
-                            &mut consumed,
-                            &mut output,
-                        )
+                        (engine.scan)(input.as_ptr(), format.as_ptr(), &mut consumed, &mut output)
                     };
                     assert_eq!((count, consumed), (1, 2), "{} {locale:?}", engine.name);
                     assert!(!output.is_null(), "{} allocated destination", engine.name);

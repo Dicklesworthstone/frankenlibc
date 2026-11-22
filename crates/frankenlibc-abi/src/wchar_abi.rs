@@ -8069,7 +8069,9 @@ unsafe fn scan_wide_buffer(
         }
     };
     // SAFETY: the current thread owns its errno slot.
-    let error = writer.error.unwrap_or_else(|| unsafe { *crate::errno_abi::__errno_location() });
+    let error = writer
+        .error
+        .unwrap_or_else(|| unsafe { *crate::errno_abi::__errno_location() });
     let outcome = WideScanOutcome {
         count: summary.count,
         input_failure: summary.input_failure,

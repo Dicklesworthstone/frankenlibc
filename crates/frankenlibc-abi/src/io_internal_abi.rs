@@ -140,33 +140,6 @@ pub struct StandardFile {
     vtable: *mut _IO_jump_t,
 }
 
-impl StandardFile {
-    pub(crate) const fn new(fd: c_int) -> Self {
-        let mut header = _IO_FILE_Layout::new(fd);
-        header._flags = GLIBC_IO_MAGIC
-            | glibc_flag_bits::LINKED
-            | glibc_flag_bits::IS_FILEBUF
-            | if fd == 0 {
-                glibc_flag_bits::NO_WRITES
-            } else if fd == 1 {
-                glibc_flag_bits::NO_READS
-            } else {
-                glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED
-            };
-        header._old_offset = -1;
-        header._offset = -1;
-        // The static lock exists before any constructor. Native operations
-        // use the same lock through their registry-owned private state.
-        header._lock = ptr::addr_of!(STD_STREAM_LOCKS[fd as usize])
-            .cast_mut()
-            .cast();
-        Self {
-            header,
-            vtable: ptr::addr_of_mut!(_IO_file_jumps),
-        }
-    }
-}
-
 const _: () = assert!(std::mem::size_of::<StandardFile>() == 224);
 const _: () = assert!(std::mem::offset_of!(StandardFile, vtable) == 216);
 
@@ -2888,17 +2861,10 @@ pub unsafe fn configure_native_stdio_stream(
     };
     // SAFETY: caller guarantees `user_buf` (if non-null) has `size` bytes of storage.
     unsafe { file.configure_buffering(mode, user_buf, size) };
-    let buf_base = file._io_file._IO_buf_base;
-    let buf_end = file._io_file._IO_buf_end;
-    drop(registry);
-    let vis = visible_stdio_stream_ptr(fd).cast::<_IO_FILE_Layout>();
-    if !vis.is_null() {
-        // SAFETY: `vis` points to our owned or copy-relocated 224-byte `_IO_2_1_*` object.
-        unsafe {
-            (*vis)._IO_buf_base = buf_base;
-            (*vis)._IO_buf_end = buf_end;
-        }
-    }
+    // configure_buffering updates the canonical public header through
+    // header_mut(). The registry slot's original prefix is no longer live
+    // header storage after publish_standard_object; copying it here would
+    // overwrite the configured buffer outside the registry lock.
     true
 }
 

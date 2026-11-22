@@ -219,6 +219,12 @@ int main(void) {
         fprintf(stderr, "FAIL: setvbuf(stdout,_IOFBF,user_buf) failed\n");
         return 1;
     }
+    /* GNU's inline unlocked path writes through the public FILE window. Its
+     * first byte after reconfiguration must survive the next native call. */
+    if (putc_unlocked('B', &_IO_2_1_stdout_) != 'B') {
+        fprintf(stderr, "FAIL: inline putc_unlocked after setvbuf failed\n");
+        return 1;
+    }
     if (fprintf(stdout, "stdout-buffered\n") != 16) {
         fprintf(stderr, "FAIL: fprintf(stdout,...) failed in full-buffered mode\n");
         return 1;

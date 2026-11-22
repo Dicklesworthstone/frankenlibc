@@ -1736,6 +1736,9 @@ fn io_2_1_objects_resolve_to_native_stdio_storage() {
     assert_eq!(stdin_global, stdin_vis);
     assert_eq!(stdout_global, stdout_vis);
     assert_eq!(stderr_global, stderr_vis);
+    assert_eq!(stdin_slot, stdin_vis);
+    assert_eq!(stdout_slot, stdout_vis);
+    assert_eq!(stderr_slot, stderr_vis);
     assert_eq!(io_stdin, stdin_vis);
     assert_eq!(io_stdout, stdout_vis);
     assert_eq!(io_stderr, stderr_vis);
@@ -1759,11 +1762,32 @@ fn io_2_1_objects_resolve_to_native_stdio_storage() {
     let mut registry = frankenlibc_abi::io_internal_abi::native_stream_registry();
     for (fd, object) in [io_stdin, io_stdout, io_stderr].into_iter().enumerate() {
         let native = registry.get_mut(fd).expect("standard native state");
+        assert_eq!(native.handle_ptr(), object);
+        // SAFETY: the GNU FILE lock pointer is at byte 136 in each live object.
+        let lock = unsafe {
+            object
+                .cast::<u8>()
+                .add(136)
+                .cast::<*mut std::ffi::c_void>()
+                .read()
+        };
+        assert!(!lock.is_null());
+        assert_eq!(native.lock_ptr(), lock);
         let original = native.offset();
         native.set_offset(123 + fd as i64);
-        // SAFETY: each object is a live GNU FILE; its _offset is at byte144.
+        // SAFETY: each object is a live GNU FILE; its _offset is at byte 144.
         let visible = unsafe { object.cast::<u8>().add(144).cast::<i64>().read() };
         assert_eq!(visible, 123 + fd as i64);
+        // C consumers also mutate the public header directly. Native methods
+        // must observe those mutations rather than a stale private prefix.
+        unsafe {
+            object
+                .cast::<u8>()
+                .add(144)
+                .cast::<i64>()
+                .write(456 + fd as i64);
+        }
+        assert_eq!(native.offset(), 456 + fd as i64);
         native.set_offset(original);
     }
 }
