@@ -1966,13 +1966,38 @@ impl PolicyTlsForkGuard {
 
 #[inline]
 pub(crate) fn runtime_policy_tls_access_active() -> bool {
-    RUNTIME_POLICY_TLS_ACCESS_DEPTH.load(AtomicOrdering::Acquire) != 0
+    if RUNTIME_POLICY_TLS_ACCESS_DEPTH.load(AtomicOrdering::Acquire) != 0
         && RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread()
+    {
+        return true;
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NATIVE_RUNTIME_POLICY_TLS.is_accessed_by_current_thread()
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        false
+    }
 }
 
 #[inline]
 pub(crate) fn runtime_policy_tls_reentry_active() -> bool {
-    RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread()
+    if RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread() {
+        return true;
+    }
+    // Default native callers have a separate cells cache. Its initializer and
+    // callback need the same allocator, string and mode reentry protection as
+    // the owned-feature cache; consulting only that other key misses this
+    // thread's live borrow and can reenter environment/logging locks.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NATIVE_RUNTIME_POLICY_TLS.is_accessed_by_current_thread()
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        false
+    }
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -5874,7 +5899,7 @@ mod tests {
             risk_upper_bound_ppm: 0,
             evidence_seqno: 9,
         };
-        fn reentrant_mode_keeps_sampler_idle() -> bool {
+        fn reentrant_policy_keeps_sampler_idle() -> bool {
             // A signal-handler write reaches mode() through decide() even
             // while this thread's owned policy slot is accessed. At this
             // boundary the unavailable-TLS fallback would scan environ and
@@ -5883,8 +5908,19 @@ mod tests {
             let boundary = MODE_SWITCH_CHECK_STRIDE - 1;
             let previous = MODE_SWITCH_CHECK_COUNTER.swap(boundary, AtomicOrdering::SeqCst);
             let resolved = mode();
+            // Exercise the actual decision entry used by write, with the
+            // runtime active so bootstrap passthrough cannot mask mode reentry.
+            // The ABI write module is excluded from this unit-test target.
+            let byte = 0x5au8;
+            let (write_mode, decision) =
+                decide(ApiFamily::IoFd, &raw const byte as usize, 1, true, false, 0);
             let sampled = MODE_SWITCH_CHECK_COUNTER.swap(previous, AtomicOrdering::SeqCst);
-            resolved == SafetyLevel::Hardened && sampled == boundary
+            resolved == SafetyLevel::Hardened
+                && write_mode == SafetyLevel::Hardened
+                && decision.action == MembraneAction::Allow
+                && decision.profile == ValidationProfile::Full
+                && decision.policy_id == 0
+                && sampled == boundary
         }
         unsafe extern "C" fn worker(raw: *mut c_void) -> *mut c_void {
             // The creator allocates all test state. Native code below uses
@@ -5961,25 +5997,38 @@ mod tests {
                 probe
                     .payload_addr
                     .store(state as *mut _ as usize, AtomicOrdering::Release);
-                runtime_policy_tls_reentry_active()
+                let protected = runtime_policy_tls_reentry_active()
+                    && runtime_policy_tls_access_active()
                     && RUNTIME_POLICY_TLS.try_with(|_| ()).is_err()
-                    && reentrant_mode_keeps_sampler_idle()
+                    && try_with_runtime_policy_tls(|_| ()).is_none();
+                // Do not short-circuit this real mode/decide call when the
+                // guard predicate is wrong: both protections need evidence.
+                (protected, reentrant_policy_keeps_sampler_idle())
             });
             #[cfg(feature = "owned-tls-cache")]
-            let protected = with_runtime_policy_tls(|state| {
+            let protected = try_with_runtime_policy_tls(|state| {
                 probe
                     .payload_addr
                     .store(state as *mut _ as usize, AtomicOrdering::Release);
-                runtime_policy_tls_reentry_active() && reentrant_mode_keeps_sampler_idle()
-            });
-            if !protected {
+                let protected = runtime_policy_tls_reentry_active()
+                    && runtime_policy_tls_access_active()
+                    && try_with_runtime_policy_tls(|_| ()).is_none();
+                (protected, reentrant_policy_keeps_sampler_idle())
+            })
+            .unwrap_or((false, false));
+            if !protected.0 {
                 failures |= 256;
+            }
+            if !protected.1 {
+                failures |= 512;
             }
             failures as *mut c_void
         }
 
         prepare_native_thread_runtime().expect("prepare policy key without activating math");
         let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        assert!(!runtime_math_enabled());
+        let _runtime_ready = enable_runtime_kernel_for_tests();
         with_mode_cache(|value| *value = MODE_STRICT);
         with_trace_counter(|value| *value = 100);
         with_decision_counter(|value| *value = 200);
