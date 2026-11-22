@@ -90,8 +90,46 @@ fn text(ptr: *const c_char) -> Option<String> {
 const POLISH_HEADER: &[u8] = b"Content-Type: text/plain; charset=UTF-8\n\
 Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n";
 
+fn run_gettext_test_in_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_GETTEXT_CATALOG_CHILD";
+    if std::env::var_os(CHILD).as_deref() == Some(std::ffi::OsStr::new(name)) {
+        return false;
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, name)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start isolated gettext catalog test");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        !timed_out
+            && output.status.success()
+            && String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+        "gettext catalog timeout={timed_out} status={}\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 #[test]
 fn gettext_catalogs_match_host_glibc() {
+    if run_gettext_test_in_child("gettext_catalogs_match_host_glibc") {
+        return;
+    }
     let ok = !unsafe { host_setlocale(libc::LC_ALL, c"en_US.UTF-8".as_ptr()) }.is_null();
     if !ok {
         println!(
@@ -254,4 +292,108 @@ fn gettext_catalogs_match_host_glibc() {
         translated >= 200,
         "only {translated} lookups were translated; catalogs not found?"
     );
+}
+
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_gettext_language_cannot_escape_catalog_root() {
+    if run_gettext_test_in_child("secure_startup_gettext_language_cannot_escape_catalog_root") {
+        return;
+    }
+    use frankenlibc_abi::stdlib_abi::set_secure_auxv_for_conformance;
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("fl_gettext_secure_{}_{unique}", std::process::id()));
+    let trusted = root.join("trusted");
+    let header =
+        b"Content-Type: text/plain; charset=UTF-8\nPlural-Forms: nplurals=2; plural=(n != 1);\n";
+    for (language, translation) in [
+        ("trusted/safe", b"inside" as &[u8]),
+        ("escape", b"outside"),
+        ("", b"parent"),
+        ("trusted/nested/safe", b"nested"),
+    ] {
+        write_catalog(
+            &root,
+            language,
+            &mo_image(&[
+                (b"", header),
+                (b"Hello", translation),
+                (b"one\0many", b"one translated\0many translated"),
+            ]),
+        );
+    }
+
+    // A private alias of the compiled C.UTF-8 LC_MESSAGES data supplies a
+    // non-C locale name without relying on installed en_US locale packages.
+    // This is the documented native-endian header, five offsets and strings.
+    let locales = root.join("locales");
+    let locale = c"fl_secure_gettext";
+    let messages = locales.join(locale.to_str().unwrap()).join("LC_MESSAGES");
+    std::fs::create_dir_all(&messages).unwrap();
+    let mut locale_image = Vec::new();
+    for word in [0x2003_1110u32, 5, 28, 34, 40, 41, 42] {
+        locale_image.extend_from_slice(&word.to_ne_bytes());
+    }
+    locale_image.extend_from_slice(b"^[yY]\0^[nN]\0\0\0UTF-8\0");
+    std::fs::write(messages.join("SYS_LC_MESSAGES"), locale_image).unwrap();
+
+    // SAFETY: only this named test runs in the isolated child. The actual auxv
+    // cache is modeled; this is not a claim of a privileged kernel-exec test.
+    unsafe {
+        set_secure_auxv_for_conformance(Some(0));
+        std::env::set_var("LOCPATH", &locales);
+        assert!(!fl::setlocale(libc::LC_MESSAGES, locale.as_ptr()).is_null());
+    }
+    let domain = c"fltest";
+    let directory = CString::new(trusted.as_os_str().as_encoded_bytes()).unwrap();
+    assert!(!unsafe { fl::bindtextdomain(domain.as_ptr(), directory.as_ptr()) }.is_null());
+
+    for secure in [Some(0), Some(1), Some(17), None, Some(0)] {
+        unsafe { set_secure_auxv_for_conformance(secure) };
+        for (language, expected) in [
+            ("safe", "inside"),
+            ("missing:safe", "inside"),
+            ("../escape:safe", "inside"),
+            ("..:safe", "inside"),
+            ("safe/../../escape:safe", "inside"),
+            ("/../escape:safe", "inside"),
+            ("nested/safe:safe", "inside"),
+            ("..@modifier:safe", "inside"),
+            ("../escape", "Hello"),
+            ("..", "Hello"),
+            ("C:../escape:safe", "Hello"),
+        ] {
+            unsafe {
+                std::env::set_var("LANGUAGE", language);
+                // GNU caches known translations until its catalog counter is
+                // advanced. Keep that contract while checking a fresh search.
+                assert!(!fl::textdomain(domain.as_ptr()).is_null());
+            }
+            for _ in 0..2 {
+                let actual = unsafe { fl::dgettext(domain.as_ptr(), c"Hello".as_ptr()) };
+                assert_eq!(
+                    text(actual).as_deref(),
+                    Some(expected),
+                    "AT_SECURE={secure:?}, LANGUAGE={language:?}"
+                );
+                let plural = unsafe {
+                    fl_unistd::dngettext(domain.as_ptr(), c"one".as_ptr(), c"many".as_ptr(), 2)
+                };
+                assert_eq!(
+                    text(plural).as_deref(),
+                    Some(if expected == "inside" {
+                        "many translated"
+                    } else {
+                        "many"
+                    }),
+                    "plural AT_SECURE={secure:?}, LANGUAGE={language:?}"
+                );
+            }
+        }
+    }
 }

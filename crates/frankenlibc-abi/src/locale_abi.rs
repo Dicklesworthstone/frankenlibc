@@ -322,11 +322,14 @@ use frankenlibc_core::locale::data::{CategoryBlob, LocaleArchive};
 
 /// One category of a named locale: the name `setlocale` reports (as the
 /// caller spelled it, NUL-terminated) and the compiled blob. Loaded once per
-/// (category, name) and kept for the process lifetime, like glibc's data.
+/// (category, name, source trust) and kept for the process lifetime.
 struct NamedCategory {
     category: c_int,
     name: Box<[u8]>,
     blob: CategoryBlob<'static>,
+    /// Only default archive/directory data may be reused when environment
+    /// paths are untrusted. A LOCPATH cache hit must not bypass that decision.
+    system_source: bool,
     /// For LC_CTYPE: the wide-character class/case/width tables.
     ctype: Option<frankenlibc_core::locale::data::CtypeTables<'static>>,
     /// For LC_CTYPE: the single-byte tables, when they differ from C's.
@@ -583,32 +586,28 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     if name.contains(&b'/') || name == b"." || name == b".." {
         return None;
     }
+    let environment_allowed = !is_secure_execution();
     let mut loaded = crate::runtime_policy::lock_std_mutex_preserving_errno(&LOADED);
-    if let Some(hit) = loaded
-        .iter()
-        .find(|n| n.category == category && n.name[..n.name.len() - 1] == *name)
-    {
+    if let Some(hit) = loaded.iter().find(|n| {
+        n.category == category
+            && n.name[..n.name.len() - 1] == *name
+            && (environment_allowed || n.system_source)
+    }) {
         return Some(hit);
     }
     let file = category_file(category)?;
     #[cfg(not(test))]
-    let locpath_bytes: Option<&[u8]> = unsafe {
-        let ptr = crate::stdlib_abi::native_getenv(b"LOCPATH");
-        if ptr.is_null() {
-            None
-        } else {
-            // SAFETY: native_getenv returns a NUL-terminated environment value
-            // when present. Its null sentinel must be checked before borrowing.
-            let s = CStr::from_ptr(ptr).to_bytes();
-            (!s.is_empty()).then_some(s)
-        }
+    let locpath_os = crate::stdlib_abi::secure_var_os("LOCPATH").filter(|v| !v.is_empty());
+    #[cfg(test)]
+    let locpath_os = if environment_allowed {
+        std::env::var_os("LOCPATH").filter(|v| !v.is_empty())
+    } else {
+        None
     };
-    #[cfg(test)]
-    let locpath_os = std::env::var_os("LOCPATH").filter(|v| !v.is_empty());
-    #[cfg(test)]
     let locpath_bytes: Option<&[u8]> = locpath_os
         .as_deref()
         .map(std::os::unix::ffi::OsStrExt::as_bytes);
+    let system_source = locpath_bytes.is_none();
     let mut blob = None;
     let mut norm_buf = [0u8; 128];
     let norm_heap: Option<Vec<u8>>;
@@ -762,6 +761,7 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         category,
         name: stored.into_boxed_slice(),
         blob,
+        system_source,
         ctype,
         bytes,
         single_byte_codec,
@@ -2257,10 +2257,20 @@ fn catalogs_for(
     }
     let mut found = Vec::new();
     for language in languages.split(|&b| b == b':').filter(|l| !l.is_empty()) {
+        // LANGUAGE selects locale names within the caller's catalog root,
+        // never paths. Apply this in every mode so an unprivileged lookup
+        // cannot prime the catalog cache with data outside the bound tree.
+        if language.contains(&b'/') || language == b".." {
+            continue;
+        }
         if mo::is_c_locale(language) {
             break;
         }
         for variant in mo::locale_variants(language) {
+            // Codeset/modifier fallback must preserve the same boundary.
+            if variant.contains(&b'/') || variant.as_slice() == b".." {
+                continue;
+            }
             let mut path = dir.to_vec();
             for part in [&variant[..], category_dir] {
                 path.push(b'/');
@@ -3357,19 +3367,13 @@ pub fn locale_reset_catalog_state_for_tests() {
 fn is_secure_execution() -> bool {
     #[cfg(not(test))]
     {
-        // SAFETY: `__errno_location` addresses this thread's canonical errno slot;
-        // preserve caller errno in case `AT_SECURE` is absent (`ENOENT`).
-        let errno_ptr = unsafe { crate::errno_abi::__errno_location() };
-        let saved_errno = unsafe { std::ptr::read_volatile(errno_ptr) };
-        let val = unsafe { crate::stdlib_abi::getauxval(libc::AT_SECURE) };
-        unsafe { std::ptr::write_volatile(errno_ptr, saved_errno) };
-        val != 0
+        !crate::stdlib_abi::secure_environment_allowed()
     }
 
     #[cfg(test)]
     {
         let Ok(bytes) = std::fs::read("/proc/self/auxv") else {
-            return false;
+            return true;
         };
         let word_bytes = std::mem::size_of::<usize>();
         let pair_bytes = 2 * word_bytes;
@@ -3386,7 +3390,7 @@ fn is_secure_execution() -> bool {
                 return usize::from_ne_bytes(val) != 0;
             }
         }
-        false
+        true
     }
 }
 

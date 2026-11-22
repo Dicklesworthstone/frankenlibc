@@ -21,6 +21,7 @@ on:
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
       - 'crates/frankenlibc-abi/src/stdlib_abi.rs'
+      - 'crates/frankenlibc-abi/src/locale_abi.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
@@ -28,6 +29,8 @@ on:
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs'
+      - 'crates/frankenlibc-abi/tests/locale_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_gettext_catalogs.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_getrpcent.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
@@ -80,6 +83,33 @@ jobs:
             2>&1 | tee artifacts/secure-startup/secure-getenv.log
           grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' \
             artifacts/secure-startup/secure-getenv.log
+      - name: Verify secure locale paths and catalog boundaries
+        if: always()
+        env:
+          FEATURES: ${{ matrix.features }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/secure-startup
+          status=0
+          for mode in strict hardened; do
+            for target in locale_abi_test conformance_diff_gettext_catalogs; do
+              expected=2
+              if [[ "$target" == conformance_diff_gettext_catalogs ]]; then
+                expected=1
+              fi
+              log="artifacts/secure-startup/$target-$mode.log"
+              if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+                --features "$FEATURES" --test "$target" secure_startup_ \
+                -- --test-threads=1 --nocapture 2>&1 | tee "$log"; then
+                status=1
+              fi
+              if ! grep -Eq "^test result: ok\\. $expected passed; 0 failed; 0 ignored;" "$log"; then
+                status=1
+              fi
+            done
+          done
+          exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

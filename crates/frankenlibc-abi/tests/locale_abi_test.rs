@@ -1162,3 +1162,182 @@ fn catclose_invalid_descriptor_matches_host_ebadf() {
     assert_eq!(abi_errno, host_errno);
     assert_eq!(abi_errno, libc::EBADF);
 }
+
+#[cfg(feature = "conformance-testing")]
+fn write_messages_locale(root: &std::path::Path, name: &str) {
+    // The public compiled-locale format is a native-endian header and offset
+    // table followed by the five LC_MESSAGES strings. The host control below
+    // also loads this fixture, so rejection cannot pass on malformed input.
+    let items: [&[u8]; 5] = [b"^[yY]\0", b"^[nN]\0", b"yes\0", b"no\0", b"UTF-8\0"];
+    let mut image = Vec::new();
+    image.extend_from_slice(&(0x2003_1115u32 ^ libc::LC_MESSAGES as u32).to_ne_bytes());
+    image.extend_from_slice(&(items.len() as u32).to_ne_bytes());
+    let mut offset = 8 + items.len() * 4;
+    for item in items {
+        image.extend_from_slice(&(offset as u32).to_ne_bytes());
+        offset += item.len();
+    }
+    for item in items {
+        image.extend_from_slice(item);
+    }
+    let directory = root.join(name).join("LC_MESSAGES");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("SYS_LC_MESSAGES"), image).unwrap();
+}
+
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_locale_paths_are_gated_and_cache_isolated() {
+    if run_native_locale_test_in_child("secure_startup_locale_paths_are_gated_and_cache_isolated") {
+        return;
+    }
+    use frankenlibc_abi::stdlib_abi::set_secure_auxv_for_conformance;
+
+    let root = temp_catalog_path("secure_locale_paths");
+    let warm_name = CString::new(format!("fl_secure_warm_{}", std::process::id())).unwrap();
+    write_messages_locale(&root, warm_name.to_str().unwrap());
+    // SAFETY: this isolated child runs only this test and owns its environment.
+    unsafe { std::env::set_var("LOCPATH", &root) };
+
+    type HostNewlocale =
+        unsafe extern "C" fn(libc::c_int, *const c_char, *mut c_void) -> *mut c_void;
+    type HostFreelocale = unsafe extern "C" fn(*mut c_void);
+    let host_new_ptr = unsafe { load_host_symbol("newlocale") }.expect("live GNU newlocale");
+    let host_free_ptr = unsafe { load_host_symbol("freelocale") }.expect("live GNU freelocale");
+    assert_ne!(host_new_ptr as usize, newlocale as *const () as usize);
+    assert_ne!(host_free_ptr as usize, freelocale as *const () as usize);
+    let host_new: HostNewlocale = unsafe { std::mem::transmute(host_new_ptr) };
+    let host_free: HostFreelocale = unsafe { std::mem::transmute(host_free_ptr) };
+    let host_locale =
+        unsafe { host_new(libc::LC_MESSAGES_MASK, warm_name.as_ptr(), ptr::null_mut()) };
+    assert!(
+        !host_locale.is_null(),
+        "GNU must load the private locale fixture"
+    );
+    unsafe { host_free(host_locale) };
+
+    // Changing only the modeled startup flag exercises the actual loader and
+    // its warm cache. This does not claim a privileged kernel-exec test.
+    for (index, secure) in [Some(0), Some(1), Some(17), None, Some(0)]
+        .into_iter()
+        .enumerate()
+    {
+        let cold_name =
+            CString::new(format!("fl_secure_cold_{}_{index}", std::process::id())).unwrap();
+        write_messages_locale(&root, cold_name.to_str().unwrap());
+        unsafe { set_secure_auxv_for_conformance(secure) };
+        assert!(!unsafe { setlocale(libc::LC_MESSAGES, c"C".as_ptr()) }.is_null());
+
+        for name in [&warm_name, &cold_name] {
+            let selected = unsafe { setlocale(libc::LC_MESSAGES, name.as_ptr()) };
+            if secure == Some(0) {
+                assert!(!selected.is_null(), "normal LOCPATH selection: {name:?}");
+                assert_eq!(unsafe { CStr::from_ptr(selected) }, name.as_c_str());
+                assert_eq!(
+                    unsafe { CStr::from_ptr(nl_langinfo(libc::YESEXPR)) }.to_bytes(),
+                    b"^[yY]"
+                );
+            } else {
+                assert!(
+                    selected.is_null(),
+                    "AT_SECURE={secure:?} used LOCPATH for {name:?}"
+                );
+                assert_eq!(
+                    unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+                    libc::ENOENT
+                );
+                assert_eq!(
+                    unsafe { CStr::from_ptr(setlocale(libc::LC_MESSAGES, ptr::null())) },
+                    c"C"
+                );
+            }
+
+            let locale =
+                unsafe { newlocale(libc::LC_MESSAGES_MASK, name.as_ptr(), ptr::null_mut()) };
+            if secure == Some(0) {
+                assert!(!locale.is_null(), "normal newlocale must honor LOCPATH");
+                assert_eq!(
+                    unsafe { CStr::from_ptr(nl_langinfo_l(libc::YESEXPR, locale)) }.to_bytes(),
+                    b"^[yY]"
+                );
+                unsafe { freelocale(locale) };
+            } else {
+                assert!(
+                    locale.is_null(),
+                    "AT_SECURE={secure:?} reused untrusted locale data"
+                );
+            }
+        }
+
+        // Built-in locales remain usable even when no environment path is trusted.
+        assert!(!unsafe { setlocale(libc::LC_MESSAGES, c"C.UTF-8".as_ptr()) }.is_null());
+    }
+}
+
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_catopen_paths_are_gated() {
+    if run_native_locale_test_in_child("secure_startup_catopen_paths_are_gated") {
+        return;
+    }
+    use frankenlibc_abi::stdlib_abi::set_secure_auxv_for_conformance;
+
+    let root = temp_catalog_path("secure_catopen_paths");
+    fs::create_dir_all(&root).unwrap();
+    let name = CString::new(format!("fl_secure_catalog_{}", std::process::id())).unwrap();
+    let path = root.join(name.to_str().unwrap());
+    fs::write(&path, build_test_catalog(&[(1, 1, "private catalog")])).unwrap();
+    let path_c = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: this isolated child runs only this test and owns its environment.
+    unsafe {
+        std::env::set_var("NLSPATH", root.join("%N"));
+        std::env::set_var("LANG", "C");
+    }
+
+    let host_open_ptr = unsafe { load_host_symbol("catopen") }.expect("live GNU catopen");
+    let host_close_ptr = unsafe { load_host_symbol("catclose") }.expect("live GNU catclose");
+    assert_ne!(host_open_ptr as usize, catopen as *const () as usize);
+    let host_open: HostCatopenFn = unsafe { std::mem::transmute(host_open_ptr) };
+    let host_close: HostCatcloseFn = unsafe { std::mem::transmute(host_close_ptr) };
+    let host_catalog = unsafe { host_open(name.as_ptr(), 0) };
+    assert_ne!(
+        host_catalog,
+        host_invalid_catalog(),
+        "GNU must honor normal NLSPATH"
+    );
+    assert_eq!(unsafe { host_close(host_catalog) }, 0);
+
+    // Model both ordinary secure values and missing security metadata, then
+    // restore ordinary execution to exercise cached and repeated path lookups.
+    for secure in [Some(0), Some(1), Some(17), None, Some(0)] {
+        unsafe { set_secure_auxv_for_conformance(secure) };
+        for flags in [0, 1] {
+            let catalog = unsafe { catopen(name.as_ptr(), flags) };
+            if secure == Some(0) {
+                assert_ne!(catalog, -1, "normal NLSPATH lookup must work");
+                assert_eq!(
+                    unsafe { CStr::from_ptr(catgets(catalog, 1, 1, c"missing".as_ptr())) }
+                        .to_bytes(),
+                    b"private catalog"
+                );
+                assert_eq!(unsafe { catclose(catalog) }, 0);
+            } else {
+                assert_eq!(catalog, -1, "AT_SECURE={secure:?} honored NLSPATH");
+                assert_eq!(
+                    unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+                    libc::ENOENT
+                );
+            }
+        }
+
+        // An explicit caller pathname is independent of the environment and
+        // remains supported by catopen in every security state.
+        let catalog = unsafe { catopen(path_c.as_ptr(), 0) };
+        assert_ne!(catalog, -1, "explicit catalog path: AT_SECURE={secure:?}");
+        assert_eq!(
+            unsafe { CStr::from_ptr(catgets(catalog, 1, 1, c"missing".as_ptr())) }.to_bytes(),
+            b"private catalog"
+        );
+        assert_eq!(unsafe { catclose(catalog) }, 0);
+    }
+}
