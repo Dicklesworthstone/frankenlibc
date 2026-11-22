@@ -290,6 +290,11 @@ pub(crate) unsafe fn strict_decimal_int_format_count(
                     kinds[fields] = b'F';
                     i += 3;
                 }
+                // `%lx` / `%lX` writes an `unsigned long *`.
+                b'l' if matches!(*f.add(i + 2), b'x' | b'X') => {
+                    kinds[fields] = b'X';
+                    i += 3;
+                }
                 b'[' => {
                     // Exactly `%[^X]`, the one scanset shape held inline. The
                     // grammar exclusions match `strict_single_negated_scanset`:
@@ -320,7 +325,8 @@ pub(crate) unsafe fn strict_decimal_int_format_count(
                 // 0.186x of host glibc, the best in the family, and this probe
                 // runs FIRST — so without this decline the list path would
                 // silently take their traffic and give some of that back.
-                if fields == 1 && kinds[0] != b'd' {
+                // Lone `%d`, `%f`, `%lf`, and `%lx`/`%lX` stay on this fast path.
+                if fields == 1 && matches!(kinds[0], b's' | b'[') {
                     return None;
                 }
                 return Some((fields, if sep == 0 { b' ' } else { sep }, kinds, delims));
@@ -560,6 +566,84 @@ unsafe fn strict_scan_decimal_int(mut p: *const u8) -> StrictIntScan {
     StrictIntScan::Value(wide as c_int, p)
 }
 
+enum StrictUlongScan {
+    Value(libc::c_ulong, *const u8),
+    InputEnd,
+    MatchFail,
+}
+
+#[inline]
+unsafe fn strict_scan_hex_ulong(mut p: *const u8) -> StrictUlongScan {
+    loop {
+        let b = unsafe { *p };
+        if !scanf_ascii_space(b) {
+            break;
+        }
+        p = unsafe { p.add(1) };
+    }
+
+    let mut b = unsafe { *p };
+    if b == 0 {
+        return StrictUlongScan::InputEnd;
+    }
+
+    let negative = match b {
+        b'-' => {
+            p = unsafe { p.add(1) };
+            true
+        }
+        b'+' => {
+            p = unsafe { p.add(1) };
+            false
+        }
+        _ => false,
+    };
+
+    // Optional `0x`/`0X` prefix: glibc treats a bare `0x` with no following hex
+    // digit as a matching failure (rc=0, destination untouched), NOT `0`.
+    b = unsafe { *p };
+    if b == b'0' && matches!(unsafe { *p.add(1) }, b'x' | b'X') {
+        p = unsafe { p.add(2) };
+    }
+
+    let mut val: libc::c_ulong = 0;
+    let mut overflowed = false;
+    let mut any_digit = false;
+    const TOP_NIBBLE_SHIFT: u32 = libc::c_ulong::BITS - 4;
+    loop {
+        b = unsafe { *p };
+        let digit = match b {
+            b'0'..=b'9' => (b - b'0') as libc::c_ulong,
+            b'a'..=b'f' => (b - b'a' + 10) as libc::c_ulong,
+            b'A'..=b'F' => (b - b'A' + 10) as libc::c_ulong,
+            _ => break,
+        };
+        any_digit = true;
+        if !overflowed {
+            if (val >> TOP_NIBBLE_SHIFT) != 0 {
+                val = libc::c_ulong::MAX;
+                overflowed = true;
+            } else {
+                val = (val << 4) | digit;
+            }
+        }
+        p = unsafe { p.add(1) };
+    }
+
+    if !any_digit {
+        return StrictUlongScan::MatchFail;
+    }
+
+    let out = if overflowed {
+        libc::c_ulong::MAX
+    } else if negative {
+        val.wrapping_neg()
+    } else {
+        val
+    };
+    StrictUlongScan::Value(out, p)
+}
+
 #[inline]
 pub(crate) unsafe fn strict_scan_decimal_ints(
     s: *const c_char,
@@ -651,6 +735,36 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
                             count as c_int
                         },
                         input_failure: exhausted && count == 0,
+                        values,
+                    };
+                }
+            }
+        }
+        if kinds[index] == b'X' {
+            match unsafe { strict_scan_hex_ulong(p) } {
+                StrictUlongScan::Value(value, next) => {
+                    // SAFETY: the probe accepted `%lx`/`%lX` here, so the caller
+                    // passed an `unsigned long *`.
+                    unsafe { *destinations[index].cast::<libc::c_ulong>() = value };
+                    p = next;
+                    count += 1;
+                    continue;
+                }
+                StrictUlongScan::InputEnd => {
+                    return StrictDecimalIntsScan {
+                        count: if count == 0 {
+                            libc::EOF
+                        } else {
+                            count as c_int
+                        },
+                        input_failure: count == 0,
+                        values,
+                    };
+                }
+                StrictUlongScan::MatchFail => {
+                    return StrictDecimalIntsScan {
+                        count: count as c_int,
+                        input_failure: false,
                         values,
                     };
                 }
