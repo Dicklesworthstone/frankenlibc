@@ -18320,13 +18320,6 @@ pub unsafe extern "C-unwind" fn freopen(
         return std::ptr::null_mut();
     }
 
-    let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
-    let Some(open_flags) = parse_mode(mode_bytes) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return std::ptr::null_mut();
-    };
-
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
@@ -18341,6 +18334,19 @@ pub unsafe extern "C-unwind" fn freopen(
         }
         return result;
     }
+
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
+    let Some(open_flags) = parse_mode(mode_bytes) else {
+        // A descriptor-backed freopen closes the old association even when
+        // the new mode is invalid. Memory/cookie streams have no descriptor
+        // association to replace, so leave their existing lifetime alone.
+        if stream_cell(id).is_some_and(|cell| cell.lock().fd() >= 0) {
+            let _ = unsafe { fclose_for_caller(stream, 0) };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    };
 
     if io_internal_abi::parked_static_slot() != 0 {
         evict_parked_st_fmemopen_slot();
@@ -18397,40 +18403,30 @@ pub unsafe extern "C-unwind" fn freopen(
                 written += rc as usize;
             }
         }
-        if id == STDIN_SENTINEL || id == STDOUT_SENTINEL || id == STDERR_SENTINEL {
+        if old_fd >= 0 {
+            // Retain every descriptor number until its replacement is open,
+            // not just 0/1/2 and NULL-path reopens. Closing first can make the
+            // new open select a lower free descriptor, changing fileno(FILE).
+            // A process pipe stays tracked until replacement closes it, so a
+            // concurrent popen child cannot inherit an untracked pipe end.
             target_fd = old_fd;
-        } else if old_fd >= 0 {
-            if pathname.is_null() {
-                // Keep it OPEN. With a NULL pathname the old descriptor is both
-                // the thing we reopen through (/proc/self/fd/N) and the number
-                // the result must keep, so closing it here would destroy the
-                // only handle on the file. bd-mpp7kt.
-                target_fd = old_fd;
-            } else {
-                (process_child, _) = close_stream_descriptor(id, old_fd);
-            }
         }
         true
     } else {
         false
     };
 
-    // Release the stream registry lock before running user `fopencookie` close
-    // callbacks or `waitpid` on a replaced `popen` child.
-    if deferred_cookie_close || process_child.is_some() {
+    // Release the stream registry lock before running user close callbacks.
+    // Process children are reaped after replacement closes their old pipe.
+    if deferred_cookie_close {
         drop(reg);
-        if deferred_cookie_close {
-            let _ = unsafe { cookie_stream_close(id) };
-        }
-        if let Some(pid) = process_child {
-            let _ = wait_popen_child(pid);
-        }
+        let _ = unsafe { cookie_stream_close(id) };
         reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     }
 
     // `freopen(NULL, mode, stream)` changes a stream's mode without naming the
     // file. glibc implements it by reopening the descriptor's own
-    // /proc/self/fd/N link and dup2-ing the result back onto the original fd,
+    // /proc/self/fd/N link and duplicating it back onto the original fd,
     // so the caller keeps both its FILE* and its descriptor number. fl used to
     // return NULL with EINVAL — after having already closed the descriptor
     // above, so the stream was destroyed AND the call reported failure.
@@ -18475,20 +18471,10 @@ pub unsafe extern "C-unwind" fn freopen(
         Ok(f) => f,
         Err(e) => {
             drop(reg);
-            // The NULL-pathname path deliberately kept the old descriptor open
-            // to reopen through it; if that reopen failed there is no stream
-            // left to own it, so close it here rather than leak. Standard
-            // streams keep their 0/1/2 descriptors either way.
-            if pathname.is_null()
-                && target_fd >= 0
-                && id != STDIN_SENTINEL
-                && id != STDOUT_SENTINEL
-                && id != STDERR_SENTINEL
-            {
-                let (child, _) = close_stream_descriptor(id, target_fd);
-                if let Some(pid) = child {
-                    let _ = wait_popen_child(pid);
-                }
+            // Failure closes the original descriptor, including stdin/out/err;
+            // the old stream was already removed and cannot own it any more.
+            if target_fd >= 0 {
+                (process_child, _) = close_stream_descriptor(id, target_fd);
             }
             drop(file_lock);
             if removed_old_stream
@@ -18498,16 +18484,43 @@ pub unsafe extern "C-unwind" fn freopen(
             {
                 maybe_unregister_dynamic_native_stream(id as *mut c_void);
             }
+            if let Some(pid) = process_child {
+                let _ = wait_popen_child(pid);
+            }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
             unsafe { set_abi_errno(e) };
             return std::ptr::null_mut();
         }
     };
 
-    // If reopening a standard stream, dup2 the new fd onto the standard fd.
-    if target_fd >= 0 && fd != target_fd {
-        let _ = raw_syscall::sys_dup2(fd, target_fd);
-        let _ = raw_syscall::sys_close(fd);
+    if target_fd >= 0 {
+        // dup2 would silently clear FD_CLOEXEC for mode 'e'. Keep both the
+        // descriptor number and requested inheritance flags, and never report
+        // success after a failed replacement (e.g. a lowered RLIMIT_NOFILE).
+        let flags = if open_flags.cloexec { libc::O_CLOEXEC } else { 0 };
+        let replacement;
+        (process_child, replacement) =
+            replace_stream_descriptor(id, fd, target_fd, flags, !pathname.is_null());
+        if fd != target_fd {
+            let _ = raw_syscall::sys_close(fd);
+        }
+        if let Err(e) = replacement {
+            drop(reg);
+            drop(file_lock);
+            if removed_old_stream
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                maybe_unregister_dynamic_native_stream(id as *mut c_void);
+            }
+            if let Some(pid) = process_child {
+                let _ = wait_popen_child(pid);
+            }
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
         fd = target_fd;
     }
 
@@ -18558,6 +18571,11 @@ pub unsafe extern "C-unwind" fn freopen(
         std_word
     };
     reg.insert_stream_with_handle(id, new_stream, handle);
+    drop(reg);
+    drop(file_lock);
+    if let Some(pid) = process_child {
+        let _ = wait_popen_child(pid);
+    }
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, false);
     // The caller's own FILE *, as glibc returns: for stdin/stdout/stderr `id` is
@@ -19378,6 +19396,72 @@ fn close_stream_descriptor(id: usize, fd: c_int) -> (Option<i32>, Result<(), c_i
     }
     let closed = raw_syscall::sys_close(fd);
     (child.map(|child| child.pid), closed)
+}
+
+/// Replace an association without exposing an untracked process-pipe end to
+/// a concurrent popen fork. The caller closes the temporary descriptor and
+/// releases all FILE/registry locks before waiting for a returned child.
+fn replace_stream_descriptor(
+    id: usize,
+    source: c_int,
+    target: c_int,
+    flags: c_int,
+    detach_process: bool,
+) -> (Option<i32>, Result<(), c_int>) {
+    let mut guard = (ACTIVE_POPEN_COUNT.load(Ordering::Acquire) != 0).then(lock_popen_pids);
+    if guard.as_ref().is_some_and(|guard| !guard.contains_key(id)) {
+        // An ordinary descriptor can block while dup3 closes it (SO_LINGER).
+        // It must not hold up unrelated process-pipe publication or closes.
+        guard = None;
+    }
+    let retain_process = if guard.is_some() {
+        if !detach_process {
+            // freopen(NULL, ...) reopens the same pipe. Its child needs the
+            // replacement FILE to close before EOF can make reaping finish.
+            true
+        } else {
+            // Named /proc/self/fd/N and /dev/fd/N aliases can also reopen the
+            // same pipe. Retain ownership unless replacement is known to
+            // close a different underlying object.
+            let mut old = std::mem::MaybeUninit::<libc::stat>::zeroed();
+            let mut new = std::mem::MaybeUninit::<libc::stat>::zeroed();
+            // SAFETY: both buffers are writable, correctly sized stat records.
+            let known = unsafe {
+                raw_syscall::sys_fstat(target, old.as_mut_ptr().cast()).is_ok()
+                    && raw_syscall::sys_fstat(source, new.as_mut_ptr().cast()).is_ok()
+            };
+            if known {
+                // SAFETY: both fstat calls succeeded.
+                let (old, new) = unsafe { (old.assume_init(), new.assume_init()) };
+                old.st_dev == new.st_dev
+                    && old.st_ino == new.st_ino
+                    && old.st_mode & libc::S_IFMT == new.st_mode & libc::S_IFMT
+            } else {
+                true
+            }
+        }
+    } else {
+        false
+    };
+    let replaced = if source == target {
+        Ok(())
+    } else {
+        raw_syscall::sys_dup3(source, target, flags).map(|_| ())
+    };
+    let child = if replaced.is_err() || !retain_process {
+        guard.as_mut().and_then(|guard| guard.remove(id))
+    } else {
+        None
+    };
+    // GNU leaves the original descriptor alive when duplication fails.
+    // Retire its FILE association, but do not wait for a process whose pipe
+    // remains open: the caller can still close that fd and reap its child.
+    let reap = if replaced.is_ok() {
+        child.map(|child| child.pid)
+    } else {
+        None
+    };
+    (reap, replaced)
 }
 
 fn wait_popen_child(pid: i32) -> Result<c_int, c_int> {

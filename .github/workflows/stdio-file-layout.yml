@@ -128,6 +128,29 @@ jobs:
             cmp artifacts/stdio-layout/echo-expected.out "$prefix-echo.out"
             test ! -s "$prefix-echo.err"
           done
+      - name: Preserve freopen descriptors, close-on-exec and process-pipe ownership
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          status=0
+          for feature in default owned; do
+            feature_args=()
+            if [[ "$feature" == owned ]]; then
+              feature_args+=(--features owned-tls-cache)
+            fi
+            for mode in strict hardened; do
+              log="artifacts/stdio-layout/freopen-$feature-$mode.log"
+              if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+                "${feature_args[@]}" --test stdio_abi_test freopen \
+                -- --test-threads=1 --nocapture 2>&1 | tee "$log"; then
+                status=1
+              fi
+              if ! grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' "$log"; then
+                status=1
+              fi
+            done
+          done
+          exit "$status"
       - name: Prepare real numeric locales for scanf conformance
         if: always() && steps.build.outcome == 'success'
         run: |

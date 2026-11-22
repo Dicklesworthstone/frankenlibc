@@ -1,10 +1,12 @@
 #define _GNU_SOURCE 1
 #include <errno.h>
+#include <fcntl.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdio_ext.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <wchar.h>
@@ -177,6 +179,93 @@ static int check_error(void) {
     return 0;
 }
 
+typedef FILE *(*reopen_entry)(const char *, const char *, FILE *);
+
+static FILE *freopen_high_descriptor(void) {
+    int original = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (original < 0) return NULL;
+    int descriptor = fcntl(original, F_DUPFD_CLOEXEC, 64);
+    int error = errno;
+    close(original);
+    if (descriptor < 0) {
+        errno = error;
+        return NULL;
+    }
+    FILE *stream = fdopen(descriptor, "w+");
+    if (stream == NULL) {
+        error = errno;
+        close(descriptor);
+        errno = error;
+    }
+    return stream;
+}
+
+static int check_freopen_descriptors(reopen_entry reopen_stream) {
+    const char *modes[] = {"r", "re", "r+", "r+e"};
+    for (int named = 0; named < 2; ++named) {
+        for (size_t m = 0; m < sizeof modes / sizeof modes[0]; ++m) {
+            FILE *stream = freopen_high_descriptor();
+            CHECK(stream != NULL);
+            int descriptor = fileno(stream);
+            CHECK(descriptor >= 64);
+            CHECK(putc_unlocked('x', stream) == 'x');
+            FILE *reopened = reopen_stream(named ? "/dev/null" : NULL, modes[m], stream);
+            CHECK(reopened == stream);
+            CHECK(fileno(reopened) == descriptor);
+            CHECK(check_header(reopened, descriptor, 0) == 0);
+            int flags = fcntl(descriptor, F_GETFD);
+            CHECK(flags >= 0);
+            CHECK((flags & FD_CLOEXEC) == (strchr(modes[m], 'e') ? FD_CLOEXEC : 0));
+            CHECK(getc_unlocked(reopened) == EOF);
+            CHECK(feof_unlocked(reopened));
+            CHECK(fclose(reopened) == 0);
+        }
+    }
+
+    const char *paths[] = {"/proc/self/fd/-1", "/dev/null", "/dev/null"};
+    const char *bad_modes[] = {"r", "z", ""};
+    const int errors[] = {ENOENT, EINVAL, EINVAL};
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; ++i) {
+        FILE *stream = freopen_high_descriptor();
+        CHECK(stream != NULL);
+        int descriptor = fileno(stream);
+        errno = 0;
+        FILE *reopened = reopen_stream(paths[i], bad_modes[i], stream);
+        int error = errno;
+        CHECK(reopened == NULL);
+        CHECK(error == errors[i]);
+        errno = 0;
+        CHECK(fcntl(descriptor, F_GETFD) == -1);
+        CHECK(errno == EBADF);
+    }
+
+    FILE *stream = freopen_high_descriptor();
+    CHECK(stream != NULL);
+    int descriptor = fileno(stream);
+    struct rlimit saved, limited;
+    CHECK(getrlimit(RLIMIT_NOFILE, &saved) == 0);
+    limited = saved;
+    limited.rlim_cur = 32;
+    int probe = open("/dev/null", O_RDONLY);
+    CHECK(probe >= 0 && probe < 32);
+    CHECK(close(probe) == 0);
+    CHECK(setrlimit(RLIMIT_NOFILE, &limited) == 0);
+    errno = 0;
+    FILE *reopened = reopen_stream(NULL, "re", stream);
+    int error = errno;
+    int restored = setrlimit(RLIMIT_NOFILE, &saved);
+    CHECK(restored == 0);
+    CHECK(reopened == NULL);
+    CHECK(error == EBADF);
+    /* GNU retains the old fd on dup3 failure, but closes its temporary fd. */
+    CHECK((fcntl(descriptor, F_GETFD) & FD_CLOEXEC) == FD_CLOEXEC);
+    int next = open("/dev/null", O_RDONLY);
+    CHECK(next == probe);
+    CHECK(close(next) == 0);
+    CHECK(close(descriptor) == 0);
+    return 0;
+}
+
 static int check_freopen(void) {
     FILE *f = tmpfile();
     CHECK(f != NULL);
@@ -187,6 +276,28 @@ static int check_freopen(void) {
     CHECK(getc_unlocked(reopened) == EOF);
     CHECK(feof_unlocked(reopened));
     CHECK(fclose(reopened) == 0);
+    CHECK(check_freopen_descriptors(freopen) == 0);
+    CHECK(check_freopen_descriptors(freopen64) == 0);
+
+    /* A failed open closes standard descriptors as well as dynamic ones.
+     * Restore the raw descriptors for diagnostics and the final write; no
+     * further stdio operation uses these now-closed standard FILE objects. */
+    FILE *standard[] = {stdin, stdout, stderr};
+    for (int fd = 0; fd < 3; ++fd) {
+        int saved = dup(fd);
+        CHECK(saved >= 0);
+        errno = 0;
+        reopened = freopen("/proc/self/fd/-1", "r", standard[fd]);
+        int error = errno;
+        errno = 0;
+        int descriptor_status = fcntl(fd, F_GETFD);
+        int descriptor_error = errno;
+        int restored = dup2(saved, fd);
+        int closed = close(saved);
+        CHECK(restored == fd && closed == 0);
+        CHECK(reopened == NULL && error == ENOENT);
+        CHECK(descriptor_status == -1 && descriptor_error == EBADF);
+    }
     return 0;
 }
 

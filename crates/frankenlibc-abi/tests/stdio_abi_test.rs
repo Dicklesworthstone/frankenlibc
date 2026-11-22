@@ -2403,6 +2403,215 @@ fn freopen_reopens_stream_with_new_file() {
     let _ = fs::remove_file(path2);
 }
 
+
+type FreopenEntry =
+    unsafe extern "C-unwind" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
+
+fn freopen_high_descriptor_stream() -> (*mut c_void, c_int) {
+    let original = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
+    assert!(original >= 0);
+    let descriptor = unsafe { libc::fcntl(original, libc::F_DUPFD_CLOEXEC, 64) };
+    assert_eq!(unsafe { libc::close(original) }, 0);
+    assert!(descriptor >= 64);
+    let stream = unsafe { fdopen(descriptor, c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    (stream, descriptor)
+}
+
+#[test]
+fn freopen_preserves_descriptor_number_and_close_on_exec() {
+    if run_alone_in_child("freopen_preserves_descriptor_number_and_close_on_exec") {
+        return;
+    }
+    signal_runtime_ready_for_tests();
+    for reopen in [freopen as FreopenEntry, freopen64 as FreopenEntry] {
+        for pathname in [std::ptr::null(), c"/dev/null".as_ptr()] {
+            for mode in [c"r", c"re", c"r+", c"r+e"] {
+                let (stream, descriptor) = freopen_high_descriptor_stream();
+                assert_eq!(unsafe { fputc(b'x' as c_int, stream) }, b'x' as c_int);
+                let reopened = unsafe { reopen(pathname, mode.as_ptr(), stream) };
+                assert_eq!(reopened, stream);
+                assert_eq!(unsafe { fileno(reopened) }, descriptor);
+                assert_eq!(
+                    unsafe { libc::fcntl(descriptor, libc::F_GETFD) } & libc::FD_CLOEXEC,
+                    if mode.to_bytes().contains(&b'e') {
+                        libc::FD_CLOEXEC
+                    } else {
+                        0
+                    }
+                );
+                assert_eq!(unsafe { frankenlibc_abi::wchar_abi::fwide(reopened, 0) }, 0);
+                assert_eq!(unsafe { fclose(reopened) }, 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn freopen_failed_open_and_mode_close_the_old_descriptor() {
+    if run_alone_in_child("freopen_failed_open_and_mode_close_the_old_descriptor") {
+        return;
+    }
+    signal_runtime_ready_for_tests();
+    for reopen in [freopen as FreopenEntry, freopen64 as FreopenEntry] {
+        for (pathname, mode, expected_errno) in [
+            (c"/proc/self/fd/-1", c"r", libc::ENOENT),
+            (c"/dev/null", c"z", libc::EINVAL),
+            (c"/dev/null", c"", libc::EINVAL),
+        ] {
+            let (stream, descriptor) = freopen_high_descriptor_stream();
+            let reopened = unsafe { reopen(pathname.as_ptr(), mode.as_ptr(), stream) };
+            let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+            assert!(reopened.is_null());
+            assert_eq!(error, expected_errno);
+            assert_eq!(unsafe { libc::fcntl(descriptor, libc::F_GETFD) }, -1);
+            assert_eq!(unsafe { *libc::__errno_location() }, libc::EBADF);
+            assert_eq!(verify_native_file(stream), None);
+        }
+    }
+
+    // The same close-on-failure rule applies to statically allocated stdin.
+    // The helper runs alone, so no sibling test can reuse the closed fd.
+    init_host_stdio_streams_for_tests();
+    assert!(unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD) } >= 0);
+    let standard = unsafe { std::ptr::addr_of!(stdin).read() };
+    let reopened = unsafe { freopen(c"/proc/self/fd/-1".as_ptr(), c"r".as_ptr(), standard) };
+    let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(reopened.is_null());
+    assert_eq!(error, libc::ENOENT);
+    assert_eq!(unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFD) }, -1);
+    assert_eq!(unsafe { *libc::__errno_location() }, libc::EBADF);
+}
+
+#[test]
+fn freopen_reports_descriptor_replacement_failure_without_leaking_the_new_fd() {
+    if run_alone_in_child(
+        "freopen_reports_descriptor_replacement_failure_without_leaking_the_new_fd",
+    ) {
+        return;
+    }
+    signal_runtime_ready_for_tests();
+    for reopen in [freopen as FreopenEntry, freopen64 as FreopenEntry] {
+        let (stream, descriptor) = freopen_high_descriptor_stream();
+        let mut saved = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut saved) }, 0);
+        let limited = libc::rlimit {
+            rlim_cur: 32,
+            rlim_max: saved.rlim_max,
+        };
+        let probe = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!((0..32).contains(&probe));
+        assert_eq!(unsafe { libc::close(probe) }, 0);
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limited) }, 0);
+        let reopened = unsafe { reopen(std::ptr::null(), c"re".as_ptr(), stream) };
+        let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // Restore process limits before assertions or further test activity.
+        let restored = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &saved) };
+        assert_eq!(restored, 0);
+        assert!(reopened.is_null());
+        assert_eq!(error, libc::EBADF);
+        assert_eq!(verify_native_file(stream), None);
+        // GNU retains the original fd when dup3 fails, but closes the new fd.
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor, libc::F_GETFD) } & libc::FD_CLOEXEC,
+            libc::FD_CLOEXEC
+        );
+        let next = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert_eq!(next, probe, "failed freopen leaked its temporary descriptor");
+        assert_eq!(unsafe { libc::close(next) }, 0);
+        assert_eq!(unsafe { libc::close(descriptor) }, 0);
+    }
+}
+
+#[test]
+fn freopen_reaps_replaced_process_streams_after_releasing_their_pipes() {
+    if run_alone_in_child("freopen_reaps_replaced_process_streams_after_releasing_their_pipes") {
+        return;
+    }
+    signal_runtime_ready_for_tests();
+    for fail_open in [false, true] {
+        let process = unsafe { popen(c"cat >/dev/null".as_ptr(), c"w".as_ptr()) };
+        assert!(!process.is_null());
+        let descriptor = unsafe { fileno(process) };
+        assert!(unsafe { fputs(c"pending".as_ptr(), process) } >= 0);
+
+        // Replacing an unrelated stream while a process pipe is active must
+        // leave that child's association intact for the later replacement.
+        let (other, other_fd) = freopen_high_descriptor_stream();
+        assert_eq!(
+            unsafe { freopen(c"/dev/null".as_ptr(), c"re".as_ptr(), other) },
+            other
+        );
+        assert_eq!(unsafe { fileno(other) }, other_fd);
+        assert_eq!(unsafe { fclose(other) }, 0);
+
+        let path = if fail_open {
+            c"/proc/self/fd/-1"
+        } else {
+            c"/dev/null"
+        };
+        let reopened = unsafe { freopen(path.as_ptr(), c"we".as_ptr(), process) };
+        let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        if fail_open {
+            assert!(reopened.is_null());
+            assert_eq!(error, libc::ENOENT);
+            assert_eq!(unsafe { libc::fcntl(descriptor, libc::F_GETFD) }, -1);
+        } else {
+            assert_eq!(reopened, process);
+            assert_eq!(unsafe { fileno(reopened) }, descriptor);
+            assert_eq!(
+                unsafe { libc::fcntl(descriptor, libc::F_GETFD) } & libc::FD_CLOEXEC,
+                libc::FD_CLOEXEC
+            );
+            assert_eq!(unsafe { fclose(reopened) }, 0);
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) }, -1);
+        assert_eq!(unsafe { *libc::__errno_location() }, libc::ECHILD);
+    }
+}
+
+#[test]
+fn freopen_same_process_pipe_reopen_keeps_the_child_until_close() {
+    if run_alone_in_child("freopen_same_process_pipe_reopen_keeps_the_child_until_close") {
+        return;
+    }
+    signal_runtime_ready_for_tests();
+    // Reaping before the replacement write end is closed would deadlock.
+    // Bound that regression within this isolated child, not the entire suite.
+    unsafe { libc::alarm(15) };
+    for reopen in [freopen as FreopenEntry, freopen64 as FreopenEntry] {
+        for named in [false, true] {
+            let process = unsafe { popen(c"cat >/dev/null".as_ptr(), c"w".as_ptr()) };
+            assert!(!process.is_null());
+            let descriptor = unsafe { fileno(process) };
+            assert!(unsafe { fputs(c"before".as_ptr(), process) } >= 0);
+            let alias = CString::new(format!("/proc/self/fd/{descriptor}")).unwrap();
+            let pathname = if named {
+                alias.as_ptr()
+            } else {
+                std::ptr::null()
+            };
+            let reopened = unsafe { reopen(pathname, c"we".as_ptr(), process) };
+            assert_eq!(reopened, process);
+            assert_eq!(unsafe { fileno(reopened) }, descriptor);
+            assert_eq!(
+                unsafe { libc::fcntl(descriptor, libc::F_GETFD) } & libc::FD_CLOEXEC,
+                libc::FD_CLOEXEC
+            );
+            assert!(unsafe { fputs(c"after".as_ptr(), reopened) } >= 0);
+            assert_eq!(unsafe { fclose(reopened) }, 0);
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) }, -1);
+            assert_eq!(unsafe { *libc::__errno_location() }, libc::ECHILD);
+        }
+    }
+    unsafe { libc::alarm(0) };
+}
+
 #[test]
 fn remove_deletes_a_file() {
     let path = temp_path("remove");
