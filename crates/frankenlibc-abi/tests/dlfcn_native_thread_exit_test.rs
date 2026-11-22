@@ -332,6 +332,85 @@ fn native_tls_destructors_can_register_more_destructors() {
 }
 
 #[test]
+fn native_dynamic_tls_destructors_pin_their_owner_until_thread_exit() {
+    if !child_case("native_dynamic_tls_destructors_pin_their_owner_until_thread_exit") {
+        return;
+    }
+    for loader in [Loader::Host, Loader::Native] {
+        let f = Fixture::new();
+        let sink = f.sink(loader);
+        let path = f.compile(
+            "dynamic_destructors",
+            r#"
+            #define _GNU_SOURCE
+            #include <dlfcn.h>
+            extern void event_push(long);
+            extern int __cxa_thread_atexit_impl(void (*)(void *), void *, void *);
+            typedef int (*register_fn)(void (*)(void *), void *, void *);
+            static int owner;
+            static __thread long value = 41;
+            static void last(void *pointer) { event_push(*(long *)pointer); }
+            static void first(void *pointer) { event_push(*(long *)pointer + 1); }
+            long start(void) {
+                const char *invalid[] = {"GLIBC_2.3", "GLIBC_PRIVATE", "GLIBC_9.99", ""};
+                for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; ++i) {
+                    dlerror();
+                    void *address = dlvsym(RTLD_DEFAULT, "__cxa_thread_atexit_impl", invalid[i]);
+                    const char *error = dlerror();
+                    if (address || !error || !*error) return -10;
+                }
+                register_fn ordinary = (register_fn)dlsym(RTLD_DEFAULT, "__cxa_thread_atexit_impl");
+                register_fn versioned = (register_fn)dlvsym(RTLD_DEFAULT, "__cxa_thread_atexit_impl", "GLIBC_2.18");
+                /* Do not submit a native DSO owner to a foreign exit queue. */
+                if (ordinary != __cxa_thread_atexit_impl || versioned != ordinary) return -11;
+                if (dlerror()) return -12;
+                value = 73;
+                if (ordinary(last, &value, &owner)) return -13;
+                if (versioned(first, &value, &owner)) return -14;
+                return 0;
+            }
+            __attribute__((destructor)) static void fini(void) { event_push(99); }
+        "#,
+            false,
+        );
+        let handle = loader.open(&path, libc::RTLD_NOW);
+        assert!(!handle.is_null());
+        let gate = Arc::new(Barrier::new(2));
+        let worker_gate = Arc::clone(&gate);
+        let registration = Arc::new(AtomicI32::new(-100));
+        let worker_registration = Arc::clone(&registration);
+        let handle_address = handle as usize;
+        let worker = std::thread::spawn(move || {
+            let result = loader.value(handle_address as *mut c_void, "start");
+            worker_registration.store(result as i32, Ordering::Release);
+            worker_gate.wait();
+            worker_gate.wait();
+            result
+        });
+        gate.wait();
+        assert_eq!(registration.load(Ordering::Acquire), 0);
+        loader.close(handle);
+        assert!(f.events(loader, sink).is_empty());
+        let retained = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(retained, handle);
+        loader.close(retained);
+        gate.wait();
+        assert_eq!(worker.join().unwrap(), 0);
+        assert_eq!(f.events(loader, sink), [74, 73]);
+        let retained = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(retained, handle);
+        loader.close(retained);
+        assert_eq!(f.events(loader, sink), [74, 73, 99]);
+        assert!(
+            loader
+                .open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD)
+                .is_null()
+        );
+        loader.close(sink);
+    }
+}
+
+#[test]
 fn native_tls_destructor_pins_distinct_code_and_data_providers() {
     if !child_case("native_tls_destructor_pins_distinct_code_and_data_providers") {
         return;

@@ -198,7 +198,6 @@ impl<T: DemandZero, const N: usize> DemandZeroArray<T, N> {
         }
     }
 
-    #[cfg(debug_assertions)]
     #[inline]
     fn as_ptr(&self) -> *const T {
         self.region.base.load(Ordering::Acquire) as *const T
@@ -218,7 +217,6 @@ impl<T: DemandZero, const N: usize> DemandZeroArray<T, N> {
         Some(unsafe { &*((base + start) as *const T) })
     }
 
-    #[cfg(debug_assertions)]
     #[inline]
     fn get_existing(&self, index: usize) -> Option<&T> {
         if index >= N {
@@ -237,12 +235,20 @@ impl<T: DemandZero, const N: usize> DemandZeroArray<T, N> {
     }
 }
 
-#[cfg(debug_assertions)]
 impl<const N: usize> DemandZeroArray<AtomicUsize, N> {
     #[inline]
     fn load(&self, index: usize, order: Ordering) -> usize {
         self.get_existing(index)
             .map_or(0, |value| value.load(order))
+    }
+
+    /// Update an entry already known to exist. Insertion must prepare both
+    /// pointer and size storage before publishing either table entry.
+    #[inline]
+    fn store_existing(&self, index: usize, value: usize, order: Ordering) {
+        if let Some(slot) = self.get_existing(index) {
+            slot.store(value, order);
+        }
     }
 }
 
@@ -1117,6 +1123,30 @@ pub(crate) fn native_thread_backend_active() -> bool {
 }
 
 #[inline]
+pub(crate) fn enter_native_wide_io_depth() {
+    if let Some(slot) = current_allocator_reentry_slot() {
+        let prev = slot.wide_io_depth.load(Ordering::Relaxed);
+        slot.wide_io_depth
+            .store(prev.saturating_add(1), Ordering::Relaxed);
+    }
+}
+
+#[inline]
+pub(crate) fn leave_native_wide_io_depth() {
+    if let Some(slot) = current_allocator_reentry_slot() {
+        let prev = slot.wide_io_depth.load(Ordering::Relaxed);
+        slot.wide_io_depth
+            .store(prev.saturating_sub(1), Ordering::Relaxed);
+    }
+}
+
+#[inline]
+pub(crate) fn native_wide_io_active() -> bool {
+    current_allocator_reentry_slot()
+        .is_some_and(|slot| slot.wide_io_depth.load(Ordering::Relaxed) != 0)
+}
+
+#[inline]
 fn acquire_host_allocator_native_thread_lock(tid: i32) {
     let tid = if tid > 0 {
         tid
@@ -1719,6 +1749,10 @@ fn bump_path_counter(counter: &AtomicUsize) {
 }
 static SEGMENT_OWNED_BITMAP: AtomicU64 = AtomicU64::new(0);
 static SEGMENT_SIDECAR_WRITABLE: AtomicU64 = AtomicU64::new(0);
+// One speculative permission upgrade per 32-sidecar batch. A failed mprotect
+// can leave earlier VMAs writable; retrying it would grow unused padding on
+// every new size class under RLIMIT_DATA. Claimed attempts never require waits.
+static SEGMENT_SIDECAR_BATCH_ATTEMPTED: AtomicU64 = AtomicU64::new(0);
 // Segment ids are claimed only when a thread exhausts its local class segment.
 // This counter is deliberately absent from the warmed allocation/free cycle.
 static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
@@ -1841,6 +1875,11 @@ static SEGMENT_SPILL_SLAB: DemandSlab<1> = DemandSlab::new(SEGMENT_SPILL_TOTAL_B
 
 #[inline]
 pub(super) fn segment_descriptor(index: usize) -> Option<&'static SegmentDescriptor> {
+    SEGMENT_DESCRIPTORS.get(index)
+}
+
+#[inline]
+fn ensure_segment_descriptor(index: usize) -> Option<&'static SegmentDescriptor> {
     SEGMENT_DESCRIPTORS.get(index)
 }
 
@@ -2371,6 +2410,7 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     if meta_bytes > SEGMENT_SIDECAR_STRIDE {
         return None;
     }
+    let descriptor = ensure_segment_descriptor(raw_index)?;
     // This segment's sidecar, in the arena reservation past the segments
     // themselves: private to the allocator and, like the reservation,
     // immortal.
@@ -6125,6 +6165,10 @@ fn ensure_fallback_slot(idx: usize) -> Option<&'static FallbackAllocSlot> {
     // SAFETY: `start..end` is promoted RW in our immortal demand-zero slab.
     Some(unsafe { &*((base + start) as *const FallbackAllocSlot) })
 }
+static FALLBACK_ALLOC_PTRS: DemandZeroArray<AtomicUsize, FALLBACK_ALLOC_TABLE_SLOTS> =
+    DemandZeroArray::new();
+static FALLBACK_ALLOC_SIZES: DemandZeroArray<AtomicUsize, FALLBACK_ALLOC_TABLE_SLOTS> =
+    DemandZeroArray::new();
 /// Reader-writer spin lock over the fallback table: the low bits count
 /// readers, `FALLBACK_TABLE_WRITER` marks the exclusive holder and
 /// `FALLBACK_TABLE_WRITER_WAITING` stops new readers so a writer (malloc /
@@ -6428,6 +6472,17 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
         return Some(reusable_idx);
     }
     None
+}
+
+/// Prepare both halves before publishing a live key. Failed page commits leave
+/// the old entry untouched; readers never see a key with inaccessible metadata.
+fn fallback_publish_entry(index: usize, key: usize, size: usize) -> Option<usize> {
+    let ptr_slot = FALLBACK_ALLOC_PTRS.get(index)?;
+    let size_slot = FALLBACK_ALLOC_SIZES.get(index)?;
+    publish_fallback_range(key, size);
+    size_slot.store(size, Ordering::Relaxed);
+    ptr_slot.store(key, Ordering::Release);
+    Some(index)
 }
 
 fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
@@ -9957,8 +10012,9 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let out = unsafe { native_libc_memalign(alignment, size) };
         // SAFETY: publish before reporting success to the caller.
-        let out =
-            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1)) };
+        let out = unsafe {
+            register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1))
+        };
         if !out.is_null() {
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }
@@ -10071,8 +10127,9 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
         // SAFETY: publish before reporting success to the caller.
-        let out =
-            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1)) };
+        let out = unsafe {
+            register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1))
+        };
         if !out.is_null() {
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }

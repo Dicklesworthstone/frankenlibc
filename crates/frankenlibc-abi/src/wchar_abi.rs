@@ -8250,9 +8250,14 @@ unsafe fn scan_wide_buffer(
     let locale = NumericLocale::current();
     let directives = super::stdio_abi::scanf_wide_directives(format, dialect, locale)?;
     let mut writer = WideScanWriter::new(ap);
-    let result = frankenlibc_core::stdio::scanf::scan_input_wide_with(
+    let mut radix_bytes = [0u8; 4];
+    let radix = char::from_u32(locale.wide_radix)
+        .unwrap_or('.')
+        .encode_utf8(&mut radix_bytes);
+    let result = frankenlibc_core::stdio::scanf::scan_input_wide_with_radix(
         input,
         directives.as_slice(),
+        radix.as_bytes(),
         |spec, value, context| {
             // SAFETY: this call owns the live va_list and the parsed format
             // describes each reached destination supplied by the caller.

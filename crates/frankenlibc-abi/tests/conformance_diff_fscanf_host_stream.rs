@@ -1320,6 +1320,10 @@ mod streaming_narrow {
 
     impl Utf8Locale {
         fn select() -> Self {
+            Self::select_named(c"C.UTF-8", libc::LC_ALL_MASK)
+        }
+
+        fn select_named(name: &CStr, mask: c_int) -> Self {
             use frankenlibc_abi::locale_abi as locale;
             type NewLocale = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
             // SAFETY: both locale implementations own separate thread-local
@@ -1329,12 +1333,11 @@ mod streaming_narrow {
                 let host_use: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
                     host_fn(c"uselocale", locale::uselocale as *const ());
                 let host_free = host_fn(c"freelocale", locale::freelocale as *const ());
-                let native =
-                    locale::newlocale(libc::LC_ALL_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut());
-                let host = host_new(libc::LC_ALL_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut());
+                let native = locale::newlocale(mask, name.as_ptr(), std::ptr::null_mut());
+                let host = host_new(mask, name.as_ptr(), std::ptr::null_mut());
                 assert!(
                     !native.is_null() && !host.is_null(),
-                    "C.UTF-8 locale required"
+                    "locale {name:?} required for both providers"
                 );
                 let native_previous = locale::uselocale(native);
                 let host_previous = host_use(host);
@@ -1349,6 +1352,262 @@ mod streaming_narrow {
                 }
             }
         }
+    }
+
+    #[test]
+    fn numeric_radix_preserves_byte_widths_counts_and_unread_input() {
+        const WORKER: &str =
+            "streaming_narrow::numeric_radix_preserves_byte_widths_counts_and_unread_input";
+        const CHILD: &str = "FRANKENLIBC_SCANF_RADIX_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let directory = if let Some(path) = std::env::var_os("FRANKENLIBC_TEST_LOCALE_PATH") {
+                std::path::PathBuf::from(path)
+            } else {
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let directory = std::env::temp_dir().join(format!(
+                    "frankenlibc-scanf-radix-{}-{nonce}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&directory).expect("create private locale directory");
+                for name in ["de_DE", "ps_AF"] {
+                    let output = std::process::Command::new("localedef")
+                        .args(["--no-archive", "-i", name, "-f", "UTF-8"])
+                        .arg(directory.join(format!("{name}.UTF-8")))
+                        .output()
+                        .expect("numeric scanf requires localedef and locale data");
+                    assert!(
+                        output.status.success(),
+                        "localedef {name}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                directory
+            };
+            for mode in ["strict", "hardened"] {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", WORKER, "--nocapture", "--test-threads=1"])
+                    .env(CHILD, "1")
+                    .env("LOCPATH", &directory)
+                    .env("FRANKENLIBC_MODE", mode)
+                    .output()
+                    .expect("start isolated numeric scanf test");
+                assert!(
+                    output.status.success(),
+                    "{mode}: {}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("NUMERIC_SCANF_OK"));
+                println!("{mode}: {}", String::from_utf8_lossy(&output.stdout));
+            }
+            return;
+        }
+
+        let (native, host) = (Api::native(), Api::host());
+        type Sscanf = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
+        type Swscanf =
+            unsafe extern "C" fn(*const libc::wchar_t, *const libc::wchar_t, ...) -> c_int;
+        let mut comparisons = 0usize;
+        let mut wide_comparisons = 0usize;
+        for (name, radix) in [(c"ps_AF.UTF-8", "٫"), (c"de_DE.UTF-8", ",")] {
+            // A mixed-category locale deliberately keeps LC_CTYPE in C. The
+            // numeric radix is a byte string, independent of text decoding.
+            for mask in [libc::LC_NUMERIC_MASK, libc::LC_ALL_MASK] {
+                let _locale = Utf8Locale::select_named(name, mask);
+                let mut inputs: Vec<Vec<u8>> = [
+                    format!("1{radix}5X"),
+                    format!("-{radix}25X"),
+                    format!("0x1{radix}8p+1X"),
+                    format!("12{radix}X"),
+                    format!("{radix}X"),
+                    "1.5X".to_owned(),
+                    "infX".to_owned(),
+                    "1e+X".to_owned(),
+                    "".to_owned(),
+                    "   ".to_owned(),
+                ]
+                .into_iter()
+                .map(String::into_bytes)
+                .collect();
+                if radix.len() > 1 {
+                    inputs.extend([
+                        vec![b'1', radix.as_bytes()[0], b'X'],
+                        vec![b'1', radix.as_bytes()[0]],
+                        vec![radix.as_bytes()[0], b'X'],
+                        vec![radix.as_bytes()[0]],
+                    ]);
+                }
+                for bytes in inputs {
+                    let input = std::ffi::CString::new(bytes).unwrap();
+                    let wide_input = std::str::from_utf8(input.as_bytes()).ok().map(|text| {
+                        text.chars()
+                            .map(|character| character as libc::wchar_t)
+                            .chain([0])
+                            .collect::<Vec<_>>()
+                    });
+                    for format in [
+                        c"%lf%n%c%n",
+                        c"%1lf%n%c%n",
+                        c"%2lf%n%c%n",
+                        c"%3lf%n%c%n",
+                        c"%4lf%n%c%n",
+                        c"%5lf%n%c%n",
+                    ] {
+                        // Width two ends inside the 0x prefix, before this
+                        // locale's radix. That existing prefix-only grammar
+                        // difference is outside this radix regression.
+                        if input.as_bytes().starts_with(b"0x") && format == c"%2lf%n%c%n" {
+                            continue;
+                        }
+                        for (symbol, native_scan, host_scan) in arms() {
+                            let observe_stream = |api: &Api, scan: FscanfFn| {
+                                let mut bytes = input.as_bytes().to_vec();
+                                let stream = unsafe {
+                                    (api.mem)(bytes.as_mut_ptr().cast(), bytes.len(), c"r".as_ptr())
+                                };
+                                assert!(!stream.is_null());
+                                let (mut number, mut before, mut byte, mut after) =
+                                    (-777.0f64, -1, 0xa5u8, -1);
+                                // SAFETY: the format always has double*, int*,
+                                // char*, int* destinations in that order.
+                                let rc = unsafe {
+                                    *(api.errno)() = 0;
+                                    scan(
+                                        stream,
+                                        format.as_ptr(),
+                                        &mut number,
+                                        &mut before,
+                                        &mut byte,
+                                        &mut after,
+                                    )
+                                };
+                                let state = api.status(stream);
+                                let position = unsafe { (api.tell)(stream) };
+                                let next = unsafe { (api.getc)(stream) };
+                                assert_eq!(unsafe { (api.close)(stream) }, 0);
+                                (
+                                    rc,
+                                    number.to_bits(),
+                                    before,
+                                    byte,
+                                    after,
+                                    position,
+                                    next,
+                                    state,
+                                )
+                            };
+                            assert_eq!(
+                                observe_stream(&native, native_scan),
+                                observe_stream(&host, host_scan),
+                                "{name:?} mask={mask} {symbol:?} {input:?} {format:?}"
+                            );
+                            comparisons += 1;
+                        }
+                        for (symbol, native_scan) in [
+                            (c"sscanf", fl::sscanf as Sscanf),
+                            (c"__isoc99_sscanf", fl::__isoc99_sscanf as Sscanf),
+                            (c"__isoc23_sscanf", isoc_abi::__isoc23_sscanf as Sscanf),
+                        ] {
+                            let host_scan: Sscanf =
+                                unsafe { host_fn(symbol, native_scan as *const ()) };
+                            let observe_buffer = |api: &Api, scan: Sscanf| {
+                                let (mut number, mut before, mut byte, mut after) =
+                                    (-777.0f64, -1, 0xa5u8, -1);
+                                let rc = unsafe {
+                                    *(api.errno)() = 0;
+                                    scan(
+                                        input.as_ptr(),
+                                        format.as_ptr(),
+                                        &mut number,
+                                        &mut before,
+                                        &mut byte,
+                                        &mut after,
+                                    )
+                                };
+                                (rc, number.to_bits(), before, byte, after, unsafe {
+                                    *(api.errno)()
+                                })
+                            };
+                            assert_eq!(
+                                observe_buffer(&native, native_scan),
+                                observe_buffer(&host, host_scan),
+                                "{name:?} mask={mask} {symbol:?} {input:?} {format:?}"
+                            );
+                            comparisons += 1;
+                            if format == c"%lf%n%c%n" {
+                                // This exact format uses the strict fast-float
+                                // path; the %n matrix above deliberately does not.
+                                let fast = |api: &Api, scan: Sscanf| {
+                                    let mut number = -777.0f64;
+                                    let rc = unsafe {
+                                        *(api.errno)() = 0;
+                                        scan(input.as_ptr(), c"%lf".as_ptr(), &mut number)
+                                    };
+                                    (rc, number.to_bits(), unsafe { *(api.errno)() })
+                                };
+                                assert_eq!(
+                                    fast(&native, native_scan),
+                                    fast(&host, host_scan),
+                                    "{name:?} mask={mask} {symbol:?} fast {input:?}"
+                                );
+                                comparisons += 1;
+                            }
+                        }
+                        if let Some(wide_input) = &wide_input {
+                            let wide_format = format
+                                .to_str()
+                                .unwrap()
+                                .replace("%c", "%lc")
+                                .chars()
+                                .map(|character| character as libc::wchar_t)
+                                .chain([0])
+                                .collect::<Vec<_>>();
+                            for (symbol, native_scan) in [
+                                (c"swscanf", frankenlibc_abi::wchar_abi::swscanf as Swscanf),
+                                (c"__isoc99_swscanf", isoc_abi::__isoc99_swscanf as Swscanf),
+                                (c"__isoc23_swscanf", isoc_abi::__isoc23_swscanf as Swscanf),
+                            ] {
+                                let host_scan: Swscanf =
+                                    unsafe { host_fn(symbol, native_scan as *const ()) };
+                                let observe_wide = |api: &Api, scan: Swscanf| {
+                                    let (mut number, mut before, mut character, mut after) =
+                                        (-777.0f64, -1, -1 as libc::wchar_t, -1);
+                                    // SAFETY: the wide format uses double*, int*,
+                                    // wchar_t*, int* destinations in that order.
+                                    let rc = unsafe {
+                                        *(api.errno)() = 0;
+                                        scan(
+                                            wide_input.as_ptr(),
+                                            wide_format.as_ptr(),
+                                            &mut number,
+                                            &mut before,
+                                            &mut character,
+                                            &mut after,
+                                        )
+                                    };
+                                    (rc, number.to_bits(), before, character, after, unsafe {
+                                        *(api.errno)()
+                                    })
+                                };
+                                assert_eq!(
+                                    observe_wide(&native, native_scan),
+                                    observe_wide(&host, host_scan),
+                                    "{name:?} mask={mask} {symbol:?} wide {input:?} {format:?}"
+                                );
+                                comparisons += 1;
+                                wide_comparisons += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(comparisons >= 1000);
+        assert!(wide_comparisons >= 500);
+        println!("NUMERIC_SCANF_OK comparisons={comparisons} wide={wide_comparisons}");
     }
 
     impl Drop for Utf8Locale {

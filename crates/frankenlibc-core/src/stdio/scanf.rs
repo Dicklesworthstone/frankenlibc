@@ -448,9 +448,10 @@ impl ScanSpec {
         input: &[u8],
         pos: usize,
         wide_input: bool,
+        radix: Option<&[u8]>,
     ) -> Option<(Option<ScanValue>, usize)> {
         self.scan_operation_kind()?
-            .scan(input, pos, self, wide_input)
+            .scan(input, pos, self, wide_input, radix)
     }
 }
 
@@ -474,10 +475,14 @@ impl ScanOperationKind {
         pos: usize,
         spec: &ScanSpec,
         wide_input: bool,
+        radix: Option<&[u8]>,
     ) -> Option<(Option<ScanValue>, usize)> {
         match self {
             ScanOperationKind::Int(kind) => kind.scan(input, pos, spec),
-            ScanOperationKind::Float => scan_float(input, pos, spec),
+            ScanOperationKind::Float => match radix {
+                Some(radix) => scan_float_with_radix(input, pos, spec, wide_input, radix),
+                None => scan_float(input, pos, spec),
+            },
             ScanOperationKind::Character => scan_char(input, pos, spec, wide_input),
             ScanOperationKind::String => scan_string(input, pos, spec, wide_input),
             ScanOperationKind::Scanset => scan_scanset(input, pos, spec),
@@ -1145,7 +1150,17 @@ pub struct ScanWriteError {
 /// Run the parsed directives against a NARROW (byte) input stream (sscanf et al.):
 /// `%s`/`%c`/`%[` field widths count bytes.
 pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
-    scan_input_impl::<true, false, _>(input, directives, |_, _, _| Ok(()))
+    scan_input_impl::<true, false, _>(input, directives, None, |_, _, _| Ok(()))
+}
+
+/// Scan with an immutable LC_NUMERIC radix. Narrow widths and `%n` count
+/// input bytes even when the radix occupies more than one byte.
+pub fn scan_input_with_radix(
+    input: &[u8],
+    directives: &[ScanDirective],
+    radix: &[u8],
+) -> ScanResult {
+    scan_input_impl::<true, false, _>(input, directives, Some(radix), |_, _, _| Ok(()))
 }
 
 /// The engine's `%f` spec, built ONCE.
@@ -1196,12 +1211,25 @@ pub fn scan_default_float(input: &[u8], pos: usize) -> Option<(f64, usize)> {
     }
 }
 
+/// The default float field with the same explicit radix used by the full
+/// scanner, including byte-accurate consumption of multibyte radix strings.
+pub fn scan_default_float_with_radix(
+    input: &[u8],
+    pos: usize,
+    radix: &[u8],
+) -> Option<(f64, usize)> {
+    match scan_float_with_radix(input, pos, default_float_spec(), false, radix) {
+        Some((Some(ScanValue::Float(value)), next)) => Some((value, next)),
+        _ => None,
+    }
+}
+
 /// Run the parsed directives against a WIDE input stream (swscanf et al.), passed
 /// in here as its UTF-8 multibyte encoding. `%s`/`%c` field widths count WIDE
 /// characters (whole UTF-8 sequences), matching the C wide-scanf semantics, even
 /// without an `l` length modifier.
 pub fn scan_input_wide(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
-    scan_input_impl::<true, true, _>(input, directives, |_, _, _| Ok(()))
+    scan_input_impl::<true, true, _>(input, directives, None, |_, _, _| Ok(()))
 }
 
 /// Scan a wide input with a writer invoked before parsing the next directive.
@@ -1221,7 +1249,21 @@ pub fn scan_input_wide_with<F>(input: &[u8], directives: &[ScanDirective], write
 where
     F: FnMut(&ScanSpec, Option<&ScanValue>, ScanWriteContext) -> Result<(), ScanWriteError>,
 {
-    scan_input_impl::<false, true, _>(input, directives, writer)
+    scan_input_impl::<false, true, _>(input, directives, None, writer)
+}
+
+/// Wide-buffer scanning with the UTF-8 encoding of LC_NUMERIC's wide radix.
+/// The encoding is independent of LC_CTYPE, just like the wide FILE scanner.
+pub fn scan_input_wide_with_radix<F>(
+    input: &[u8],
+    directives: &[ScanDirective],
+    radix: &[u8],
+    writer: F,
+) -> ScanResult
+where
+    F: FnMut(&ScanSpec, Option<&ScanValue>, ScanWriteContext) -> Result<(), ScanWriteError>,
+{
+    scan_input_impl::<false, true, _>(input, directives, Some(radix), writer)
 }
 
 /// One result from a wide stream read. The ABI owns decoding, errno, and FILE
@@ -1307,6 +1349,7 @@ pub struct WideScanSession<'a> {
     count: i32,
     consumed: usize,
     radix: u32,
+    narrow_radix: Option<&'a [u8]>,
     phase: WideScanPhase,
     lookahead: Option<u32>,
     replay: std::collections::VecDeque<u32>,
@@ -1328,6 +1371,7 @@ impl<'a> WideScanSession<'a> {
             count: 0,
             consumed: 0,
             radix,
+            narrow_radix: None,
             phase: WideScanPhase::Directive,
             lookahead: None,
             replay: std::collections::VecDeque::new(),
@@ -1346,12 +1390,14 @@ impl<'a> WideScanSession<'a> {
     #[must_use]
     pub fn new_narrow(
         directives: &'a [ScanDirective],
-        radix: u8,
+        radix: &'a [u8],
         codec: crate::iconv::MultibyteCodec,
     ) -> Self {
+        let radix = if radix.is_empty() { b"." } else { radix };
         Self {
             narrow_codec: Some(codec),
-            ..Self::new(directives, u32::from(radix))
+            narrow_radix: Some(radix),
+            ..Self::new(directives, u32::from(radix[0]))
         }
     }
 
@@ -1507,21 +1553,33 @@ impl<'a> WideScanSession<'a> {
             ScanOperationKind::Pointer => scan_pointer(token, 0, spec),
             _ => unreachable!("only numerical conversions collect a token"),
         };
-        let (value, end) = result.unwrap_or((None, 0));
+        // A consumed sign or radix without digits is a matching failure, but
+        // still belongs to the input item. Only a parser which supplies an
+        // explicit shorter end position may return those bytes to the stream.
+        let (value, end) = result.unwrap_or((None, token.len()));
         // Only the numerical parser can rewind a speculative spelling, such
         // as the optional suffix of infinity. Restore scalar radix characters,
         // not their normalized one-byte representation, before existing lookahead.
-        for &byte in token[end..].iter().rev() {
-            let character = if number.kind == ScanOperationKind::Float && byte == b'.' {
-                self.radix
+        for (index, &byte) in token[end..].iter().enumerate().rev() {
+            if number.radix_at == Some(end + index)
+                && let Some(radix) = self.narrow_radix
+            {
+                for &byte in radix.iter().rev() {
+                    self.replay.push_front(u32::from(byte));
+                }
             } else {
-                u32::from(byte)
-            };
-            self.replay.push_front(character);
+                let character = if number.kind == ScanOperationKind::Float && byte == b'.' {
+                    self.radix
+                } else {
+                    u32::from(byte)
+                };
+                self.replay.push_front(character);
+            }
         }
-        self.consumed -= token.len() - end;
+        let source_end = number.source_units(end);
+        self.consumed -= number.input_len - source_end;
         let Some(value) = value else {
-            let exhausted = token.is_empty()
+            let exhausted = number.input_len == 0
                 && matches!(
                     self.available(),
                     Some(WideScanInput::Eof | WideScanInput::Error)
@@ -1529,7 +1587,8 @@ impl<'a> WideScanSession<'a> {
             return Some(self.finish(exhausted));
         };
         if !spec.suppress {
-            if let Err(error) = writer(spec, WideScanEvent::Value(value), self.context(end)) {
+            if let Err(error) = writer(spec, WideScanEvent::Value(value), self.context(source_end))
+            {
                 return Some(self.finish(error.input_failure));
             }
             self.count = self.count.saturating_add(1);
@@ -1756,8 +1815,14 @@ impl<'a> WideScanSession<'a> {
                     let width = effective_width(spec, usize::MAX);
                     // Floats and complete word spellings end at their width.
                     // GNU integer fields still fetch a lookahead at that point.
-                    let at_width = number.bytes.len() == width;
-                    if number.complete() || (at_width && number.kind == ScanOperationKind::Float) {
+                    let at_width = number.input_len >= width;
+                    // GNU completes a multibyte radix once its first byte fits,
+                    // even when the remaining bytes cross the field width.
+                    if number.complete()
+                        || (at_width
+                            && number.kind == ScanOperationKind::Float
+                            && number.radix_prefix == 0)
+                    {
                         if let Some(result) = self.end_number(spec, number, writer) {
                             return result;
                         }
@@ -1769,7 +1834,11 @@ impl<'a> WideScanSession<'a> {
                             return self.need_input(WideScanReadPurpose::Conversion);
                         }
                         Some(WideScanInput::Character(character))
-                            if !at_width && number.accept(character, spec, self.radix) =>
+                            if (!at_width || number.radix_prefix != 0)
+                                && match self.narrow_radix {
+                                    Some(radix) => number.accept_narrow(character, spec, radix),
+                                    None => number.accept(character, spec, self.radix),
+                                } =>
                         {
                             self.consume();
                             self.phase = WideScanPhase::Number(number);
@@ -1818,6 +1887,13 @@ struct WideScanNumber {
     // Normalizing the locale radix to one byte preserves scalar field widths
     // and lets the existing numerical parsers run once without UTF-8 offsets.
     bytes: InlineVec<u8, 64>,
+    // Source units differ from normalized bytes for a narrow multibyte radix.
+    // There can be at most one radix in a numeric token; this offset is enough
+    // to reconstruct both a parser rewind and the original `%n` count.
+    input_len: usize,
+    radix_at: Option<usize>,
+    radix_len: usize,
+    radix_prefix: usize,
 }
 
 impl WideScanNumber {
@@ -1826,6 +1902,10 @@ impl WideScanNumber {
             kind,
             state: WideNumberState::Start,
             bytes: InlineVec::default(),
+            input_len: 0,
+            radix_at: None,
+            radix_len: 1,
+            radix_prefix: 0,
         }
     }
 
@@ -1833,14 +1913,54 @@ impl WideScanNumber {
         matches!(self.state, WideNumberState::Complete)
     }
 
-    fn accept(&mut self, character: u32, spec: &ScanSpec, radix: u32) -> bool {
-        let radix_position = self.kind == ScanOperationKind::Float
+    fn radix_position(&self) -> bool {
+        self.kind == ScanOperationKind::Float
             && matches!(
                 self.state,
                 WideNumberState::Start
                     | WideNumberState::FloatZero
                     | WideNumberState::Mantissa { .. }
-            );
+            )
+    }
+
+    fn source_units(&self, normalized: usize) -> usize {
+        normalized
+            + if self.radix_at.is_some_and(|index| index < normalized) {
+                self.radix_len - 1
+            } else {
+                0
+            }
+            + self.radix_prefix
+    }
+
+    fn accept_narrow(&mut self, character: u32, spec: &ScanSpec, radix: &[u8]) -> bool {
+        if self.radix_prefix != 0 {
+            if character != u32::from(radix[self.radix_prefix]) {
+                return false;
+            }
+            self.input_len += 1;
+            self.radix_prefix += 1;
+            if self.radix_prefix == radix.len() {
+                self.radix_at = Some(self.bytes.len());
+                self.radix_len = radix.len();
+                self.radix_prefix = 0;
+                self.bytes.push(b'.');
+            }
+            return true;
+        }
+        if radix.len() > 1 && self.radix_position() && character == u32::from(radix[0]) {
+            if !self.accept_byte(b'.', spec) {
+                return false;
+            }
+            self.input_len += 1;
+            self.radix_prefix = 1;
+            return true;
+        }
+        self.accept(character, spec, u32::from(radix[0]))
+    }
+
+    fn accept(&mut self, character: u32, spec: &ScanSpec, radix: u32) -> bool {
+        let radix_position = self.radix_position();
         let byte = if radix_position && character == radix {
             b'.'
         } else if character < 0x80 && !(radix_position && character == u32::from(b'.')) {
@@ -1850,6 +1970,7 @@ impl WideScanNumber {
         };
         if self.accept_byte(byte, spec) {
             self.bytes.push(byte);
+            self.input_len += 1;
             true
         } else {
             false
@@ -2037,6 +2158,7 @@ impl WideScanNumber {
 fn scan_input_impl<const COLLECT: bool, const WIDE_INPUT: bool, F>(
     input: &[u8],
     directives: &[ScanDirective],
+    radix: Option<&[u8]>,
     mut writer: F,
 ) -> ScanResult
 where
@@ -2129,7 +2251,7 @@ where
                 pos += character.expect("the complete wide literal matched").1;
             }
             ScanDirective::Spec(spec) => {
-                let result = spec.scan_at(input, pos, wide_input);
+                let result = spec.scan_at(input, pos, wide_input, radix);
                 match result {
                     None => {
                         // Matching failure or input exhaustion.
@@ -2728,6 +2850,85 @@ fn float_scan_value(spec: &ScanSpec, val: f64, token: &[u8]) -> ScanValue {
         ScanValue::LongDouble(crate::float128::strtold_scan_c(token).bytes)
     } else {
         ScanValue::Float(val)
+    }
+}
+
+/// Parse a non-C radix through the same resumable numerical grammar as FILE
+/// input. Only this locale path needs normalization; the C fast parser keeps
+/// its allocation-free behavior. The session records source units before
+/// normalization, so a narrow radix cannot shorten a field width or `%n`.
+fn scan_float_with_radix(
+    input: &[u8],
+    pos: usize,
+    spec: &ScanSpec,
+    wide_input: bool,
+    radix: &[u8],
+) -> Option<(Option<ScanValue>, usize)> {
+    if radix.is_empty() || radix == b"." {
+        return scan_float_c_radix(input, pos, spec);
+    }
+    let tail = input.get(pos..)?;
+    let mut field = spec.clone();
+    // The surrounding scanner owns suppression and assignment. This local
+    // numerical session must still deliver the parsed value for that scanner.
+    field.suppress = false;
+    let directives = [ScanDirective::Spec(field)];
+    let mut session = if wide_input {
+        WideScanSession::new(&directives, wide_character_at(radix, 0)?.0)
+    } else {
+        WideScanSession::new_narrow(&directives, radix, crate::iconv::MultibyteCodec::Utf8)
+    };
+    let mut offset = 0;
+    let mut supplied = None;
+    let mut value = None;
+    let summary = loop {
+        let progress = session.resume(
+            supplied.take(),
+            &mut |_, event, _| {
+                if let WideScanEvent::Value(parsed) = event {
+                    value = Some(parsed);
+                }
+                Ok(())
+            },
+            &|character| {
+                if wide_input {
+                    crate::string::wchar::iswspace(character)
+                } else {
+                    matches!(character, 9..=13 | 32)
+                }
+            },
+        );
+        match progress {
+            WideScanProgress::Complete(summary) => break summary,
+            WideScanProgress::NeedInput(_) => {
+                let next = if wide_input {
+                    wide_character_at(tail, offset)
+                } else {
+                    tail.get(offset).map(|&byte| (u32::from(byte), 1))
+                };
+                supplied = Some(match next {
+                    Some((character, length)) => {
+                        offset += length;
+                        WideScanInput::Character(character)
+                    }
+                    None => WideScanInput::Eof,
+                });
+            }
+        }
+    };
+    let consumed = if wide_input {
+        let mut offset = 0;
+        for _ in 0..summary.consumed {
+            offset += wide_character_at(tail, offset)?.1;
+        }
+        offset
+    } else {
+        summary.consumed
+    };
+    if value.is_none() && (consumed == 0 || summary.input_failure) {
+        None
+    } else {
+        Some((value, pos + consumed))
     }
 }
 
@@ -5004,9 +5205,18 @@ mod wide_stream_scan_tests {
     }
 
     fn run_narrow(format: &str, input: &[u8], terminal: Option<WideScanInput>) -> (Trace, bool) {
+        run_narrow_radix(format, input, terminal, b".")
+    }
+
+    fn run_narrow_radix(
+        format: &str,
+        input: &[u8],
+        terminal: Option<WideScanInput>,
+        radix: &[u8],
+    ) -> (Trace, bool) {
         let directives = parse_scanf_format(format.as_bytes());
         let mut session =
-            WideScanSession::new_narrow(&directives, b'.', crate::iconv::MultibyteCodec::Utf8);
+            WideScanSession::new_narrow(&directives, radix, crate::iconv::MultibyteCodec::Utf8);
         let mut source = input.iter().copied();
         let mut texts: Vec<Vec<u32>> = Vec::new();
         let mut values = Vec::new();
@@ -5052,6 +5262,105 @@ mod wide_stream_scan_tests {
             },
             session.encoding_error(),
         )
+    }
+
+    #[test]
+    fn multibyte_radix_preserves_narrow_widths_and_source_counts() {
+        // Independently measured with GNU fscanf and the ps_AF LC_NUMERIC
+        // radix U+066B: completing the radix can cross a byte field width.
+        let radix = "٫".as_bytes();
+        for (format, input, expected, before, character, consumed) in [
+            ("%1lf%n%c", "1٫5X".as_bytes(), 1.0_f64, 1, 0xd9, 2),
+            ("%2lf%n%c", "1٫5X".as_bytes(), 1.0, 3, b'5', 4),
+            ("%3lf%n%c", "1٫5X".as_bytes(), 1.0, 3, b'5', 4),
+            ("%4lf%n%c", "1٫5X".as_bytes(), 1.5, 4, b'X', 5),
+            ("%lf%n%c", b"1\xd9X".as_slice(), 1.0, 2, b'X', 3),
+            ("%4lf%n%c", "0x1٫8p1X".as_bytes(), 1.0, 5, b'8', 6),
+            ("%lf%n%c", "1٫5٫6X".as_bytes(), 1.5, 4, 0xd9, 5),
+        ] {
+            let (trace, encoding_error) = run_narrow_radix(format, input, None, radix);
+            assert!(!encoding_error, "{format} {input:?}");
+            assert_eq!(trace.summary.count, 2, "{format} {input:?}");
+            assert_eq!(trace.summary.consumed, consumed, "{format} {input:?}");
+            assert!(!trace.summary.input_failure);
+            assert_eq!(trace.texts, [vec![u32::from(character)]]);
+            assert!(
+                matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(count)]
+                if value.to_bits() == expected.to_bits() && *count == before)
+            );
+
+            let directives = parse_scanf_format(format.as_bytes());
+            let buffer = scan_input_with_radix(input, &directives, radix);
+            assert_eq!(buffer.count, 2, "buffer {format} {input:?}");
+            assert_eq!(buffer.consumed, consumed, "buffer {format} {input:?}");
+            assert!(!buffer.input_failure);
+            assert!(
+                matches!(buffer.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(count), ScanValue::Char(bytes)]
+                if value.to_bits() == expected.to_bits() && *count == before && bytes.as_slice() == [character])
+            );
+        }
+    }
+
+    #[test]
+    fn multibyte_radix_retains_partial_input_and_distinguishes_eof() {
+        let radix = "٫".as_bytes();
+        for (input, consumed, unread) in [
+            (b"\xd9X".as_slice(), 1, vec![u32::from(b'X')]),
+            ("٫X".as_bytes(), 2, vec![u32::from(b'X')]),
+            (b"\xd9".as_slice(), 1, Vec::new()),
+        ] {
+            let (trace, encoding_error) =
+                run_narrow_radix("%lf%n", input, Some(WideScanInput::Eof), radix);
+            assert!(!encoding_error);
+            assert_eq!(trace.summary.count, 0, "{input:?}");
+            assert_eq!(trace.summary.consumed, consumed, "{input:?}");
+            assert!(!trace.summary.input_failure, "{input:?}");
+            assert!(trace.values.is_empty());
+            assert_eq!(trace.unread, unread);
+
+            let directives = parse_scanf_format(b"%lf%n");
+            let buffer = scan_input_with_radix(input, &directives, radix);
+            assert_eq!(buffer.count, 0);
+            assert_eq!(buffer.consumed, consumed);
+            assert!(!buffer.input_failure);
+            assert!(buffer.values.is_empty());
+        }
+        let (trace, _) = run_narrow_radix("%lf%n", b"1\xd9", Some(WideScanInput::Eof), radix);
+        assert_eq!(trace.summary.count, 1);
+        assert_eq!(trace.summary.consumed, 2);
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::Float(1.0), ScanValue::CharsConsumed(2)]
+        ));
+
+        let directives = parse_scanf_format(b"%lf");
+        for input in [b"".as_slice(), b"   ".as_slice()] {
+            let buffer = scan_input_with_radix(input, &directives, radix);
+            assert_eq!(buffer.count, 0);
+            assert!(buffer.input_failure, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn multibyte_radix_wide_buffer_width_counts_characters() {
+        let directives = parse_scanf_format_wide(b"%2lf%n%lc");
+        let mut values = Vec::new();
+        let result = scan_input_wide_with_radix(
+            "1٫5X".as_bytes(),
+            &directives,
+            "٫".as_bytes(),
+            |_, value, _| {
+                values.push(value.unwrap().clone());
+                Ok(())
+            },
+        );
+        assert_eq!(result.count, 2);
+        assert_eq!(result.consumed, 4);
+        assert!(!result.input_failure);
+        assert!(
+            matches!(values.as_slice(), [ScanValue::Float(1.0), ScanValue::CharsConsumed(2), ScanValue::Char(bytes)]
+            if bytes.as_slice() == b"5")
+        );
     }
 
     #[test]
@@ -5570,7 +5879,7 @@ mod wide_stream_scan_tests {
     }
 
     #[test]
-    fn locale_radix_counts_scalars_and_rewinds_its_original_character() {
+    fn locale_radix_counts_scalars_and_preserves_matching_failure_consumption() {
         let trace = run_locale(
             "%3lf%n%1c",
             "1٫5X",
@@ -5603,8 +5912,11 @@ mod wide_stream_scan_tests {
         assert_eq!(trace.texts, [vec![u32::from(b'.')]]);
         assert_eq!(trace.requests.len(), 2);
         let trace = run_locale("%lf", "٫X", None, 0x66b, &crate::string::wchar::iswspace);
-        assert_eq!(trace.summary.consumed, 0);
-        assert_eq!(trace.unread, [0x66b, u32::from(b'X')]);
+        // GNU fwscanf consumes the radix as an incomplete input item, fails
+        // the conversion, and leaves only X unread (two UTF-8 source bytes,
+        // one wide character). The former rewind expectation was incorrect.
+        assert_eq!(trace.summary.consumed, 1);
+        assert_eq!(trace.unread, [u32::from(b'X')]);
     }
 
     #[test]

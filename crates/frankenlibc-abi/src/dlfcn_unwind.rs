@@ -150,6 +150,325 @@ fn readable_end(object: &LoadedObject, mapping: &Mapping, offset: usize) -> Opti
     end.map(|end| end.min(next_boundary))
 }
 
+// A search-table count cannot by itself establish the end of an unterminated
+// stream. For this fallback the following GNU property note provides an
+// independent, readable metadata boundary; its bytes are never overwritten.
+fn property_boundary(
+    object: &LoadedObject,
+    mapping: &Mapping,
+    offset: usize,
+    limit: usize,
+) -> Option<usize> {
+    let header = object
+        .program_headers
+        .iter()
+        .filter(|header| header.p_type == ProgramType::GnuProperty)
+        .filter(|header| {
+            usize::try_from(header.p_vaddr)
+                .is_ok_and(|start| offset < start && start <= limit)
+        })
+        .min_by_key(|header| header.p_vaddr)?;
+    let start = usize::try_from(header.p_vaddr).ok()?;
+    let len = usize::try_from(header.p_memsz).ok()?;
+    if header.p_filesz != header.p_memsz
+        || len < 24
+        || !start.is_multiple_of(8)
+        || start.checked_add(len)? > readable_end(object, mapping, start)?
+    {
+        return None;
+    }
+    let address = mapping.base.checked_add(start)?;
+    // SAFETY: the entire note lies in a checked readable owned mapping span.
+    let note = unsafe { std::slice::from_raw_parts(address as *const u8, len) };
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(note.get(at..at.checked_add(4)?)?.try_into().ok()?))
+    };
+    let desc_len = usize::try_from(word(4)?).ok()?;
+    if word(0)? != 4
+        || word(8)? != 5
+        || note.get(12..16)? != b"GNU\0"
+        || desc_len.checked_add(16)? != len
+        || !desc_len.is_multiple_of(8)
+    {
+        return None;
+    }
+    let mut cursor = 16usize;
+    while cursor < len {
+        let data_len = usize::try_from(word(cursor.checked_add(4)?)?).ok()?;
+        cursor = cursor.checked_add(8)?.checked_add(data_len)?;
+        cursor = cursor.checked_add(7)? & !7;
+        if cursor > len {
+            return None;
+        }
+    }
+    Some(start)
+}
+
+struct IndexedFrame {
+    pc: usize,
+    fde: usize,
+    seen: bool,
+}
+
+fn frame_index(
+    header: &[u8],
+    mut cursor: usize,
+    count: usize,
+    address: usize,
+) -> Option<Vec<IndexedFrame>> {
+    // GNU's usual ELF64 header table is a sorted sequence of data-relative
+    // signed 32-bit (initial PC, FDE) pairs. Other tables retain the original
+    // terminated-stream contract.
+    if count == 0
+        || header[3] != 0x3b
+        || cursor.checked_add(count.checked_mul(8)?)? != header.len()
+    {
+        return None;
+    }
+    let mut entries = Vec::new();
+    entries.try_reserve_exact(count).ok()?;
+    let mut previous = None;
+    for _ in 0..count {
+        let pc = pointer(header, &mut cursor, 0x3b, address)?;
+        let fde = pointer(header, &mut cursor, 0x3b, address)?;
+        if previous.is_some_and(|previous| previous >= pc) {
+            return None;
+        }
+        previous = Some(pc);
+        entries.push(IndexedFrame { pc, fde, seen: false });
+    }
+    Some(entries)
+}
+
+struct CopiedCie {
+    source: usize,
+    output: usize,
+    encoding: u8,
+}
+
+// Only instructions whose operands remain valid after relocation are copied.
+// In particular DW_CFA_set_loc uses the CIE's pointer encoding, and expression
+// blocks can contain DW_OP_GNU_encoded_addr. Neither may be blindly copied.
+fn position_independent_cfi(bytes: &[u8]) -> Option<()> {
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        let opcode = *bytes.get(cursor)?;
+        cursor = cursor.checked_add(1)?;
+        match opcode & 0xc0 {
+            0x40 | 0xc0 => {}
+            0x80 => {
+                leb(bytes, &mut cursor, false)?;
+            }
+            _ => match opcode {
+                0x00 | 0x0a | 0x0b => {}
+                0x02..=0x04 => {
+                    let size = 1usize << (opcode - 2);
+                    let end = cursor.checked_add(size)?;
+                    bytes.get(cursor..end)?;
+                    cursor = end;
+                }
+                0x05 | 0x09 | 0x0c | 0x14 | 0x2f => {
+                    leb(bytes, &mut cursor, false)?;
+                    leb(bytes, &mut cursor, false)?;
+                }
+                0x06..=0x08 | 0x0d | 0x0e | 0x2e => {
+                    leb(bytes, &mut cursor, false)?;
+                }
+                0x11 | 0x12 | 0x15 => {
+                    leb(bytes, &mut cursor, false)?;
+                    leb(bytes, &mut cursor, true)?;
+                }
+                0x13 => {
+                    leb(bytes, &mut cursor, true)?;
+                }
+                _ => return None,
+            },
+        }
+    }
+    Some(())
+}
+
+fn append_record(output: &mut Vec<u8>, body: &[u8]) -> Option<()> {
+    // Keep absolute ELF64 pointer operands aligned. Padding is DW_CFA_nop.
+    let total = body.len().checked_add(4)?.checked_add(7)? & !7;
+    let length = u32::try_from(total.checked_sub(4)?).ok()?;
+    if length == u32::MAX {
+        return None;
+    }
+    let end = output.len().checked_add(total)?;
+    output.try_reserve(total).ok()?;
+    output.extend_from_slice(&length.to_le_bytes());
+    output.extend_from_slice(body);
+    output.resize(end, 0);
+    Some(())
+}
+
+fn copy_cie(record: &[u8], source: usize, output: &mut Vec<u8>) -> Option<CopiedCie> {
+    let version = *record.get(4)?;
+    let augmentation_end =
+        5usize.checked_add(record.get(5..)?.iter().position(|byte| *byte == 0)?)?;
+    if record.get(5..augmentation_end)? != b"zR" {
+        return None;
+    }
+    let mut fixups = Vec::new();
+    let parsed = cie_record(record, source, source.checked_add(4)?, &mut fixups)?;
+    // This normalizer accepts only zR, which contains no CIE pointers that
+    // need rebasing. Never discard a fixup from a broader augmentation.
+    if !fixups.is_empty() {
+        return None;
+    }
+    let mut cursor = augmentation_end.checked_add(1)?;
+    if version == 4 {
+        cursor = cursor.checked_add(2)?;
+    }
+    leb(record, &mut cursor, false)?;
+    leb(record, &mut cursor, true)?;
+    if version == 1 {
+        record.get(cursor)?;
+        cursor = cursor.checked_add(1)?;
+    } else {
+        leb(record, &mut cursor, false)?;
+    }
+    if leb(record, &mut cursor, false)? != 1 {
+        return None;
+    }
+    let encoding_offset = cursor;
+    cursor = cursor.checked_add(1)?;
+    position_independent_cfi(record.get(cursor..)?)?;
+    let mut body = Vec::new();
+    body.try_reserve_exact(record.len()).ok()?;
+    body.extend_from_slice(record);
+    // The normalized FDEs carry absolute ELF64 addresses and ranges.
+    *body.get_mut(encoding_offset)? = 0;
+    let copied = CopiedCie {
+        source,
+        output: output.len(),
+        encoding: parsed.fde_encoding,
+    };
+    append_record(output, &body)?;
+    Some(copied)
+}
+
+fn mapped_code_range(
+    object: &LoadedObject,
+    mapping: &Mapping,
+    pc: usize,
+    range: usize,
+) -> Option<()> {
+    let first = pc.checked_sub(mapping.base)?;
+    let last = first.checked_add(range)?;
+    if range == 0 || last > mapping.len {
+        return None;
+    }
+    let first = u64::try_from(first).ok()?;
+    let last = u64::try_from(last).ok()?;
+    object
+        .program_headers
+        .iter()
+        .any(|header| {
+            header.is_load()
+                && header.p_flags.is_executable()
+                && header.p_vaddr <= first
+                && header
+                    .p_vaddr
+                    .checked_add(header.p_memsz)
+                    .is_some_and(|end| last <= end)
+        })
+        .then_some(())
+}
+
+fn normalize_unterminated(
+    bytes: &[u8],
+    address: usize,
+    mut index: Vec<IndexedFrame>,
+    object: &LoadedObject,
+    mapping: &Mapping,
+) -> Option<Vec<u64>> {
+    let mut output = Vec::new();
+    let mut cies: Vec<CopiedCie> = Vec::new();
+    let mut at = 0usize;
+    while at < bytes.len() {
+        let id_at = at.checked_add(4)?;
+        let length = u32::from_le_bytes(bytes.get(at..id_at)?.try_into().ok()?);
+        // A zero before the independently established boundary is not an
+        // unterminated stream, and must not bypass a count mismatch.
+        if length < 4 || length == u32::MAX {
+            return None;
+        }
+        let end = id_at.checked_add(usize::try_from(length).ok()?)?;
+        let record = bytes.get(id_at..end)?;
+        let delta = u32::from_le_bytes(record.get(..4)?.try_into().ok()?) as usize;
+        if delta == 0 {
+            let copied = copy_cie(record, at, &mut output)?;
+            cies.try_reserve(1).ok()?;
+            cies.push(copied);
+        } else {
+            let target = id_at.checked_sub(delta)?;
+            let cie = &cies[cies.binary_search_by_key(&target, |cie| cie.source).ok()?];
+            let mut cursor = 4usize;
+            let raw = encoded(record, &mut cursor, cie.encoding)?;
+            // libgcc treats a zero encoded initial PC as an absent FDE.
+            if raw == 0 {
+                return None;
+            }
+            let base = match cie.encoding & 0xf0 {
+                0x00 => 0,
+                0x10 => address.checked_add(id_at)?.checked_add(4)?,
+                _ => return None,
+            };
+            let pc = usize::try_from(base as i128 + raw).ok()?;
+            let range = usize::try_from(encoded(record, &mut cursor, cie.encoding & 0x0f)?).ok()?;
+            mapped_code_range(object, mapping, pc, range)?;
+            // zR has no per-FDE augmentation payload.
+            if leb(record, &mut cursor, false)? != 0 {
+                return None;
+            }
+            let instructions = record.get(cursor..)?;
+            position_independent_cfi(instructions)?;
+            let slot = index.binary_search_by_key(&pc, |entry| entry.pc).ok()?;
+            let entry = &mut index[slot];
+            if entry.seen || entry.fde != address.checked_add(at)? {
+                return None;
+            }
+            entry.seen = true;
+            let delta = output.len().checked_add(4)?.checked_sub(cie.output)?;
+            let delta = u32::try_from(delta).ok()?;
+            let mut body = Vec::new();
+            body.try_reserve_exact(21usize.checked_add(instructions.len())?).ok()?;
+            body.extend_from_slice(&delta.to_le_bytes());
+            body.extend_from_slice(&u64::try_from(pc).ok()?.to_le_bytes());
+            body.extend_from_slice(&u64::try_from(range).ok()?.to_le_bytes());
+            body.push(0);
+            body.extend_from_slice(instructions);
+            append_record(&mut output, &body)?;
+        }
+        at = end;
+    }
+    if at != bytes.len() || index.iter().any(|entry| !entry.seen) {
+        return None;
+    }
+    output.try_reserve(4).ok()?;
+    output.extend_from_slice(&[0; 4]);
+    let plan = validate_stream(&output, Some(index.len()))??;
+    // The normalized output must be complete, terminated, and entirely
+    // absolute; a partial/count-bounded plan is insufficient here.
+    if !plan.terminated_in_place
+        || plan.byte_len.checked_add(4)? != output.len()
+        || !plan.pcrel_fixups.is_empty()
+    {
+        return None;
+    }
+    // Vec<u64> supplies ELF64 alignment and stable storage through deregister.
+    let mut aligned = Vec::new();
+    aligned.try_reserve_exact(output.len().checked_add(7)? / 8).ok()?;
+    for chunk in output.chunks(8) {
+        let mut word = [0; 8];
+        word[..chunk.len()].copy_from_slice(chunk);
+        aligned.push(u64::from_ne_bytes(word));
+    }
+    Some(aligned)
+}
+
 fn pointer(bytes: &[u8], cursor: &mut usize, encoding: u8, base: usize) -> Option<usize> {
     let at = *cursor;
     let raw = encoded(bytes, cursor, encoding)?;

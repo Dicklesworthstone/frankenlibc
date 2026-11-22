@@ -182,6 +182,130 @@ fn child_case(name: &str) -> bool {
 }
 
 #[test]
+fn native_dynamic_tls_resolver_matches_imports_and_module_ownership() {
+    if !child_case("native_dynamic_tls_resolver_matches_imports_and_module_ownership") {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for loader in [Loader::Host, Loader::Native] {
+        let f = Fixture::new();
+        let path = f.compile(
+            "dynamic_resolver",
+            r#"
+            #define _GNU_SOURCE
+            #include <dlfcn.h>
+            #include <stddef.h>
+            struct value_type { long prefix; long value; unsigned char zeroes[16]; };
+            static __thread struct value_type tls_value = {11, 41, {0}};
+            struct tls_index { size_t module; size_t offset; };
+            extern void *__tls_get_addr(struct tls_index *);
+            typedef void *(*resolve_fn)(struct tls_index *);
+            long value(void) { return tls_value.value; }
+            long probe(void *handle, int variant, long expected, int fresh) {
+                const char *versions[] = {0, "GLIBC_2.3", "GLIBC_2.2.5",
+                                         "GLIBC_PRIVATE", "GLIBC_9.99", ""};
+                dlerror();
+                void *address = variant
+                    ? dlvsym(RTLD_DEFAULT, "__tls_get_addr", versions[variant])
+                    : dlsym(RTLD_DEFAULT, "__tls_get_addr");
+                if (variant >= 2) {
+                    const char *error = dlerror();
+                    return !address && error && *error ? 0 : -10;
+                }
+                /* Reject a wrong provider BEFORE it can interpret a native
+                   module ID as an unrelated host DTV entry. */
+                if (address != (void *)__tls_get_addr) return -11;
+                if (dlerror()) return -12;
+                size_t module = 0;
+                void *base = 0;
+                if (dlinfo(handle, RTLD_DI_TLS_MODID, &module) || !module) return -13;
+                if (dlinfo(handle, RTLD_DI_TLS_DATA, &base)) return -14;
+                if (fresh && base) return -15;
+                struct tls_index index = {module, offsetof(struct value_type, value)};
+                long *resolved = ((resolve_fn)address)(&index);
+                if (!resolved || *resolved != expected) return -16;
+                if (resolved != &tls_value.value) return -17;
+                if (dlinfo(handle, RTLD_DI_TLS_DATA, &base) || !base) return -18;
+                if ((char *)resolved - (char *)base != offsetof(struct value_type, value))
+                    return -19;
+                if (tls_value.prefix != 11 || tls_value.zeroes[15] != 0) return -20;
+                return ++*resolved;
+            }
+        "#,
+            &[],
+            &[],
+        );
+        let handle = loader.open(&path, libc::RTLD_NOW);
+        assert!(!handle.is_null());
+        type Probe = unsafe extern "C" fn(*mut c_void, c_int, i64, c_int) -> i64;
+        // SAFETY: the compiled fixture declares the exact probe signature.
+        let probe: Probe = unsafe { std::mem::transmute(loader.symbol(handle, "probe")) };
+        for version in 2..6 {
+            assert_eq!(unsafe { probe(handle, version, 41, 1) }, 0);
+        }
+        assert_eq!(unsafe { probe(handle, 0, 41, 1) }, 42);
+        assert_eq!(unsafe { probe(handle, 1, 42, 0) }, 43);
+        let handle_address = handle as usize;
+        std::thread::spawn(move || {
+            let handle = handle_address as *mut c_void;
+            assert_eq!(unsafe { probe(handle, 1, 41, 1) }, 42);
+            assert_eq!(unsafe { probe(handle, 0, 42, 0) }, 43);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(loader.value(handle, "value"), 43);
+        loader.close(handle);
+    }
+}
+
+#[test]
+fn native_dynamic_tls_hooks_preserve_scoped_definitions() {
+    if !child_case("native_dynamic_tls_hooks_preserve_scoped_definitions") {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for loader in [Loader::Host, Loader::Native] {
+        let f = Fixture::new();
+        let version = f.dir.join("hooks.map");
+        std::fs::write(
+            &version,
+            "FL_TLS_HOOK_1 { global: __tls_get_addr; __cxa_thread_atexit_impl; };",
+        )
+        .unwrap();
+        let flag = format!("-Wl,--version-script={}", version.display());
+        let path = f.compile(
+            "scoped_hooks",
+            r#"
+            #define _GNU_SOURCE
+            #include <dlfcn.h>
+            void *__tls_get_addr(void *index) { return index; }
+            int __cxa_thread_atexit_impl(void (*callback)(void *), void *arg, void *owner) {
+                (void)callback; (void)arg; (void)owner;
+                return 71;
+            }
+            long probe(void) {
+                const char *names[] = {"__tls_get_addr", "__cxa_thread_atexit_impl"};
+                void *expected[] = {(void *)__tls_get_addr, (void *)__cxa_thread_atexit_impl};
+                for (unsigned i = 0; i < 2; ++i) {
+                    if (dlsym(RTLD_DEFAULT, names[i]) != expected[i]) return 1;
+                    /* A native definition may supply a version absent from the
+                       builtin hook; its local scope must still be searched. */
+                    if (dlvsym(RTLD_DEFAULT, names[i], "FL_TLS_HOOK_1") != expected[i]) return 2;
+                }
+                return 0;
+            }
+        "#,
+            &[],
+            &[&flag],
+        );
+        let handle = loader.open(&path, libc::RTLD_NOW | libc::RTLD_DEEPBIND);
+        assert!(!handle.is_null());
+        assert_eq!(loader.value(handle, "probe"), 0);
+        loader.close(handle);
+    }
+}
+
+#[test]
 fn native_tls_data_bss_alignment_and_dlsym_match_host() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {

@@ -122,6 +122,18 @@ unsafe extern "C" fn native_dlvsym(
 /// or host lookup: that can mix incompatible allocator/FILE ownership domains.
 /// Native scoped definitions are searched before applying this fallback.
 pub(super) fn runtime_export(name: &str, version: Option<&str>) -> Option<Option<u64>> {
+    // Native TLS module IDs and destructor owners belong to this loader.
+    // Dynamically obtained hooks must use the same private implementations as
+    // compiler imports; host hooks would interpret these IDs in the host DTV
+    // or submit native owners to a foreign destructor queue. Keep recognized
+    // but unsupported versions authoritative, just like other owned runtimes.
+    match name {
+        "__tls_get_addr" => return Some(tls::resolver_address(version)),
+        "__cxa_thread_atexit_impl" => {
+            return Some(super::thread_exit::resolver_address(version));
+        }
+        _ => {}
+    }
     memory::address(name, None)?;
     Some(memory::address(name, version))
 }
