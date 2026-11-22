@@ -899,28 +899,23 @@ pub const FP_SUBNORMAL: i32 = 3;
 pub const FP_NORMAL: i32 = 4;
 
 /// Classify a double-precision float (glibc `__fpclassify`).
-#[inline]
+#[inline(always)]
 pub fn fpclassify(x: f64) -> i32 {
-    const ABS_MASK: u64 = 0x7fff_ffff_ffff_ffff;
-    const EXP_MASK: u64 = 0x7ff0_0000_0000_0000;
-
-    let magnitude = x.to_bits() & ABS_MASK;
-    match magnitude & EXP_MASK {
-        0 => {
-            if magnitude == 0 {
-                FP_ZERO
-            } else {
-                FP_SUBNORMAL
-            }
-        }
-        EXP_MASK => {
-            if magnitude == EXP_MASK {
-                FP_INFINITE
-            } else {
-                FP_NAN
-            }
-        }
-        _ => FP_NORMAL,
+    // Shifting left by 1 strips the sign bit in one instruction (`add rax, rax`)
+    // and avoids 64-bit `movabs` mask immediates on x86_64.
+    let u = x.to_bits() << 1;
+    let exp = (u >> 53) as u32;
+    if exp.wrapping_sub(1) < 2046 {
+        return FP_NORMAL;
+    }
+    if exp == 0 {
+        return if u == 0 { FP_ZERO } else { FP_SUBNORMAL };
+    }
+    // `exp == 2047`: bits 1..=52 of `u` hold the mantissa, so `u << 11 == 0` iff Inf.
+    if (u << 11) == 0 {
+        FP_INFINITE
+    } else {
+        FP_NAN
     }
 }
 

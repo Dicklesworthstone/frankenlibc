@@ -1361,28 +1361,25 @@ pub const FP_SUBNORMAL_F32: i32 = 3;
 pub const FP_NORMAL_F32: i32 = 4;
 
 /// Classify a single-precision float (glibc `__fpclassifyf`).
-#[inline]
+#[inline(always)]
 pub fn fpclassifyf(x: f32) -> i32 {
-    const ABS_MASK: u32 = 0x7fff_ffff;
-    const EXP_MASK: u32 = 0x7f80_0000;
-
-    let magnitude = x.to_bits() & ABS_MASK;
-    match magnitude & EXP_MASK {
-        0 => {
-            if magnitude == 0 {
-                FP_ZERO_F32
-            } else {
-                FP_SUBNORMAL_F32
-            }
-        }
-        EXP_MASK => {
-            if magnitude == EXP_MASK {
-                FP_INFINITE_F32
-            } else {
-                FP_NAN_F32
-            }
-        }
-        _ => FP_NORMAL_F32,
+    // Shifting left by 1 strips the sign bit in one instruction (`add eax, eax`).
+    let u = x.to_bits() << 1;
+    let exp = u >> 24;
+    if exp.wrapping_sub(1) < 254 {
+        return FP_NORMAL_F32;
+    }
+    if exp == 0 {
+        return if u == 0 {
+            FP_ZERO_F32
+        } else {
+            FP_SUBNORMAL_F32
+        };
+    }
+    if (u << 8) == 0 {
+        FP_INFINITE_F32
+    } else {
+        FP_NAN_F32
     }
 }
 
