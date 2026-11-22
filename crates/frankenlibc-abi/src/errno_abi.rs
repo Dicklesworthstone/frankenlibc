@@ -136,8 +136,7 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 /// use FrankenLibC's owned TLS slot.
 ///
 /// Uses volatile write to prevent the LTO optimizer from eliminating the store.
-#[cold]
-#[inline(never)]
+#[inline]
 pub unsafe fn set_abi_errno(val: c_int) {
     unsafe { set_abi_errno_local(val) };
 }
