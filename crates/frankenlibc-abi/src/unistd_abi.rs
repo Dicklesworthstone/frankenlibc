@@ -12421,7 +12421,7 @@ fn nss_files_hosts_multi() -> bool {
         }
     };
     let mut multi = false;
-    let path = std::env::var_os("RESOLV_HOST_CONF")
+    let path = crate::stdlib_abi::secure_var_os("RESOLV_HOST_CONF")
         .unwrap_or_else(|| std::ffi::OsString::from("/etc/host.conf"));
     if let Ok(content) = std::fs::read(path) {
         for line in content.split(|&byte| byte == b'\n') {
@@ -12438,7 +12438,7 @@ fn nss_files_hosts_multi() -> bool {
             }
         }
     }
-    if let Some(value) = std::env::var_os("RESOLV_MULTI")
+    if let Some(value) = crate::stdlib_abi::secure_var_os("RESOLV_MULTI")
         && let Some(value) = boolean(value.as_os_str().as_bytes())
     {
         multi = value;

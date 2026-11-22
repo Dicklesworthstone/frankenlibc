@@ -341,6 +341,207 @@ fn child_test_command(test_name: &str) -> Command {
     command
 }
 
+/// Exercise the production file selectors and their warmed identity caches.
+/// AT_SECURE is modeled in an isolated process; this does not claim a
+/// privileged kernel-exec test or alter the machine's account databases.
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_ignores_identity_file_overrides() {
+    use frankenlibc_abi::{grp_abi as group, pwd_abi as passwd, stdlib_abi as env};
+
+    const TEST: &str = "secure_startup_ignores_identity_file_overrides";
+    const CHILD: &str = "FRANKENLIBC_SECURE_IDENTITY_TEST_CHILD";
+    const NAME: &str = "FRANKENLIBC_SECURE_IDENTITY_TEST_NAME";
+    const MARKER: &str = "secure identity overrides and warmed caches checked";
+    if std::env::var_os(CHILD).is_none() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let name = format!("fl_secure_identity_{}_{stamp}", std::process::id());
+        let dir = std::env::temp_dir().join(&name);
+        // Retain these private fixture files as failure evidence. No system
+        // files are written and no existing directory is removed/reused.
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(
+            dir.join("passwd"),
+            format!("{name}:x:61234:61235:Fixture:/fixture:/bin/sh\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("group"), format!("{name}:x:61235:{name}\n")).unwrap();
+        std::fs::write(
+            dir.join("shadow"),
+            format!("{name}:fixture-password:20000:0:99999:7:::\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("gshadow"),
+            format!("{name}:fixture-password::{name}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("nsswitch.conf"),
+            "passwd: files\ngroup: files\nshadow: files\ninitgroups: files\n",
+        )
+        .unwrap();
+        for mode in ["strict", "hardened"] {
+            let mut command = child_test_command(TEST);
+            command
+                .env(CHILD, "1")
+                .env(NAME, &name)
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FRANKENLIBC_PASSWD_PATH", dir.join("passwd"))
+                .env("FRANKENLIBC_GROUP_PATH", dir.join("group"))
+                .env("FRANKENLIBC_SHADOW_PATH", dir.join("shadow"))
+                .env("FRANKENLIBC_GSHADOW_PATH", dir.join("gshadow"))
+                .env("FRANKENLIBC_NSSWITCH_CONF", dir.join("nsswitch.conf"));
+            let output = run_child(command, &format!("secure identity {mode}"));
+            assert!(String::from_utf8_lossy(&output.stdout).contains(MARKER));
+        }
+        return;
+    }
+
+    // SAFETY: only this test runs in the child. The timer bounds external NSS
+    // modules from the host's real configuration as well as local file I/O.
+    unsafe { libc::alarm(30) };
+    let name = CString::new(std::env::var(NAME).unwrap()).unwrap();
+    // Returning to normal execution between refusals proves the fixture
+    // remains reachable and refreshes both positive UID/GID cache entries.
+    for secure in [Some(0), Some(1), Some(0), None, Some(0), Some(17), Some(0)] {
+        // SAFETY: no other auxv reader runs in this isolated child.
+        unsafe { env::set_secure_auxv_for_conformance(secure) };
+        let allowed = secure == Some(0);
+        for _ in 0..2 {
+            // SAFETY: inputs are live NUL-terminated names; each static result
+            // is inspected before another call can overwrite its storage.
+            unsafe {
+                let pw = passwd::getpwnam(name.as_ptr());
+                assert_eq!(!pw.is_null(), allowed, "getpwnam: {secure:?}");
+                if !pw.is_null() {
+                    assert_eq!(cstr((*pw).pw_name), name.as_bytes());
+                    assert_eq!((*pw).pw_uid, 61234);
+                }
+                let pw = passwd::getpwuid(61234);
+                assert_eq!(
+                    !pw.is_null() && cstr((*pw).pw_name) == name.as_bytes(),
+                    allowed,
+                    "getpwuid cache: {secure:?}"
+                );
+                let gr = group::getgrnam(name.as_ptr());
+                assert_eq!(!gr.is_null(), allowed, "getgrnam: {secure:?}");
+                if !gr.is_null() {
+                    assert_eq!(cstr((*gr).gr_name), name.as_bytes());
+                    assert_eq!((*gr).gr_gid, 61235);
+                }
+                let gr = group::getgrgid(61235);
+                assert_eq!(
+                    !gr.is_null() && cstr((*gr).gr_name) == name.as_bytes(),
+                    allowed,
+                    "getgrgid cache: {secure:?}"
+                );
+                assert_eq!(
+                    !passwd::getspnam(name.as_ptr()).is_null(),
+                    allowed,
+                    "getspnam: {secure:?}"
+                );
+                assert_eq!(
+                    !passwd::getsgnam(name.as_ptr()).is_null(),
+                    allowed,
+                    "getsgnam: {secure:?}"
+                );
+            }
+        }
+    }
+    unsafe { libc::alarm(0) };
+    println!("{MARKER}");
+}
+
+/// An attacker-controlled nsswitch file can select loadable service modules,
+/// even if the passwd/group file overrides themselves are rejected.
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_ignores_nss_configuration_override() {
+    use frankenlibc_abi::{pwd_abi as passwd, stdlib_abi as env};
+
+    const TEST: &str = "secure_startup_ignores_nss_configuration_override";
+    const CHILD: &str = "FRANKENLIBC_SECURE_NSS_CONFIG_TEST_CHILD";
+    const NAME: &str = "FRANKENLIBC_SECURE_NSS_CONFIG_TEST_NAME";
+    const MARKER: &str = "secure NSS configuration and warmed policy checked";
+    if std::env::var_os(CHILD).is_none() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "frankenlibc-secure-nss-config-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let config = dir.join("nsswitch.conf");
+        // The deliberately absent module stops lookup before files. This
+        // tests policy selection without loading any test-supplied DSO.
+        std::fs::write(
+            &config,
+            format!(
+                "passwd: flmissing{}x{stamp} [UNAVAIL=return] files\n",
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        let content = std::fs::read("/etc/passwd").unwrap();
+        let name = content
+            .split(|&byte| byte == b'\n')
+            .find(|line| !line.is_empty() && !matches!(line[0], b'#' | b'+' | b'-'))
+            .and_then(|line| line.split(|&byte| byte == b':').next())
+            .expect("host has a real files account");
+        use std::os::unix::ffi::OsStrExt;
+        for mode in ["strict", "hardened"] {
+            let mut command = child_test_command(TEST);
+            command
+                .env(CHILD, "1")
+                .env(NAME, std::ffi::OsStr::from_bytes(name))
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FRANKENLIBC_NSSWITCH_CONF", &config)
+                .env_remove("FRANKENLIBC_PASSWD_PATH");
+            let output = run_child(command, &format!("secure NSS policy {mode}"));
+            assert!(String::from_utf8_lossy(&output.stdout).contains(MARKER));
+        }
+        return;
+    }
+
+    unsafe { libc::alarm(30) };
+    let name = CString::new(std::env::var_os(NAME).unwrap().as_encoded_bytes()).unwrap();
+    // Host GNU libc ignores FrankenLibC's private override variable. Capture
+    // its trusted system-policy answer as an independent comparison oracle.
+    let trusted = unsafe { libc::getpwnam(name.as_ptr()) };
+    assert!(
+        !trusted.is_null(),
+        "system NSS resolves its real files account"
+    );
+    let trusted = unsafe { pw_line(trusted) };
+    for secure in [Some(0), Some(1), Some(0), None, Some(0), Some(17), Some(0)] {
+        unsafe { env::set_secure_auxv_for_conformance(secure) };
+        for _ in 0..2 {
+            let value = unsafe { passwd::getpwnam(name.as_ptr()) };
+            if secure == Some(0) {
+                assert!(
+                    value.is_null(),
+                    "the ordinary override must select the absent module"
+                );
+            } else {
+                assert!(!value.is_null(), "secure policy cache: {secure:?}");
+                assert_eq!(
+                    unsafe { pw_line(value) },
+                    trusted,
+                    "secure policy: {secure:?}"
+                );
+            }
+        }
+    }
+    unsafe { libc::alarm(0) };
+    println!("{MARKER}");
+}
+
 // glibc 2.39, same files, `passwd: files fltest` / `group: files
 // [SUCCESS=merge] fltest` / `initgroups: files fltestnoig` / `shadow: fltest`.
 const EXPECTED_FL_ONLY: &str = "\

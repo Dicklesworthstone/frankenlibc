@@ -211,8 +211,8 @@ fn random_id() -> Result<u16, c_int> {
 
 fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2], bool) {
     let content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
-    let localdomain = std::env::var_os("LOCALDOMAIN");
-    let options = std::env::var_os("RES_OPTIONS");
+    let localdomain = crate::stdlib_abi::secure_var_os("LOCALDOMAIN");
+    let options = crate::stdlib_abi::secure_var_os("RES_OPTIONS");
     let mut config = ResolverConfig::parse(&content);
     config.apply_overrides(
         localdomain.as_ref().map(|value| value.as_bytes()),

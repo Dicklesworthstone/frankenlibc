@@ -171,7 +171,7 @@ impl GrpStorage {
     }
 
     fn configured_source_path() -> PathBuf {
-        std::env::var_os(GROUP_PATH_ENV)
+        crate::stdlib_abi::secure_var_os(GROUP_PATH_ENV)
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(GROUP_PATH))

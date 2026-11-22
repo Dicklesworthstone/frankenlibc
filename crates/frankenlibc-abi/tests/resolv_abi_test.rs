@@ -474,6 +474,216 @@ fn temp_resolver_path(kind: &str) -> std::path::PathBuf {
     ))
 }
 
+#[cfg(feature = "conformance-testing")]
+fn run_secure_resolver_test_in_children(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_SECURE_RESOLVER_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(name) {
+        // SAFETY: this isolated exact-test process owns its signal state.
+        unsafe { libc::alarm(30) };
+        return false;
+    }
+    for mode in ["strict", "hardened"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture", "--test-threads=1"])
+            .env(CHILD, name)
+            .env("FRANKENLIBC_MODE", mode)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "{mode}: {}\n{stdout}\n{stderr}",
+            output.status
+        );
+    }
+    true
+}
+
+/// Exercise real files-provider entrypoints, including their warmed caches.
+/// Modeled auxv transitions are a conformance control, not privileged execs.
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_ignores_resolver_file_overrides() {
+    const NAME: &str = "secure_startup_ignores_resolver_file_overrides";
+    if run_secure_resolver_test_in_children(NAME) {
+        return;
+    }
+    use frankenlibc_abi::stdlib_abi::set_secure_auxv_for_conformance;
+    use std::os::unix::ffi::OsStringExt;
+
+    let host = CString::new(format!("fl-secure-host-{}", std::process::id())).unwrap();
+    let service = CString::new(format!("fl-secure-service-{}", std::process::id())).unwrap();
+    let protocol = CString::new(format!("fl-secure-protocol-{}", std::process::id())).unwrap();
+    let mut raw_path = temp_resolver_path("secure-hosts")
+        .into_os_string()
+        .into_vec();
+    raw_path.push(0xff);
+    let hosts_path = std::path::PathBuf::from(std::ffi::OsString::from_vec(raw_path));
+    let services_path = temp_resolver_path("secure-services");
+    let protocols_path = temp_resolver_path("secure-protocols");
+    std::fs::write(
+        &hosts_path,
+        format!("203.0.113.241 {}\n", host.to_str().unwrap()),
+    )
+    .unwrap();
+    std::fs::write(
+        &services_path,
+        format!("{} 54321/tcp\n", service.to_str().unwrap()),
+    )
+    .unwrap();
+    std::fs::write(
+        &protocols_path,
+        format!("{} 251\n", protocol.to_str().unwrap()),
+    )
+    .unwrap();
+
+    // SAFETY: only this named test executes in the child. The environment
+    // remains populated during denied lookups, including a non-UTF-8 path.
+    unsafe {
+        std::env::set_var(HOSTS_PATH_ENV, &hosts_path);
+        std::env::set_var(SERVICES_PATH_ENV, &services_path);
+        std::env::set_var(PROTOCOLS_PATH_ENV, &protocols_path);
+    }
+    for secure in [Some(0), Some(1), Some(0), None, Some(0), Some(17), Some(0)] {
+        // SAFETY: the child has no concurrent auxiliary-vector readers.
+        unsafe { set_secure_auxv_for_conformance(secure) };
+        for _ in 0..2 {
+            let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+            let mut servent: libc::servent = unsafe { mem::zeroed() };
+            let mut protoent: libc::protoent = unsafe { mem::zeroed() };
+            let mut buffer = [0 as c_char; 1024];
+            let mut error = 0;
+            let mut host_error = 0;
+            // SAFETY: each provider receives its exact result layout and a
+            // live writable scratch span. No DNS query or NSS module is used.
+            let host_status = unsafe {
+                unistd_abi::_nss_files_gethostbyname_r(
+                    host.as_ptr(),
+                    (&mut hostent as *mut libc::hostent).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut error,
+                    &mut host_error,
+                )
+            };
+            assert_eq!(host_status == 1, secure == Some(0), "hosts: {secure:?}");
+            if host_status == 1 {
+                assert_eq!(hostent.h_addrtype, libc::AF_INET);
+                assert_eq!(hostent.h_length, 4);
+                assert_eq!(
+                    unsafe { std::slice::from_raw_parts((*hostent.h_addr_list).cast::<u8>(), 4) },
+                    &[203, 0, 113, 241]
+                );
+            }
+            let service_status = unsafe {
+                unistd_abi::_nss_files_getservbyname_r(
+                    service.as_ptr(),
+                    c"tcp".as_ptr(),
+                    (&mut servent as *mut libc::servent).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut error,
+                )
+            };
+            assert_eq!(
+                service_status == 1,
+                secure == Some(0),
+                "services: {secure:?}"
+            );
+            if service_status == 1 {
+                assert_eq!(u16::from_be(servent.s_port as u16), 54321);
+            }
+            let protocol_status = unsafe {
+                unistd_abi::_nss_files_getprotobyname_r(
+                    protocol.as_ptr(),
+                    (&mut protoent as *mut libc::protoent).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut error,
+                )
+            };
+            assert_eq!(
+                protocol_status == 1,
+                secure == Some(0),
+                "protocols: {secure:?}"
+            );
+            if protocol_status == 1 {
+                assert_eq!(protoent.p_proto, 251);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "conformance-testing")]
+#[test]
+fn secure_startup_ignores_resolver_environment_options() {
+    const NAME: &str = "secure_startup_ignores_resolver_environment_options";
+    if run_secure_resolver_test_in_children(NAME) {
+        return;
+    }
+    use frankenlibc_abi::glibc_internal_abi::{__res_nclose, __res_ninit};
+    use frankenlibc_abi::resolv_state::State;
+    use frankenlibc_abi::stdlib_abi::set_secure_auxv_for_conformance;
+
+    fn configuration() -> (c_int, c_int, libc::c_ulong, u32, Vec<Vec<u8>>) {
+        let mut state = State::zeroed();
+        // SAFETY: the matching init/close functions own only the initialized
+        // state's auxiliary allocations; its public fields stay live here.
+        assert_eq!(unsafe { __res_ninit((&mut state as *mut State).cast()) }, 0);
+        let search = state
+            .dnsrch
+            .iter()
+            .take_while(|pointer| !pointer.is_null())
+            .map(|&pointer| unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec())
+            .collect();
+        let snapshot = (
+            state.retrans,
+            state.retry,
+            state.options,
+            state.ndots_nsort & 15,
+            search,
+        );
+        unsafe { __res_nclose((&mut state as *mut State).cast()) };
+        snapshot
+    }
+
+    // A file-derived control avoids assuming the test host's resolver policy.
+    // SAFETY: this exact-test child has no concurrent environment readers.
+    unsafe {
+        set_secure_auxv_for_conformance(Some(0));
+        std::env::remove_var("LOCALDOMAIN");
+        std::env::remove_var("RES_OPTIONS");
+    }
+    let file_config = configuration();
+    unsafe {
+        std::env::set_var("LOCALDOMAIN", "fl-secure-resolver.invalid");
+        std::env::set_var(
+            "RES_OPTIONS",
+            "ndots:15 timeout:30 attempts:5 rotate use-vc edns0",
+        );
+    }
+    let overridden = configuration();
+    assert_eq!(overridden.0, 30);
+    assert_eq!(overridden.1, 5);
+    assert_eq!(overridden.3, 15);
+    assert_eq!(overridden.4, vec![b"fl-secure-resolver.invalid".to_vec()]);
+    assert_ne!(overridden, file_config, "control must observe the override");
+    for secure in [Some(1), Some(0), None, Some(0), Some(17), Some(0)] {
+        unsafe { set_secure_auxv_for_conformance(secure) };
+        assert_eq!(
+            configuration(),
+            if secure == Some(0) {
+                &overridden
+            } else {
+                &file_config
+            }
+            .clone(),
+            "resolver options: {secure:?}"
+        );
+    }
+}
+
 fn with_resolver_lock<T>(f: impl FnOnce() -> T) -> T {
     let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()

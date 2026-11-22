@@ -19,11 +19,15 @@ on:
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
+      - 'crates/frankenlibc-abi/src/grp_abi.rs'
+      - 'crates/frankenlibc-abi/src/stdlib_abi.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolver_no_aaaa_test.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_getrpcent.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
@@ -38,6 +42,50 @@ permissions:
   contents: read
 
 jobs:
+  secure-startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [conformance-testing, 'conformance-testing,owned-tls-cache']
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Verify secure identity and resolver configuration
+        env:
+          FEATURES: ${{ matrix.features }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/secure-startup
+          for target in nss_module_test resolv_abi_test; do
+            log="artifacts/secure-startup/$target.log"
+            cargo test -p frankenlibc-abi --features "$FEATURES" \
+              --test "$target" secure_startup_ -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' "$log"
+          done
+          cargo test -p frankenlibc-abi --features "$FEATURES" \
+            --test conformance_diff_secure_getenv -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/secure-startup/secure-getenv.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' \
+            artifacts/secure-startup/secure-getenv.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secure-startup-${{ matrix.features }}
+          path: artifacts/secure-startup/
+
   resolver:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

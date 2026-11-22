@@ -174,7 +174,7 @@ impl PwdStorage {
     }
 
     fn configured_source_path() -> PathBuf {
-        std::env::var_os(PASSWD_PATH_ENV)
+        crate::stdlib_abi::secure_var_os(PASSWD_PATH_ENV)
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(PASSWD_PATH))
@@ -1270,21 +1270,11 @@ unsafe fn getpwent_r_impl(
 const SHADOW_PATH: &str = "/etc/shadow";
 
 fn read_shadow_file() -> std::io::Result<Vec<u8>> {
-    // SAFETY: the key is static and NUL-terminated. secure_getenv ignores the
-    // fixture/backend override in a privileged execution context.
-    let configured =
-        unsafe { crate::stdlib_abi::secure_getenv(c"FRANKENLIBC_SHADOW_PATH".as_ptr()) };
-    let path = if configured.is_null() {
-        PathBuf::from(SHADOW_PATH)
-    } else {
-        // SAFETY: secure_getenv returns a NUL-terminated environment value.
-        let bytes = unsafe { std::ffi::CStr::from_ptr(configured) }.to_bytes();
-        if bytes.is_empty() {
-            PathBuf::from(SHADOW_PATH)
-        } else {
-            PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
-        }
-    };
+    // Obtain an owned OS-string path instead of retaining a raw getenv pointer.
+    let path = crate::stdlib_abi::secure_var_os("FRANKENLIBC_SHADOW_PATH")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(SHADOW_PATH));
     std::fs::read(path)
 }
 
@@ -2001,7 +1991,7 @@ const GSHADOW_PATH: &str = "/etc/gshadow";
 const GSHADOW_PATH_ENV: &str = "FRANKENLIBC_GSHADOW_PATH";
 
 fn gshadow_source_path() -> PathBuf {
-    std::env::var_os(GSHADOW_PATH_ENV)
+    crate::stdlib_abi::secure_var_os(GSHADOW_PATH_ENV)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(GSHADOW_PATH))

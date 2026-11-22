@@ -3073,6 +3073,40 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
 // secure_getenv
 // ---------------------------------------------------------------------------
 
+/// Whether startup evidence permits configuration from the environment.
+///
+/// Keep this decision shared by public `secure_getenv` and native service
+/// backends. A missing auxiliary-vector entry is not evidence of an
+/// unprivileged startup, and checking current credentials would incorrectly
+/// trust the environment after a privileged process drops its credentials.
+#[inline]
+pub(crate) fn secure_environment_allowed() -> bool {
+    // SAFETY: errno is this thread's writable slot; getauxval reads the
+    // bootstrap/reentry-safe native auxiliary-vector cache.
+    unsafe {
+        let saved_errno = *crate::errno_abi::__errno_location();
+        set_abi_errno(0);
+        let secure = getauxval(libc::AT_SECURE as c_ulong);
+        let known = *crate::errno_abi::__errno_location() == 0;
+        set_abi_errno(saved_errno);
+        known && secure == 0
+    }
+}
+
+/// An owned environment value for native configuration and its cache keys.
+///
+/// Denied lookups never inspect the environment. Using the same accessor when
+/// selecting a file and validating a cached file prevents a previously cached
+/// override from bypassing the startup-security decision.
+#[inline]
+pub(crate) fn secure_var_os(name: &str) -> Option<std::ffi::OsString> {
+    if secure_environment_allowed() {
+        std::env::var_os(name)
+    } else {
+        None
+    }
+}
+
 /// GNU `secure_getenv` — getenv that returns null in secure execution mode.
 ///
 /// AT_SECURE records the kernel's decision at process startup. Current IDs are
@@ -3080,14 +3114,9 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
 /// file capabilities can request secure execution without changing either ID.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn secure_getenv(name: *const c_char) -> *mut c_char {
-    // getauxval's native cache is bootstrap/reentry-safe. Preserve errno even
-    // if the auxiliary vector is unavailable; an unknown security state must
-    // not expose environment data by treating a failed lookup as AT_SECURE=0.
+    // Preserve errno through both the security check and getenv's policy path.
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
-    unsafe { set_abi_errno(0) };
-    let secure = unsafe { getauxval(libc::AT_SECURE as c_ulong) };
-    let known = unsafe { *crate::errno_abi::__errno_location() == 0 };
-    let result = if known && secure == 0 {
+    let result = if secure_environment_allowed() {
         unsafe { getenv(name) }
     } else {
         ptr::null_mut()

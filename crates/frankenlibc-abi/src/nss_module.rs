@@ -170,7 +170,9 @@ fn database_slot(database: Database) -> usize {
 
 fn config_path() -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
-    std::env::var_os(NSSWITCH_PATH_ENV)
+    // This path chooses both identity data and loadable NSS service modules.
+    // Secure or unknown startup state must use the system configuration.
+    crate::stdlib_abi::secure_var_os(NSSWITCH_PATH_ENV)
         .filter(|v| !v.is_empty())
         .map(|v| v.as_bytes().to_vec())
         .unwrap_or_else(|| NSSWITCH_PATH.as_bytes().to_vec())

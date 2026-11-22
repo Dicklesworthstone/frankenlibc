@@ -210,11 +210,12 @@ impl BackendFileCache {
     /// `fallback_insert_sized_index` 16.7%, `free` 13.8%), while `getenv` did not appear
     /// at >=0.1% and the `stat` syscall was ~1.5%.
     ///
-    /// Semantics are unchanged: the environment is still consulted on every call, so a
-    /// `setenv`/`putenv` between two lookups is observed exactly as before. No environment
-    /// snapshot or generation fence is introduced.
+    /// In ordinary execution the environment is still consulted on every call,
+    /// so a `setenv`/`putenv` between two lookups is observed. Secure or unknown
+    /// startup state always compares against the trusted default instead; a
+    /// cached override must not bypass the same check used to choose the file.
     fn source_path_matches_env(&self) -> bool {
-        match std::env::var_os(self.env_key) {
+        match crate::stdlib_abi::secure_var_os(self.env_key) {
             Some(value) if !value.is_empty() => self.source_path.as_os_str() == value,
             _ => self.source_path.as_os_str() == OsStr::new(self.default_path),
         }
@@ -705,7 +706,7 @@ thread_local! {
 }
 
 fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
-    std::env::var_os(env_key)
+    crate::stdlib_abi::secure_var_os(env_key)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(default_path))
@@ -1252,7 +1253,7 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
     // netlink snapshot leaves results unfiltered, as glibc does.
     let procfs_override = [PROC_NET_ROUTE_PATH_ENV, PROC_NET_IF_INET6_PATH_ENV]
         .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+        .any(|name| crate::stdlib_abi::secure_var_os(name).is_some_and(|value| !value.is_empty()));
     if !procfs_override {
         return crate::unistd_abi::addrconfig_state_snapshot();
     }
@@ -2910,7 +2911,7 @@ fn native_dns_query(
         .queries_attempted
         .fetch_add(1, AtomicOrdering::Relaxed);
 
-    let server = match std::env::var_os("FRANKENLIBC_DNS_PORT")
+    let server = match crate::stdlib_abi::secure_var_os("FRANKENLIBC_DNS_PORT")
         .and_then(|port| port.to_str()?.parse::<u16>().ok())
         .filter(|&port| port != 0)
     {
@@ -3010,8 +3011,8 @@ fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
     // Address and reverse lookups honor the same process overrides as
     // res_ninit, including an explicitly empty LOCALDOMAIN. Snapshot each
     // value once so search order and transport options share one config.
-    let localdomain = std::env::var_os("LOCALDOMAIN");
-    let options = std::env::var_os("RES_OPTIONS");
+    let localdomain = crate::stdlib_abi::secure_var_os("LOCALDOMAIN");
+    let options = crate::stdlib_abi::secure_var_os("RES_OPTIONS");
     config.apply_overrides(
         localdomain.as_ref().map(|value| value.as_bytes()),
         options.as_ref().map(|value| value.as_bytes()),
