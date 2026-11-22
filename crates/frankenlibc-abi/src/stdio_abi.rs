@@ -9833,6 +9833,86 @@ unsafe fn extension_write(
     }
 }
 
+/// A descriptor formatter owns a bounded pending prefix, not the descriptor.
+/// GNU dprintf flushes this 2048-byte buffer only when another byte needs room
+/// (or formatting succeeds). A later conversion failure discards pending
+/// bytes, while every acknowledged write remains committed. In particular,
+/// a failed flush must stop before a following %n or registered renderer.
+struct DescriptorPrintfOutput {
+    fd: c_int,
+    caller: usize,
+    buffer: [u8; 2048],
+    used: usize,
+    written: usize,
+    failure: Option<c_int>,
+}
+
+impl DescriptorPrintfOutput {
+    fn new(fd: c_int, caller: usize) -> Self {
+        Self {
+            fd,
+            caller,
+            buffer: [0; 2048],
+            used: 0,
+            written: 0,
+            failure: None,
+        }
+    }
+
+    fn write(&mut self, mut bytes: &[u8]) -> Result<usize, c_int> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let length = bytes.len();
+        while !bytes.is_empty() {
+            if self.used == self.buffer.len() {
+                self.flush()?;
+            }
+            let copied = bytes.len().min(self.buffer.len() - self.used);
+            self.buffer[self.used..self.used + copied].copy_from_slice(&bytes[..copied]);
+            self.used += copied;
+            bytes = &bytes[copied..];
+        }
+        Ok(length)
+    }
+
+    fn flush(&mut self) -> Result<(), c_int> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let mut offset = 0;
+        while offset < self.used {
+            // SAFETY: this owner retains the initialized pending bytes across
+            // the cancellation-aware write. No FILE or caller fd is retired.
+            let written = unsafe {
+                stream_write_fd(
+                    self.caller,
+                    self.fd,
+                    self.buffer[offset..self.used].as_ptr().cast(),
+                    self.used - offset,
+                )
+            };
+            if written <= 0 {
+                let error = if written < 0 {
+                    // SAFETY: the failed write set the calling thread's ABI errno.
+                    unsafe { *super::errno_abi::__errno_location() }
+                } else {
+                    errno::EIO
+                };
+                // A callback or cleanup can ask to write again. Preserve the
+                // first failure without replaying any acknowledged prefix.
+                self.failure = Some(error);
+                self.used = 0;
+                return Err(error);
+            }
+            offset += written as usize;
+            self.written += written as usize;
+        }
+        self.used = 0;
+        Ok(())
+    }
+}
+
 /// Buffer native wide output until success, flushing before a user callback.
 /// GNU discards pending output on a public wide memory stream when a native
 /// multibyte conversion fails. Bounded swprintf sinks instead publish their
@@ -9843,11 +9923,16 @@ struct ExtensionOutput {
     caller: usize,
     pending: Option<Vec<u8>>,
     bounded: Option<*mut StrictDirectSnprintfWriter>,
+    descriptor: Option<*mut DescriptorPrintfOutput>,
 }
 
 impl ExtensionOutput {
     unsafe fn write(&mut self, bytes: &[u8]) -> Result<usize, c_int> {
-        if let Some(writer) = self.bounded {
+        if let Some(writer) = self.descriptor {
+            // SAFETY: dprintf owns this stack buffer through all callbacks and
+            // FILE retirement. No mutable borrow survives a callback invocation.
+            unsafe { (*writer).write(bytes) }
+        } else if let Some(writer) = self.bounded {
             // SAFETY: the snprintf owner retains this writer until its FILE is
             // closed. No Rust reference to it survives a user callback.
             unsafe { (*writer).push(bytes) };
@@ -9888,6 +9973,21 @@ impl ExtensionOutput {
             // SAFETY: pending owns these bytes and the FILE stays live.
             unsafe { extension_write(self.stream, pending, self.wide, self.caller) }?;
             pending.clear();
+        }
+        Ok(())
+    }
+
+    fn uses_bounded_fields(&self) -> bool {
+        self.bounded.is_some() || self.descriptor.is_some()
+    }
+
+    fn check_failure(&self) -> Result<(), c_int> {
+        if let Some(writer) = self.descriptor {
+            // SAFETY: the descriptor owner retains this pointer until all
+            // formatting callbacks and the private FILE have retired.
+            if let Some(error) = unsafe { (*writer).failure } {
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -10004,6 +10104,95 @@ unsafe fn extension_bounded_wide_string(
     Ok(length + padding)
 }
 
+/// Descriptor output converts wide strings in bounded chunks. An invalid
+/// character discards its conversion chunk, preserving only earlier chunks
+/// that reached the descriptor buffer. Right alignment needs a length pass;
+/// GNU's unbounded error case still emits width + 1 spaces before conversion.
+unsafe fn extension_descriptor_wide_string(
+    output: &mut ExtensionOutput,
+    spec: &FormatSpec,
+    pointer: *const u32,
+) -> Result<usize, c_int> {
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let limit = match spec.precision {
+        Precision::Fixed(limit) => Some(limit),
+        _ => None,
+    };
+    let width = match spec.width {
+        Width::Fixed(width) => width,
+        _ => 0,
+    };
+    let mut padding = 0;
+    if !spec.flags.left_justify && width != 0 {
+        let mut length = 0usize;
+        let mut index = 0;
+        while limit.is_none_or(|limit| length < limit) {
+            // SAFETY: the caller supplies characters through NUL or precision.
+            let wc = unsafe { *pointer.add(index) };
+            if wc == 0 {
+                break;
+            }
+            let mut encoded = [0; 6];
+            let Some(n) = codec.encode(wc, &mut encoded) else {
+                if limit.is_some() {
+                    return Err(errno::EILSEQ);
+                }
+                padding = width.checked_add(1).ok_or(errno::EOVERFLOW)?;
+                break;
+            };
+            if limit.is_some_and(|limit| n > limit - length) {
+                break;
+            }
+            length = length.checked_add(n).ok_or(errno::EOVERFLOW)?;
+            index += 1;
+        }
+        if padding == 0 {
+            padding = width.saturating_sub(length);
+        }
+        // SAFETY: this output owns the live descriptor sink for the call.
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+
+    let mut block = [0; 256];
+    let mut used = 0;
+    let mut length = 0usize;
+    let mut index = 0;
+    while limit.is_none_or(|limit| length < limit) {
+        // SAFETY: each character is read only before NUL or the byte precision.
+        let wc = unsafe { *pointer.add(index) };
+        if wc == 0 {
+            break;
+        }
+        let mut encoded = [0; 6];
+        let n = codec.encode(wc, &mut encoded).ok_or(errno::EILSEQ)?;
+        if limit.is_some_and(|limit| n > limit - length) {
+            break;
+        }
+        if n > block.len() - used {
+            // SAFETY: only initialized complete multibyte sequences are emitted.
+            unsafe { output.write(&block[..used]) }?;
+            used = 0;
+        }
+        block[used..used + n].copy_from_slice(&encoded[..n]);
+        used += n;
+        length = length.checked_add(n).ok_or(errno::EOVERFLOW)?;
+        index += 1;
+        if used == block.len() {
+            // SAFETY: the full conversion chunk contains initialized bytes.
+            unsafe { output.write(&block) }?;
+            used = 0;
+        }
+    }
+    // SAFETY: a successful conversion publishes its final, possibly empty chunk.
+    unsafe { output.write(&block[..used]) }?;
+    if spec.flags.left_justify {
+        padding = width.saturating_sub(length);
+        // SAFETY: this output retains the same descriptor sink after conversion.
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    length.checked_add(padding).ok_or(errno::EOVERFLOW)
+}
+
 /// A bounded snprintf needs the field's length and retained prefix, never an
 /// allocation proportional to width/precision. Keep native digit generation
 /// and locale rules, but represent padding and exact trailing zeros as runs.
@@ -10025,6 +10214,10 @@ unsafe fn extension_format_bounded(
             return unsafe { extension_bounded_string(output, spec, bytes) };
         }
         if matches!(spec.length, LengthMod::L) {
+            if output.descriptor.is_some() {
+                // SAFETY: the native argument is the caller's wide string.
+                return unsafe { extension_descriptor_wide_string(output, spec, pointer.cast()) };
+            }
             return unsafe { extension_bounded_wide_string(output, spec, pointer.cast()) };
         }
         let bytes = if let Precision::Fixed(precision) = spec.precision {
@@ -10308,8 +10501,37 @@ unsafe fn extension_format_stream(
     caller: usize,
 ) -> Result<c_int, c_int> {
     let extensions = printf_extensions_snapshot();
+    let output = ExtensionOutput {
+        stream,
+        wide,
+        caller,
+        bounded: (!wide).then(|| extension_bounded_writer(stream)).flatten(),
+        descriptor: (!wide)
+            .then(|| extension_descriptor_writer(stream))
+            .flatten(),
+        pending: (wide
+            && crate::wchar_abi::reserve_wide_output(stream, 0)
+                .is_some_and(|(_, bounded)| !bounded))
+        .then(Vec::new),
+    };
+    // SAFETY: this stream owner and the extension snapshot outlive formatting.
+    unsafe { extension_format_output(output, bytes, ap, entry_errno, &extensions) }
+}
+
+/// Share typed argument planning and conversion dispatch between FILE and fd
+/// sinks. Ordinary dprintf needs neither a FILE nor output-sized allocation;
+/// only registered renderers need the recursive FILE callback interface.
+unsafe fn extension_format_output(
+    mut output: ExtensionOutput,
+    bytes: &[u8],
+    ap: *mut c_void,
+    entry_errno: c_int,
+    extensions: &PrintfExtensions,
+) -> Result<c_int, c_int> {
+    let stream = output.stream;
+    let wide = output.wide;
     // SAFETY: the parser calls registered arginfo functions with owned outputs.
-    let plan = unsafe { extension_plan(bytes, wide, &extensions, ExtensionPlanPurpose::Format) }?;
+    let plan = unsafe { extension_plan(bytes, wide, extensions, ExtensionPlanPurpose::Format) }?;
     if ap.is_null() && plan.count != 0 {
         return Err(errno::EINVAL);
     }
@@ -10324,7 +10546,7 @@ unsafe fn extension_format_stream(
             .flatten()
             .unwrap_or(PrintfArgType { kind: 0, size: 0 });
         // SAFETY: the complete arginfo/native plan determines each va_arg class.
-        args.push(unsafe { extension_read_argument(kind, ap, &extensions) }?);
+        args.push(unsafe { extension_read_argument(kind, ap, extensions) }?);
     }
     // Registration also routes ordinary conversions through this engine.
     // Preserve the existing hardened literal-upgrade check before any output;
@@ -10350,21 +10572,16 @@ unsafe fn extension_format_stream(
             RepairLogContext::new(0, Some(pointer)),
         );
         // SAFETY: the literal format is live and contains no interpreted args.
-        return c_int::try_from(unsafe { extension_write(stream, bytes, wide, caller) }?)
-            .map_err(|_| errno::EOVERFLOW);
+        let count = unsafe { output.write(bytes) }?;
+        // SAFETY: a wide memory stream may retain the literal until this flush.
+        unsafe { output.flush() }?;
+        return c_int::try_from(count).map_err(|_| errno::EOVERFLOW);
     }
-    let mut output = ExtensionOutput {
-        stream,
-        wide,
-        caller,
-        bounded: (!wide).then(|| extension_bounded_writer(stream)).flatten(),
-        pending: (wide
-            && crate::wchar_abi::reserve_wide_output(stream, 0)
-                .is_some_and(|(_, bounded)| !bounded))
-        .then(Vec::new),
-    };
     let mut count = 0usize;
     for segment in plan.segments {
+        // A custom renderer can ignore a failed nested write and return a
+        // positive count. The sink failure still stops later conversions/%n.
+        output.check_failure()?;
         let emitted = match segment {
             ExtensionSegment::Error(error) => return Err(error),
             ExtensionSegment::Literal(literal) => {
@@ -10420,7 +10637,9 @@ unsafe fn extension_format_stream(
                         // SAFETY: the callback has the registered GNU printf_function
                         // ABI. All decoded storage and the snapshot outlive this call.
                         let callback: Render = unsafe { std::mem::transmute(conversion.render) };
-                        Some(unsafe { callback(stream, &spec.info, pointers.as_ptr()) })
+                        let result = unsafe { callback(stream, &spec.info, pointers.as_ptr()) };
+                        output.check_failure()?;
+                        Some(result)
                     } else {
                         None
                     };
@@ -10469,7 +10688,7 @@ unsafe fn extension_format_stream(
                             // even if a registered callback changes it mid-format.
                             let (message, _) =
                                 crate::string_abi::rendered_strerror_message(entry_errno);
-                            if output.bounded.is_some() {
+                            if output.uses_bounded_fields() {
                                 unsafe {
                                     extension_bounded_string(
                                         &mut output,
@@ -10487,7 +10706,7 @@ unsafe fn extension_format_stream(
                             let raw = args
                                 .get(spec.first_arg)
                                 .map_or(0, ExtensionArgument::native_bits);
-                            if output.bounded.is_some() {
+                            if output.uses_bounded_fields() {
                                 unsafe { extension_format_bounded(&mut output, &spec.native, raw) }?
                             } else {
                                 let rendered =
@@ -10669,6 +10888,50 @@ fn extension_bounded_writer(stream: *mut c_void) -> Option<*mut StrictDirectSnpr
         .then_some(info.cookie.cast())
 }
 
+unsafe extern "C-unwind" fn extension_descriptor_write(
+    cookie: *mut c_void,
+    bytes: *const c_char,
+    count: usize,
+) -> isize {
+    let bytes = if count == 0 {
+        &[]
+    } else {
+        // SAFETY: the native FILE supplies a live span for this synchronous
+        // write; the dprintf frame owns the cookie until the FILE is closed.
+        unsafe { std::slice::from_raw_parts(bytes.cast(), count) }
+    };
+    // SAFETY: the cookie exclusively accesses the enclosing descriptor sink
+    // during this call, including recursive printf invocations by a renderer.
+    match unsafe { (*cookie.cast::<DescriptorPrintfOutput>()).write(bytes) } {
+        Ok(length) => length as isize,
+        Err(error) => {
+            // SAFETY: errno belongs to this caller, as does the failed write.
+            unsafe { set_abi_errno(error) };
+            -1
+        }
+    }
+}
+
+fn extension_descriptor_writer(stream: *mut c_void) -> Option<*mut DescriptorPrintfOutput> {
+    if stream.is_null() || !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return None;
+    }
+    let id = canonical_stream_id(stream);
+    let writer = |info: &CookieStreamInfo| {
+        (info.funcs.write? as usize == extension_descriptor_write as *const () as usize)
+            .then_some(info.cookie.cast())
+    };
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        return (aux.id == id)
+            .then_some(aux.cookie.as_ref())
+            .flatten()
+            .and_then(writer);
+    }
+    let registry = lock_cookie_registry();
+    registry.as_ref()?.get(&id).and_then(writer)
+}
+
 struct ExtensionSnprintfStream(*mut c_void);
 
 impl ExtensionSnprintfStream {
@@ -10804,34 +11067,100 @@ unsafe fn registered_asprintf(
     buffer.result
 }
 
-unsafe fn registered_dprintf(
+unsafe fn streaming_dprintf(
     fd: c_int,
     format: *const c_char,
     ap: *mut c_void,
     caller: usize,
 ) -> c_int {
     let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    let _ = take_render_failure();
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let Some(buffer) =
-        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
-    else {
-        return -1;
-    };
-    let bytes = if buffer.state.len == 0 {
-        &[]
+    let extensions = if printf_extensions_active() {
+        printf_extensions_snapshot()
     } else {
-        // SAFETY: fclose published these initialized output bytes. The empty
-        // failure case above does not construct a slice from a null pointer.
-        unsafe { std::slice::from_raw_parts(buffer.state.data.cast::<u8>(), buffer.state.len) }
+        PrintfExtensions::new()
     };
-    if write_all_fd_for_caller(fd, bytes, caller) {
-        buffer.result
+    let mut descriptor = DescriptorPrintfOutput::new(fd, caller);
+    let descriptor_ptr = std::ptr::from_mut(&mut descriptor);
+    let mut stream = ExtensionSnprintfStream(std::ptr::null_mut());
+    if extensions
+        .conversions
+        .iter()
+        .flatten()
+        .any(|conversion| conversion.render != 0)
+    {
+        // A callback receives a real recursive FILE, sharing this same sink.
+        // Its close hook is absent: retiring the private FILE never closes fd.
+        stream.0 = unsafe {
+            fopencookie(
+                descriptor_ptr.cast(),
+                c"w".as_ptr(),
+                CookieIoFuncs {
+                    write: Some(extension_descriptor_write),
+                    ..CookieIoFuncs::default()
+                },
+            )
+        };
+        if stream.0.is_null()
+            || unsafe {
+                setvbuf(stream.0, std::ptr::null_mut(), 2 /* _IONBF */, 0)
+            } != 0
+        {
+            return -1;
+        }
+    }
+    let result = {
+        // SAFETY: the optional callback FILE remains live through formatting.
+        // Ordinary calls have no FILE and acquire no stream lock.
+        let _lock = unsafe { StdioLockGuard::acquire(stream.0) };
+        let output = ExtensionOutput {
+            stream: stream.0,
+            wide: false,
+            caller,
+            pending: None,
+            bounded: None,
+            descriptor: Some(descriptor_ptr),
+        };
+        // Internal setup cannot change %m or callback-visible entry errno.
+        unsafe { set_abi_errno(entry_errno) };
+        // SAFETY: the frame retains the va_list, descriptor buffer, optional
+        // callback FILE and one coherent extension snapshot for the whole call.
+        unsafe {
+            extension_format_output(output, c_str_bytes(format), ap, entry_errno, &extensions)
+        }
+    };
+    // On conversion failure pending bytes are deliberately discarded. Earlier
+    // flushes remain committed; on success the last partial buffer is written.
+    // SAFETY: use the same pointer as the optional cookie until its FILE closes;
+    // no Rust reference to the sink survives a callback or the close operation.
+    let result = result.and_then(|count| unsafe { (*descriptor_ptr).flush() }.map(|()| count));
+    let saved_errno = unsafe { *super::errno_abi::__errno_location() };
+    let close_result = unsafe { stream.close() };
+    let result = if close_result != 0 && result.is_ok() {
+        Err(unsafe { *super::errno_abi::__errno_location() })
     } else {
-        -1
+        result
+    };
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, descriptor.written),
+        result.is_err(),
+    );
+    match result {
+        Ok(count) => {
+            unsafe { set_abi_errno(saved_errno) };
+            count
+        }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     }
 }
 
@@ -15074,7 +15403,7 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
     if printf_extensions_active() {
         // SAFETY: the callback engine consumes this frame's live va_list.
         return unsafe {
-            registered_dprintf(fd, format, core::ptr::from_mut(&mut args).cast(), caller)
+            streaming_dprintf(fd, format, core::ptr::from_mut(&mut args).cast(), caller)
         };
     }
     // Exact %d/%x/%u (±\n) fast paths — render inline + write straight to the fd, skipping
@@ -15092,58 +15421,8 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
         return unsafe { strict_direct_fd_ux(fd, arg, hex, newline, caller) };
     }
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return -1;
-    }
-
-    let fmt_bytes = unsafe { c_str_bytes(format) };
-    let segments = parse_format_string(fmt_bytes);
-    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            return -1;
-        }
-    };
-    let extract_count = arg_buf.len();
-    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
-
-    // Bare "%s" fast path: write the string straight to the fd, else render.
-    let mut _bare_hold = None;
-    let bytes = unsafe {
-        bare_s_or_render(
-            "dprintf",
-            fmt_bytes,
-            &segments,
-            arg_buf.as_ptr(),
-            extract_count,
-            &mut _bare_hold,
-        )
-    };
-    let total_len = bytes.len();
-
-    // The render error belongs to this call, even if the descriptor write
-    // fails too. Consume it before I/O so no early return can poison the next
-    // fast-path printf, and retain it for the final errno decision.
-    let render_failure = take_render_failure();
-    let adverse = !write_all_fd_for_caller(fd, bytes, caller);
-    runtime_policy::observe(
-        ApiFamily::Stdio,
-        decision.profile,
-        runtime_policy::scaled_cost(15, total_len),
-        adverse,
-    );
-    if let Some(error) = render_failure {
-        // SAFETY: errno is this thread's writable ABI error slot.
-        unsafe { set_abi_errno(error) };
-        -1
-    } else if adverse {
-        -1
-    } else {
-        printf_result_to_c_int(total_len)
-    }
+    // SAFETY: the common streaming engine consumes this frame's live va_list.
+    unsafe { streaming_dprintf(fd, format, core::ptr::from_mut(&mut args).cast(), caller) }
 }
 
 /// GNU `asprintf`.
@@ -16631,7 +16910,7 @@ pub(crate) unsafe fn vdprintf_for_caller(
     }
     if printf_extensions_active() {
         // SAFETY: ap is the caller-supplied C va_list for this format.
-        return unsafe { registered_dprintf(fd, format, ap, caller) };
+        return unsafe { streaming_dprintf(fd, format, ap, caller) };
     }
     // Exact %d/%x/%u (±\n) va_list fast paths — the va_list twin of dprintf's: pull ONE gp arg,
     // render inline + write straight to the fd. Return immediately (ap advanced).
@@ -16647,80 +16926,8 @@ pub(crate) unsafe fn vdprintf_for_caller(
         let arg = unsafe { va_read_one_gp(ap) } as c_uint;
         return unsafe { strict_direct_fd_ux(fd, arg, hex, newline, caller) };
     }
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return -1;
-    }
-
-    let fmt_bytes = unsafe { c_str_bytes(format) };
-    let segments = parse_format_string(fmt_bytes);
-    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            return -1;
-        }
-    };
-    let extract_count = arg_buf.len();
-    unsafe { arg_buf.extract(&segments, ap) };
-
-    // Bare "%s" fast path: use the string directly, else render.
-    let mut _bare_hold = None;
-    let bytes = unsafe {
-        bare_s_or_render(
-            "vdprintf",
-            fmt_bytes,
-            &segments,
-            arg_buf.as_ptr(),
-            extract_count,
-            &mut _bare_hold,
-        )
-    };
-    let total_len = bytes.len();
-
-    // Keep the current call's render failure out of shared thread-local state
-    // while the descriptor write may fail or invoke policy hooks.
-    let render_failure = take_render_failure();
-    let mut written = 0usize;
-    let mut adverse = false;
-    while written < total_len {
-        let rc = unsafe {
-            stream_write_fd(
-                caller,
-                fd,
-                bytes[written..].as_ptr().cast(),
-                total_len - written,
-            )
-        };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if e == errno::EINTR {
-                continue;
-            }
-            adverse = true;
-            break;
-        } else if rc == 0 {
-            adverse = true;
-            break;
-        }
-        written += rc as usize;
-    }
-    runtime_policy::observe(
-        ApiFamily::Stdio,
-        decision.profile,
-        runtime_policy::scaled_cost(15, total_len),
-        adverse,
-    );
-    if let Some(error) = render_failure {
-        // SAFETY: errno is this thread's writable ABI error slot.
-        unsafe { set_abi_errno(error) };
-        -1
-    } else if adverse {
-        -1
-    } else {
-        printf_result_to_c_int(total_len)
-    }
+    // SAFETY: the shared streaming engine consumes the caller's live va_list.
+    unsafe { streaming_dprintf(fd, format, ap, caller) }
 }
 
 /// GNU `vasprintf` — allocate and format from va_list.

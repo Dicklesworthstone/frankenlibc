@@ -22,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/tests/native_file_layout_test.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_dprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
@@ -416,7 +417,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
           for mode in strict hardened; do
-            for target in conformance_diff_stdio_printf conformance_diff_swprintf conformance_diff_fgetpos open_wmemstream_differential_test; do
+            for target in conformance_diff_stdio_printf conformance_diff_dprintf conformance_diff_swprintf conformance_diff_fgetpos open_wmemstream_differential_test; do
               FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
                 --test "$target" -- --test-threads=1 --nocapture \
                 2>&1 | tee "artifacts/stdio-layout/$target-$mode.log"
