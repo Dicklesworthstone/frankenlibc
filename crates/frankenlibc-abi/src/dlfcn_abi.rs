@@ -535,7 +535,8 @@ pub(crate) use native::{
 use native::{close_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol};
 pub(crate) use native::{native_address_info_extra, query_object_info};
 pub(crate) use native::{
-    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
+    drain_current_thread_tls_destructors, prepare_native_public_tls_destructors,
+    register_native_public_tls_destructor,
 };
 
 #[cfg(any(feature = "standalone", feature = "conformance-testing"))]

@@ -54,7 +54,8 @@ pub(crate) use thread_exit::{
     ThreadExitForkGuard, lock_thread_exit_for_fork, migrate_creator_thread_exit_for_native_threads,
 };
 pub(crate) use thread_exit::{
-    prepare_native_public_tls_destructors, register_native_public_tls_destructor,
+    drain_current as drain_current_thread_tls_destructors, prepare_native_public_tls_destructors,
+    register_native_public_tls_destructor,
 };
 
 #[path = "dlfcn_ifunc.rs"]

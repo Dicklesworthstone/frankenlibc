@@ -801,7 +801,7 @@ fn drain_state(state: *mut ThreadState) {
     drain(unsafe { &*state }, false);
 }
 
-fn drain_current() {
+pub(crate) fn drain_current() {
     if let Some(handle) = current_thread_handle() {
         if let Some(state) = native_state(handle, false) {
             drain_state(state);

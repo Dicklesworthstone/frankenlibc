@@ -8,6 +8,8 @@ on:
       - 'crates/frankenlibc-abi/src/util.rs'
       - 'crates/frankenlibc-abi/src/dlfcn_abi.rs'
       - 'crates/frankenlibc-abi/src/dlfcn_thread_exit.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn_native.rs'
+      - 'crates/frankenlibc-abi/src/exit_handlers.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'

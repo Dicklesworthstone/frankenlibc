@@ -154,7 +154,8 @@ def check_public_tls_destructors(root, library, output, environment, compile_fix
     if not (negative["returncode"] == 80 and not negative["stdout"] and
             negative["stderr"] == "wrong provider for pthread_create\n"):
         failures.append("provider-negative")
-    common = ("return", "exit", "cancel", "late-key", "runtime-callback")
+    common = ("return", "exit", "cancel", "late-key", "runtime-callback",
+              "process-exit", "process-recursive", "process-empty")
     runtime_retry_cases = ("runtime-retry-pending", "runtime-retry-consumed")
     gnu_cases = common + ("creator-error", "creator-error-consumed", "native-dso",
                           "host-owner") + runtime_retry_cases

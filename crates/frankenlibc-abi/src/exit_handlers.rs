@@ -285,11 +285,25 @@ pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
 }
 
 /// Normal process termination destroys the calling thread's C++ TLS objects
-/// before process callbacks. The two registries below mirror registration in
-/// startup_abi::__cxa_thread_atexit_impl: the host owns its TLS/DSO pinning when
-/// interposing, while standalone and recursive-lookup fallbacks are owned here.
+/// before process callbacks. Select the same owner as registration in
+/// startup_abi::__cxa_thread_atexit_impl: managed clones own a native queue,
+/// while initial/hosted threads use host or compiler-TLS fallback queues.
 /// Do not put this in finalize_cxa_handlers: dlclose is not thread termination.
 fn run_exiting_thread_dtors() {
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+        // Keep the handle and its scratch storage live through every callback.
+        // The drain removes one entry before invoking it, so registration and
+        // recursive exit resume this same owner's remaining queue.
+        crate::dlfcn_abi::drain_current_thread_tls_destructors();
+        return;
+    }
+    if frankenlibc_core::pthread::tls::current_thread_is_exiting_native() {
+        // The last native worker may call process exit after its handle was
+        // withdrawn. Its TLS was already drained before teardown; inherited
+        // compiler TLS still belongs to the creator even in this final tail.
+        return;
+    }
+
     #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
     if let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__call_tls_dtors") {
         // SAFETY: lookup excludes our export and returns the host's no-argument

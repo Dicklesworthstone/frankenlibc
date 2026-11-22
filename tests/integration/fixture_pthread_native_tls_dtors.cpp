@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #endif
 #include <atomic>
+#include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
@@ -68,6 +69,19 @@ static Destructor module_callback;
 static void *module_owner;
 static void *module_argument;
 static int runtime_owner_token;
+static bool process_exit_case;
+static bool recursive_process_exit;
+static bool empty_process_exit;
+static bool expected_native_backend;
+static char process_tokens[] = "alpha,beta,gamma,delta";
+static char *process_address;
+
+static bool process_scratch_matches(const char *expected_token) {
+    if (!process_address || strcmp(process_address, "203.0.113.7"))
+        return false;
+    char *token = strtok(nullptr, ",");
+    return token && !strcmp(token, expected_token);
+}
 
 static void check_provider(const char *symbol) {
     const char *expected = getenv("FRANKENLIBC_TEST_LIBRARY");
@@ -88,9 +102,55 @@ static void record(void *argument) {
     int value = (int)(uintptr_t)argument;
     int index = event_count.fetch_add(1);
     if (index < 16) events[index] = value;
+    if (process_exit_case &&
+        !process_scratch_matches(value == 2 ? "beta" : value == 3 ? "gamma" : "delta"))
+        registration_failed.store(1);
     if (value == 2 &&
         __cxa_thread_atexit_impl(record, (void *)(uintptr_t)3, __dso_handle))
         registration_failed.store(1);
+    if (value == 2 && recursive_process_exit) exit(0);
+}
+
+// Only the worker touches these objects. Its compiler-generated registrations
+// must enter its native queue even though its hardware TLS aliases the creator.
+struct ProcessTlsWitness {
+    int value;
+    explicit ProcessTlsWitness(int number) : value(number) {}
+    ~ProcessTlsWitness() { record((void *)(uintptr_t)value); }
+};
+
+static void touch_process_tls() {
+    thread_local ProcessTlsWitness first(1);
+    thread_local ProcessTlsWitness second(2);
+    (void)first;
+    (void)second;
+}
+
+static void process_exit_check() {
+    // Process callbacks must still be able to use libc after the TLS drain.
+    // Request fresh scratch here: host teardown may have retired old buffers.
+    in_addr address{htonl(0xcb007108U)};
+    char *current_address = inet_ntoa(address);
+    char tokens[] = "process,callback";
+    char *first = strtok(tokens, ",");
+    char *second = strtok(nullptr, ",");
+    bool scratch_ok = current_address && !strcmp(current_address, "203.0.113.8") &&
+                      first && !strcmp(first, "process") &&
+                      second && !strcmp(second, "callback");
+    bool ok = syscall(SYS_gettid) == worker_tid && worker_tid != creator_tid &&
+              ((worker_tp == creator_tp) == expected_native_backend) &&
+              !registration_failed.load() && !wrong_thread.load() &&
+              !creator_callbacks.load() &&
+              event_count.load() == (empty_process_exit ? 0 : 3) &&
+              (empty_process_exit || (events[0] == 2 && events[1] == 3 && events[2] == 1)) &&
+              scratch_ok;
+    printf("native public TLS dtors %s: events=%d [%d,%d,%d] creator=%d "
+           "wrong_thread=%d registration_failed=%d %s\n", exit_kind,
+           event_count.load(), events[0], events[1], events[2],
+           creator_callbacks.load(), wrong_thread.load(), registration_failed.load(),
+           ok ? "PASS" : "FAIL");
+    fflush(stdout);
+    if (!ok) _exit(43);
 }
 
 static void creator_callback(void *) {
@@ -122,10 +182,22 @@ static void *worker(void *) {
     }
     if (use_late_key && pthread_setspecific(late_key, (void *)(uintptr_t)1))
         registration_failed.store(1);
-    if (__cxa_thread_atexit_impl(record, (void *)(uintptr_t)1, __dso_handle) ||
-        __cxa_thread_atexit_impl(record, (void *)(uintptr_t)2, __dso_handle))
+    if (process_exit_case) {
+        if (!empty_process_exit) {
+            // These buffers must survive every C++ TLS callback.
+            in_addr address{htonl(0xcb007107U)};
+            process_address = inet_ntoa(address);
+            char *first = strtok(process_tokens, ",");
+            if (!process_address || !first || strcmp(first, "alpha"))
+                registration_failed.store(1);
+            touch_process_tls();
+        }
+    } else if (__cxa_thread_atexit_impl(record, (void *)(uintptr_t)1, __dso_handle) ||
+               __cxa_thread_atexit_impl(record, (void *)(uintptr_t)2, __dso_handle)) {
         registration_failed.store(1);
+    }
     ready.store(1, std::memory_order_release);
+    if (process_exit_case) exit(0);
     if (strcmp(exit_kind, "cancel") == 0) {
         for (;;) {
             pthread_testcancel();
@@ -199,6 +271,10 @@ int main(int argc, char **argv) {
     bool runtime_retry = !strcmp(exit_kind, "runtime-retry-pending") ||
                          !strcmp(exit_kind, "runtime-retry-consumed");
     bool runtime_callback = !strcmp(exit_kind, "runtime-callback") || runtime_retry;
+    recursive_process_exit = !strcmp(exit_kind, "process-recursive");
+    empty_process_exit = !strcmp(exit_kind, "process-empty");
+    process_exit_case = !strcmp(exit_kind, "process-exit") ||
+                        recursive_process_exit || empty_process_exit;
     const char *native_setting = getenv("FRANKENLIBC_THREAD_NATIVE");
     bool native = getenv("FRANKENLIBC_TEST_LIBRARY") != nullptr &&
                   native_setting && !strcmp(native_setting, "1");
@@ -207,7 +283,7 @@ int main(int argc, char **argv) {
     use_late_key = !strcmp(exit_kind, "late-key");
     if (strcmp(exit_kind, "return") && strcmp(exit_kind, "exit") &&
         strcmp(exit_kind, "cancel") && !use_late_key && !use_module &&
-        !creator_error && !runtime_callback) return 2;
+        !creator_error && !runtime_callback && !process_exit_case) return 2;
     // A mismatched executable owner cannot pin an unloadable callback in GNU.
     // This is an explicit rejection check for the native registration policy,
     // not a valid GNU unload-and-call workload.
@@ -219,6 +295,13 @@ int main(int argc, char **argv) {
     creator_tid = syscall(SYS_gettid);
     creator_tp = (uintptr_t)__builtin_thread_pointer();
     if (__cxa_thread_atexit_impl(creator_callback, nullptr, __dso_handle)) return 3;
+    if (process_exit_case) {
+        check_provider("exit");
+        check_provider("strtok");
+        check_provider("inet_ntoa");
+        expected_native_backend = native;
+        if (atexit(process_exit_check)) return 19;
+    }
     if (runtime_retry &&
         !prepare_runtime_pin_retry(!strcmp(exit_kind, "runtime-retry-consumed"), native)) {
         fprintf(stderr, "runtime pin retry precondition failed: %s\n", exit_kind);
@@ -267,6 +350,10 @@ int main(int argc, char **argv) {
     pthread_t thread;
     if (pthread_create(&thread, nullptr, worker, nullptr)) return 4;
     while (!ready.load(std::memory_order_acquire)) sched_yield();
+    // The process callback, on the exiting worker, owns this case's verdict.
+    // The creator stays alive with its own pending TLS callback throughout.
+    if (process_exit_case)
+        for (;;) sched_yield();
     bool rejected = use_module && !native_module && native;
     bool early_unload = false;
     if (use_module) {
