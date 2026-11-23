@@ -11,6 +11,9 @@ on:
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/socket/**'
       - 'crates/frankenlibc-core/src/nss/**'
+      - 'crates/frankenlibc-core/src/crypt/**'
+      - 'Cargo.toml'
+      - 'crates/frankenlibc-core/Cargo.toml'
       - 'crates/frankenlibc-core/src/netgroup/**'
       - 'crates/frankenlibc-core/src/rpc/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
@@ -54,6 +57,49 @@ defaults:
     shell: bash
 
 jobs:
+  native-files-parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Execute native files parser contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/native-files-parsers
+          cargo test -p frankenlibc-core --lib resolv::nss_netdb_tests \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/core.log
+          grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/core.log
+      - name: Execute yescrypt parameter and encoding contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/native-files-parsers
+          cargo test -p frankenlibc-core --lib crypt::yescrypt_params \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/yescrypt-params.log
+          grep -Eq '^test result: ok\. 8 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/yescrypt-params.log
+          cargo test -p frankenlibc-core --lib crypt::base64 \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/crypt-base64.log
+          grep -Eq '^test result: ok\. 9 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/crypt-base64.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-files-parsers
+          path: artifacts/native-files-parsers/
+
   protocol-database:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

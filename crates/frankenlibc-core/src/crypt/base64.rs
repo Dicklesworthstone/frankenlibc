@@ -8,6 +8,50 @@
 /// The 64-character crypt(3) alphabet.
 pub const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
+/// Encode a little-endian bit stream, as used for yescrypt salts and hashes.
+/// Unlike [`encode`], this does not reverse three-byte groups or add padding.
+pub fn encode_le(input: &[u8]) -> String {
+    let mut output = String::with_capacity((input.len() / 3) * 4 + 4);
+    let mut word = 0u32;
+    let mut bits = 0u32;
+    for &byte in input {
+        word |= u32::from(byte) << bits;
+        bits += 8;
+        while bits >= 6 {
+            output.push(ALPHABET[(word & 63) as usize] as char);
+            word >>= 6;
+            bits -= 6;
+        }
+    }
+    if bits != 0 {
+        output.push(ALPHABET[word as usize] as char);
+    }
+    output
+}
+
+/// Decode canonical little-endian crypt base-64 into bounded caller storage.
+/// A lone final digit or nonzero unused bits are malformed, not an extra byte.
+pub fn decode_le(input: &[u8], output: &mut [u8]) -> Option<usize> {
+    if input.len() % 4 == 1 {
+        return None;
+    }
+    let mut written = 0;
+    let mut word = 0u32;
+    let mut bits = 0u32;
+    for &byte in input {
+        let digit = ALPHABET.iter().position(|&value| value == byte)? as u32;
+        word |= digit << bits;
+        bits += 6;
+        if bits >= 8 {
+            *output.get_mut(written)? = word as u8;
+            written += 1;
+            word >>= 8;
+            bits -= 8;
+        }
+    }
+    (word == 0).then_some(written)
+}
+
 /// Encode `input` to a `n_chars`-long crypt(3)-style base-64 string.
 ///
 /// `input` is consumed in **groups of three bytes**, each group packed
@@ -56,6 +100,24 @@ pub fn encode(input: &[u8], n_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn little_endian_stream_is_canonical_and_bounded() {
+        let input: Vec<_> = (0..64u8).collect();
+        let mut decoded = [0; 64];
+        for length in 0..=input.len() {
+            let text = encode_le(&input[..length]);
+            assert_eq!(decode_le(text.as_bytes(), &mut decoded), Some(length));
+            assert_eq!(&decoded[..length], &input[..length]);
+        }
+        assert_eq!(encode_le(&[0, 1, 2, 3]), ".2U.1.");
+        assert_eq!(decode_le(b"A.", &mut decoded), Some(1));
+        assert_eq!(decoded[0], 12);
+        for invalid in [b".".as_slice(), b"AB", b"..E", b".!!!", b"....."] {
+            assert_eq!(decode_le(invalid, &mut decoded), None);
+        }
+        assert_eq!(decode_le(b"....", &mut decoded[..2]), None);
+    }
 
     #[test]
     fn alphabet_has_64_chars() {

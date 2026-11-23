@@ -3,8 +3,9 @@
 //! Pure-safe Rust port of the salt prefix parsing, crypt(3)-style base-64
 //! encoding, and the password hashing schemes: SHA-512 (`$6$`), SHA-256
 //! (`$5$`), MD5 (`$1$`), bcrypt (`$2*$`), traditional and BSDI extended DES
-//! (two-character and `_` settings) and NTHASH (`$3$`), plus the scrypt KDF and its
-//! PBKDF2-HMAC-SHA-256 dependency, which `$7$` and `$y$` are built on.
+//! (two-character and `_` settings), NTHASH (`$3$`), scrypt (`$7$`) and yescrypt
+//! (`$y$`). The yescrypt KDF uses the pinned pure-Rust implementation; its
+//! settings, resource admission and crypt output are owned here.
 //! The SHA/MD5 schemes lived inline in frankenlibc-abi/src/unistd_abi.rs
 //! before being lifted here. The abi `crypt()` entry point is a thin
 //! shim that dispatches on the salt prefix and packs the result into
