@@ -13331,9 +13331,9 @@ fn crypt_ra_allocates_buffer_when_data_null() {
 }
 
 #[test]
-fn crypt_gensalt_default_is_sha512() {
+fn crypt_gensalt_default_is_yescrypt() {
     use frankenlibc_abi::unistd_abi::crypt_gensalt;
-    let rbytes = b"randombytes!";
+    let rbytes = b"sixteenrandomby!";
     let p = unsafe {
         crypt_gensalt(
             std::ptr::null(),
@@ -13344,8 +13344,8 @@ fn crypt_gensalt_default_is_sha512() {
     };
     assert!(!p.is_null());
     let s = unsafe { CStr::from_ptr(p) };
-    assert!(s.to_bytes().starts_with(b"$6$"), "got: {s:?}");
-    assert!(s.to_bytes().len() >= 3 + 16, "len: {}", s.to_bytes().len()); // "$6$" + 16 chars of salt
+    assert!(s.to_bytes().starts_with(b"$y$j9T$"), "got: {s:?}");
+    assert_eq!(s.to_bytes().len(), 7 + 22); // prefix, parameters, 128-bit salt
 }
 
 #[test]
@@ -13512,7 +13512,7 @@ fn crypt_gensalt_ra_allocates_via_malloc() {
     let p = unsafe { crypt_gensalt_ra(std::ptr::null(), 0, std::ptr::null(), 0) };
     assert!(!p.is_null());
     let s = unsafe { CStr::from_ptr(p) };
-    assert!(s.to_bytes().starts_with(b"$6$"));
+    assert!(s.to_bytes().starts_with(b"$y$"));
     unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
 }
 
@@ -15486,7 +15486,7 @@ fn nss_files_initgroups_dyn_miss_preserves_errnop_and_array() {
 }
 
 #[test]
-fn nss_files_parse_stubs_return_zero_skip_line() {
+fn nss_files_parsers_reject_null_result_without_changing_error() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_parse_etherent, _nss_files_parse_grent, _nss_files_parse_netent,
         _nss_files_parse_protoent, _nss_files_parse_pwent, _nss_files_parse_rpcent,
@@ -15506,7 +15506,8 @@ fn nss_files_parse_stubs_return_zero_skip_line() {
                     &mut errnop,
                 )
             };
-            assert_eq!(rc, 0, concat!(stringify!($f), " should return 0 (skip)"));
+            assert_eq!(rc, 0, concat!(stringify!($f), " must reject a null result"));
+            assert_eq!(errnop, 99, "invalid output must preserve the error slot");
         }};
     }
 

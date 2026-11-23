@@ -11,6 +11,9 @@ on:
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/socket/**'
       - 'crates/frankenlibc-core/src/nss/**'
+      - 'crates/frankenlibc-core/src/crypt/**'
+      - 'Cargo.toml'
+      - 'crates/frankenlibc-core/Cargo.toml'
       - 'crates/frankenlibc-core/src/netgroup/**'
       - 'crates/frankenlibc-core/src/rpc/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
@@ -28,6 +31,9 @@ on:
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_netdb_r_aliases.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_nss_files_parsers.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_crypt_schemes.rs'
+      - 'crates/frankenlibc-abi/Cargo.toml'
       - 'crates/frankenlibc-abi/tests/conformance_diff_protoent_r_aliases.rs'
       - 'crates/frankenlibc-abi/tests/resolver_no_aaaa_test.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
@@ -54,6 +60,77 @@ defaults:
     shell: bash
 
 jobs:
+  native-files-parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Execute native files parser contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/native-files-parsers
+          cargo test -p frankenlibc-core --lib resolv::nss_netdb_tests \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/core.log
+          grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/core.log
+      - name: Execute yescrypt parameter and encoding contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/native-files-parsers
+          cargo test -p frankenlibc-core --lib crypt::yescrypt_params \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/yescrypt-params.log
+          grep -Eq '^test result: ok\. 8 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/yescrypt-params.log
+          cargo test -p frankenlibc-core --lib crypt::base64 \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/crypt-base64.log
+          grep -Eq '^test result: ok\. 9 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/crypt-base64.log
+      - name: Execute protocol source policy and native parser ABI regressions
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --lib nss:: \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/nss-policy.log
+          grep -Eq '^test result: ok\. 26 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/nss-policy.log
+          cargo test -p frankenlibc-abi --test conformance_diff_nss_files_parsers \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/abi.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/abi.log
+      - name: Compare native yescrypt with the independent host provider
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --test conformance_diff_crypt_schemes yescrypt \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/native-files-parsers/yescrypt-abi.log
+          grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' \
+            artifacts/native-files-parsers/yescrypt-abi.log
+          for test in crypt_gensalt_default_is_yescrypt crypt_gensalt_ra_allocates_via_malloc; do
+            cargo test -p frankenlibc-abi --test unistd_abi_test "$test" \
+              -- --exact --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/native-files-parsers/$test.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+              "artifacts/native-files-parsers/$test.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-files-parsers
+          path: artifacts/native-files-parsers/
+
   protocol-database:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -150,6 +227,22 @@ jobs:
             -- --nocapture --test-threads=1 2>&1 | tee artifacts/services-enumeration/tests.log
           grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
             artifacts/services-enumeration/tests.log
+      - name: Compare protocol modules, source actions, retries, and reentry with GNU
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test protocols_ \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/services-enumeration/protocols.log
+          grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
+            artifacts/services-enumeration/protocols.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

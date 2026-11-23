@@ -55,12 +55,12 @@ struct ConfigCache {
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 7],
+    parsed: [Option<Arc<Vec<Service>>>; 8],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
     /// Process-local overrides are independent of the on-disk image. A
     /// fingerprint or path change must never erase an explicit selection.
-    overrides: [Option<Arc<Vec<Service>>>; 7],
+    overrides: [Option<Arc<Vec<Service>>>; 8],
     hosts_override: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     hosts_parsed: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     /// GNU freezes the whole configuration on the first successful runtime
@@ -73,9 +73,9 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None, None, None, None],
+    parsed: [None, None, None, None, None, None, None, None],
     initgroups_explicit: None,
-    overrides: [None, None, None, None, None, None, None],
+    overrides: [None, None, None, None, None, None, None, None],
     hosts_override: None,
     hosts_parsed: None,
     frozen: false,
@@ -107,6 +107,7 @@ pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), Confi
         b"initgroups" => Database::Initgroups,
         b"publickey" => Database::Publickey,
         b"services" => Database::Services,
+        b"protocols" => Database::Protocols,
         b"netgroup" => Database::Netgroup,
         _ => return Err(ConfigureError::UnknownDatabase),
     };
@@ -128,7 +129,7 @@ fn freeze_config(cache: &mut ConfigCache, read: fn(&ConfigCache) -> Option<Vec<u
     if !cache.frozen {
         cache.snapshot = read(cache);
         cache.frozen = true;
-        cache.parsed = [None, None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -165,6 +166,7 @@ fn database_slot(database: Database) -> usize {
         Database::Publickey => 4,
         Database::Services => 5,
         Database::Netgroup => 6,
+        Database::Protocols => 7,
     }
 }
 
@@ -275,7 +277,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -1052,48 +1054,236 @@ pub(crate) unsafe fn service_entry_r(
     unsafe { query.answer(out, buf, len) }
 }
 
-/// Resolved enumeration callback. Modules remain loaded in the process cache;
-/// invoking it requires no loader/configuration lock or thread-storage borrow.
-pub(crate) struct ServiceEnumeration {
-    next: GetEntFn<libc::servent>,
+/// The two netdb databases share GNU's set/get/end source traversal, while
+/// keeping their entry layouts and callback signatures distinct.
+#[derive(Clone, Copy)]
+pub(crate) enum NetdbDatabase {
+    Services,
+    Protocols,
 }
 
-impl ServiceEnumeration {
+impl NetdbDatabase {
+    pub(crate) fn database(self) -> Database {
+        match self {
+            Self::Services => Database::Services,
+            Self::Protocols => Database::Protocols,
+        }
+    }
+
+    fn functions(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Services => ("setservent", "getservent_r", "endservent"),
+            Self::Protocols => ("setprotoent", "getprotoent_r", "endprotoent"),
+        }
+    }
+}
+
+/// Resolved enumeration callback. Modules remain loaded in the process cache;
+/// invoking it requires no loader/configuration lock or thread-storage borrow.
+pub(crate) struct NetdbEnumeration {
+    next: usize,
+    database: NetdbDatabase,
+}
+
+impl NetdbEnumeration {
     /// # Safety
     /// The output object and exact caller buffer are writable for the callback.
     pub(crate) unsafe fn next_r(
         &self,
-        output: *mut libc::servent,
+        output: *mut c_void,
         buffer: *mut c_char,
         capacity: usize,
     ) -> c_int {
         // Enumeration preserves the module's errno, including untouched
         // success/miss slots, unlike the keyed services lookup adapter.
         let error = unsafe { crate::errno_abi::__errno_location() };
-        unsafe { (self.next)(output, buffer, capacity, error) }
+        // SAFETY: construction resolves the function for this exact database;
+        // callers supply its matching complete output layout.
+        unsafe {
+            match self.database {
+                NetdbDatabase::Services => {
+                    let next: GetEntFn<libc::servent> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+                NetdbDatabase::Protocols => {
+                    let next: GetEntFn<libc::protoent> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+            }
+        }
     }
 }
 
-pub(crate) fn service_enumeration(service: &[u8]) -> Option<ServiceEnumeration> {
-    let address = module_function(service, "getservent_r")?;
-    // SAFETY: the resolved function has the documented NSS getservent_r ABI.
-    Some(ServiceEnumeration { next: unsafe { core::mem::transmute(address) } })
+pub(crate) fn netdb_enumeration(
+    database: NetdbDatabase,
+    service: &[u8],
+) -> Option<NetdbEnumeration> {
+    let next = module_function(service, database.functions().1)?;
+    Some(NetdbEnumeration { next, database })
 }
 
-pub(crate) fn service_setent(service: &[u8], stayopen: c_int) -> Option<c_int> {
-    let address = module_function(service, "setservent")?;
-    // SAFETY: NSS setservent accepts one int and returns an nss_status.
+pub(crate) fn netdb_setent(
+    database: NetdbDatabase,
+    service: &[u8],
+    stayopen: c_int,
+) -> Option<c_int> {
+    let address = module_function(service, database.functions().0)?;
+    // SAFETY: both NSS set callbacks accept one int and return an nss_status.
     let function: SetEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function(stayopen) })
 }
 
-pub(crate) fn service_endent(service: &[u8]) -> Option<c_int> {
+pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_int> {
     // GNU enumeration cleanup may visit a configured module before any get
     // callback has loaded it. Preserve absence separately from callback status.
-    let address = module_function(service, "endservent")?;
-    // SAFETY: NSS endservent takes no arguments and returns an nss_status.
+    let address = module_function(service, database.functions().2)?;
+    // SAFETY: both NSS end callbacks take no arguments and return nss_status.
     let function: EndEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function() })
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ProtocolKey<'a> {
+    Name(&'a [u8]),
+    Number(c_int),
+}
+
+struct ProtocolQuery<'a> {
+    address: usize,
+    key: ProtocolKey<'a>,
+    name: Vec<u8>,
+}
+
+impl<'a> ProtocolQuery<'a> {
+    fn new(service: &[u8], key: ProtocolKey<'a>) -> Option<Self> {
+        let function = match key {
+            ProtocolKey::Name(_) => "getprotobyname_r",
+            ProtocolKey::Number(_) => "getprotobynumber_r",
+        };
+        let address = module_function(service, function)?;
+        let name = match key {
+            ProtocolKey::Name(name) => {
+                let mut terminated = name.to_vec();
+                terminated.push(0);
+                terminated
+            }
+            ProtocolKey::Number(_) => Vec::new(),
+        };
+        Some(Self { address, key, name })
+    }
+
+    /// # Safety
+    /// `out` and `buf[..len]` are writable for the configured NSS callback.
+    unsafe fn answer(&self, out: *mut libc::protoent, buf: *mut c_char, len: usize) -> Answer<()> {
+        type ByNumber = unsafe extern "C" fn(
+            c_int,
+            *mut libc::protoent,
+            *mut c_char,
+            usize,
+            *mut c_int,
+        ) -> c_int;
+        let error = unsafe { crate::errno_abi::__errno_location() };
+        // SAFETY: the selected lookup name determines the exact module ABI;
+        // the terminated key and caller-owned objects remain live throughout.
+        let status = unsafe {
+            match self.key {
+                ProtocolKey::Name(_) => {
+                    let call: ByNameFn<libc::protoent> = core::mem::transmute(self.address);
+                    call(self.name.as_ptr().cast(), out, buf, len, error)
+                }
+                ProtocolKey::Number(number) => {
+                    let call: ByNumber = core::mem::transmute(self.address);
+                    call(number, out, buf, len, error)
+                }
+            }
+        };
+        match classify(status, unsafe { *error }) {
+            Raw::Range => Answer::BufferTooSmall,
+            Raw::Status(Status::Success, _) => {
+                unsafe { *error = 0 };
+                Answer::Found(())
+            }
+            Raw::Status(Status::NotFound, _) => {
+                unsafe { *error = 0 };
+                Answer::NotFound
+            }
+            Raw::Status(Status::TryAgain, error) => Answer::TryAgain(error),
+            Raw::Status(Status::Unavailable, error) => Answer::Unavailable(error),
+        }
+    }
+}
+
+/// # Safety
+/// A successful NSS module provides terminated strings and an alias table
+/// valid until its caller-owned scratch buffer is released.
+unsafe fn protocol_from_c(
+    entry: &libc::protoent,
+) -> Option<frankenlibc_core::resolv::ProtocolEntry> {
+    if entry.p_name.is_null() {
+        return None;
+    }
+    let mut aliases = Vec::new();
+    if !entry.p_aliases.is_null() {
+        for index in 0..MAX_SCRATCH / size_of::<usize>() {
+            // SAFETY: the successful module supplies a terminated pointer table.
+            let alias = unsafe { *entry.p_aliases.add(index) };
+            if alias.is_null() {
+                break;
+            }
+            aliases.push(unsafe { owned(alias) });
+            if index + 1 == MAX_SCRATCH / size_of::<usize>() {
+                return None;
+            }
+        }
+    }
+    Some(frankenlibc_core::resolv::ProtocolEntry {
+        // SAFETY: the successful module supplies a terminated name.
+        name: unsafe { owned(entry.p_name) },
+        number: entry.p_proto,
+        aliases,
+    })
+}
+
+pub(crate) fn protocol_entry(
+    service: &[u8],
+    key: ProtocolKey<'_>,
+) -> Answer<frankenlibc_core::resolv::ProtocolEntry> {
+    let Some(query) = ProtocolQuery::new(service, key) else {
+        return Answer::Unavailable(missing_source());
+    };
+    let mut out = MaybeUninit::<libc::protoent>::zeroed();
+    let mut size = INITIAL_SCRATCH;
+    loop {
+        let mut scratch = vec![0u8; size];
+        // SAFETY: the result and complete scratch storage live across the call.
+        match unsafe { query.answer(out.as_mut_ptr(), scratch.as_mut_ptr().cast(), size) } {
+            Answer::BufferTooSmall if size < MAX_SCRATCH => size *= 2,
+            Answer::Found(()) => {
+                // SAFETY: copy every field before dropping the module scratch.
+                return unsafe { protocol_from_c(out.assume_init_ref()) }
+                    .map_or(Answer::Unavailable(libc::EINVAL), Answer::Found);
+            }
+            Answer::NotFound => return Answer::NotFound,
+            Answer::Unavailable(error) => return Answer::Unavailable(error),
+            Answer::TryAgain(error) => return Answer::TryAgain(error),
+            Answer::BufferTooSmall => return Answer::BufferTooSmall,
+        }
+    }
+}
+
+/// # Safety
+/// The caller has checked its complete protoent and exact buffer capacity.
+pub(crate) unsafe fn protocol_entry_r(
+    service: &[u8],
+    key: ProtocolKey<'_>,
+    out: *mut libc::protoent,
+    buf: *mut c_char,
+    len: usize,
+) -> Answer<()> {
+    let Some(query) = ProtocolQuery::new(service, key) else {
+        return Answer::Unavailable(missing_source());
+    };
+    unsafe { query.answer(out, buf, len) }
 }
 
 /// Every pointer returned by a hosts module is copied before its scratch

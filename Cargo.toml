@@ -41,6 +41,7 @@ md-5 = "0.11.0"
 clap = { version = "4.6.1", features = ["derive"] }
 criterion = "0.8.2"
 libc = "0.2.185"
+yescrypt = { version = "=0.1.0", default-features = false }
 
 # Native IDNA processing. Keep the Unicode backend on the Unicode 16 cohort
 # used by core's normative IDNA2008 property table. The ICU 2.0 crates constrain

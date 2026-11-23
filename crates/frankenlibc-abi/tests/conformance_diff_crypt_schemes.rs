@@ -478,6 +478,181 @@ fn generated_settings_round_trip_through_crypt() {
 }
 
 // ---------------------------------------------------------------------------
+// Native yescrypt ($y$)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn yescrypt_native_core_and_abi_match_live_libxcrypt() {
+    let _oracle = oracle_lock();
+    let host = host_crypt().expect("libxcrypt is required for the yescrypt oracle");
+    let cases: &[(&[u8], &str)] = &[
+        (b"password", "$y$j75$saltsalt"),
+        (b"", "$y$j3.$.."),
+        (b"password", "$y$j3.$"),
+        (b"\x80\xfe\xc3\xa9", "$y$j3.$..."),
+        (b"pw", "$y$.3.$.."),
+        (b"pw", "$y$/3.$.."),
+        (b"pw", "$y$j3/$.."),
+        (b"pw", "$y$j3..0$.."),
+        (b"pw", "$y$j3./.$.."),
+        (b"pw", "$y$j3.0..$.."),
+        (b"pw", "$y$j3.E.$.."),
+        (b"pw", "$y$j3.zzzzzz$.."),
+        (b"pw", "$y$j3kE$.."),
+        (b"pw", "$y$j3.$A/$oldhash"),
+    ];
+    for &(password, text) in cases {
+        let key = CString::new(password).unwrap();
+        let setting = CString::new(text).unwrap();
+        // SAFETY: NUL-terminated strings and independently resolved oracle.
+        let ptr = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        assert!(!ptr.is_null());
+        let expected = unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned();
+        assert!(expected.starts_with("$y$"), "oracle rejected {text}");
+        // Calling the core directly makes host delegation incapable of
+        // concealing a missing or incorrect native implementation.
+        assert_eq!(
+            frankenlibc_core::crypt::yescrypt_params::hash(password, text.as_bytes()).unwrap(),
+            expected,
+            "native {text}"
+        );
+        assert_eq!(fl_crypt(&key, &setting), expected, "ABI {text}");
+        let stored = CString::new(expected.clone()).unwrap();
+        assert_eq!(
+            fl_crypt(&key, &stored),
+            expected,
+            "stored-hash verification"
+        );
+    }
+}
+
+#[test]
+fn yescrypt_gensalt_costs_entropy_and_round_trip_match_libxcrypt() {
+    let _oracle = oracle_lock();
+    let host = host_gensalt().expect("libxcrypt is required for the yescrypt oracle");
+    let bytes: Vec<u8> = (0..96).collect();
+    for prefix in [None, Some("$y$"), Some("$y$j75$oldsetting")] {
+        let prefix = prefix.map(|text| CString::new(text).unwrap());
+        let p = prefix
+            .as_ref()
+            .map_or(std::ptr::null(), |text| text.as_ptr());
+        for count in 0..=12 {
+            for length in [15, 16, 17, 24, 32, 64, 96] {
+                // SAFETY: all entropy lengths fit the supplied byte array.
+                let expected = unsafe { host(p, count, bytes.as_ptr().cast(), length) };
+                let expected =
+                    (!expected.is_null()).then(|| unsafe { CStr::from_ptr(expected) }.to_owned());
+                let actual = unsafe {
+                    frankenlibc_abi::unistd_abi::crypt_gensalt(
+                        p,
+                        count,
+                        bytes.as_ptr().cast(),
+                        length,
+                    )
+                };
+                let actual =
+                    (!actual.is_null()).then(|| unsafe { CStr::from_ptr(actual) }.to_owned());
+                assert_eq!(
+                    actual, expected,
+                    "prefix={prefix:?} count={count} length={length}"
+                );
+            }
+        }
+    }
+    let setting = unsafe {
+        frankenlibc_abi::unistd_abi::crypt_gensalt(c"$y$".as_ptr(), 1, bytes.as_ptr().cast(), 64)
+    };
+    assert!(!setting.is_null());
+    let setting = unsafe { CStr::from_ptr(setting) }.to_owned();
+    let expected =
+        frankenlibc_core::crypt::yescrypt_params::hash(b"password", setting.to_bytes()).unwrap();
+    assert_eq!(fl_crypt(c"password", &setting), expected);
+}
+
+#[test]
+fn yescrypt_failure_tokens_and_errno_survive_reentrant_wrappers() {
+    let _oracle = oracle_lock();
+    let host = host_crypt().expect("libxcrypt is required for the yescrypt oracle");
+    let key = CString::new("password").unwrap();
+    for setting in [
+        "$y$j75$A",
+        "$y$j75$AB",
+        "$y$j75.$..",
+        "$y$j75..0$..",
+        "$y$j75$..$bad!",
+        "$y$j75$..$bad:",
+        "$y$j75z$..",
+    ] {
+        let setting = CString::new(setting).unwrap();
+        let expected = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        assert!(!expected.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(expected) }.to_bytes(), b"*0");
+        assert_eq!(fl_crypt(&key, &setting), "*0");
+        assert_eq!(
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+            libc::EINVAL
+        );
+    }
+    for (password, setting, error) in [
+        (vec![b'x'; 512], "$y$j3.$..", libc::ERANGE),
+        (b"password".to_vec(), "$y$jGT$..", libc::ENOMEM),
+    ] {
+        let key = CString::new(password).unwrap();
+        let setting = CString::new(setting).unwrap();
+        assert_eq!(fl_crypt(&key, &setting), "*0");
+        assert_eq!(
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+            error
+        );
+        let mut buffer = [0u8; 384];
+        let r = unsafe {
+            frankenlibc_abi::unistd_abi::crypt_r(
+                key.as_ptr(),
+                setting.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+            )
+        };
+        assert_eq!(r, buffer.as_mut_ptr().cast());
+        assert_eq!(&buffer[..3], b"*0\0");
+        assert_eq!(
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+            error
+        );
+        let r = unsafe {
+            frankenlibc_abi::unistd_abi::crypt_rn(
+                key.as_ptr(),
+                setting.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as i32,
+            )
+        };
+        assert!(r.is_null());
+        assert_eq!(&buffer[..3], b"*0\0");
+        assert_eq!(
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+            error
+        );
+    }
+}
+
+#[test]
+fn yescrypt_null_entropy_draws_fresh_native_random_salts() {
+    let mut salts = std::collections::HashSet::new();
+    for _ in 0..8 {
+        let ptr = unsafe {
+            frankenlibc_abi::unistd_abi::crypt_gensalt(std::ptr::null(), 1, std::ptr::null(), 0)
+        };
+        assert!(!ptr.is_null());
+        let setting = unsafe { CStr::from_ptr(ptr) }.to_owned();
+        assert!(setting.to_bytes().starts_with(b"$y$j75$"));
+        assert_eq!(setting.to_bytes().len(), 7 + 22);
+        assert!(salts.insert(setting), "OS-generated salts repeated");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // NTHASH ($3$)
 // ---------------------------------------------------------------------------
 //

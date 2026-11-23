@@ -166,8 +166,9 @@ void FN(set_service_enum_reentry)(int (*callback)(void)) {
   service_enum_reentry = callback;
 }
 
-static enum nss_status service_enum_status(const char *phase, int *error) {
-  const char *scenario = getenv("FLTEST_SERVICE_ENUM");
+static enum nss_status netdb_enum_status(const char *environment,
+                                        const char *phase, int *error) {
+  const char *scenario = getenv(environment);
   if (!scenario || strcmp(STR(SERVICE), "fltest")) return NSS_STATUS_SUCCESS;
   if (!strcmp(phase, "set")) {
     if (!strcmp(scenario, "set-unavail")) { *error = EIO; return NSS_STATUS_UNAVAIL; }
@@ -190,7 +191,7 @@ enum nss_status FN(setservent)(int stayopen) {
   trace("setservent", "");
   service_enum_cursor = 0;
   service_enum_callback_ran = 0;
-  return service_enum_status("set", &errno);
+  return netdb_enum_status("FLTEST_SERVICE_ENUM", "set", &errno);
 }
 
 #endif
@@ -207,7 +208,7 @@ enum nss_status FN(endservent)(void) {
 enum nss_status FN(getservent_r)(struct servent *out, char *buf, size_t len,
                                 int *errnop) {
   trace("getservent_r", "");
-  enum nss_status status = service_enum_status("get", errnop);
+  enum nss_status status = netdb_enum_status("FLTEST_SERVICE_ENUM", "get", errnop);
   if (status != NSS_STATUS_SUCCESS) return status;
   if (service_enum_cursor >= 2) return NSS_STATUS_NOTFOUND;
   if (service_enum_reentry && !service_enum_callback_ran) {
@@ -219,6 +220,125 @@ enum nss_status FN(getservent_r)(struct servent *out, char *buf, size_t len,
                         large ? "udp" : "tcp", large ? 4502 : 4501,
                         large, out, buf, len, errnop);
   if (status == NSS_STATUS_SUCCESS) ++service_enum_cursor;
+  return status;
+}
+
+/* Protocol records exercise the same module/lifecycle contracts with their
+ * own cursor. Numbers are signed C ints, not 8- or 16-bit wire values. */
+static enum nss_status fill_protocol(const char *name, int number, int large,
+                                    struct protoent *out, char *buf, size_t len,
+                                    int *errnop) {
+  size_t pad = (sizeof(char *) - (uintptr_t)buf % sizeof(char *)) % sizeof(char *);
+  size_t count = large ? 3 : 2;
+  size_t need = pad + (count + 1) * sizeof(char *) + strlen(name) + 1 +
+                sizeof "fltest-proto" + sizeof "shared-protocol" +
+                (large ? 3073 : 0);
+  if (len < need) { *errnop = ERANGE; return NSS_STATUS_TRYAGAIN; }
+  char **aliases = (char **)(buf + pad);
+  char *cur = (char *)(aliases + count + 1), *end = buf + len;
+  out->p_name = put(&cur, end, name);
+  out->p_proto = number;
+  out->p_aliases = aliases;
+  aliases[0] = put(&cur, end, "fltest-proto");
+  aliases[1] = put(&cur, end, "shared-protocol");
+  if (large) {
+    aliases[2] = cur;
+    memset(cur, 'p', 3072);
+    cur[3072] = '\0';
+  }
+  aliases[count] = NULL;
+  *errnop = 0;
+  return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status FN(getprotobyname_r)(const char *name, struct protoent *out,
+                                    char *buf, size_t len, int *errnop) {
+  trace("getprotobyname_r", name);
+  enum nss_status status;
+  if (forced(&status, errnop)) return status;
+  if (!strcmp(name, "fltest-errno-none")) return NSS_STATUS_NOTFOUND;
+  if (!strcmp(name, "fltest-errno-again")) return NSS_STATUS_TRYAGAIN;
+  if (!strcmp(name, "fltest-errno-unavail")) return NSS_STATUS_UNAVAIL;
+  if (!strcmp(name, "fltest-again")) { *errnop = EAGAIN; return NSS_STATUS_TRYAGAIN; }
+  if (!strcmp(name, "fltest-unavail")) { *errnop = ENOSYS; return NSS_STATUS_UNAVAIL; }
+  if (!strcmp(name, "fltest-errno-success") || !strcmp(name, "fltest-errno-written")) {
+    int saved = *errnop;
+    status = fill_protocol("errno-unchanged", 14503, 0, out, buf, len, errnop);
+    if (status == NSS_STATUS_SUCCESS)
+      *errnop = !strcmp(name, "fltest-errno-written") ? EIO : saved;
+    return status;
+  }
+  int large = !strcmp(name, "fltest-large-protocol");
+  if (!strcmp(name, "tcp"))
+    return fill_protocol("module-tcp", 14600, 0, out, buf, len, errnop);
+  if (!strcmp(name, "fltest-negative"))
+    return fill_protocol("negative", -7, 0, out, buf, len, errnop);
+  if (!strcmp(name, "fltest-wide"))
+    return fill_protocol("wide", 70000, 0, out, buf, len, errnop);
+  if (!large && strcmp(name, "fltest-protocol") && strcmp(name, "fltest-proto") &&
+      strcmp(name, "shared-protocol")) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  return fill_protocol("fltest-protocol", large ? 14502 : 14501,
+                       large, out, buf, len, errnop);
+}
+
+enum nss_status FN(getprotobynumber_r)(int number, struct protoent *out,
+                                      char *buf, size_t len, int *errnop) {
+  trace("getprotobynumber_r", NULL);
+  enum nss_status status;
+  if (forced(&status, errnop)) return status;
+  const char *name = number == -7 ? "negative" : number == 70000 ? "wide"
+                     : number == 6 ? "module-tcp" : "fltest-protocol";
+  if (number != -7 && number != 70000 && number != 6 &&
+      number != 14501 && number != 14502) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  return fill_protocol(name, number, number == 14502, out, buf, len, errnop);
+}
+
+static size_t protocol_enum_cursor;
+static int (*protocol_enum_reentry)(void);
+static int protocol_enum_callback_ran;
+
+void FN(set_protocol_enum_reentry)(int (*callback)(void)) {
+  protocol_enum_reentry = callback;
+}
+
+#ifndef NO_PROTOCOL_SET
+enum nss_status FN(setprotoent)(int stayopen) {
+  (void)stayopen;
+  trace("setprotoent", "");
+  protocol_enum_cursor = 0;
+  protocol_enum_callback_ran = 0;
+  return netdb_enum_status("FLTEST_PROTOCOL_ENUM", "set", &errno);
+}
+#endif
+
+#ifndef NO_PROTOCOL_END
+enum nss_status FN(endprotoent)(void) {
+  trace("endprotoent", "");
+  protocol_enum_cursor = 0;
+  return NSS_STATUS_SUCCESS;
+}
+#endif
+
+enum nss_status FN(getprotoent_r)(struct protoent *out, char *buf, size_t len,
+                                 int *errnop) {
+  trace("getprotoent_r", "");
+  enum nss_status status = netdb_enum_status("FLTEST_PROTOCOL_ENUM", "get", errnop);
+  if (status != NSS_STATUS_SUCCESS) return status;
+  if (protocol_enum_cursor >= 2) return NSS_STATUS_NOTFOUND;
+  if (protocol_enum_reentry && !protocol_enum_callback_ran) {
+    protocol_enum_callback_ran = 1;
+    if (protocol_enum_reentry()) { *errnop = EIO; return NSS_STATUS_UNAVAIL; }
+  }
+  int large = protocol_enum_cursor != 0;
+  status = fill_protocol(large ? STR(SERVICE) "-proto-large" : STR(SERVICE) "-proto-small",
+                         large ? 14502 : 14501, large, out, buf, len, errnop);
+  if (status == NSS_STATUS_SUCCESS) ++protocol_enum_cursor;
   return status;
 }
 

@@ -523,6 +523,394 @@ fn service_name_matches(entry: &ServiceEntry, name: &[u8]) -> bool {
             .any(|alias| eq_ignore_ascii_case(alias, name))
 }
 
+/// The GNU files-module parsers consume a writable line and return pointers
+/// into that line. Keep their grammar separate from the public database
+/// readers: the module caller has already removed leading whitespace, and
+/// services accept C-style integer bases while protocols and RPC use decimal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NssNetdbKind {
+    Ether,
+    Network,
+    Protocol,
+    Rpc,
+    Service,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum NssNetdbValue {
+    Ether([u8; 6]),
+    Network(u32),
+    Protocol(i32),
+    Rpc(i32),
+    Service {
+        port: u16,
+        protocol: core::ops::Range<usize>,
+    },
+}
+
+/// All ranges refer to the original immutable input. The ABI validates the
+/// complete alias table before terminating any strings or publishing pointers.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NssNetdbRecord {
+    pub name: core::ops::Range<usize>,
+    pub aliases: core::ops::Range<usize>,
+    pub alias_count: usize,
+    pub value: NssNetdbValue,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct NssNetdbParse {
+    pub record: Option<NssNetdbRecord>,
+    pub line_end: usize,
+    /// GNU's unsigned-long conversion changes errno even on a skipped line.
+    pub overflowed: bool,
+}
+
+fn nss_netdb_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+
+fn nss_netdb_word(line: &[u8], cursor: &mut usize) -> core::ops::Range<usize> {
+    let start = *cursor;
+    while *cursor < line.len() && !nss_netdb_space(line[*cursor]) {
+        *cursor += 1;
+    }
+    start..*cursor
+}
+
+fn nss_netdb_skip_space(line: &[u8], cursor: &mut usize) {
+    while *cursor < line.len() && nss_netdb_space(line[*cursor]) {
+        *cursor += 1;
+    }
+}
+
+fn nss_netdb_unsigned(field: &[u8], base: u64) -> (Option<u64>, bool) {
+    let negative = field.starts_with(b"-");
+    let field = if negative || field.starts_with(b"+") {
+        &field[1..]
+    } else {
+        field
+    };
+    let (digits, base) =
+        if (base == 0 || base == 16) && (field.starts_with(b"0x") || field.starts_with(b"0X")) {
+            (&field[2..], 16u64)
+        } else if base == 0 && field.starts_with(b"0") {
+            (field, 8)
+        } else {
+            (field, if base == 0 { 10 } else { base })
+        };
+    if digits.is_empty() {
+        return (None, false);
+    }
+    let mut value = 0u64;
+    let mut overflowed = false;
+    for &byte in digits {
+        let digit = match byte {
+            b'0'..=b'9' => u64::from(byte - b'0'),
+            b'a'..=b'f' => u64::from(byte - b'a' + 10),
+            b'A'..=b'F' => u64::from(byte - b'A' + 10),
+            _ => return (None, overflowed),
+        };
+        if digit >= base {
+            return (None, overflowed);
+        }
+        if let Some(next) = value.checked_mul(base).and_then(|v| v.checked_add(digit)) {
+            value = next;
+        } else {
+            overflowed = true;
+        }
+    }
+    (
+        (!overflowed).then(|| {
+            if negative {
+                value.wrapping_neg()
+            } else {
+                value
+            }
+        }),
+        overflowed,
+    )
+}
+
+fn nss_netdb_number(field: &[u8], auto_base: bool) -> (Option<u32>, bool) {
+    let (value, overflowed) = nss_netdb_unsigned(field, if auto_base { 0 } else { 10 });
+    (
+        value.and_then(|number| u32::try_from(number).ok()),
+        overflowed,
+    )
+}
+
+/// Parse the five non-account `_nss_files_parse_*` contracts without pointers,
+/// allocation, or input mutation. A bad network number is the GNU sentinel
+/// INADDR_NONE in an otherwise valid record; it is not a skipped record.
+#[must_use]
+pub fn parse_nss_netdb_line(kind: NssNetdbKind, input: &[u8]) -> NssNetdbParse {
+    let line_end = input
+        .iter()
+        .position(|&byte| matches!(byte, 0 | b'#' | b'\n'))
+        .unwrap_or(input.len());
+    let line = &input[..line_end];
+    let mut parsed = NssNetdbParse {
+        record: None,
+        line_end,
+        overflowed: false,
+    };
+    if line.is_empty() && kind != NssNetdbKind::Network {
+        return parsed;
+    }
+    let mut cursor = 0;
+    if kind == NssNetdbKind::Ether {
+        let mut address = [0; 6];
+        for (index, octet) in address.iter_mut().enumerate() {
+            // GNU uses unsigned-long hexadecimal conversion for each octet:
+            // leading zeroes, a sign, 0x, and whitespace after ':' are legal.
+            nss_netdb_skip_space(line, &mut cursor);
+            let start = cursor;
+            let end = if index == 5 {
+                nss_netdb_word(line, &mut cursor).end
+            } else if let Some(colon) = line[start..].iter().position(|&byte| byte == b':') {
+                cursor = start + colon + 1;
+                start + colon
+            } else {
+                return parsed;
+            };
+            let (number, overflowed) = nss_netdb_unsigned(&line[start..end], 16);
+            parsed.overflowed |= overflowed;
+            let Some(number) = number.and_then(|value| u8::try_from(value).ok()) else {
+                return parsed;
+            };
+            *octet = number;
+        }
+        nss_netdb_skip_space(line, &mut cursor);
+        let name = nss_netdb_word(line, &mut cursor);
+        parsed.record = Some(NssNetdbRecord {
+            name,
+            aliases: line_end..line_end,
+            alias_count: 0,
+            value: NssNetdbValue::Ether(address),
+        });
+        return parsed;
+    }
+
+    let name = nss_netdb_word(line, &mut cursor);
+    nss_netdb_skip_space(line, &mut cursor);
+    let field = nss_netdb_word(line, &mut cursor);
+    let value = match kind {
+        NssNetdbKind::Network => {
+            let number = parse_network_number_components(&line[field.clone()])
+                .map(|(value, components)| value << (8 * (4 - components)))
+                .unwrap_or(u32::MAX);
+            NssNetdbValue::Network(number)
+        }
+        NssNetdbKind::Protocol | NssNetdbKind::Rpc => {
+            let (number, overflowed) = nss_netdb_number(&line[field], false);
+            parsed.overflowed = overflowed;
+            let Some(number) = number else {
+                return parsed;
+            };
+            if kind == NssNetdbKind::Protocol {
+                NssNetdbValue::Protocol(number as i32)
+            } else {
+                NssNetdbValue::Rpc(number as i32)
+            }
+        }
+        NssNetdbKind::Service => {
+            let separator = line[field.clone()].iter().position(|&b| b == b'/');
+            let number_end = separator.map_or(field.end, |n| field.start + n);
+            let (number, overflowed) = nss_netdb_number(&line[field.start..number_end], true);
+            parsed.overflowed = overflowed;
+            let Some(number) = number else {
+                return parsed;
+            };
+            if separator.is_none() && field.end != line_end {
+                return parsed;
+            }
+            NssNetdbValue::Service {
+                port: number as u16,
+                protocol: separator.map_or(field.end, |_| number_end + 1)..field.end,
+            }
+        }
+        NssNetdbKind::Ether => unreachable!(),
+    };
+    nss_netdb_skip_space(line, &mut cursor);
+    let aliases = cursor..line_end;
+    let mut alias_count = 0;
+    while cursor < line_end {
+        let _ = nss_netdb_word(line, &mut cursor);
+        alias_count += 1;
+        nss_netdb_skip_space(line, &mut cursor);
+    }
+    parsed.record = Some(NssNetdbRecord {
+        name,
+        aliases,
+        alias_count,
+        value,
+    });
+    parsed
+}
+
+/// Terminate the already parsed aliases in place and report each start offset.
+/// The caller has reserved `alias_count + 2` pointer slots before invoking this.
+pub fn split_nss_netdb_aliases(
+    text: &mut [u8],
+    aliases: core::ops::Range<usize>,
+    mut emit: impl FnMut(usize),
+) {
+    let mut cursor = aliases.start;
+    while cursor < aliases.end {
+        while cursor < aliases.end && nss_netdb_space(text[cursor]) {
+            cursor += 1;
+        }
+        if cursor == aliases.end {
+            break;
+        }
+        emit(cursor);
+        while cursor < aliases.end && !nss_netdb_space(text[cursor]) {
+            cursor += 1;
+        }
+        text[cursor] = 0;
+        cursor += 1;
+    }
+}
+
+#[cfg(test)]
+mod nss_netdb_tests {
+    use super::{NssNetdbKind as Kind, NssNetdbValue as Value, *};
+
+    #[test]
+    fn network_parser_keeps_invalid_number_records_and_classful_prefixes() {
+        for (line, number) in [
+            (&b"loop 127 lo"[..], 0x7f00_0000),
+            (&b"local 0x7f.01 alias"[..], 0x7f01_0000),
+            (&b"bad 09 alias"[..], u32::MAX),
+            (&b"bad 256 alias"[..], u32::MAX),
+            (&b"missing"[..], u32::MAX),
+            (&b"# comment"[..], u32::MAX),
+            (&b""[..], u32::MAX),
+        ] {
+            let record = parse_nss_netdb_line(Kind::Network, line).record.unwrap();
+            assert_eq!(record.value, Value::Network(number), "{line:?}");
+        }
+    }
+
+    #[test]
+    fn protocol_and_rpc_numbers_preserve_unsigned_long_conversion() {
+        for kind in [Kind::Protocol, Kind::Rpc] {
+            for (field, expected) in [
+                ("+6", 6),
+                ("-0", 0),
+                ("2147483648", i32::MIN),
+                ("4294967295", -1),
+                ("-18446744073709551615", 1),
+            ] {
+                let line = format!("name {field} alias");
+                let parsed = parse_nss_netdb_line(kind, line.as_bytes());
+                let record = parsed.record.unwrap();
+                let value = match record.value {
+                    Value::Protocol(value) | Value::Rpc(value) => value,
+                    _ => panic!("wrong database value"),
+                };
+                assert_eq!(value, expected, "{line}");
+                assert_eq!(record.alias_count, 1);
+                assert!(!parsed.overflowed);
+            }
+            for field in ["-1", "4294967296", "0x6", "6garbage", ""] {
+                assert!(
+                    parse_nss_netdb_line(kind, format!("name {field}").as_bytes())
+                        .record
+                        .is_none()
+                );
+            }
+            let parsed = parse_nss_netdb_line(kind, b"name 18446744073709551616junk");
+            assert!(parsed.record.is_none());
+            assert!(parsed.overflowed);
+        }
+    }
+
+    #[test]
+    fn service_parser_accepts_c_bases_and_preserves_protocol_boundaries() {
+        for (line, port, protocol) in [
+            (&b"http 0x50/tcp alias"[..], 80, &b"tcp"[..]),
+            (&b"echo 010/udp"[..], 8, &b"udp"[..]),
+            (&b"wrap 65536/tcp/extra"[..], 0, &b"tcp/extra"[..]),
+            (&b"empty 80/ alias"[..], 80, &b""[..]),
+            (&b"empty 80"[..], 80, &b""[..]),
+            (&b"negative -0/tcp"[..], 0, &b"tcp"[..]),
+        ] {
+            let record = parse_nss_netdb_line(Kind::Service, line).record.unwrap();
+            let Value::Service {
+                port: actual_port,
+                protocol: range,
+            } = record.value
+            else {
+                panic!("wrong database value");
+            };
+            assert_eq!(actual_port, port);
+            assert_eq!(&line[range], protocol);
+        }
+        for line in [
+            &b"http 080/tcp"[..],
+            b"http 80 ",
+            b"http 80 /tcp",
+            b"http /tcp",
+        ] {
+            assert!(
+                parse_nss_netdb_line(Kind::Service, line).record.is_none(),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ether_parser_uses_complete_hexadecimal_octets() {
+        for line in [
+            &b"000:001:002:003:004:005 host"[..],
+            b"+0: 0x1:2:3:4:0005 host",
+            b"-0:1:2:3:4:5 host ignored",
+            b"0:1:2:3:4:5\x0bhost",
+        ] {
+            let record = parse_nss_netdb_line(Kind::Ether, line).record.unwrap();
+            assert_eq!(record.value, Value::Ether([0, 1, 2, 3, 4, 5]));
+            assert_eq!(&line[record.name], b"host");
+            assert_eq!(record.alias_count, 0);
+        }
+        for line in [
+            &b"0:1:2:3:4:100 host"[..],
+            b"0:1:2:3:4:05x host",
+            b"0 :1:2:3:4:5 host",
+            b"0:1:2:3:4:5:6 host",
+        ] {
+            assert!(
+                parse_nss_netdb_line(Kind::Ether, line).record.is_none(),
+                "{line:?}"
+            );
+        }
+        assert!(parse_nss_netdb_line(Kind::Ether, b"0:1:2:3:4:fffffffffffffffff host").overflowed);
+    }
+
+    #[test]
+    fn comments_whitespace_and_alias_offsets_share_the_original_line() {
+        let input = b"tcp\x0b6\x0cTCP\talt # ignored\nnext";
+        let parsed = parse_nss_netdb_line(Kind::Protocol, input);
+        let record = parsed.record.unwrap();
+        assert_eq!(&input[record.name], b"tcp");
+        assert_eq!(record.alias_count, 2);
+        let mut storage = input.to_vec();
+        storage.push(0);
+        storage[parsed.line_end] = 0;
+        let mut offsets = Vec::new();
+        split_nss_netdb_aliases(&mut storage, record.aliases, |offset| offsets.push(offset));
+        let words: Vec<_> = offsets
+            .into_iter()
+            .map(|offset| {
+                let rest = &storage[offset..];
+                &rest[..rest.iter().position(|&byte| byte == 0).unwrap()]
+            })
+            .collect();
+        assert_eq!(words, [b"TCP".as_slice(), b"alt".as_slice()]);
+    }
+}
+
 /// Parsed `/etc/protocols` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtocolEntry {
