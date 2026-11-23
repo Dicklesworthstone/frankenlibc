@@ -5533,6 +5533,128 @@ unsafe extern "C" fn lock_and_exit(m: *mut c_void) -> *mut c_void {
 }
 
 #[test]
+fn robust_mutex_recovery_claim_is_exclusive_before_owner_publication() {
+    for priority_inherit in [false, true] {
+        assert_eq!(
+            __test_robust_mutex_unpublished_owner_claim(priority_inherit),
+            (libc::EOWNERDEAD, libc::EBUSY),
+            "priority inheritance: {priority_inherit}"
+        );
+    }
+}
+
+#[test]
+fn robust_mutex_recovery_survives_claimant_exit_before_owner_publication() {
+    for priority_inherit in [false, true] {
+        assert_eq!(
+            __test_robust_mutex_unpublished_owner_exit(priority_inherit),
+            (libc::EOWNERDEAD, libc::EOWNERDEAD),
+            "priority inheritance: {priority_inherit}"
+        );
+    }
+}
+
+#[test]
+fn robust_mutex_pi_owner_died_handoff_preserves_live_owner() {
+    for waiters in [false, true] {
+        let (result, before, after) = __test_pi_mutex_owner_died_handoff(true, waiters);
+        assert_eq!(result, libc::EBUSY, "waiters: {waiters}");
+        assert_eq!(after, before, "a live kernel-handoff owner must retain its word");
+    }
+
+    let (result, before, after) = __test_pi_mutex_owner_died_handoff(false, false);
+    assert_eq!(result, libc::EOWNERDEAD);
+    assert_eq!(before, 0x4000_0000);
+    // SAFETY: gettid has no pointer arguments and returns this thread's kernel TID.
+    let current_tid = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
+    assert_eq!(after, current_tid, "an ownerless word must still be recoverable");
+}
+
+#[test]
+fn robust_mutex_recovery_preserves_mutual_exclusion_under_contention() {
+    const CONTENDERS: usize = 4;
+    for protocol in [libc::PTHREAD_PRIO_NONE, libc::PTHREAD_PRIO_INHERIT] {
+        for shared in [libc::PTHREAD_PROCESS_PRIVATE, libc::PTHREAD_PROCESS_SHARED] {
+            // SAFETY: the initialized attr and mutex remain alive until all
+            // scoped contenders and the exiting owner have joined.
+            unsafe {
+                let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+                let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+                assert_eq!(pthread_mutexattr_init(&mut attr), 0);
+                assert_eq!(
+                    pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_ROBUST),
+                    0
+                );
+                assert_eq!(pthread_mutexattr_setprotocol(&mut attr, protocol), 0);
+                assert_eq!(pthread_mutexattr_setpshared(&mut attr, shared), 0);
+                assert_eq!(pthread_mutex_init(&mut mutex, &attr), 0);
+                assert_eq!(pthread_mutexattr_destroy(&mut attr), 0);
+                let address = (&mut mutex as *mut libc::pthread_mutex_t) as usize;
+
+                for round in 0..8 {
+                    let owner = std::thread::spawn(move || {
+                        pthread_mutex_lock(address as *mut libc::pthread_mutex_t)
+                    });
+                    assert_eq!(owner.join().unwrap(), 0);
+
+                    let start = std::sync::Barrier::new(CONTENDERS);
+                    let inside = AtomicUsize::new(0);
+                    let recoveries = AtomicUsize::new(0);
+                    let failures = AtomicUsize::new(0);
+                    std::thread::scope(|scope| {
+                        for _ in 0..CONTENDERS {
+                            scope.spawn(|| {
+                                let mutex = address as *mut libc::pthread_mutex_t;
+                                let mut deadline: libc::timespec = std::mem::zeroed();
+                                assert_eq!(
+                                    libc::clock_gettime(libc::CLOCK_REALTIME, &mut deadline),
+                                    0
+                                );
+                                deadline.tv_sec += 5;
+                                start.wait();
+                                let rc = pthread_mutex_timedlock(mutex, &deadline);
+                                if rc != 0 && rc != libc::EOWNERDEAD {
+                                    failures.fetch_add(1, Ordering::SeqCst);
+                                    return;
+                                }
+                                if inside.fetch_add(1, Ordering::SeqCst) != 0 {
+                                    failures.fetch_add(1, Ordering::SeqCst);
+                                }
+                                if rc == libc::EOWNERDEAD {
+                                    recoveries.fetch_add(1, Ordering::SeqCst);
+                                    if pthread_mutex_consistent(mutex) != 0 {
+                                        failures.fetch_add(1, Ordering::SeqCst);
+                                    }
+                                }
+                                // Keep the recovered owner inside long enough
+                                // for competing waiters to attempt acquisition.
+                                for _ in 0..32 {
+                                    std::thread::yield_now();
+                                }
+                                if inside.fetch_sub(1, Ordering::SeqCst) != 1 {
+                                    failures.fetch_add(1, Ordering::SeqCst);
+                                }
+                                if pthread_mutex_unlock(mutex) != 0 {
+                                    failures.fetch_add(1, Ordering::SeqCst);
+                                }
+                            });
+                        }
+                    });
+                    assert_eq!(
+                        failures.load(Ordering::SeqCst),
+                        0,
+                        "protocol={protocol}, shared={shared}, round={round}"
+                    );
+                    assert_eq!(recoveries.load(Ordering::SeqCst), 1);
+                    assert_eq!(inside.load(Ordering::SeqCst), 0);
+                }
+                assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+            }
+        }
+    }
+}
+
+#[test]
 fn robust_mutex_owner_death_eownerdead_consistent() {
     // glibc accepts robust (and process-shared / PI) attributes; a robust
     // mutex whose owner thread exits holding it reports EOWNERDEAD to the next

@@ -3783,8 +3783,17 @@ fn futex_private_bit(raw_type: i32) -> c_int {
 
 /// A recorded owner that no longer exists.
 fn mutex_owner_dead(pid: i32, tid: i32) -> bool {
-    pid == ROBUST_OWNER_EXITED_PID
-        || (pid > 0 && tid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH))
+    // A negative owner reserves a recovery claimant's TID before its PID is
+    // published. Ignore the predecessor's PID/death marker in that state, but
+    // still permit recovery if the claimant itself exits before publication.
+    if tid < 0 {
+        return tid
+            .checked_neg()
+            .is_some_and(|claimant| raw_syscall::sys_tkill(claimant, 0) == Err(libc::ESRCH));
+    }
+    tid > 0
+        && (pid == ROBUST_OWNER_EXITED_PID
+            || (pid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH)))
 }
 
 /// Nanoseconds from now until an absolute CLOCK_REALTIME deadline.
@@ -3917,11 +3926,13 @@ unsafe fn ext_mutex_lock(
             }
         }
     }
-    m.owner.store(tid, Ordering::Release);
     if robust {
+        // Publish the PID before the TID. A contender that acquires this TID
+        // must never combine it with the previous owner's death marker.
         m.owner_pid
             .store(raw_syscall::sys_getpid(), Ordering::Release);
     }
+    m.owner.store(tid, Ordering::Release);
     m.count.store(1, Ordering::Release);
     if robust {
         remember_robust_mutex_held(tid, mutex);
@@ -3954,15 +3965,26 @@ fn ext_acquire(
         }
         if robust {
             let owner = m.owner.load(Ordering::Acquire);
-            if mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), owner)
-                && m.owner
-                    .compare_exchange(owner, tid, Ordering::AcqRel, Ordering::Acquire)
+            if mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), owner) {
+                // Kernel TIDs are positive; retain the claimant's identity
+                // without publishing a live PID/TID pair prematurely.
+                let Some(claimant) = tid.checked_neg().filter(|claimant| *claimant < 0) else {
+                    return libc::EINVAL;
+                };
+                if m.owner
+                    .compare_exchange(owner, claimant, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
-            {
-                // The lock word stays held; mark it contended so our unlock
-                // wakes anyone else who queued behind the dead owner.
-                m.word.store(2, Ordering::Release);
-                return libc::EOWNERDEAD;
+                {
+                    // Reserve the owner slot until ext_mutex_lock publishes
+                    // the new PID followed by its positive TID. Publishing a
+                    // positive TID here would let another contender steal it
+                    // using the stale exited PID. Unlike owner=0, the negative
+                    // reservation remains recoverable if this claimant exits.
+                    // The lock word stays held; mark it contended so our unlock
+                    // wakes anyone else who queued behind the dead owner.
+                    m.word.store(2, Ordering::Release);
+                    return libc::EOWNERDEAD;
+                }
             }
         }
         if try_only {
@@ -4013,8 +4035,20 @@ fn ext_pi_acquire(
         if robust {
             let observed = m.word.load(Ordering::Acquire);
             let holder = observed & FUTEX_PI_TID_MASK;
-            let holder_gone = observed & FUTEX_PI_OWNER_DIED != 0
-                || (holder != 0 && mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), holder));
+            let published_owner = m.owner.load(Ordering::Acquire);
+            let holder_gone = if holder == 0 {
+                observed & FUTEX_PI_OWNER_DIED != 0
+            } else if observed & FUTEX_PI_OWNER_DIED == 0 && published_owner == holder {
+                mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), holder)
+            } else {
+                // The kernel can hand a PI mutex to a live waiter with both
+                // its TID and OWNER_DIED set before that waiter returns to
+                // userspace. The bit describes the predecessor, not the new
+                // holder: neither it nor stale PID metadata authorizes theft.
+                // The same liveness check covers an unpublished claimant that
+                // exits before completing its PID/TID publication.
+                raw_syscall::sys_tkill(holder, 0) == Err(libc::ESRCH)
+            };
             if holder_gone {
                 if m.word
                     .compare_exchange(
@@ -4025,6 +4059,9 @@ fn ext_pi_acquire(
                     )
                     .is_ok()
                 {
+                    // The new lockword owner does not yet match the published
+                    // PID/TID pair. Its own liveness, never the predecessor's
+                    // marker, governs recovery during the publication window.
                     return libc::EOWNERDEAD;
                 }
                 continue;
@@ -13332,4 +13369,107 @@ pub fn __test_threading_force_native_override_state() -> (bool, usize) {
         )
     })
     .unwrap_or_else(|| (global_force_native_threading_enabled(), 0))
+}
+
+/// Replay two robust-mutex recovery attempts before the first claimant has
+/// published its owner PID/TID pair. Both attempts use the real acquire path;
+/// a second claimant must not inherit the first owner's stale death marker.
+#[doc(hidden)]
+pub fn __test_robust_mutex_unpublished_owner_claim(priority_inherit: bool) -> (c_int, c_int) {
+    test_robust_mutex_unpublished_owner(priority_inherit, false)
+}
+
+/// A claimant that exits after acquiring the lockword but before publishing
+/// its PID/TID pair must remain recoverable by the next contender.
+#[doc(hidden)]
+pub fn __test_robust_mutex_unpublished_owner_exit(priority_inherit: bool) -> (c_int, c_int) {
+    test_robust_mutex_unpublished_owner(priority_inherit, true)
+}
+
+fn test_robust_mutex_unpublished_owner(
+    priority_inherit: bool,
+    claimant_exits: bool,
+) -> (c_int, c_int) {
+    let dead_tid = FUTEX_PI_TID_MASK;
+    let claimant_tid = raw_syscall::sys_gettid();
+    let contender_tid = if claimant_tid == 1 { 2 } else { 1 };
+    let raw_type = MUTEX_FLAG_ROBUST | if priority_inherit { MUTEX_FLAG_PI } else { 0 };
+    let word = AtomicI32::new(if priority_inherit { dead_tid } else { 2 });
+    let type_word = AtomicI32::new(raw_type);
+    let owner = AtomicI32::new(dead_tid);
+    let owner_pid = AtomicI32::new(ROBUST_OWNER_EXITED_PID);
+    let count = AtomicU32::new(1);
+    let mutex = ExtMutex {
+        word: &word,
+        type_word: &type_word,
+        owner: &owner,
+        owner_pid: &owner_pid,
+        count: &count,
+    };
+    let acquire = |tid| {
+        if priority_inherit {
+            ext_pi_acquire(&mutex, raw_type, tid, None, true)
+        } else {
+            ext_acquire(&mutex, raw_type, tid, None, true)
+        }
+    };
+    let first = if claimant_exits {
+        // Actual thread exit makes the reserved kernel TID unavailable; no
+        // fabricated liveness result or mutation of the owner state is used.
+        let (result, exited_tid) = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let tid = raw_syscall::sys_gettid();
+                    (acquire(tid), tid)
+                })
+                .join()
+                .expect("unpublished robust-mutex claimant")
+        });
+        // pthread_join can wake at clear_child_tid before the kernel finishes
+        // removing the task. Observe that exact liveness boundary rather than
+        // assuming the TID is already absent or sleeping for a guessed delay.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while raw_syscall::sys_tkill(exited_tid, 0) != Err(libc::ESRCH) {
+            assert!(std::time::Instant::now() < until, "claimant TID still live");
+            std::thread::yield_now();
+        }
+        result
+    } else {
+        acquire(claimant_tid)
+    };
+    let second = acquire(contender_tid);
+    (first, second)
+}
+
+/// Exercise the real PI acquire path while a kernel handoff still carries
+/// OWNER_DIED. The live holder's word must remain unchanged; an ownerless
+/// OWNER_DIED word must still be recoverable.
+#[doc(hidden)]
+pub fn __test_pi_mutex_owner_died_handoff(
+    live_holder: bool,
+    waiters: bool,
+) -> (c_int, i32, i32) {
+    let current_tid = raw_syscall::sys_gettid();
+    let holder = if live_holder { current_tid } else { 0 };
+    let contender = if live_holder {
+        if current_tid == 1 { 2 } else { 1 }
+    } else {
+        current_tid
+    };
+    let before = FUTEX_PI_OWNER_DIED | holder | if waiters { FUTEX_PI_WAITERS } else { 0 };
+    let raw_type = MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI;
+    let word = AtomicI32::new(before);
+    let type_word = AtomicI32::new(raw_type);
+    let owner = AtomicI32::new(FUTEX_PI_TID_MASK);
+    let owner_pid = AtomicI32::new(ROBUST_OWNER_EXITED_PID);
+    let count = AtomicU32::new(1);
+    let mutex = ExtMutex {
+        word: &word,
+        type_word: &type_word,
+        owner: &owner,
+        owner_pid: &owner_pid,
+        count: &count,
+    };
+    let result = ext_pi_acquire(&mutex, raw_type, contender, None, true);
+    (result, before, word.load(Ordering::Acquire))
 }
