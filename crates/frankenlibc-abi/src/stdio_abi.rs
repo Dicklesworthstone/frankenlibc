@@ -5779,10 +5779,12 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
         retire_read_window(s);
         let flush_ok = s.mem_flush();
         sync_and_unregister_fast_fixed_mem_read(id, s);
-        let wide_ok = unsafe {
-            sync_memstream_to_caller(id, s, true);
-            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, true)
-        };
+        let published = unsafe { sync_memstream_to_caller(id, s, true) };
+        let wide_ok = unsafe { crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, true) };
+        let ok = flush_ok && published && wide_ok;
+        // Retiring the stream can free several allocations and wake waiters.
+        // Keep the publication error across that required cleanup.
+        let saved_errno = (!ok).then(|| unsafe { *crate::errno_abi::__errno_location() });
         // Remove sync metadata for open_memstream.
         let mut sync_guard = lock_mem_sync_registry();
         if let Some(ref mut map) = *sync_guard {
@@ -5797,7 +5799,10 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
             .remove_stream(id);
         drop(file_lock);
         maybe_unregister_dynamic_native_stream(stream);
-        return if flush_ok && wide_ok { 0 } else { libc::EOF };
+        if let Some(error) = saved_errno {
+            unsafe { set_abi_errno(error) };
+        }
+        return if ok { 0 } else { libc::EOF };
     }
 
     let fd = s.fd();
@@ -5878,7 +5883,7 @@ unsafe fn flush_native_streams(caller: usize, only_line_buffered: bool) -> bool 
             .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, Arc::clone(c))))
             .collect()
     };
-    let mut any_fail = false;
+    let mut error = None;
     for (id, cell) in snapshot {
         let Some(mut s_guard) = lock_snapshot_stream(id, &cell) else {
             continue;
@@ -5893,19 +5898,24 @@ unsafe fn flush_native_streams(caller: usize, only_line_buffered: bool) -> bool 
         } else if s.is_mem_backed() {
             let flush_ok = s.mem_flush();
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-            let wide_ok = unsafe {
-                sync_memstream_to_caller(id, s, false);
-                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
-            };
-            flush_ok && wide_ok
+            let published = unsafe { sync_memstream_to_caller(id, s, false) };
+            let wide_ok = unsafe { crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false) };
+            flush_ok && published && wide_ok
         } else {
             unsafe { flush_stream_for_caller(s, caller) }
         };
         if !ok {
-            any_fail = true;
+            error = Some(unsafe { *crate::errno_abi::__errno_location() });
         }
     }
-    !any_fail
+    if let Some(error) = error {
+        // A later successfully flushed stream must not hide an earlier
+        // failure's errno, including a failed memory-buffer publication.
+        unsafe { set_abi_errno(error) };
+        false
+    } else {
+        true
+    }
 }
 
 /// GNU `_flushlbf` and `_IO_flush_all_linebuffered` share selective flushing.
@@ -6011,7 +6021,11 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         }
         let any_fail = !unsafe { flush_native_streams(caller, false) };
         let failed = any_fail || host_fail;
+        let saved_errno = failed.then(|| unsafe { *crate::errno_abi::__errno_location() });
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, failed);
+        if let Some(error) = saved_errno {
+            unsafe { set_abi_errno(error) };
+        }
         return if failed { libc::EOF } else { 0 };
     }
 
@@ -6037,12 +6051,15 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         if s.is_mem_backed() {
             let flush_ok = s.mem_flush();
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-            let wide_ok = unsafe {
-                sync_memstream_to_caller(id, s, false);
-                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
-            };
-            let ok = flush_ok && wide_ok;
+            let published = unsafe { sync_memstream_to_caller(id, s, false) };
+            let wide_ok = unsafe { crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false) };
+            let ok = flush_ok && published && wide_ok;
+            let saved_errno = (!ok).then(|| unsafe { *crate::errno_abi::__errno_location() });
+            drop(s_guard);
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
+            if let Some(error) = saved_errno {
+                unsafe { set_abi_errno(error) };
+            }
             return if ok { 0 } else { libc::EOF };
         }
         // Cache this non-cookie non-mem fd stream so subsequent fflush/read/write hit the MT fast
@@ -8077,13 +8094,14 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
             return 0;
         }
         let flush_ok = s.mem_flush();
-        unsafe {
-            sync_memstream_to_caller(id, s, false);
-        }
+        let published = unsafe { sync_memstream_to_caller(id, s, false) };
         // open_wmemstream publishes bufp/sizeloc only on fflush or fclose;
         // seeking changes its wchar cursor without publishing a new buffer.
-        if !flush_ok {
+        if !flush_ok || !published {
+            let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+            drop(s_guard);
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            unsafe { set_abi_errno(saved_errno) };
             return -1;
         }
         let new_pos = s.mem_seek(offset, whence);
@@ -20648,12 +20666,14 @@ fn lock_mem_sync_registry()
 
 /// Synchronize open_memstream data to the C caller's pointers.
 /// Called after fflush and fclose for open_memstream streams.
-unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream, closing: bool) {
+/// Publication is transactional: an allocation failure leaves the last
+/// published buffer and size live, sets the stream error, and reports ENOMEM.
+unsafe fn sync_memstream_to_caller(id: usize, stream: &mut StdioStream, closing: bool) -> bool {
     // Lock-free fast path: no open_memstream has ever been created, so this id
     // cannot have sync metadata. A new open_memstream id is only published after
     // the Release store in `open_memstream`, so this Acquire load is correct.
     if !MEM_STREAM_SYNC_PRESENT.load(Ordering::Acquire) {
-        return;
+        return true;
     }
     let sync_guard = lock_mem_sync_registry();
     if let Some(ref map) = *sync_guard
@@ -20668,29 +20688,39 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream, closing: boo
         // content length, diverging from glibc after a backward seek.
         let pos = stream.offset().max(0) as usize;
         let reported = len.min(pos);
+        // At close the returned buffer ends at the current position. A flush
+        // keeps the older tail, which can become visible after a later seek.
+        let length = if closing { reported } else { len };
+        let Some(alloc_size) = length.checked_add(1) else {
+            stream.set_error();
+            drop(sync_guard);
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return false;
+        };
         let previous = unsafe { *info.ptr_loc };
         // Allocate a new buffer via malloc and copy data + NUL terminator.
-        let buf = unsafe { malloc(len + 1) };
-        if !buf.is_null() {
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), len);
-                *buf.cast::<u8>().add(len) = 0; // NUL-terminate at the max extent
-                // At close glibc truncates the buffer at the current position
-                // (realloc to size+1, NUL there): "abc123", seek 1, 'Q',
-                // fclose -> "aQ". A flush while open keeps the tail
-                // (open_memstream_differential_test), so only on close.
-                if closing {
-                    *buf.cast::<u8>().add(reported) = 0;
-                }
-                *info.ptr_loc = buf.cast::<c_char>();
-                *info.size_loc = reported;
-                if !previous.is_null() {
-                    free(previous.cast::<c_void>());
-                }
+        let buf = unsafe { malloc(alloc_size) };
+        if buf.is_null() {
+            stream.set_error();
+            drop(sync_guard);
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return false;
+        }
+        // SAFETY: the fresh allocation holds the selected initialized extent
+        // and its NUL. Commit the caller's slots only after copying succeeds;
+        // the previous allocation remains caller-visible on either failure.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), length);
+            *buf.cast::<u8>().add(length) = 0;
+            *info.ptr_loc = buf.cast::<c_char>();
+            *info.size_loc = reported;
+            if !previous.is_null() {
+                free(previous.cast::<c_void>());
             }
         }
     }
     drop(sync_guard);
+    true
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
