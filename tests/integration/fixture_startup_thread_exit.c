@@ -43,6 +43,7 @@ static int verify_worker_identity;
 static void *expected_result;
 static int cancel_from_worker;
 static int wait_initial_kernel_exit;
+static int detach_survivor;
 
 static void event(char ch) {
     if (syscall(SYS_write, STDOUT_FILENO, &ch, 1) != 1) _exit(119);
@@ -80,7 +81,8 @@ __attribute__((constructor)) static void initialize(void) {
     const char *library = getenv("FRANKENLIBC_TEST_LIBRARY");
     const char *startup = getenv("FRANKENLIBC_TEST_STARTUP_LIBRARY");
     check_provider("__libc_start_main", startup ? startup : library);
-    const char *symbols[] = {"pthread_exit", "pthread_cancel", "pthread_join",
+    const char *symbols[] = {"pthread_create", "pthread_detach", "pthread_exit",
+                            "pthread_cancel", "pthread_join",
                             "pthread_key_create", "pthread_setspecific", "exit",
                             "pthread_self", "pthread_getspecific", "__errno_location"};
     for (unsigned i = 0; i < sizeof(symbols) / sizeof(symbols[0]); ++i)
@@ -111,6 +113,7 @@ static thread_local TlsCleanup tls_cleanup;
 static void *survivor(void *unused) {
     (void)unused;
     while (!LOAD_READY()) sched_yield();
+    if (detach_survivor && pthread_detach(pthread_self())) _exit(118);
     if (cancel_from_worker && pthread_cancel(initial_thread)) _exit(118);
     if (wait_initial_kernel_exit) {
         /* The kernel clears this word after initial-thread teardown. Waiting
@@ -156,7 +159,8 @@ int main(int argc, char **argv, char **envp) {
 #endif
     const char *scenario = argv[1];
     initial_thread = pthread_self();
-    wait_initial_kernel_exit = !strcmp(scenario, "worker-last-exit");
+    detach_survivor = !strcmp(scenario, "worker-last-detached");
+    wait_initial_kernel_exit = !strcmp(scenario, "worker-last-exit") || detach_survivor;
     if (wait_initial_kernel_exit && syscall(SYS_set_tid_address, &initial_alive) <= 0)
         return 118;
     int worker = !strcmp(scenario, "worker-exit") ||

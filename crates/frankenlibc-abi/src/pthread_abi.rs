@@ -1556,6 +1556,30 @@ extern "C" fn native_pthread_self_slow() -> libc::pthread_t {
     }
 
     let tid = core_self_tid();
+    #[cfg(all(feature = "owned-tls-cache", not(feature = "standalone")))]
+    if tid > 0
+        && !frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
+        && let Some(host_self) = resolved_thread_self_raw()
+    {
+        // Host key teardown can retire the owned pthread cache before the
+        // last worker runs process callbacks. Its registered host identity is
+        // still live, including for detached workers. Recover by both handle
+        // and TID: a reverse TID scan could select a stale recycled identity.
+        // SAFETY: the resolved function reads the calling host thread's TCB;
+        // native owners returned above and exiting native tails are excluded.
+        let host_thread = unsafe { host_self() };
+        let registered_tid = HOST_THREAD_TID_REGISTRY
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&(host_thread as usize))
+            .copied();
+        if registered_tid == Some(tid) {
+            // The registry guard is gone before owned-cache initialization.
+            // Unregistered callers retain the established numeric fallback.
+            remember_current_pthread_self(host_thread);
+            return host_thread;
+        }
+    }
     let result = if tid > 0 {
         // Use the TLS table to resolve our own ThreadHandle in O(1) time
         // without taking the global registry lock. This also ensures
