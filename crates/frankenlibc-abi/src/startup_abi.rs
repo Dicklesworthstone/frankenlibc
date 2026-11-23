@@ -26,14 +26,17 @@ type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) ->
 /// wrapper into glibc's __libc_start_call_main, which ends the forced unwind.
 /// The calling convention is `MainFn`'s; only the unwind contract differs.
 type MainUnwindFn = unsafe extern "C-unwind" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
-type HookFn = unsafe extern "C" fn();
+// The legacy CRT's __libc_csu_init receives the process vectors and forwards
+// them to executable constructors. Finalizers have a separate void(void) ABI.
+type InitFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char);
+type FiniFn = unsafe extern "C" fn();
 type HostStartMainFn = unsafe extern "C" fn(
     Option<MainFn>,
     c_int,
     *mut *mut c_char,
-    Option<HookFn>,
-    Option<HookFn>,
-    Option<HookFn>,
+    Option<InitFn>,
+    Option<FiniFn>,
+    Option<FiniFn>,
     *mut c_void,
 ) -> c_int;
 
@@ -620,9 +623,9 @@ unsafe fn delegate_to_host_libc_start_main(
     main: Option<MainFn>,
     argc: c_int,
     ubp_av: *mut *mut c_char,
-    init: Option<HookFn>,
-    fini: Option<HookFn>,
-    rtld_fini: Option<HookFn>,
+    init: Option<InitFn>,
+    fini: Option<FiniFn>,
+    rtld_fini: Option<FiniFn>,
     stack_end: *mut c_void,
 ) -> Option<c_int> {
     let resolved_envp = unsafe { resolve_startup_envp(argc, ubp_av, environ) };
@@ -749,7 +752,12 @@ unsafe extern "C-unwind" fn owned_host_main_wrapper(
     unsafe { crate::stdlib_abi::exit(status) }
 }
 
-unsafe extern "C" fn owned_executable_init_complete() {}
+unsafe extern "C" fn owned_executable_init_complete(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) {
+}
 
 unsafe fn run_owned_main_on_host(
     host: HostStartMainFn,
@@ -972,7 +980,6 @@ unsafe fn call_executable_init(
     argv: *mut *mut c_char,
     envp: *mut *mut c_char,
 ) -> Result<(), ()> {
-    type InitFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char);
     let aux = |key| auxv.iter().find(|&&(k, _)| k == key).map(|&(_, v)| v);
     let phdr_addr = aux(libc::AT_PHDR as usize).ok_or(())?;
     let phnum = aux(libc::AT_PHNUM as usize).ok_or(())?;
@@ -1104,9 +1111,9 @@ unsafe fn startup_phase0_impl(
     main: Option<MainFn>,
     argc: c_int,
     ubp_av: *mut *mut c_char,
-    init: Option<HookFn>,
-    fini: Option<HookFn>,
-    rtld_fini: Option<HookFn>,
+    init: Option<InitFn>,
+    fini: Option<FiniFn>,
+    rtld_fini: Option<FiniFn>,
     stack_end: *mut c_void,
     auxv_from_kernel_stack: bool,
     publish_environment: bool,
@@ -1319,8 +1326,9 @@ unsafe fn startup_phase0_impl(
 
     if let Some(init_fn) = init {
         path.push(StartupCheckpoint::CallInitHook);
-        // SAFETY: callback pointer provided by caller.
-        unsafe { init_fn() };
+        // SAFETY: the CRT supplies an initializer with the GNU argc/argv/envp
+        // ABI. These are the same validated vectors passed to modern ELF init.
+        unsafe { init_fn(normalized_argc as c_int, ubp_av, resolved_envp) };
     } else if auxv_from_kernel_stack {
         path.push(StartupCheckpoint::CallInitHook);
         // SAFETY: use the same real kernel auxv validated and classified above,
@@ -1457,9 +1465,9 @@ pub unsafe extern "C" fn __libc_start_main(
     main: Option<MainFn>,
     argc: c_int,
     ubp_av: *mut *mut c_char,
-    init: Option<HookFn>,
-    fini: Option<HookFn>,
-    rtld_fini: Option<HookFn>,
+    init: Option<InitFn>,
+    fini: Option<FiniFn>,
+    rtld_fini: Option<FiniFn>,
     stack_end: *mut c_void,
 ) -> c_int {
     // Keep loader/init in bootstrap passthrough mode and flip runtime-ready at
@@ -1563,11 +1571,12 @@ pub unsafe extern "C" fn __libc_start_main(
     // Host delegation failed (dlvsym couldn't find host __libc_start_main).
     // Fall back to calling main() directly with minimal init.
     // This is sufficient for most LD_PRELOAD scenarios.
-    if let Some(init_fn) = init {
-        // SAFETY: init is the .init function from the ELF; call it for C++ constructors etc.
-        unsafe { init_fn() };
-    }
     let envp = unsafe { resolve_startup_envp(argc, ubp_av, environ) };
+    if let Some(init_fn) = init {
+        // SAFETY: the caller's legacy CRT initializer receives the same live
+        // process vectors as main, including when no host delegate is present.
+        unsafe { init_fn(argc, ubp_av, envp) };
+    }
     init_process_globals(ubp_av, envp);
     crate::host_resolve::bootstrap_host_symbols();
     unsafe { crate::io_internal_abi::bootstrap_host_libio_exports() };
@@ -1596,9 +1605,9 @@ pub unsafe extern "C" fn __frankenlibc_startup_phase0(
     main: Option<MainFn>,
     argc: c_int,
     ubp_av: *mut *mut c_char,
-    init: Option<HookFn>,
-    fini: Option<HookFn>,
-    rtld_fini: Option<HookFn>,
+    init: Option<InitFn>,
+    fini: Option<FiniFn>,
+    rtld_fini: Option<FiniFn>,
     stack_end: *mut c_void,
 ) -> c_int {
     // SAFETY: dedicated fixture path invokes the same validated implementation.
@@ -1916,9 +1925,9 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     // Native clones inherit their creator's hardware TLS. Neither the host's
     // destructor queue nor our compiler-TLS fallback belongs to this worker.
     // Dispatch before reading any of the hosted reentry/capture TLS flags.
-    if let Some(result) = crate::dlfcn_abi::register_native_public_tls_destructor(
-        dtor, obj, _dso_handle,
-    ) {
+    if let Some(result) =
+        crate::dlfcn_abi::register_native_public_tls_destructor(dtor, obj, _dso_handle)
+    {
         return result;
     }
     if !tls_atexit_capture_for_tests_enabled()

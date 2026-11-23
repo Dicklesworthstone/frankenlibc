@@ -6,9 +6,18 @@
 # 2. FRANKENLIBC_STARTUP_DELEGATE=1 delegates to host libc
 # 3. Init/fini hooks and atexit handlers fire correctly
 # 4. errno TLS isolation holds across threads
+# 5. Legacy CRT init callbacks preserve argc/argv/envp in PIE and EXEC programs
 #
+# --legacy-crt-only runs the exact-output CRT matrix against an existing build.
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
+
+LEGACY_CRT_ONLY=0
+if [[ $# -gt 1 || ( $# -eq 1 && "${1:-}" != --legacy-crt-only ) ]]; then
+  echo "Usage: $0 [--legacy-crt-only]" >&2
+  exit 2
+fi
+if [[ $# -eq 1 ]]; then LEGACY_CRT_ONLY=1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -32,7 +41,7 @@ for candidate in "${LIB_CANDIDATES[@]}"; do
   fi
 done
 
-if [[ -z "${LIB_PATH}" ]]; then
+if [[ -z "${LIB_PATH}" && "${LEGACY_CRT_ONLY}" -eq 0 ]]; then
   echo "Building libfrankenlibc_abi.so..."
   cargo build -p frankenlibc-abi --release 2>&1 | tail -3
   for candidate in "${LIB_CANDIDATES[@]}"; do
@@ -51,6 +60,70 @@ fi
 echo "=== Owned Startup Default E2E Test (bd-73h55.1) ==="
 echo "Library: ${LIB_PATH}"
 echo ""
+
+check_legacy_crt() {
+  local layout mode backend startup fixture oracle output errors
+  local -a layout_flags candidate_env
+  for layout in pie exec; do
+    fixture="${OUT_DIR}/fixture_legacy_crt_${layout}"
+    layout_flags=(-fPIE -pie)
+    if [[ "${layout}" == exec ]]; then layout_flags=(-fno-pie -no-pie); fi
+    if ! "${CC:-cc}" -O2 -Wall -Wextra -Werror -fno-plt "${layout_flags[@]}" \
+      -DFRANKENLIBC_LEGACY_CRT_FIXTURE -Wl,--wrap=__libc_start_main \
+      "${REPO_ROOT}/tests/integration/fixture_startup.c" -o "${fixture}" -ldl; then
+      echo "FAIL: ${layout} legacy CRT fixture did not compile" >&2
+      return 1
+    fi
+    oracle="${OUT_DIR}/legacy-${layout}-host.out"
+    errors="${OUT_DIR}/legacy-${layout}-host.err"
+    if ! timeout --kill-after=2s 20s env -u LD_PRELOAD \
+      -u FRANKENLIBC_EXPECTED_STARTUP_LIBRARY \
+      FRANKENLIBC_LEGACY_INIT_MARKER=process-vectors \
+      "${fixture}" "first argument" second > "${oracle}" 2> "${errors}"; then
+      cat "${errors}" >&2
+      echo "FAIL: ${layout} GNU legacy CRT fixture exited unsuccessfully" >&2
+      return 1
+    fi
+    if ! printf 'legacy_crt_init=ok argc=3 constructors=2 preinit=1\nlegacy_crt_fini=ok\n' \
+      | cmp -s - "${oracle}" || [[ -s "${errors}" ]]; then
+      cat "${oracle}" "${errors}" >&2
+      echo "FAIL: ${layout} GNU legacy CRT fixture did not complete every check" >&2
+      return 1
+    fi
+    for mode in strict hardened; do
+      for backend in 0 1; do
+        for startup in owned delegated; do
+          output="${OUT_DIR}/legacy-${layout}-${mode}-${backend}-${startup}.out"
+          errors="${output%.out}.err"
+          candidate_env=(env -u FRANKENLIBC_STARTUP_PHASE0 \
+            -u FRANKENLIBC_STARTUP_RETURN_FOR_TESTS -u FRANKENLIBC_STARTUP_DELEGATE \
+            LD_PRELOAD="${LIB_PATH}" FRANKENLIBC_EXPECTED_STARTUP_LIBRARY="${LIB_PATH}" \
+            FRANKENLIBC_LEGACY_INIT_MARKER=process-vectors \
+            FRANKENLIBC_MODE="${mode}" FRANKENLIBC_THREAD_NATIVE="${backend}")
+          if [[ "${startup}" == delegated ]]; then
+            candidate_env+=(FRANKENLIBC_STARTUP_DELEGATE=1)
+          fi
+          if ! timeout --kill-after=2s 20s "${candidate_env[@]}" \
+            "${fixture}" "first argument" second > "${output}" 2> "${errors}"; then
+            cat "${output}" "${errors}" >&2
+            echo "FAIL: legacy CRT ${layout}/${mode}/${backend}/${startup} exited unsuccessfully" >&2
+            return 1
+          fi
+          if ! cmp -s "${oracle}" "${output}" || [[ -s "${errors}" ]]; then
+            diff -u "${oracle}" "${output}" >&2 || true
+            cat "${errors}" >&2
+            echo "FAIL: legacy CRT ${layout}/${mode}/${backend}/${startup} differs from GNU" >&2
+            return 1
+          fi
+        done
+      done
+    done
+  done
+  echo "PASS: legacy CRT arguments, constructor order and finalization (2 GNU, 16 candidate cases)"
+}
+
+check_legacy_crt || exit 1
+if [[ "${LEGACY_CRT_ONLY}" -eq 1 ]]; then exit 0; fi
 
 # Create C fixture to test owned startup
 FIXTURE_SRC="${OUT_DIR}/fixture_owned_startup.c"

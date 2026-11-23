@@ -29,12 +29,18 @@ use frankenlibc_abi::stdio_abi::{fflush, fwrite, stdout};
 use serde_json::Value;
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
-type HookFn = unsafe extern "C" fn();
+type InitFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char);
+type FiniFn = unsafe extern "C" fn();
 
 static INIT_CALLS: AtomicUsize = AtomicUsize::new(0);
+static INIT_ARGC: AtomicUsize = AtomicUsize::new(usize::MAX);
+static INIT_ARGV: AtomicUsize = AtomicUsize::new(0);
+static INIT_ENVP: AtomicUsize = AtomicUsize::new(0);
 static FINI_CALLS: AtomicUsize = AtomicUsize::new(0);
 static RTLD_FINI_CALLS: AtomicUsize = AtomicUsize::new(0);
 static MAIN_ARGC: AtomicUsize = AtomicUsize::new(usize::MAX);
+static MAIN_ARGV: AtomicUsize = AtomicUsize::new(0);
+static MAIN_ENVP: AtomicUsize = AtomicUsize::new(0);
 static MAIN_ENVP_NONNULL: AtomicU8 = AtomicU8::new(0);
 static HOST_DELEGATE_CALLS: AtomicUsize = AtomicUsize::new(0);
 static HOST_DELEGATE_LAST_ARGC: AtomicUsize = AtomicUsize::new(usize::MAX);
@@ -49,7 +55,10 @@ unsafe fn abi_errno() -> c_int {
     unsafe { *p }
 }
 
-unsafe extern "C" fn test_init() {
+unsafe extern "C" fn test_init(argc: c_int, argv: *mut *mut c_char, envp: *mut *mut c_char) {
+    INIT_ARGC.store(argc as usize, Ordering::Relaxed);
+    INIT_ARGV.store(argv as usize, Ordering::Relaxed);
+    INIT_ENVP.store(envp as usize, Ordering::Relaxed);
     INIT_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -64,23 +73,30 @@ unsafe extern "C" fn test_rtld_fini() {
 unsafe extern "C" fn test_host_start_main(
     _main: Option<MainFn>,
     argc: c_int,
-    _ubp_av: *mut *mut c_char,
-    _init: Option<HookFn>,
-    _fini: Option<HookFn>,
-    _rtld_fini: Option<HookFn>,
+    ubp_av: *mut *mut c_char,
+    init: Option<InitFn>,
+    _fini: Option<FiniFn>,
+    _rtld_fini: Option<FiniFn>,
     _stack_end: *mut c_void,
 ) -> c_int {
     HOST_DELEGATE_CALLS.fetch_add(1, Ordering::Relaxed);
     HOST_DELEGATE_LAST_ARGC.store(if argc < 0 { 0 } else { argc as usize }, Ordering::Relaxed);
+    if let Some(init) = init {
+        // SAFETY: tests supplying an initializer provide contiguous, live
+        // argv/envp vectors, matching the host CRT's init callback contract.
+        unsafe { init(argc, ubp_av, ubp_av.add(argc as usize + 1)) };
+    }
     211
 }
 
 unsafe extern "C" fn test_main(
     argc: c_int,
-    _argv: *mut *mut c_char,
+    argv: *mut *mut c_char,
     envp: *mut *mut c_char,
 ) -> c_int {
     MAIN_ARGC.store(if argc < 0 { 0 } else { argc as usize }, Ordering::Relaxed);
+    MAIN_ARGV.store(argv as usize, Ordering::Relaxed);
+    MAIN_ENVP.store(envp as usize, Ordering::Relaxed);
     MAIN_ENVP_NONNULL.store(u8::from(!envp.is_null()), Ordering::Relaxed);
     7
 }
@@ -107,9 +123,14 @@ unsafe extern "C" fn test_main_writes_stdout(
 
 fn reset_test_counters() {
     INIT_CALLS.store(0, Ordering::Relaxed);
+    INIT_ARGC.store(usize::MAX, Ordering::Relaxed);
+    INIT_ARGV.store(0, Ordering::Relaxed);
+    INIT_ENVP.store(0, Ordering::Relaxed);
     FINI_CALLS.store(0, Ordering::Relaxed);
     RTLD_FINI_CALLS.store(0, Ordering::Relaxed);
     MAIN_ARGC.store(usize::MAX, Ordering::Relaxed);
+    MAIN_ARGV.store(0, Ordering::Relaxed);
+    MAIN_ENVP.store(0, Ordering::Relaxed);
     MAIN_ENVP_NONNULL.store(0, Ordering::Relaxed);
     HOST_DELEGATE_CALLS.store(0, Ordering::Relaxed);
     HOST_DELEGATE_LAST_ARGC.store(usize::MAX, Ordering::Relaxed);
@@ -361,17 +382,34 @@ fn startup_phase0_executes_main_and_captures_invariants() {
             Some(test_main as MainFn),
             2,
             argv_env.as_mut_ptr(),
-            Some(test_init as HookFn),
-            Some(test_fini as HookFn),
-            Some(test_rtld_fini as HookFn),
+            Some(test_init as InitFn),
+            Some(test_fini as FiniFn),
+            Some(test_rtld_fini as FiniFn),
             auxv.as_mut_ptr().cast::<c_void>(),
         )
     };
     assert_eq!(rc, 7);
     assert_eq!(INIT_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(INIT_ARGC.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        INIT_ARGV.load(Ordering::Relaxed),
+        argv_env.as_ptr() as usize
+    );
+    assert_eq!(
+        INIT_ENVP.load(Ordering::Relaxed),
+        argv_env[3..].as_ptr() as usize
+    );
     assert_eq!(FINI_CALLS.load(Ordering::Relaxed), 1);
     assert_eq!(RTLD_FINI_CALLS.load(Ordering::Relaxed), 1);
     assert_eq!(MAIN_ARGC.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        MAIN_ARGV.load(Ordering::Relaxed),
+        INIT_ARGV.load(Ordering::Relaxed)
+    );
+    assert_eq!(
+        MAIN_ENVP.load(Ordering::Relaxed),
+        INIT_ENVP.load(Ordering::Relaxed)
+    );
     assert_eq!(MAIN_ENVP_NONNULL.load(Ordering::Relaxed), 1);
 
     let mut snapshot = StartupInvariantSnapshot {
@@ -398,6 +436,51 @@ fn startup_phase0_executes_main_and_captures_invariants() {
     assert_eq!(policy.last_phase, StartupCheckpoint::Complete);
     assert!(policy.dag_valid);
     assert!(policy.latency_ns > 0);
+}
+
+#[test]
+fn startup_phase0_legacy_init_preserves_empty_vectors() {
+    let _guard = acquire_test_lock();
+    reset_test_counters();
+    // argc == 0 still has two distinct live vector addresses: argv points at
+    // its terminator and envp points at the following environment terminator.
+    let mut argv_env = [ptr::null_mut(), ptr::null_mut()];
+    let mut auxv = [AT_NULL, 0];
+    // SAFETY: both empty vectors and the auxv terminator remain live through
+    // the initializer, main and finalizers; every callback has its real ABI.
+    let status = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main),
+            0,
+            argv_env.as_mut_ptr(),
+            Some(test_init),
+            Some(test_fini),
+            Some(test_rtld_fini),
+            auxv.as_mut_ptr().cast(),
+        )
+    };
+    assert_eq!(status, 7);
+    assert_eq!(INIT_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(INIT_ARGC.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        INIT_ARGV.load(Ordering::Relaxed),
+        argv_env.as_ptr() as usize
+    );
+    assert_eq!(
+        INIT_ENVP.load(Ordering::Relaxed),
+        argv_env[1..].as_ptr() as usize
+    );
+    assert_eq!(MAIN_ARGC.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        MAIN_ARGV.load(Ordering::Relaxed),
+        INIT_ARGV.load(Ordering::Relaxed)
+    );
+    assert_eq!(
+        MAIN_ENVP.load(Ordering::Relaxed),
+        INIT_ENVP.load(Ordering::Relaxed)
+    );
+    assert_eq!(FINI_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(RTLD_FINI_CALLS.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -632,7 +715,7 @@ fn startup_phase0_negative_argc_normalizes_to_zero() {
             Some(test_main as MainFn),
             -7,
             argv_env.as_mut_ptr(),
-            Some(test_init as HookFn),
+            Some(test_init as InitFn),
             None,
             None,
             auxv.as_mut_ptr().cast::<c_void>(),
@@ -640,6 +723,15 @@ fn startup_phase0_negative_argc_normalizes_to_zero() {
     };
     assert_eq!(rc, 7);
     assert_eq!(INIT_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(INIT_ARGC.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        INIT_ARGV.load(Ordering::Relaxed),
+        argv_env.as_ptr() as usize
+    );
+    assert_eq!(
+        INIT_ENVP.load(Ordering::Relaxed),
+        argv_env[1..].as_ptr() as usize
+    );
     assert_eq!(MAIN_ARGC.load(Ordering::Relaxed), 0);
     assert_eq!(MAIN_ENVP_NONNULL.load(Ordering::Relaxed), 1);
 
@@ -803,7 +895,7 @@ fn libc_start_main_explicit_delegate_env_delegates_to_host() {
                         Some(test_main as MainFn),
                         1,
                         argv_env.as_mut_ptr(),
-                        None,
+                        Some(test_init),
                         None,
                         None,
                         auxv.as_mut_ptr().cast::<c_void>(),
@@ -816,6 +908,16 @@ fn libc_start_main_explicit_delegate_env_delegates_to_host() {
     assert_eq!(rc, 211);
     assert_eq!(HOST_DELEGATE_CALLS.load(Ordering::Relaxed), 1);
     assert_eq!(HOST_DELEGATE_LAST_ARGC.load(Ordering::Relaxed), 1);
+    assert_eq!(INIT_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(INIT_ARGC.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        INIT_ARGV.load(Ordering::Relaxed),
+        argv_env.as_ptr() as usize
+    );
+    assert_eq!(
+        INIT_ENVP.load(Ordering::Relaxed),
+        argv_env[2..].as_ptr() as usize
+    );
     let policy = startup_policy_snapshot_for_tests();
     assert_eq!(policy.decision, StartupPolicyDecision::FallbackHost);
     assert_eq!(policy.failure_reason, StartupFailureReason::None);

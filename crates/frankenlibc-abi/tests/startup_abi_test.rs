@@ -285,7 +285,7 @@ static INIT_FINI_ARRAY_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 static EXIT_CALLBACK_ORDER_FD: AtomicI32 = AtomicI32::new(-1);
 static CXA_ATEXIT_ORDER: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
 
-unsafe extern "C" fn init_hook() {
+unsafe extern "C" fn init_hook(_argc: c_int, _argv: *mut *mut c_char, _envp: *mut *mut c_char) {
     unsafe { INIT_CALLED = true };
 }
 
@@ -293,7 +293,11 @@ unsafe extern "C" fn fini_hook() {
     unsafe { FINI_CALLED = true };
 }
 
-unsafe extern "C" fn constructor_order_init_hook() {
+unsafe extern "C" fn constructor_order_init_hook(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) {
     let mut order = CONSTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner());
     order.push("preinit_array");
     order.push("init_array");
@@ -337,7 +341,11 @@ unsafe extern "C" fn destructor_order_rtld_fini_hook() {
         .push("rtld_fini");
 }
 
-unsafe extern "C" fn init_fini_array_init_hook() {
+unsafe extern "C" fn init_fini_array_init_hook(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) {
     let mut order = INIT_FINI_ARRAY_ORDER
         .lock()
         .unwrap_or_else(|e| e.into_inner());

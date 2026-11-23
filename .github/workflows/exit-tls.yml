@@ -13,10 +13,12 @@ on:
       - 'crates/frankenlibc-core/src/syscall/mod.rs'
       - 'tests/integration/fixture_exit_tls*'
       - 'tests/integration/fixture_startup_thread_exit.c'
+      - 'tests/integration/fixture_startup.c'
       - 'tests/integration/fixture_pthread_cancel.c'
       - 'crates/frankenlibc-abi/tests/conformance_diff_system_signals.rs'
       - 'scripts/check_exit_tls.py'
       - 'scripts/check_startup_thread_exit.py'
+      - 'scripts/check_owned_startup_default_e2e.sh'
       - '.github/workflows/exit-tls.yml'
   workflow_dispatch:
 permissions:
@@ -66,6 +68,9 @@ jobs:
           cargo test -p frankenlibc-core --lib "${args[@]}" pthread::thread::tests::prepared_thread_ -- --test-threads=1 2>&1 | tee "$root/prepared-threads.log"
           grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/prepared-threads.log"
           python3 scripts/check_startup_thread_exit.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/startup"
+          FRANKENLIBC_SMOKE_LIB_PATH="$PWD/target/release/libfrankenlibc_abi.so" \
+            scripts/check_owned_startup_default_e2e.sh --legacy-crt-only 2>&1 | tee "$root/legacy-crt.log"
+          cp target/owned_startup_default_e2e/legacy-* "$root/"
           cc -O2 -pthread tests/integration/fixture_pthread_cancel.c -ldl -o "$root/pthread-cancel"
           for mode in strict hardened; do
             for scenario in self worker; do
@@ -78,7 +83,7 @@ jobs:
           python3 scripts/check_exit_tickets.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/exit"
           cargo test -p frankenlibc-abi --test dlfcn_native_cxa_test "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/cxa.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/cxa.log"
-          git diff --exit-code -- crates/frankenlibc-abi/src tests/integration/fixture_exit_tls* tests/integration/fixture_startup_thread_exit.c tests/integration/fixture_pthread_cancel.c scripts/check_exit_tls.py scripts/check_startup_thread_exit.py
+          git diff --exit-code -- crates/frankenlibc-abi/src tests/integration/fixture_exit_tls* tests/integration/fixture_startup_thread_exit.c tests/integration/fixture_startup.c tests/integration/fixture_pthread_cancel.c scripts/check_exit_tls.py scripts/check_startup_thread_exit.py scripts/check_owned_startup_default_e2e.sh
       - name: Preserve system signal dispositions across concurrent calls and cancellation
         if: always()
         shell: bash
