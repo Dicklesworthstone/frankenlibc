@@ -1158,34 +1158,138 @@ fn with_protocols_backend_snapshot<R>(
     }
 }
 
-/// Shared `/etc/protocols` lookup by canonical name or alias, through the cached backend
-/// bytes and the generation-stamped parsed index. Runs `f` on the BORROWED cache entry, so
-/// no `ProtocolEntry` (its name `Vec<u8>` plus its `Vec<Vec<u8>>` of aliases — 3+ heap
-/// allocations and a `realloc`) is cloned per call. `Ok(None)` means "no such protocol";
-/// `Err` means the backend could not be read.
-///
-/// Exposed to the crate so the reentrant `getprotobyname_r` (which lives in `unistd_abi`)
-/// can share this cache instead of re-reading and re-parsing the file on every call.
+/// Files lookups retain the generation-stamped index and borrowed records.
+/// Foreign NSS callbacks never execute while either cache is borrowed.
+fn with_files_protocol_entry<R>(
+    key: crate::nss_module::ProtocolKey<'_>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    use crate::nss_module::ProtocolKey;
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            let found = match key {
+                ProtocolKey::Name(name) => cache.lookup_by_name(generation, content, name),
+                ProtocolKey::Number(number) => cache.lookup_by_number(generation, content, number),
+            };
+            // SAFETY: a completed files scan clears an earlier provider error.
+            unsafe { set_abi_errno(0) };
+            found.map(f)
+        })
+    })
+}
+
+fn with_protocol_entry<R>(
+    key: crate::nss_module::ProtocolKey<'_>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    use frankenlibc_core::nss::{Answer, Database};
+    let sources = crate::nss_module::services(Database::Protocols);
+    // Preserve the allocation-free record visit for the usual files-only case.
+    if matches!(sources.as_slice(), [only] if only.name() == b"files") {
+        return with_files_protocol_entry(key, f);
+    }
+    let answer = frankenlibc_core::nss::lookup(
+        &sources,
+        |source| match source.name() {
+            b"files" => match with_files_protocol_entry(key, Clone::clone) {
+                Ok(Some(entry)) => Answer::Found(entry),
+                Ok(None) => Answer::NotFound,
+                Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
+            },
+            _ => crate::nss_module::protocol_entry(source.name(), key),
+        },
+        None,
+    );
+    match answer {
+        Answer::Found(entry) => Ok(Some(f(&entry))),
+        Answer::NotFound => {
+            // SAFETY: the public wrapper clears errno for a definitive miss.
+            unsafe { set_abi_errno(0) };
+            Ok(None)
+        }
+        Answer::Unavailable(error) | Answer::TryAgain(error) => {
+            Err(std::io::Error::from_raw_os_error(error))
+        }
+        Answer::BufferTooSmall => Err(std::io::Error::from_raw_os_error(libc::ERANGE)),
+    }
+}
+
 pub(crate) fn with_protocol_entry_by_name<R>(
     name: &[u8],
     f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
 ) -> std::io::Result<Option<R>> {
-    with_protocols_backend_snapshot(|content, generation| {
-        with_protocol_lookup_cache(|cache| cache.lookup_by_name(generation, content, name).map(f))
-    })
+    with_protocol_entry(crate::nss_module::ProtocolKey::Name(name), f)
 }
 
-/// Shared `/etc/protocols` lookup by protocol number. Sibling of
-/// [`with_protocol_entry_by_name`], shared with the reentrant `getprotobynumber_r`.
 pub(crate) fn with_protocol_entry_by_number<R>(
     number: c_int,
     f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
 ) -> std::io::Result<Option<R>> {
-    with_protocols_backend_snapshot(|content, generation| {
-        with_protocol_lookup_cache(|cache| {
-            cache.lookup_by_number(generation, content, number).map(f)
-        })
-    })
+    with_protocol_entry(crate::nss_module::ProtocolKey::Number(number), f)
+}
+
+/// Pack a files-only answer without traversing NSS. The private files provider
+/// must remain independent of a caller's configured protocol modules.
+///
+/// # Safety
+/// `out` and `buf[..len]` are validated, writable caller-owned objects.
+pub(crate) unsafe fn files_protocol_lookup_r(
+    key: crate::nss_module::ProtocolKey<'_>,
+    out: *mut libc::protoent,
+    buf: *mut c_char,
+    len: usize,
+) -> frankenlibc_core::nss::Answer<()> {
+    use frankenlibc_core::nss::Answer;
+    match with_files_protocol_entry(key, |entry| {
+        let mut resolved = ptr::null_mut();
+        // SAFETY: the ABI validated complete output objects before dispatch.
+        unsafe {
+            crate::unistd_abi::fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                out.cast(),
+                buf,
+                len,
+                &mut resolved,
+            )
+        }
+    }) {
+        Ok(Some(0)) => Answer::Found(()),
+        Ok(Some(libc::ERANGE)) => Answer::BufferTooSmall,
+        Ok(Some(error)) => Answer::Unavailable(error),
+        Ok(None) => Answer::NotFound,
+        Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
+    }
+}
+
+/// Dispatch with the caller's exact buffer, preserving a module's alignment
+/// and ERANGE behavior. No policy lock or files-cache borrow reaches a module.
+///
+/// # Safety
+/// `out` and `buf[..len]` are validated, writable caller-owned objects.
+pub(crate) unsafe fn protocol_lookup_r(
+    key: crate::nss_module::ProtocolKey<'_>,
+    out: *mut libc::protoent,
+    buf: *mut c_char,
+    len: usize,
+) -> frankenlibc_core::nss::Answer<()> {
+    use frankenlibc_core::nss::Database;
+    let sources = crate::nss_module::services(Database::Protocols);
+    frankenlibc_core::nss::lookup(
+        &sources,
+        |source| {
+            // SAFETY: the ABI validated these objects before source traversal.
+            unsafe {
+                if source.name() == b"files" {
+                    files_protocol_lookup_r(key, out, buf, len)
+                } else {
+                    crate::nss_module::protocol_entry_r(source.name(), key, out, buf, len)
+                }
+            }
+        },
+        None,
+    )
 }
 
 /// Bench-only: reproduce the per-call `PathBuf` that `refresh_source_path_from_env` used to
@@ -6030,7 +6134,7 @@ pub unsafe fn getservbyport_legacy_parse_per_call_for_bench(
     with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))
 }
 
-/// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.
+/// POSIX `getprotobyname` — look up a protocol through configured NSS sources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
     let (_, decision) = runtime_policy::decide(
@@ -6061,19 +6165,15 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
     }
     let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
 
-    let entry = match with_protocols_backend_snapshot(|content, generation| {
-        with_protocol_lookup_cache(|cache| {
-            cache
-                .lookup_by_name(generation, content, name_bytes)
-                .cloned()
-        })
-    }) {
+    let entry = match lookup_protocol_entry_by_name(name_bytes) {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             return ptr::null_mut();
         }
-        Err(_) => {
+        Err(error) => {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
             return ptr::null_mut();
         }
@@ -6136,7 +6236,7 @@ pub unsafe fn getprotobyname_legacy_read_per_call_for_bench(name: *const c_char)
     with_tls_protoent(|storage| fill_protoent_storage(storage, &entry))
 }
 
-/// POSIX `getprotobynumber` — look up a protocol by number in /etc/protocols.
+/// POSIX `getprotobynumber` — look up a protocol through configured NSS sources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
     let (_, decision) = runtime_policy::decide(
@@ -6152,17 +6252,15 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let entry = match with_protocols_backend_snapshot(|content, generation| {
-        with_protocol_lookup_cache(|cache| {
-            cache.lookup_by_number(generation, content, proto).cloned()
-        })
-    }) {
+    let entry = match lookup_protocol_entry_by_number(proto) {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             return ptr::null_mut();
         }
-        Err(_) => {
+        Err(error) => {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
             return ptr::null_mut();
         }

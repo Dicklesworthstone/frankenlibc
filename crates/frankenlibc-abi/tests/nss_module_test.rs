@@ -2893,6 +2893,841 @@ fn services_enumeration_files_retry_and_provider_isolation() {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ProtocolRecord {
+    name: Vec<u8>,
+    number: c_int,
+    aliases: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ProtocolRequest<'a> {
+    Name(&'a CStr),
+    Number(c_int),
+    Next,
+}
+
+struct ProtocolApi {
+    name: unsafe extern "C" fn(*const c_char) -> *mut c_void,
+    number: unsafe extern "C" fn(c_int) -> *mut c_void,
+    name_r: unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+    ) -> c_int,
+    number_r:
+        unsafe extern "C" fn(c_int, *mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int,
+    set: unsafe extern "C" fn(c_int),
+    get: unsafe extern "C" fn() -> *mut c_void,
+    get_r: unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int,
+    end: unsafe extern "C" fn(),
+    error: unsafe extern "C" fn() -> *mut c_int,
+}
+
+fn protocol_api(host: bool) -> ProtocolApi {
+    unsafe extern "C" {
+        #[link_name = "getprotobyname"]
+        fn host_name(name: *const c_char) -> *mut c_void;
+        #[link_name = "getprotobynumber"]
+        fn host_number(number: c_int) -> *mut c_void;
+        #[link_name = "getprotobyname_r"]
+        fn host_name_r(
+            name: *const c_char,
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            result: *mut *mut c_void,
+        ) -> c_int;
+        #[link_name = "getprotobynumber_r"]
+        fn host_number_r(
+            number: c_int,
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            result: *mut *mut c_void,
+        ) -> c_int;
+        #[link_name = "setprotoent"]
+        fn host_set(stayopen: c_int);
+        #[link_name = "getprotoent"]
+        fn host_get() -> *mut c_void;
+        #[link_name = "getprotoent_r"]
+        fn host_get_r(
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            result: *mut *mut c_void,
+        ) -> c_int;
+        #[link_name = "endprotoent"]
+        fn host_end();
+    }
+    use frankenlibc_abi::{errno_abi as e, resolv_abi as r, unistd_abi as u};
+    assert_ne!(host_name as *const (), r::getprotobyname as *const ());
+    assert_ne!(host_get_r as *const (), u::getprotoent_r as *const ());
+    if host {
+        ProtocolApi {
+            name: host_name,
+            number: host_number,
+            name_r: host_name_r,
+            number_r: host_number_r,
+            set: host_set,
+            get: host_get,
+            get_r: host_get_r,
+            end: host_end,
+            error: libc::__errno_location,
+        }
+    } else {
+        ProtocolApi {
+            name: r::getprotobyname,
+            number: r::getprotobynumber,
+            name_r: u::getprotobyname_r,
+            number_r: u::getprotobynumber_r,
+            set: u::setprotoent,
+            get: u::getprotoent,
+            get_r: u::getprotoent_r,
+            end: u::endprotoent,
+            error: e::__errno_location,
+        }
+    }
+}
+
+unsafe fn protocol_record(
+    pointer: *mut c_void,
+    bounds: Option<(usize, usize)>,
+) -> Option<ProtocolRecord> {
+    if pointer.is_null() {
+        return None;
+    }
+    // SAFETY: a successful API call publishes a complete protoent.
+    let entry = unsafe { &*pointer.cast::<libc::protoent>() };
+    let string = |pointer: *const c_char| {
+        assert!(!pointer.is_null());
+        if let Some((start, end)) = bounds {
+            let address = pointer as usize;
+            assert!(
+                (start..end).contains(&address),
+                "protocol string escaped caller buffer"
+            );
+            // SAFETY: the complete remaining range is inside the caller buffer.
+            let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), end - address) };
+            let len = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .expect("unterminated protocol string");
+            bytes[..len].to_vec()
+        } else {
+            // SAFETY: non-reentrant answers own terminated strings.
+            unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec()
+        }
+    };
+    assert!(!entry.p_aliases.is_null());
+    let mut aliases = Vec::new();
+    for index in 0..4096 {
+        let address = (entry.p_aliases as usize)
+            .checked_add(index * std::mem::size_of::<usize>())
+            .unwrap();
+        assert_eq!(address % std::mem::align_of::<usize>(), 0);
+        if let Some((start, end)) = bounds {
+            assert!(address >= start && address + std::mem::size_of::<usize>() <= end);
+        }
+        // SAFETY: caller-backed slots were bounded above; owned output follows
+        // the API's NULL-terminated alias-array contract.
+        let alias = unsafe { *(address as *const *const c_char) };
+        if alias.is_null() {
+            return Some(ProtocolRecord {
+                name: string(entry.p_name),
+                number: entry.p_proto,
+                aliases,
+            });
+        }
+        aliases.push(string(alias));
+    }
+    panic!("protocol alias array was not terminated");
+}
+
+fn protocol_call(
+    api: &ProtocolApi,
+    request: ProtocolRequest<'_>,
+    capacity: Option<usize>,
+    offset: usize,
+) -> (c_int, c_int, Option<ProtocolRecord>) {
+    if let Some(capacity) = capacity {
+        let mut storage = vec![0x5au8; 16384 + 16];
+        assert!(offset + capacity <= storage.len());
+        let mut output: libc::protoent = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::dangling_mut();
+        let buffer = unsafe { storage.as_mut_ptr().add(offset).cast::<c_char>() };
+        unsafe { *(api.error)() = 619 };
+        // SAFETY: every public API receives complete output objects and a
+        // deliberately exact (possibly short or unaligned) buffer range.
+        let rc = unsafe {
+            match request {
+                ProtocolRequest::Name(name) => (api.name_r)(
+                    name.as_ptr(),
+                    (&raw mut output).cast(),
+                    buffer,
+                    capacity,
+                    &mut result,
+                ),
+                ProtocolRequest::Number(number) => (api.number_r)(
+                    number,
+                    (&raw mut output).cast(),
+                    buffer,
+                    capacity,
+                    &mut result,
+                ),
+                ProtocolRequest::Next => {
+                    (api.get_r)((&raw mut output).cast(), buffer, capacity, &mut result)
+                }
+            }
+        };
+        let error = unsafe { *(api.error)() };
+        assert!(
+            storage[..offset]
+                .iter()
+                .chain(&storage[offset + capacity..])
+                .all(|&byte| byte == 0x5a)
+        );
+        if !result.is_null() {
+            assert_eq!(result, (&raw mut output).cast());
+            assert_eq!(rc, 0);
+        }
+        let observed =
+            unsafe { protocol_record(result, Some((buffer as usize, buffer as usize + capacity))) };
+        (rc, error, observed)
+    } else {
+        unsafe { *(api.error)() = 619 };
+        let result = unsafe {
+            match request {
+                ProtocolRequest::Name(name) => (api.name)(name.as_ptr()),
+                ProtocolRequest::Number(number) => (api.number)(number),
+                ProtocolRequest::Next => (api.get)(),
+            }
+        };
+        let error = unsafe { *(api.error)() };
+        (0, error, unsafe { protocol_record(result, None) })
+    }
+}
+
+fn configure_host_protocols() {
+    unsafe extern "C" {
+        fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+    }
+    let sources = CString::new(std::env::var("FLTEST_PROTOCOL_SOURCES").unwrap()).unwrap();
+    assert_eq!(
+        unsafe { __nss_configure_lookup(c"protocols".as_ptr(), sources.as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn protocols_lookups_match_glibc_module_policy() {
+    const TEST: &str = "protocols_lookups_match_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_PROTOCOL_PROVIDER").unwrap() == "host";
+        if host {
+            configure_host_protocols();
+        }
+        unsafe { libc::alarm(20) };
+        let api = protocol_api(host);
+        let mut transcript = String::new();
+        let sources = std::env::var("FLTEST_PROTOCOL_SOURCES").unwrap();
+        let queries = [
+            ProtocolRequest::Name(c"tcp"),
+            ProtocolRequest::Name(c"TCP"),
+            ProtocolRequest::Name(c"fltest-protocol"),
+            ProtocolRequest::Name(c"fltest-proto"),
+            ProtocolRequest::Name(c"fltest-large-protocol"),
+            ProtocolRequest::Name(c"fltest-negative"),
+            ProtocolRequest::Name(c"fltest-wide"),
+            ProtocolRequest::Name(c"missing-protocol"),
+            ProtocolRequest::Name(c"fltest-again"),
+            ProtocolRequest::Name(c"fltest-unavail"),
+            ProtocolRequest::Name(c"fltest-errno-none"),
+            ProtocolRequest::Name(c"fltest-errno-again"),
+            ProtocolRequest::Name(c"fltest-errno-unavail"),
+            ProtocolRequest::Name(c"fltest-errno-success"),
+            ProtocolRequest::Name(c"fltest-errno-written"),
+            ProtocolRequest::Number(6),
+            ProtocolRequest::Number(14501),
+            ProtocolRequest::Number(14502),
+            ProtocolRequest::Number(-7),
+            ProtocolRequest::Number(70000),
+            ProtocolRequest::Number(987654),
+        ];
+        for query in queries {
+            // Exact small-buffer behavior belongs to the selected module.
+            // Files keyed lookups retain their existing parsed index: GNU's
+            // sequential scan can exhaust a tiny buffer on an unrelated line.
+            let module_answer = match query {
+                ProtocolRequest::Name(name) => [
+                    c"tcp",
+                    c"fltest-protocol",
+                    c"fltest-proto",
+                    c"fltest-large-protocol",
+                    c"fltest-negative",
+                    c"fltest-wide",
+                    c"fltest-errno-success",
+                    c"fltest-errno-written",
+                ]
+                .contains(&name),
+                ProtocolRequest::Number(number) => matches!(number, 6 | 14501 | 14502 | -7 | 70000),
+                ProtocolRequest::Next => false,
+            };
+            let mut budgets = Vec::new();
+            if sources == "fltest" || (sources.starts_with("fltest ") && module_answer) {
+                budgets.extend([(Some(0), 0), (Some(7), 1)]);
+            }
+            if sources == "fltest" {
+                budgets.push((Some(96), 3));
+            }
+            budgets.extend([(Some(8192), 1), (None, 0)]);
+            for (capacity, offset) in budgets {
+                writeln!(
+                    transcript,
+                    "{query:?} {capacity:?}/{offset} {:?}",
+                    protocol_call(&api, query, capacity, offset)
+                )
+                .unwrap();
+            }
+        }
+        println!("PROTOCOL_LOOKUP_BEGIN\n{transcript}PROTOCOL_LOOKUP_END");
+        unsafe { libc::alarm(0) };
+        return;
+    }
+    let dir = scratch_dir("protocol-lookups");
+    build_modules(&dir);
+    let cases = [
+        "fltest",
+        "files",
+        "fltest files",
+        "files fltest",
+        "fltest [SUCCESS=continue] files",
+        "fltest [SUCCESS=merge] files",
+        "fltest [NOTFOUND=return] files",
+        "fltest [TRYAGAIN=return] files",
+        "fltest [TRYAGAIN=continue] files",
+        "fltest [UNAVAIL=return] files",
+        "flmissing files",
+        "flmissing [UNAVAIL=return] files",
+        "compat files",
+    ];
+    let mut compared = 0;
+    for (index, sources) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("protocol-lookup-{index}-{provider}-{mode}");
+            let mut child =
+                host_module_child(TEST, &dir, &format!("protocols: {sources}\n"), &label);
+            child
+                .env("FLTEST_PROTOCOL_PROVIDER", provider)
+                .env("FLTEST_PROTOCOL_SOURCES", sources)
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &label);
+            let stdout = std::str::from_utf8(&output.stdout).unwrap();
+            let transcript = stdout
+                .split_once("PROTOCOL_LOOKUP_BEGIN\n")
+                .unwrap()
+                .1
+                .split_once("PROTOCOL_LOOKUP_END")
+                .unwrap()
+                .0
+                .to_owned();
+            assert!((42..=105).contains(&transcript.lines().count()));
+            if sources == "fltest" {
+                assert!(
+                    transcript.contains("number: 14501") && transcript.contains("number: 14502")
+                );
+                assert!(transcript.contains("number: -7") && transcript.contains("number: 70000"));
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(&transcript, expected, "{label}: sources={sources}");
+                compared += 1;
+            } else {
+                oracle = Some(transcript);
+            }
+        }
+    }
+    assert_eq!(compared, 26);
+    eprintln!("protocol lookups: {compared} independent GNU/candidate process comparisons");
+}
+
+fn protocol_enumeration_transcript(api: &ProtocolApi) -> String {
+    let mut transcript = String::new();
+    unsafe { (api.end)() };
+    for capacity in [0, 1, 7] {
+        writeln!(
+            transcript,
+            "implicit {capacity} {:?}",
+            protocol_call(api, ProtocolRequest::Next, Some(capacity), 1)
+        )
+        .unwrap();
+    }
+    for index in 0..6 {
+        let answer = protocol_call(api, ProtocolRequest::Next, Some(8192), index % 2);
+        let done = answer.2.is_none();
+        writeln!(transcript, "implicit {index} {answer:?}").unwrap();
+        if done {
+            break;
+        }
+    }
+    unsafe {
+        (api.end)();
+        (api.set)(1)
+    };
+    for index in 0..6 {
+        let answer = protocol_call(api, ProtocolRequest::Next, None, 0);
+        let done = answer.2.is_none();
+        writeln!(transcript, "owned {index} {answer:?}").unwrap();
+        if done {
+            break;
+        }
+    }
+    unsafe { (api.set)(0) };
+    writeln!(
+        transcript,
+        "short {:?}",
+        protocol_call(api, ProtocolRequest::Next, Some(1), 0)
+    )
+    .unwrap();
+    writeln!(
+        transcript,
+        "retry {:?}",
+        protocol_call(api, ProtocolRequest::Next, Some(8192), 1)
+    )
+    .unwrap();
+    unsafe {
+        (api.end)();
+        (api.set)(0)
+    };
+    writeln!(
+        transcript,
+        "early end {:?}",
+        protocol_call(api, ProtocolRequest::Next, Some(8192), 0)
+    )
+    .unwrap();
+    unsafe {
+        (api.end)();
+        (api.end)()
+    };
+    writeln!(
+        transcript,
+        "after end {:?}",
+        protocol_call(api, ProtocolRequest::Next, Some(8192), 1)
+    )
+    .unwrap();
+    unsafe { (api.end)() };
+    transcript
+}
+
+#[test]
+fn protocols_enumeration_matches_glibc_module_policy() {
+    const TEST: &str = "protocols_enumeration_matches_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_PROTOCOL_PROVIDER").unwrap() == "host";
+        if host {
+            configure_host_protocols();
+        }
+        unsafe { libc::alarm(20) };
+        let transcript = protocol_enumeration_transcript(&protocol_api(host));
+        println!("PROTOCOL_ENUM_BEGIN\n{transcript}PROTOCOL_ENUM_END");
+        unsafe { libc::alarm(0) };
+        return;
+    }
+    let dir = scratch_dir("protocol-enumeration");
+    build_modules(&dir);
+    let module = Command::new("cc")
+        .args([
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-DSERVICE=fltestgetonly",
+            "-DNO_PROTOCOL_SET",
+            "-DNO_PROTOCOL_END",
+        ])
+        .arg(repo_root().join("tests/integration/fixture_nss_module_lib.c"))
+        .arg("-o")
+        .arg(dir.join("libnss_fltestgetonly.so.2"))
+        .output()
+        .unwrap();
+    assert!(
+        module.status.success(),
+        "{}",
+        String::from_utf8_lossy(&module.stderr)
+    );
+    let cases = [
+        ("fltest", "normal"),
+        ("fltest fltestnoig", "normal"),
+        ("fltest [SUCCESS=continue] fltestnoig", "normal"),
+        ("fltest [SUCCESS=merge] fltestnoig", "normal"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "normal"),
+        ("fltest [NOTFOUND=return] fltestnoig", "normal"),
+        (
+            "fltest [SUCCESS=return NOTFOUND=return UNAVAIL=return TRYAGAIN=return] fltestnoig",
+            "normal",
+        ),
+        ("fltest [UNAVAIL=return] fltestnoig", "get-unavail"),
+        ("fltest [UNAVAIL=continue] fltestnoig", "get-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-quiet-again"),
+        ("fltest fltestnoig", "get-return"),
+        ("fltest [!SUCCESS=continue] fltestnoig", "get-return"),
+        ("fltest fltestnoig", "set-unavail"),
+        ("fltest [UNAVAIL=return] fltestnoig", "set-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "set-again"),
+        ("fltest [NOTFOUND=return] fltestnoig", "set-notfound"),
+        ("fltest fltestnoig", "set-return"),
+        ("flmissing fltest", "normal"),
+        ("flmissing fltest", "set-unavail"),
+        ("flmissing [UNAVAIL=return] files", "normal"),
+        ("fltestgetonly", "normal"),
+        ("fltestgetonly fltest", "normal"),
+        ("fltestgetonly [UNAVAIL=return] fltest", "normal"),
+        ("fltest fltestgetonly fltestnoig", "normal"),
+        ("fltest flmissing [UNAVAIL=return] fltestnoig", "normal"),
+        ("files", "normal"),
+    ];
+    let mut compared = 0;
+    for (index, (sources, scenario)) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("protocol-enum-{index}-{provider}-{mode}");
+            let mut child =
+                host_module_child(TEST, &dir, &format!("protocols: {sources}\n"), &label);
+            child
+                .env("FLTEST_PROTOCOL_PROVIDER", provider)
+                .env("FLTEST_PROTOCOL_SOURCES", sources)
+                .env("FLTEST_PROTOCOL_ENUM", scenario)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &label);
+            let stdout = std::str::from_utf8(&output.stdout).unwrap();
+            let transcript = stdout
+                .split_once("PROTOCOL_ENUM_BEGIN\n")
+                .unwrap()
+                .1
+                .split_once("PROTOCOL_ENUM_END")
+                .unwrap()
+                .0
+                .to_owned();
+            assert!(transcript.lines().count() >= 9);
+            let cleanup = String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter(|line| line.contains(":endprotoent("))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if sources == "fltest" {
+                assert!(
+                    transcript.contains("number: 14501") && transcript.contains("number: 14502")
+                );
+            }
+            if sources == "fltest fltestnoig" && scenario == "normal" {
+                assert!(
+                    cleanup
+                        .iter()
+                        .filter(|line| line.contains("fltestnoig:endprotoent("))
+                        .count()
+                        >= 4
+                );
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(
+                    &(transcript, cleanup),
+                    expected,
+                    "{label}: {sources}, {scenario}"
+                );
+                compared += 1;
+            } else {
+                oracle = Some((transcript, cleanup));
+            }
+        }
+    }
+    assert_eq!(compared, 56);
+    eprintln!("protocol enumeration: {compared} independent GNU/candidate process comparisons");
+}
+
+unsafe extern "C" fn protocol_enumeration_reentry() -> c_int {
+    use frankenlibc_abi::{errno_abi as e, resolv_abi as r, unistd_abi as u};
+    let mut output: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut buffer = [0 as c_char; 1024];
+    let mut result = std::ptr::null_mut();
+    unsafe {
+        u::setprotoent(0);
+        if *e::__errno_location() != libc::EDEADLK {
+            return 1;
+        }
+        if !u::getprotoent().is_null() || *e::__errno_location() != libc::EDEADLK {
+            return 2;
+        }
+        if u::getprotoent_r(
+            (&raw mut output).cast(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        ) != libc::EDEADLK
+            || !result.is_null()
+        {
+            return 3;
+        }
+        u::endprotoent();
+        if *e::__errno_location() != libc::EDEADLK {
+            return 4;
+        }
+        let keyed = r::getprotobyname(c"tcp".as_ptr()).cast::<libc::protoent>();
+        if keyed.is_null() || (*keyed).p_proto != 14600 {
+            return 5;
+        }
+    }
+    0
+}
+
+#[test]
+fn protocols_files_retry_provider_isolation_and_reentry() {
+    const TEST: &str = "protocols_files_retry_provider_isolation_and_reentry";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        use frankenlibc_abi::{glibc_internal_abi as g, unistd_abi as u};
+        unsafe { libc::alarm(20) };
+        let api = protocol_api(false);
+        let mut raw: libc::protoent = unsafe { std::mem::zeroed() };
+        let mut storage = [0 as c_char; 8192];
+        let mut error = 717;
+        unsafe {
+            assert_eq!(u::_nss_files_setprotoent(0), 1);
+            assert_eq!(
+                u::_nss_files_getprotoent_r(
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error
+                ),
+                1
+            );
+            assert_eq!(raw.p_proto, 14511);
+            // A public end before initialization cannot close a private cursor.
+            (api.end)();
+            assert_eq!(
+                u::_nss_files_getprotoent_r(
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error
+                ),
+                1
+            );
+            assert_eq!(raw.p_proto, 14512);
+            for (name, capacity, status, expected_error) in [
+                (c"local-alias", storage.len(), 1, 717),
+                (c"missing-protocol", storage.len(), 0, 717),
+                (c"local-alias", 1, -2, libc::ERANGE),
+            ] {
+                error = 717;
+                *(api.error)() = 619;
+                assert_eq!(
+                    u::_nss_files_getprotobyname_r(
+                        name.as_ptr(),
+                        (&raw mut raw).cast(),
+                        storage.as_mut_ptr(),
+                        capacity,
+                        &mut error,
+                    ),
+                    status,
+                );
+                assert_eq!((*(api.error)(), error), (619, expected_error));
+                if status == 1 {
+                    assert_eq!(raw.p_proto, 6);
+                }
+            }
+            error = 717;
+            *(api.error)() = 619;
+            assert_eq!(
+                u::_nss_files_getprotobynumber_r(
+                    6,
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(raw.p_name).to_bytes(), b"local-tcp");
+            assert_eq!((*(api.error)(), error), (619, 717));
+            let path = std::env::var_os("FRANKENLIBC_PROTOCOLS_PATH").unwrap();
+            std::env::set_var(
+                "FRANKENLIBC_PROTOCOLS_PATH",
+                PathBuf::from(&path).with_extension("missing"),
+            );
+            error = 717;
+            *(api.error)() = 619;
+            assert_eq!(
+                u::_nss_files_getprotobynumber_r(
+                    6,
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                ),
+                -1,
+            );
+            assert_eq!((*(api.error)(), error), (619, libc::ENOENT));
+            std::env::set_var("FRANKENLIBC_PROTOCOLS_PATH", path);
+            (api.set)(0);
+        }
+        assert_eq!(
+            protocol_call(&api, ProtocolRequest::Next, None, 0)
+                .2
+                .unwrap()
+                .number,
+            14501
+        );
+        unsafe {
+            u::_nss_files_setprotoent(0);
+            assert_eq!(
+                u::_nss_files_getprotoent_r(
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    1,
+                    &mut error
+                ),
+                -2
+            );
+            assert_eq!(error, libc::ERANGE);
+            u::_nss_files_endprotoent();
+        }
+        let large = protocol_call(&api, ProtocolRequest::Next, None, 0)
+            .2
+            .unwrap();
+        assert_eq!(large.number, 14502);
+        assert_eq!(large.aliases[2], vec![b'p'; 3072]);
+        unsafe {
+            (api.end)();
+            let handle = libc::dlopen(c"libnss_fltest.so.2".as_ptr(), libc::RTLD_NOW);
+            assert!(!handle.is_null());
+            let symbol = libc::dlsym(handle, c"_nss_fltest_set_protocol_enum_reentry".as_ptr());
+            assert!(!symbol.is_null());
+            let install: unsafe extern "C" fn(Option<unsafe extern "C" fn() -> c_int>) =
+                std::mem::transmute(symbol);
+            install(Some(protocol_enumeration_reentry));
+            (api.set)(0);
+            assert_eq!(
+                protocol_call(&api, ProtocolRequest::Next, None, 0)
+                    .2
+                    .unwrap()
+                    .number,
+                14501
+            );
+            assert_eq!(
+                protocol_call(&api, ProtocolRequest::Next, None, 0)
+                    .2
+                    .unwrap()
+                    .number,
+                14502
+            );
+            assert!(
+                protocol_call(&api, ProtocolRequest::Next, None, 0)
+                    .2
+                    .is_none()
+            );
+            (api.end)();
+            install(None);
+            libc::dlclose(handle);
+            assert_eq!(
+                g::__nss_configure_lookup(c"protocols".as_ptr(), c"files".as_ptr()),
+                0
+            );
+            (api.set)(0);
+        }
+        let small = protocol_call(&api, ProtocolRequest::Next, Some(1), 1);
+        assert_eq!(
+            (small.0, small.1, small.2),
+            (libc::ERANGE, libc::ERANGE, None)
+        );
+        unsafe {
+            assert_eq!(
+                u::_nss_files_getprotoent_r(
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error
+                ),
+                1
+            );
+            let first = protocol_record((&raw mut raw).cast(), None).unwrap();
+            assert_eq!(first.name.len(), 1800);
+            assert_eq!(first.aliases.len(), 24);
+        }
+        assert_eq!(
+            protocol_call(&api, ProtocolRequest::Next, Some(8192), 1)
+                .2
+                .unwrap()
+                .number,
+            14512
+        );
+        // A different thread owns an independent cursor and published storage.
+        std::thread::spawn(|| {
+            let api = protocol_api(false);
+            let first = protocol_call(&api, ProtocolRequest::Next, None, 0)
+                .2
+                .unwrap();
+            assert_eq!(first.number, 14511);
+            unsafe { (api.end)() };
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            protocol_call(&api, ProtocolRequest::Next, Some(8192), 0)
+                .2
+                .unwrap()
+                .number,
+            6
+        );
+        assert!(
+            protocol_call(&api, ProtocolRequest::Next, Some(8192), 0)
+                .2
+                .is_none()
+        );
+        unsafe { (api.set)(0) };
+        assert_eq!(
+            protocol_call(&api, ProtocolRequest::Next, Some(7), 0).0,
+            libc::ERANGE
+        );
+        let replacement = std::env::var_os("FLTEST_PROTOCOLS_REPLACEMENT").unwrap();
+        unsafe { std::env::set_var("FRANKENLIBC_PROTOCOLS_PATH", replacement) };
+        let changed = protocol_call(&api, ProtocolRequest::Next, Some(8192), 1)
+            .2
+            .unwrap();
+        assert_eq!((changed.name, changed.number), (b"changed".to_vec(), 14513));
+        unsafe {
+            (api.end)();
+            u::_nss_files_endprotoent();
+            libc::alarm(0)
+        };
+        return;
+    }
+    let dir = scratch_dir("protocol-files-retry");
+    build_modules(&dir);
+    let path = dir.join("protocols");
+    let aliases = (0..24)
+        .map(|index| format!("alias{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    std::fs::write(&path, format!("# comment\nbad record\n{} 14511 {aliases}\nsecond 14512 last\nlocal-tcp 6 local-alias\n", "n".repeat(1800))).unwrap();
+    let replacement = dir.join("protocols-replacement");
+    std::fs::write(&replacement, "changed 14513 replacement\n").unwrap();
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(TEST, &dir, "protocols: fltest\n", mode);
+        child
+            .env("FRANKENLIBC_PROTOCOLS_PATH", &path)
+            .env("FLTEST_PROTOCOLS_REPLACEMENT", &replacement)
+            .env("FRANKENLIBC_MODE", mode);
+        run_child(
+            child,
+            &format!("protocol files and callback isolation {mode}"),
+        );
+    }
+}
+
 static SERVICE_ENUM_REENTRY_CALLS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 

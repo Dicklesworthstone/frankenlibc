@@ -1,5 +1,5 @@
 //! Name Service Switch dispatch policy for passwd, group, shadow, initgroups
-//! services, netgroup and Secure RPC publickey databases.
+//! services, protocols, netgroup and Secure RPC publickey databases.
 //!
 //! Clean-room from the GNU libc manual ("The NSS Configuration File",
 //! "Actions in the NSS configuration") and behaviour measured against glibc
@@ -155,6 +155,7 @@ pub enum Database {
     Initgroups,
     Publickey,
     Services,
+    Protocols,
     Netgroup,
 }
 
@@ -167,6 +168,7 @@ impl Database {
             Self::Initgroups => b"initgroups",
             Self::Publickey => b"publickey",
             Self::Services => b"services",
+            Self::Protocols => b"protocols",
             Self::Netgroup => b"netgroup",
         }
     }
@@ -199,6 +201,7 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
         | Database::Group
         | Database::Publickey
         | Database::Services
+        | Database::Protocols
         | Database::Netgroup => None,
     };
     if let Some(fallback) = fallback
@@ -486,6 +489,7 @@ mod tests {
                 "shadow" => Database::Shadow,
                 "publickey" => Database::Publickey,
                 "services" => Database::Services,
+                "protocols" => Database::Protocols,
                 "netgroup" => Database::Netgroup,
                 _ => Database::Initgroups,
             },
@@ -608,6 +612,38 @@ mod tests {
             None,
         );
         assert_eq!(answer, Answer::Found(b"files".to_vec()));
+    }
+
+    #[test]
+    fn protocols_keep_their_own_sources_and_range_retry_contract() {
+        assert_eq!(names(&services_for(None, Database::Protocols)), [b"files"]);
+        assert_eq!(
+            names(&services_for(
+                Some(b"services: remote\n"),
+                Database::Protocols
+            )),
+            [b"files"]
+        );
+        assert!(line("protocols", "").is_empty());
+        let sources = services_for(
+            Some(b"protocols: discarded\nservices: other\nprotocols: remote [TRYAGAIN=continue] files\n"),
+            Database::Protocols,
+        );
+        assert_eq!(names(&sources), [b"remote".as_slice(), b"files"]);
+        let mut calls = 0;
+        let answer: Answer<()> = lookup(
+            &sources,
+            |_| {
+                calls += 1;
+                Answer::BufferTooSmall
+            },
+            None,
+        );
+        assert_eq!(answer, Answer::BufferTooSmall);
+        assert_eq!(calls, 1, "ERANGE retries the selected protocol source");
+        let sources = line("protocols", "remote [UNAVAIL=return] files");
+        let answer: Answer<()> = lookup(&sources, |_| Answer::Unavailable(5), None);
+        assert_eq!(answer, Answer::Unavailable(5));
     }
 
     #[test]

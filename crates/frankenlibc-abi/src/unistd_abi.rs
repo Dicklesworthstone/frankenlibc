@@ -9716,7 +9716,8 @@ fn crypt_extended_with_host(_key: *const c_char, _salt: *const c_char) -> Option
 /// POSIX `crypt` — one-way password hashing.
 ///
 /// Native implementation supporting:
-/// - `$6$salt$` — SHA-512 (default on modern Linux)
+/// - `$y$params$salt` — yescrypt
+/// - `$6$salt$` — SHA-512
 /// - `$5$salt$` — SHA-256
 /// - `$1$salt$` — MD5 (deprecated but supported for compatibility)
 /// - `$3$` — NTHASH (MD4 of the byte-widened password; salt ignored)
@@ -9742,7 +9743,22 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         return crypt_failure_token(b"");
     };
 
-    let result = if salt_bytes.starts_with(b"$6$") {
+    let result = if salt_bytes.starts_with(b"$y$") {
+        // Own both acceptance and rejection of this scheme in every profile.
+        // Stored Linux shadow hashes must not depend on loading host libcrypt.
+        match frankenlibc_core::crypt::yescrypt_params::hash(&key_bytes, &salt_bytes) {
+            Ok(hash) => Some(hash),
+            Err(error) => {
+                use frankenlibc_core::crypt::yescrypt_params::Error;
+                let error = match error {
+                    Error::InvalidSetting => errno::EINVAL,
+                    Error::PasswordTooLong => errno::ERANGE,
+                    Error::ResourceLimit => errno::ENOMEM,
+                };
+                return crypt_failure_token_with_errno(&salt_bytes, error);
+            }
+        }
+    } else if salt_bytes.starts_with(b"$6$") {
         crypt_sha512(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$5$") {
         crypt_sha256(&key_bytes, &salt_bytes)
@@ -9809,8 +9825,7 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
             return crypt_failure_token(&salt_bytes);
         };
         if hash_bytes.len() >= 256 {
-            unsafe { set_abi_errno(errno::ERANGE) };
-            return crypt_failure_token(&salt_bytes);
+            return crypt_failure_token_with_errno(&salt_bytes, errno::ERANGE);
         }
         return with_crypt_buf(|buf| {
             buf[..hash_bytes.len()].copy_from_slice(&hash_bytes);
@@ -9846,7 +9861,11 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
 ///   "!!!not-a-salt!!!" -> *0
 ///   "*0" -> *1               "*1" -> *0
 fn crypt_failure_token(salt_bytes: &[u8]) -> *mut c_char {
-    unsafe { set_abi_errno(errno::EINVAL) };
+    crypt_failure_token_with_errno(salt_bytes, errno::EINVAL)
+}
+
+fn crypt_failure_token_with_errno(salt_bytes: &[u8], error: c_int) -> *mut c_char {
+    unsafe { set_abi_errno(error) };
     let token: &[u8; 2] = if salt_bytes.starts_with(b"*0") {
         b"*1"
     } else {
@@ -10074,13 +10093,13 @@ pub unsafe extern "C" fn setkey_r(key: *const c_char, data: *mut c_void) {
 
 // Fallback for hosts without libxcrypt's preferred-method entry point. Lives
 // in BSS so the pointer remains valid for the process lifetime.
-static CRYPT_PREFERRED_METHOD_STATIC: [u8; 4] = *b"$6$\0";
+static CRYPT_PREFERRED_METHOD_STATIC: [u8; 4] = *b"$y$\0";
 
 /// libcrypt `crypt_preferred_method() -> *const c_char` — return
 /// the static prefix string of the preferred crypto method
 /// supported on this system. When libxcrypt is available this returns its
 /// actual current default (normally yescrypt), matching the delegated modern
-/// `crypt` methods. Hosts without libxcrypt retain the native SHA-512 fallback.
+/// `crypt` methods. Hosts without libxcrypt use native yescrypt.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crypt_preferred_method() -> *const c_char {
     host_crypt_preferred_method().unwrap_or(CRYPT_PREFERRED_METHOD_STATIC.as_ptr() as *const c_char)
@@ -10236,6 +10255,12 @@ pub unsafe extern "C" fn crypt_rn(
         unsafe { set_abi_errno(errno::ERANGE) };
         return core::ptr::null_mut();
     }
+    // crypt_r preserves the failure token as its return value, whereas
+    // libxcrypt's size-aware/allocating variants return NULL and leave the
+    // token in caller storage. Preserve crypt's specific EINVAL/ERANGE/ENOMEM.
+    if unsafe { *result } == b'*' as c_char {
+        return core::ptr::null_mut();
+    }
     dst
 }
 
@@ -10285,11 +10310,11 @@ pub unsafe extern "C" fn crypt_ra(
 }
 
 /// Pick the algorithm prefix for a `crypt_gensalt` call.
-/// `NULL`/empty maps to `"$6$"` (SHA-512); unsupported prefixes are
+/// `NULL` selects yescrypt; empty selects DES. Unsupported prefixes are
 /// rejected instead of silently changing the requested method.
 fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
     if prefix.is_null() {
-        return Ok(b"$6$");
+        return Ok(b"$y$");
     }
     let Some(bytes) = (unsafe { read_c_string_bytes(prefix) }) else {
         return Err(errno::EINVAL);
@@ -10301,7 +10326,7 @@ fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
         // expects two characters and receives nineteen is a real compatibility
         // break, which is why this matches the incumbent even though it is the
         // WEAKER default. Note the strong default is reached by passing NULL,
-        // which is a different case and still lands on `$6$` below.
+        // which is a different case and selects native yescrypt above.
         b"" => Ok(b""),
         // `$3$` NTHASH: the setting is the bare prefix, since the scheme has no
         // salt. libxcrypt's gensalt DOES support it -- I claimed in md4.rs that
@@ -10319,6 +10344,9 @@ fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
         b"$2b$" => Ok(b"$2b$"),
         b"$2y$" => Ok(b"$2y$"),
         b"$7$" => Ok(b"$7$"),
+        // libxcrypt selects yescrypt from a complete $y$ prefix even when
+        // a previous setting or hash follows it.
+        other if other.starts_with(b"$y$") => Ok(b"$y$"),
         // BSDI extended DES is selected by a leading underscore; anything after
         // it is ignored (`_` and `__` both answer the same setting).
         other if other.first() == Some(&b'_') => Ok(b"_"),
@@ -10514,6 +10542,25 @@ fn build_gensalt(
             out.push(CRYPT_B64_ALPHABET[((iterations >> (6 * index)) & 0x3f) as usize]);
         }
         gensalt_encode_bytes(rbytes, nrbytes, 4, out);
+    } else if p == b"$y$" {
+        let entropy = if rbytes.is_null() {
+            let mut random = [0u8; 16];
+            // Native getentropy retries EINTR and short reads. NULL requests
+            // OS randomness; it never means a constant salt.
+            if unsafe { getentropy(random.as_mut_ptr().cast(), random.len()) } != 0 {
+                return Err(current_abi_errno());
+            }
+            random.to_vec()
+        } else {
+            if nrbytes < 16 {
+                return Err(errno::EINVAL);
+            }
+            gensalt_entropy(rbytes, nrbytes, nrbytes.min(64))?
+        };
+        let setting = frankenlibc_core::crypt::yescrypt_params::gensalt(count, &entropy)
+            .map_err(|_| errno::EINVAL)?;
+        // The shared prefix has already been written.
+        out.extend_from_slice(&setting.as_bytes()[p.len()..]);
     } else if gensalt_is_bcrypt(p) {
         // `$2?$` + two zero-padded cost digits + `$` + 22 salt characters.
         // Measured against libxcrypt: count 0 selects 05, counts 4..=31 are
@@ -10593,7 +10640,7 @@ fn with_gensalt_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
 
 /// libcrypt `crypt_gensalt(prefix, count, *rbytes, nrbytes) ->
 /// *mut c_char` — generate a salt string for the requested
-/// algorithm. NULL/empty prefix maps to `"$6$"` (SHA-512);
+/// algorithm. NULL prefix selects yescrypt; empty prefix selects DES.
 /// unsupported prefixes are rejected with EINVAL. When `count >=
 /// 1000` we emit the optional `rounds=N$` segment.
 /// Returns a pointer to a thread-local static buffer; valid until
@@ -12092,7 +12139,7 @@ pub unsafe extern "C" fn _nss_files_endgrent() -> c_int {
 /// `_nss_files_endprotoent()` — close/reset protocol database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endprotoent() -> c_int {
-    unsafe { endprotoent() };
+    files_endprotoent();
     NSS_STATUS_SUCCESS
 }
 
@@ -13209,9 +13256,13 @@ pub unsafe extern "C" fn _nss_files_getprotobyname_r(
     buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    let mut resolved = std::ptr::null_mut();
-    let rc = unsafe { getprotobyname_r(name, result, buffer, buflen, &mut resolved) };
-    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+    // SAFETY: the shared files adapter validates the complete protoent and
+    // bounded buffer, preserving the provider's error-slot contract.
+    unsafe {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
+            protocol_by_name_r(name, result, buffer, buflen, resolved, true)
+        })
+    }
 }
 
 /// `_nss_files_getprotobynumber_r(number, *result, *buf, buflen,
@@ -13224,9 +13275,20 @@ pub unsafe extern "C" fn _nss_files_getprotobynumber_r(
     buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    let mut resolved = std::ptr::null_mut();
-    let rc = unsafe { getprotobynumber_r(proto, result, buffer, buflen, &mut resolved) };
-    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+    // SAFETY: the shared files adapter validates every caller object and keeps
+    // a missing backend distinct from a completed lookup with no match.
+    unsafe {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
+            protocol_lookup_result_r(
+                crate::nss_module::ProtocolKey::Number(proto),
+                result,
+                buffer,
+                buflen,
+                resolved,
+                true,
+            )
+        })
+    }
 }
 
 /// `_nss_files_getcanonname_r(name, *buffer, buflen, **result,
@@ -13628,30 +13690,151 @@ pub unsafe extern "C" fn _nss_files_initgroups_dyn(
     }
 }
 
-/// `_nss_files_parse_*(line, *result, *parser_data, buflen, *errnop)
-/// -> int` — internal line parsers. Each returns 1 on success, 0 to
-/// signal "skip this line", -1 to signal ERANGE. Stubs return 0
-/// (skip) so callers walk to the next line without complaint.
-macro_rules! nss_files_parse_stub {
-    ($name:ident) => {
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name(
-            _line: *mut c_char,
-            _result: *mut c_void,
-            _data: *mut c_void,
-            _buflen: usize,
-            _errnop: *mut c_int,
-        ) -> c_int {
-            0
+/// GNU's private etherent layout puts the hostname before the six octets.
+#[repr(C)]
+struct NssParsedEther {
+    name: *mut c_char,
+    address: EtherAddrBytes,
+}
+
+/// Marshal a safe-core record into the caller's line and trailing aligned
+/// pointer array. GNU reserves a spare pointer after the terminating NULL;
+/// preserve that exact capacity contract without modifying any input on ERANGE.
+unsafe fn nss_parse_netdb_line(
+    kind: frankenlibc_core::resolv::NssNetdbKind,
+    line: *mut c_char,
+    result: *mut c_void,
+    data: *mut c_void,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    use frankenlibc_core::resolv::{NssNetdbKind, NssNetdbValue};
+
+    let saved_errno = current_abi_errno();
+    let result_fits = match kind {
+        NssNetdbKind::Ether => tracked_object_fits(result.cast::<NssParsedEther>()),
+        NssNetdbKind::Network => tracked_object_fits(result.cast::<NetEnt>()),
+        NssNetdbKind::Protocol => tracked_object_fits(result.cast::<libc::protoent>()),
+        NssNetdbKind::Rpc => tracked_object_fits(result.cast::<RpcEnt>()),
+        NssNetdbKind::Service => tracked_object_fits(result.cast::<libc::servent>()),
+    };
+    if line.is_null() || !result_fits {
+        return unsafe { nss_account_parse_result(0, saved_errno, false, errnop) };
+    }
+    // SAFETY: the NSS caller supplies a writable terminated line. Known
+    // allocation bounds prevent reading past a tracked unterminated object.
+    let (text_len, terminated) = unsafe { scan_c_string(line, known_remaining(line as usize)) };
+    if !terminated || text_len >= isize::MAX as usize {
+        return unsafe { nss_account_parse_result(-1, saved_errno, false, errnop) };
+    }
+    // SAFETY: scanning established the readable extent; the core only returns
+    // offsets, so this immutable borrow ends before the first output write.
+    let parsed = frankenlibc_core::resolv::parse_nss_netdb_line(kind, unsafe {
+        core::slice::from_raw_parts(line.cast::<u8>(), text_len)
+    });
+    let Some(record) = parsed.record else {
+        return unsafe { nss_account_parse_result(0, saved_errno, parsed.overflowed, errnop) };
+    };
+    let table = if kind == NssNetdbKind::Ether {
+        core::ptr::null_mut()
+    } else {
+        let Some(table) = record
+            .alias_count
+            .checked_add(2)
+            .and_then(|slots| nss_account_array_start(line, text_len, data, buflen, slots))
+        else {
+            return unsafe { nss_account_parse_result(-1, saved_errno, parsed.overflowed, errnop) };
+        };
+        table
+    };
+    // SAFETY: the caller owns the complete mutable line, including its NUL.
+    // The alias array is aligned, fully bounded, and disjoint from that line.
+    let text = unsafe { core::slice::from_raw_parts_mut(line.cast::<u8>(), text_len + 1) };
+    text[parsed.line_end] = 0;
+    let name = nss_account_string(text, line, Some(record.name));
+    if !table.is_null() {
+        let mut index = 0;
+        frankenlibc_core::resolv::split_nss_netdb_aliases(text, record.aliases, |offset| {
+            // SAFETY: offsets and count come from the same parsed line; the
+            // complete table was admitted before any mutation or publication.
+            unsafe { table.add(index).write(line.add(offset)) };
+            index += 1;
+        });
+        // SAFETY: the checked layout includes NULL and the untouched spare slot.
+        unsafe { table.add(index).write(core::ptr::null_mut()) };
+    }
+    // SAFETY: each output object's complete extent was checked above. The
+    // strings and alias array remain in caller-owned storage after this call.
+    unsafe {
+        match record.value {
+            NssNetdbValue::Ether(octet) => result.cast::<NssParsedEther>().write(NssParsedEther {
+                name,
+                address: EtherAddrBytes { octet },
+            }),
+            NssNetdbValue::Network(number) => result.cast::<NetEnt>().write(NetEnt {
+                n_name: name,
+                n_aliases: table,
+                n_addrtype: libc::AF_INET,
+                n_net: number,
+            }),
+            NssNetdbValue::Protocol(number) => {
+                result.cast::<libc::protoent>().write(libc::protoent {
+                    p_name: name,
+                    p_aliases: table,
+                    p_proto: number,
+                })
+            }
+            NssNetdbValue::Rpc(number) => result.cast::<RpcEnt>().write(RpcEnt {
+                r_name: name,
+                r_aliases: table,
+                r_number: number,
+            }),
+            NssNetdbValue::Service { port, protocol } => {
+                let protocol = nss_account_string(text, line, Some(protocol));
+                result.cast::<libc::servent>().write(libc::servent {
+                    s_name: name,
+                    s_aliases: table,
+                    s_port: c_int::from(port.to_be()),
+                    s_proto: protocol,
+                });
+            }
         }
+        nss_account_parse_result(1, saved_errno, parsed.overflowed, errnop)
+    }
+}
+
+/// GNU files parsers return 1 for a record, 0 for a skipped line, and -1 with
+/// `*errnop = ERANGE` when the supplied alias-pointer workspace is too small.
+macro_rules! nss_files_parse_netdb {
+    ($name:ident, $kind:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+                pub unsafe extern "C" fn $name(
+                    line: *mut c_char,
+                    result: *mut c_void,
+                    data: *mut c_void,
+                    buflen: usize,
+                    errnop: *mut c_int,
+                ) -> c_int {
+                    // SAFETY: forward the NSS parser's mutable line/output contract.
+                    unsafe {
+                        nss_parse_netdb_line(
+                            frankenlibc_core::resolv::NssNetdbKind::$kind,
+                            line,
+                            result,
+                            data,
+                            buflen,
+                            errnop,
+                        )
+                    }
+                }
     };
 }
 
-nss_files_parse_stub!(_nss_files_parse_etherent);
-nss_files_parse_stub!(_nss_files_parse_netent);
-nss_files_parse_stub!(_nss_files_parse_protoent);
-nss_files_parse_stub!(_nss_files_parse_rpcent);
-nss_files_parse_stub!(_nss_files_parse_servent);
+nss_files_parse_netdb!(_nss_files_parse_etherent, Ether);
+nss_files_parse_netdb!(_nss_files_parse_netent, Network);
+nss_files_parse_netdb!(_nss_files_parse_protoent, Protocol);
+nss_files_parse_netdb!(_nss_files_parse_rpcent, Rpc);
+nss_files_parse_netdb!(_nss_files_parse_servent, Service);
 
 /// The four account parsers share the caller's writable text storage. Only
 /// group and gshadow need additional aligned pointer arrays in parser_data.
@@ -22243,16 +22426,18 @@ impl ServiceFilesCursor {
 
 /// Public enumeration follows one immutable source-policy snapshot. Foreign
 /// callbacks run only after this state has been leased out of thread storage.
-struct ServiceIteration {
+struct NetdbIteration {
+    database: crate::nss_module::NetdbDatabase,
     sources: Option<std::sync::Arc<Vec<frankenlibc_core::nss::Service>>>,
     source: usize,
     needs_set: bool,
     stayopen: c_int,
 }
 
-impl ServiceIteration {
-    const fn new() -> Self {
+impl NetdbIteration {
+    const fn new(database: crate::nss_module::NetdbDatabase) -> Self {
         Self {
+            database,
             sources: None,
             source: 0,
             needs_set: false,
@@ -22261,10 +22446,9 @@ impl ServiceIteration {
     }
 
     fn sources(&mut self) -> std::sync::Arc<Vec<frankenlibc_core::nss::Service>> {
+        let database = self.database.database();
         self.sources
-            .get_or_insert_with(|| {
-                crate::nss_module::services(frankenlibc_core::nss::Database::Services)
-            })
+            .get_or_insert_with(|| crate::nss_module::services(database))
             .clone()
     }
 
@@ -22281,7 +22465,11 @@ impl ServiceIteration {
 
     fn begin(&mut self, source: &frankenlibc_core::nss::Service, stayopen: c_int) -> Option<c_int> {
         if source.name() == b"files" {
-            Some(match files_setservent() {
+            let error = match self.database {
+                crate::nss_module::NetdbDatabase::Services => files_setservent(),
+                crate::nss_module::NetdbDatabase::Protocols => files_setprotoent(),
+            };
+            Some(match error {
                 0 => NSS_STATUS_SUCCESS,
                 error => {
                     unsafe { set_abi_errno(error) };
@@ -22293,13 +22481,13 @@ impl ServiceIteration {
                 }
             })
         } else {
-            crate::nss_module::service_setent(source.name(), stayopen)
+            crate::nss_module::netdb_setent(self.database, source.name(), stayopen)
         }
     }
 
     fn rewind(&mut self, stayopen: c_int) {
         use frankenlibc_core::nss::Action;
-        let sources = crate::nss_module::services(frankenlibc_core::nss::Database::Services);
+        let sources = crate::nss_module::services(self.database.database());
         self.sources = Some(sources.clone());
         self.source = 0;
         self.needs_set = false;
@@ -22339,14 +22527,17 @@ impl ServiceIteration {
         if self.sources.is_none() {
             return;
         }
-        let sources = crate::nss_module::services(frankenlibc_core::nss::Database::Services);
+        let sources = crate::nss_module::services(self.database.database());
         let mut first = None;
         for (index, source) in sources.iter().enumerate() {
             let found = if source.name() == b"files" {
-                files_endservent();
+                match self.database {
+                    crate::nss_module::NetdbDatabase::Services => files_endservent(),
+                    crate::nss_module::NetdbDatabase::Protocols => files_endprotoent(),
+                }
                 true
             } else {
-                crate::nss_module::service_endent(source.name()).is_some()
+                crate::nss_module::netdb_endent(self.database, source.name()).is_some()
             };
             if !found {
                 if source.action(Status::Unavailable) != Action::Continue {
@@ -22384,7 +22575,7 @@ impl ServiceIteration {
     /// The caller validated the result object and the exact buffer capacity.
     unsafe fn next_r(
         &mut self,
-        output: *mut libc::servent,
+        output: *mut c_void,
         buffer: *mut c_char,
         capacity: usize,
     ) -> c_int {
@@ -22396,7 +22587,9 @@ impl ServiceIteration {
             let module = if source.name() == b"files" {
                 None
             } else {
-                let Some(module) = crate::nss_module::service_enumeration(source.name()) else {
+                let Some(module) =
+                    crate::nss_module::netdb_enumeration(self.database, source.name())
+                else {
                     // A missing function is a lookup failure, not a callback
                     // answer. Preserve the previous status if no source remains.
                     if source.action(frankenlibc_core::nss::Status::Unavailable) != Action::Continue
@@ -22410,7 +22603,7 @@ impl ServiceIteration {
                     self.source += 1;
                     // Initial symbol lookup skips missing providers without
                     // starting enumeration. Preserve whether a real previous
-                    // provider transition already requires setservent.
+                    // provider transition already requires a set callback.
                     continue;
                 };
                 Some(module)
@@ -22456,10 +22649,17 @@ impl ServiceIteration {
                 // The public files lane and direct provider share one cursor.
                 // Only native file I/O/packing runs during this short TLS borrow;
                 // module callbacks always execute with the lease outside TLS.
-                let outcome = with_serv_iter_state(|state| {
-                    // SAFETY: the complete caller objects were checked.
-                    unsafe { state.files.next_r(output, buffer, capacity) }
-                });
+                let outcome = match self.database {
+                    crate::nss_module::NetdbDatabase::Services => with_serv_iter_state(|state| {
+                        // SAFETY: the caller supplies a complete servent object.
+                        unsafe { state.files.next_r(output.cast(), buffer, capacity) }
+                    }),
+                    crate::nss_module::NetdbDatabase::Protocols => with_proto_iter_state(|state| {
+                        let mut result = std::ptr::null_mut();
+                        // SAFETY: the caller supplies a complete protoent object.
+                        unsafe { state.next_r(output, buffer, capacity, &mut result) }
+                    }),
+                };
                 match outcome {
                     Ok(found) => {
                         unsafe { set_abi_errno(saved_errno) };
@@ -22495,7 +22695,7 @@ impl ServiceIteration {
 }
 
 struct ServIterState {
-    iteration: ServiceIteration,
+    iteration: NetdbIteration,
     /// Direct _nss_files_* callers bypass public NSS source selection.
     files: ServiceFilesCursor,
     busy: bool,
@@ -22506,7 +22706,7 @@ struct ServIterState {
 impl ServIterState {
     const fn new() -> Self {
         Self {
-            iteration: ServiceIteration::new(),
+            iteration: NetdbIteration::new(crate::nss_module::NetdbDatabase::Services),
             files: ServiceFilesCursor::new(),
             busy: false,
             entry: libc::servent {
@@ -22559,7 +22759,7 @@ fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R 
 /// Move all state needed by foreign callbacks out of TLS, including the
 /// non-reentrant buffer. Recursive public enumeration cannot alias it.
 struct ServiceIterationLease {
-    iteration: ServiceIteration,
+    iteration: NetdbIteration,
     buffer: Vec<u8>,
 }
 
@@ -22571,7 +22771,10 @@ impl ServiceIterationLease {
             }
             state.busy = true;
             Some(Self {
-                iteration: std::mem::replace(&mut state.iteration, ServiceIteration::new()),
+                iteration: std::mem::replace(
+                    &mut state.iteration,
+                    NetdbIteration::new(crate::nss_module::NetdbDatabase::Services),
+                ),
                 buffer: std::mem::take(&mut state.buffer),
             })
         })
@@ -22580,7 +22783,10 @@ impl ServiceIterationLease {
 
 impl Drop for ServiceIterationLease {
     fn drop(&mut self) {
-        let iteration = std::mem::replace(&mut self.iteration, ServiceIteration::new());
+        let iteration = std::mem::replace(
+            &mut self.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Services),
+        );
         let buffer = std::mem::take(&mut self.buffer);
         with_serv_iter_state(|state| {
             state.iteration = iteration;
@@ -22644,9 +22850,11 @@ pub unsafe extern "C" fn getservent() -> *mut c_void {
         }
         // SAFETY: output and the leased buffer remain live through callbacks.
         let status = unsafe {
-            lease
-                .iteration
-                .next_r(&mut output, lease.buffer.as_mut_ptr().cast(), capacity)
+            lease.iteration.next_r(
+                (&raw mut output).cast(),
+                lease.buffer.as_mut_ptr().cast(),
+                capacity,
+            )
         };
         if status == NSS_STATUS_SUCCESS {
             drop(lease);
@@ -22983,6 +23191,8 @@ pub unsafe extern "C" fn getnetbyaddr(net: u32, addr_type: c_int) -> *mut c_void
 // ---------------------------------------------------------------------------
 
 struct ProtoIterState {
+    iteration: NetdbIteration,
+    busy: bool,
     source_path: Option<std::path::PathBuf>,
     reader: Option<std::io::BufReader<std::fs::File>>,
     line_buf: Vec<u8>,
@@ -22995,6 +23205,8 @@ struct ProtoIterState {
 impl ProtoIterState {
     const fn new() -> Self {
         Self {
+            iteration: NetdbIteration::new(crate::nss_module::NetdbDatabase::Protocols),
+            busy: false,
             source_path: None,
             reader: None,
             line_buf: Vec::new(),
@@ -23124,6 +23336,46 @@ fn with_proto_iter_state<R>(callback: impl FnOnce(&mut ProtoIterState) -> R) -> 
     }
 }
 
+/// Move the public cursor and answer buffer out of TLS before a foreign
+/// provider runs. Direct files calls retain access only to their own cursor.
+struct ProtocolIterationLease {
+    iteration: NetdbIteration,
+    buffer: Vec<u8>,
+}
+
+impl ProtocolIterationLease {
+    fn acquire() -> Option<Self> {
+        with_proto_iter_state(|state| {
+            if state.busy {
+                return None;
+            }
+            state.busy = true;
+            Some(Self {
+                iteration: std::mem::replace(
+                    &mut state.iteration,
+                    NetdbIteration::new(crate::nss_module::NetdbDatabase::Protocols),
+                ),
+                buffer: std::mem::take(&mut state.entry_buf),
+            })
+        })
+    }
+}
+
+impl Drop for ProtocolIterationLease {
+    fn drop(&mut self) {
+        let iteration = std::mem::replace(
+            &mut self.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Protocols),
+        );
+        let buffer = std::mem::take(&mut self.buffer);
+        with_proto_iter_state(|state| {
+            state.iteration = iteration;
+            state.entry_buf = buffer;
+            state.busy = false;
+        });
+    }
+}
+
 fn files_setprotoent() -> c_int {
     with_proto_iter_state(|state| {
         state
@@ -23133,19 +23385,18 @@ fn files_setprotoent() -> c_int {
     })
 }
 
-/// `setprotoent` — open /etc/protocols for iteration.
-///
-/// Native implementation.
+/// Select and rewind the first available configured NSS protocols source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
-    let _ = nss_identity_setent(files_setprotoent);
+pub unsafe extern "C" fn setprotoent(stayopen: c_int) {
+    let Some(mut lease) = ProtocolIterationLease::acquire() else {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.rewind(stayopen);
 }
 
-/// `endprotoent` — close /etc/protocols iteration.
-///
-/// Native implementation.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endprotoent() {
+fn files_endprotoent() {
     let saved_errno = current_abi_errno();
     with_proto_iter_state(|state| {
         state.reader = None;
@@ -23157,69 +23408,69 @@ pub unsafe extern "C" fn endprotoent() {
     unsafe { set_abi_errno(saved_errno) };
 }
 
-/// `getprotoent` — get next /etc/protocols entry.
-///
-/// Native implementation using thread-local iterator state.
+/// Close configured providers once public enumeration has been initialized.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endprotoent() {
+    let Some(mut lease) = ProtocolIterationLease::acquire() else {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.end();
+}
+
+/// Enumerate protocols through NSS, retaining a complete record while growing
+/// the owner's non-reentrant answer buffer after ERANGE.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotoent() -> *mut c_void {
-    let saved_errno = current_abi_errno();
-    let outcome = with_proto_iter_state(|state| -> Result<*mut c_void, c_int> {
-        if !state.ensure_entry()? {
-            return Ok(std::ptr::null_mut());
+    let Some(mut lease) = ProtocolIterationLease::acquire() else {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return std::ptr::null_mut();
+    };
+    let mut output = libc::protoent {
+        p_name: std::ptr::null_mut(),
+        p_aliases: std::ptr::null_mut(),
+        p_proto: 0,
+    };
+    let mut capacity = lease.buffer.len().max(1024);
+    loop {
+        if capacity > lease.buffer.len() {
+            let additional = capacity - lease.buffer.len();
+            if lease.buffer.try_reserve_exact(additional).is_err() {
+                // SAFETY: errno belongs to the calling thread.
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return std::ptr::null_mut();
+            }
+            lease.buffer.resize(capacity, 0);
         }
-        let entry = state.pending.as_ref().unwrap();
-        let bytes = entry
-            .aliases
-            .iter()
-            .try_fold(entry.name.len(), |size, alias| {
-                size.checked_add(alias.len())?.checked_add(1)
-            });
-        let pointer_bytes = entry
-            .aliases
-            .len()
-            .checked_add(1)
-            .and_then(|count| count.checked_mul(core::mem::size_of::<*mut c_char>()));
-        let required = bytes
-            .and_then(|size| size.checked_add(1))
-            .and_then(|size| size.checked_add(pointer_bytes?))
-            .and_then(|size| size.checked_add(core::mem::align_of::<*mut c_char>() - 1))
-            .ok_or(libc::ENOMEM)?;
-        if state.entry_buf.len() < required {
-            state
-                .entry_buf
-                .try_reserve(required - state.entry_buf.len())
-                .map_err(|_| libc::ENOMEM)?;
-            state.entry_buf.resize(required, 0);
-        }
-        let mut result = std::ptr::null_mut();
-        // SAFETY: the typed record and all packed bytes belong to this stable
-        // per-owner state. Complete capacity was checked before allocation.
-        let rc = unsafe {
-            fill_protoent_r(
-                &entry.name,
-                entry.number,
-                &entry.aliases,
-                (&raw mut state.entry).cast(),
-                state.entry_buf.as_mut_ptr().cast(),
-                state.entry_buf.len(),
-                &mut result,
+        // SAFETY: output and leased storage survive every provider callback.
+        let status = unsafe {
+            lease.iteration.next_r(
+                (&raw mut output).cast(),
+                lease.buffer.as_mut_ptr().cast(),
+                capacity,
             )
         };
-        if rc != 0 {
-            return Err(rc);
+        if status == NSS_STATUS_SUCCESS {
+            drop(lease);
+            return with_proto_iter_state(|state| {
+                state.entry = output;
+                (&raw mut state.entry).cast()
+            });
         }
-        state.pending = None;
-        Ok(result)
-    });
-    match outcome {
-        Ok(result) => {
-            unsafe { set_abi_errno(saved_errno) };
-            result
+        if status != NSS_STATUS_TRYAGAIN || current_abi_errno() != libc::ERANGE {
+            return std::ptr::null_mut();
         }
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            std::ptr::null_mut()
-        }
+        let Some(next) = capacity
+            .checked_mul(2)
+            .filter(|&size| size <= isize::MAX as usize)
+        else {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return std::ptr::null_mut();
+        };
+        capacity = next;
     }
 }
 
@@ -32771,7 +33022,7 @@ pub unsafe extern "C" fn getnetent_r(
 ///
 /// Packs p_name into `buf`, sets p_aliases to a NULL-terminated list at the
 /// end of `buf`, and fills the protoent at `result_buf`.
-unsafe fn fill_protoent_r(
+pub(crate) unsafe fn fill_protoent_r(
     name: &[u8],
     proto: c_int,
     aliases: &[Vec<u8>],
@@ -32822,16 +33073,13 @@ unsafe fn fill_protoent_r(
     0
 }
 
-/// `getprotobyname_r` — reentrant protocol lookup by name.
-///
-/// Native implementation: scans /etc/protocols.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getprotobyname_r(
+unsafe fn protocol_by_name_r(
     name: *const c_char,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
+    files_only: bool,
 ) -> c_int {
     if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
         return libc::EINVAL;
@@ -32849,48 +33097,29 @@ pub unsafe extern "C" fn getprotobyname_r(
         return libc::EINVAL;
     };
 
-    // Shared generation-stamped parsed index (resolv_abi), the same one the non-reentrant
-    // `getprotobyname` uses — it already agrees on name+alias matching, canonical name, and
-    // alias list, so this keeps the two in lockstep by construction rather than by having a
-    // second call site of the core parser. Replaces a per-call `std::fs::read(PROTOCOLS_PATH)`
-    // + linear scan: this entry point re-read and re-parsed the whole file on EVERY call and
-    // never reached `BackendFileCache`. A backend read error still reports "not found" with
-    // `*result` left NULL (glibc behavior), exactly as before. Borrow the cache entry rather
-    // than cloning it: a `ProtocolEntry` clone is a name `Vec<u8>` plus a `Vec<Vec<u8>>` of
-    // aliases, i.e. 3+ malloc/free pairs per call through the interposed allocator. A `perf`
-    // frame table put ~92% of this function's self time in allocator bookkeeping.
-    //
-    // RESTORED (bd-870h4v): this is fc181036f's shipped bd-qds9jk implementation. e634aff2a
-    // reverted it to the per-call re-read above while leaving `with_protocol_entry_by_name`
-    // in the tree as dead code, which cost 2.64x on getprotobyname_r_tcp AND dropped alias
-    // support (conformance_diff_protoent_r_aliases was RED at HEAD).
-    match crate::resolv_abi::with_protocol_entry_by_name(needle.as_slice(), |entry| unsafe {
-        fill_protoent_r(
-            &entry.name,
-            entry.number,
-            &entry.aliases,
+    // SAFETY: the key is a bounded, copied C string and the shared helper
+    // rechecks the writable objects before invoking any provider.
+    unsafe {
+        protocol_lookup_result_r(
+            crate::nss_module::ProtocolKey::Name(&needle),
             result_buf,
             buf,
             buflen,
             result,
+            files_only,
         )
-    }) {
-        Ok(Some(rc)) => rc,
-        Ok(None) | Err(_) => 0, // not found, result stays NULL (glibc behavior)
     }
 }
 
-/// `getprotobynumber_r` — reentrant protocol lookup by number.
-///
-/// Native implementation: scans /etc/protocols.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getprotobynumber_r(
-    proto: c_int,
+unsafe fn protocol_lookup_result_r(
+    key: crate::nss_module::ProtocolKey<'_>,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
+    files_only: bool,
 ) -> c_int {
+    use frankenlibc_core::nss::Answer;
     if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
         return libc::EINVAL;
     }
@@ -32902,21 +33131,71 @@ pub unsafe extern "C" fn getprotobynumber_r(
         return libc::EINVAL;
     }
 
-    // Shared generation-stamped parsed number index, borrowed not cloned; see
-    // `getprotobyname_r` above. RESTORED (bd-870h4v) from fc181036f.
-    match crate::resolv_abi::with_protocol_entry_by_number(proto, |entry| unsafe {
-        fill_protoent_r(
-            &entry.name,
-            entry.number,
-            &entry.aliases,
+    let capacity = tracked_output_capacity(buf, buflen);
+    // SAFETY: the typed output object and actual writable capacity were checked.
+    let answer = unsafe {
+        if files_only {
+            crate::resolv_abi::files_protocol_lookup_r(key, result_buf.cast(), buf, capacity)
+        } else {
+            crate::resolv_abi::protocol_lookup_r(key, result_buf.cast(), buf, capacity)
+        }
+    };
+    match answer {
+        Answer::Found(()) => {
+            // SAFETY: only the final successful provider publishes the result.
+            unsafe { *result = result_buf };
+            0
+        }
+        Answer::NotFound => {
+            // SAFETY: GNU clears errno after a definitive keyed lookup miss.
+            unsafe { set_abi_errno(0) };
+            0
+        }
+        Answer::Unavailable(error) | Answer::TryAgain(error) => {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(error) };
+            error
+        }
+        Answer::BufferTooSmall => {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::ERANGE) };
+            libc::ERANGE
+        }
+    }
+}
+
+/// Reentrant protocol name/alias lookup through configured NSS sources.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobyname_r(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    // SAFETY: the shared helper checks the caller's key and output objects.
+    unsafe { protocol_by_name_r(name, result_buf, buf, buflen, result, false) }
+}
+
+/// Reentrant protocol-number lookup through configured NSS sources.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobynumber_r(
+    proto: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    // SAFETY: the shared helper checks all writable caller objects.
+    unsafe {
+        protocol_lookup_result_r(
+            crate::nss_module::ProtocolKey::Number(proto),
             result_buf,
             buf,
             buflen,
             result,
+            false,
         )
-    }) {
-        Ok(Some(rc)) => rc,
-        Ok(None) | Err(_) => 0,
     }
 }
 
@@ -32950,17 +33229,30 @@ pub unsafe extern "C" fn getprotoent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    let saved_errno = current_abi_errno();
-    // SAFETY: the helper checks all caller objects before consuming a record.
-    match unsafe { protocol_next_result(result_buf, buf, buflen, result) } {
-        Ok(found) => {
-            unsafe { set_abi_errno(saved_errno) };
-            if found { 0 } else { libc::ENOENT }
-        }
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            error
-        }
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+    // SAFETY: the result slot was validated before clearing it.
+    unsafe { *result = std::ptr::null_mut() };
+    if buf.is_null() || !tracked_object_fits::<libc::protoent>(result_buf.cast()) {
+        return libc::EINVAL;
+    }
+    let Some(mut lease) = ProtocolIterationLease::acquire() else {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return libc::EDEADLK;
+    };
+    let capacity = tracked_output_capacity(buf, buflen);
+    // SAFETY: complete caller objects are valid and no TLS borrow survives.
+    let status = unsafe { lease.iteration.next_r(result_buf, buf, capacity) };
+    if status == NSS_STATUS_SUCCESS {
+        // SAFETY: the validated result object contains this provider's answer.
+        unsafe { *result = result_buf };
+        0
+    } else if status == NSS_STATUS_TRYAGAIN {
+        current_abi_errno()
+    } else {
+        libc::ENOENT
     }
 }
 
