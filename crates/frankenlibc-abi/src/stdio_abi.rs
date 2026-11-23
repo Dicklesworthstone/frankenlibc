@@ -6555,6 +6555,13 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
 unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> (usize, bool) {
+    // A historical error flag does not forbid a new read, but stream access
+    // mode still does even when its underlying descriptor permits reading.
+    if !s.is_readable() {
+        s.set_error();
+        unsafe { set_abi_errno(errno::EBADF) };
+        return (0, true);
+    }
     let io_caller = stream_io_caller(s, caller);
     let max = dst.len();
     let mut written = 0usize;
@@ -6563,21 +6570,12 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
         let (n, outcome) = s.read_into_slice(b'\n', &mut dst[written..]);
         written += n;
         match outcome {
-            ReadUntil::Found => break,
-            ReadUntil::Eof => {
-                if s.is_error() {
-                    had_error = true;
-                }
-                break;
-            }
+            ReadUntil::Found | ReadUntil::Eof => break,
             ReadUntil::NeedRefill => {
                 if written >= max {
                     break;
                 }
-                if s.is_eof() || s.is_error() {
-                    if s.is_error() {
-                        had_error = true;
-                    }
+                if s.is_eof() {
                     break;
                 }
                 if s.buffer_capacity() == 0 {
@@ -6602,11 +6600,12 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
                         }
                         break;
                     }
-                } else if unsafe { refill_stream(s, caller) } <= 0 {
-                    if s.is_error() {
-                        had_error = true;
+                } else {
+                    let rc = unsafe { refill_stream(s, caller) };
+                    if rc <= 0 {
+                        had_error = rc < 0;
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -6634,6 +6633,11 @@ fn fgets_read_failed(written: usize, had_error: bool) -> bool {
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
 unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> usize {
+    if !s.is_readable() {
+        s.set_error();
+        unsafe { set_abi_errno(errno::EBADF) };
+        return 0;
+    }
     let io_caller = stream_io_caller(s, caller);
     let total = dst.len();
     let mut read_total = 0usize;
@@ -6643,9 +6647,7 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
             read_total += n;
             continue;
         }
-        if s.is_error() {
-            break;
-        }
+        // ferror is sticky diagnostic state, not a prohibition on retrying.
         // Small remaining request on a buffered stream: refill in one block (like glibc/fgetc)
         // instead of a per-call direct fd read. Large requests (>= capacity) keep the direct
         // read below (buffering would just add a copy).
@@ -6916,7 +6918,9 @@ pub(crate) unsafe fn fgets_unlocked_for_caller(
             if let Some(cell) = stream_cell(id) {
                 let s = cell.lock();
                 reached_eof = s.is_eof();
-                had_error = s.is_error();
+                // EOF after a successful retry must not turn the old error
+                // indicator into a new fgets failure.
+                had_error = !reached_eof && s.is_error();
             }
             break;
         }
