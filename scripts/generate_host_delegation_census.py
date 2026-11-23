@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 21
+DETECTOR_VERSION = 22
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -127,6 +127,9 @@ PARAM_BINDING_RE = re.compile(
 LOCAL_BINDING_RE = re.compile(
     r"\blet\s+(?:mut\s+)?(?:(?:Some|Ok|Err)\s*\(\s*)?"
     r"([A-Za-z_][A-Za-z0-9_]*)"
+)
+LOCAL_TUPLE_BINDING_RE = re.compile(
+    r"\blet\s+(?:(?:Some|Ok|Err)\s*\(\s*)?\(\s*([^()\n]+?)\s*\)"
 )
 EXPORT_NAME_RE = re.compile(r'export_name\s*=\s*"([^"]+)"')
 BROADER_REFERENCE_RE = re.compile(
@@ -1241,6 +1244,7 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
         "finite_binary_f128",
     }
     rpc_macros = {"rpc_stub", "xdr_i32_prim", "xdr_narrow_prim", "xdr_i64_prim"}
+    rpc_svc_macros = {"failure_export"}
     unistd_leaf_macros = {
         "xdr_stub",
         "nss_files_end_stub",
@@ -1275,6 +1279,7 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
                 "canonicalize",
                 *finite_macros,
                 *rpc_macros,
+                *rpc_svc_macros,
                 *unistd_leaf_macros,
                 *unistd_errno_macros,
             }:
@@ -1414,6 +1419,19 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
             add_function(declaration.group(1), line_no, calls, exported=True)
             continue
 
+        if path.name == "rpc_svc.rs" and macro_name in rpc_svc_macros:
+            line_no = text.count("\n", 0, body_start) + 1
+            parts = split_top_level(body)
+            if len(parts) != 2:
+                raise ValueError(
+                    f"unrecognized {macro_name}! declaration at {path}:{line_no}"
+                )
+            name_match = require_match(
+                r"([A-Za-z_]\w*)", parts[0], macro_name, line_no
+            )
+            add_function(name_match.group(1), line_no, "send();", exported=True)
+            continue
+
         if path.name == "unistd_abi.rs" and macro_name in {
             *unistd_leaf_macros,
             *unistd_errno_macros,
@@ -1436,10 +1454,10 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
 def _strip_angle_groups(text: str) -> str:
     out: list[str] = []
     depth = 0
-    for ch in text:
+    for idx, ch in enumerate(text):
         if ch == "<":
             depth += 1
-        elif ch == ">" and depth > 0:
+        elif ch == ">" and depth > 0 and (idx == 0 or text[idx - 1] != "-"):
             depth -= 1
         elif depth == 0:
             out.append(ch)
@@ -1458,7 +1476,7 @@ def parse_impl_spans(mask: str) -> list[tuple[int, int, str]]:
             ch = mask[pos]
             if ch == "<":
                 angle += 1
-            elif ch == ">" and angle > 0:
+            elif ch == ">" and angle > 0 and (pos == 0 or mask[pos - 1] != "-"):
                 angle -= 1
             elif angle == 0 and ch == ";":
                 break
@@ -1763,6 +1781,32 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
                 else "binding"
             )
             events.append((binding.start(), 1, kind, binding.group(1)))
+        for tuple_binding in LOCAL_TUPLE_BINDING_RE.finditer(line):
+            if is_macro_token(
+                line_offset + tuple_binding.start()
+            ) or is_turbofish_type_arg(line_offset + tuple_binding.start()):
+                continue
+            statement_start = max(
+                line.rfind(";", 0, tuple_binding.start()),
+                line.rfind("{", 0, tuple_binding.start()),
+            )
+            prefix = line[statement_start + 1 : tuple_binding.start()]
+            kind = (
+                "next_scope_binding"
+                if re.search(r"\b(?:if|while)\b", prefix)
+                or "&&" in prefix
+                or "||" in prefix
+                else "binding"
+            )
+            for item in tuple_binding.group(1).split(","):
+                ident = re.match(
+                    r"\s*(?:(?:mut|ref)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*$",
+                    item,
+                )
+                if ident is not None and ident.group(1) != "_":
+                    events.append(
+                        (tuple_binding.start(), 1, kind, ident.group(1))
+                    )
         for closure in re.finditer(r"\|([^|\n]*)\|", line):
             if is_macro_token(line_offset + closure.start()) or is_turbofish_type_arg(
                 line_offset + closure.start()
@@ -2885,6 +2929,13 @@ def profile_source_view(
                 module_alias_candidates.setdefault(module_name, set()).add(source_path.stem)
                 full_module = "::".join(part for part in (parent_module, module_name) if part)
                 module_alias_candidates.setdefault(full_module, set()).add(source_path.stem)
+                if parent.stem != parent_module:
+                    stem_module = "::".join(
+                        part for part in (parent.stem, module_name) if part
+                    )
+                    module_alias_candidates.setdefault(stem_module, set()).add(
+                        source_path.stem
+                    )
                 module_alias_candidates.setdefault(f"{source_path.stem}::super", set()).add(
                     parent.stem
                 )
@@ -4241,6 +4292,48 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     require(
         multi_attr_decls == [("aliased_mod", root / "crates/frankenlibc-abi/src/custom_target.rs")],
         f"multi-attribute #[path] mod declaration missed: {multi_attr_decls}",
+    )
+
+    # Regression checks for v22 parser fixes: generic fn-bound `->` inside
+    # `impl<...>`, tuple destructuring `let Some((a, b))`, and `failure_export!`
+    # in `rpc_svc.rs`.
+    impl_arrow_spans = parse_impl_spans(
+        "impl<A: FnMut(usize) -> *mut c_void> IfaddrsBuilder<A> {\n"
+        "    fn new(alloc: A) -> Self { Self(alloc) }\n"
+        "}\n"
+    )
+    require(
+        len(impl_arrow_spans) == 1 and impl_arrow_spans[0][2] == "IfaddrsBuilder",
+        f"impl generic fn-bound arrow broke impl type extraction: {impl_arrow_spans}",
+    )
+    tuple_shadow_path = root / "crates/frankenlibc-abi/src/v22_tuple.rs"
+    tuple_shadow_src = (
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_tuple_shadow() {\n'
+        "    let Some((malloc, free)) = get_pair() else { return; };\n"
+        "    let p = malloc(8);\n"
+        "    free(p);\n"
+        "}\n"
+        "fn get_pair() -> Option<(fn(usize) -> usize, fn(usize))> { None }\n"
+    )
+    tuple_shadow_analysis = analyze_host_dependencies(
+        parse_functions(tuple_shadow_path, tuple_shadow_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    require(
+        not tuple_shadow_analysis["unknown_calls"],
+        f"tuple let-binding shadowing regressed: {tuple_shadow_analysis['unknown_calls']}",
+    )
+    rpc_svc_macro_fns = parse_functions(
+        root / "crates/frankenlibc-abi/src/rpc_svc.rs",
+        "fn send() {}\nfailure_export!(svcerr_decode, RemoteError::GarbageArguments);\n",
+    )
+    require(
+        any(f.exported_symbol == "svcerr_decode" for f in rpc_svc_macro_fns),
+        f"rpc_svc.rs failure_export! macro not recognized: {rpc_svc_macro_fns}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

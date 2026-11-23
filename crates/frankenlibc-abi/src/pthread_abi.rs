@@ -523,8 +523,8 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        if frankenlibc_core::pthread::tls::native_threads_may_exist()
-            || crate::malloc_abi::native_thread_backend_active()
+        if core_current_thread_handle().is_some()
+            || frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
             || global_force_native_threading_enabled()
             || force_native_threading_enabled()
         {
@@ -549,11 +549,12 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
 
 #[inline]
 fn remember_current_pthread_self(value: libc::pthread_t) {
-    let single_threaded =
-        crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
-    if single_threaded
+    if frankenlibc_core::pthread::tls::current_thread_is_exiting_native() {
+        return;
+    }
+    if crate::glibc_internal_abi::is_process_single_threaded()
+        && crate::runtime_policy::is_runtime_ready()
         && !frankenlibc_core::pthread::tls::native_threads_may_exist()
-        && !crate::malloc_abi::native_thread_backend_active()
         && !force_native_threading_enabled()
     {
         SINGLE_THREADED_PTHREAD_SELF.store(value as usize, Ordering::Release);
@@ -1061,7 +1062,29 @@ pub(crate) fn in_threading_policy_context() -> bool {
 pub(crate) fn reset_threading_policy_in_fork_child() -> u64 {
     NATIVE_LAST_THREAD_EXITING.store(false, Ordering::Release);
     PTHREAD_TLS_ACCESS_DEPTH.store(0, Ordering::Release);
+    SINGLE_THREADED_PTHREAD_SELF.store(0, Ordering::Release);
     crate::signal_abi::reset_native_sigcancel_state_in_fork_child();
+    // Only the calling thread survives `fork()` and becomes the child's main
+    // thread (tid == child pid). Keep `MAIN_THREAD_FL_NAME` synced to the
+    // surviving thread's preserved `pthread_self()` identity (or 0 if none was
+    // cached yet, so the child populates it lazily on first query).
+    let surviving_name = if let Some(handle) = core_current_thread_handle() {
+        handle as usize
+    } else {
+        let mut cached = 0usize;
+        #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+        {
+            if !frankenlibc_core::pthread::tls::current_thread_is_exiting_native() {
+                cached = PTHREAD_SELF_FAST_RAW.get() as usize;
+            }
+        }
+        if cached == 0 {
+            cached =
+                try_with_pthread_tls(|tls| tls.current_pthread_self_cache as usize).unwrap_or(0);
+        }
+        cached
+    };
+    MAIN_THREAD_FL_NAME.store(surviving_name, Ordering::Release);
     let active = if let Some(handle) = core_current_thread_handle() {
         // SAFETY: surviving native thread owns its handle across fork.
         u64::from(unsafe { (*handle).threading_policy_depth.load(Ordering::Relaxed) != 0 })
@@ -1579,7 +1602,9 @@ extern "C" fn native_pthread_self_mt_or_slow() -> libc::pthread_t {
 
 #[inline(always)]
 pub(crate) fn native_pthread_self() -> libc::pthread_t {
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+    if crate::glibc_internal_abi::is_process_single_threaded()
+        && crate::runtime_policy::is_runtime_ready()
+    {
         let cached = SINGLE_THREADED_PTHREAD_SELF.load(Ordering::Relaxed);
         if cached != 0 {
             return cached as libc::pthread_t;
@@ -1970,7 +1995,8 @@ pub(crate) fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
 
     // The main thread's tid is the pid. A fork child keeps the parent's name
     // for it (pthread_self is cached), which as a tid names no thread here.
-    if thread as usize == MAIN_THREAD_FL_NAME.load(Ordering::Acquire) {
+    let main_name = MAIN_THREAD_FL_NAME.load(Ordering::Acquire);
+    if main_name != 0 && thread as usize == main_name {
         return Some(raw_syscall::sys_getpid());
     }
 
@@ -2754,7 +2780,6 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     }
 
     let result = if rc == 0 {
-        crate::malloc_abi::latch_multi_threaded_before_thread_create();
         let (start_ctx, gettid) = new_host_thread_start_context(start_routine, arg);
         let mut host_thread: libc::pthread_t = 0;
         unsafe {
@@ -4533,9 +4558,10 @@ pub unsafe extern "C" fn pthread_create(
     } else {
         attr
     };
-    // Clear __libc_single_threaded on first thread creation.
-    crate::glibc_internal_abi::__libc_single_threaded
-        .store(0, std::sync::atomic::Ordering::Release);
+    // Latch MULTI_THREADED, clear __libc_single_threaded and single-threaded
+    // pthread_self/stdio caches synchronously BEFORE spawning either a hosted
+    // (NULL-attr or custom-attr) or native thread.
+    crate::malloc_abi::latch_multi_threaded_before_thread_create();
     // rand()/random() skip their lock while single-threaded; flip them to the
     // locked path now, before the new thread can run.
     frankenlibc_core::stdlib::random_sv::mark_multithreaded();

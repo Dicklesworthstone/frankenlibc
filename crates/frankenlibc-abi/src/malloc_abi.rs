@@ -867,7 +867,9 @@ fn compute_desired_strict_hot_mode() -> u64 {
     {
         return STRICT_HOT_MODE_SLOW as u64;
     }
-    if MULTI_THREADED.load(Ordering::SeqCst) {
+    if MULTI_THREADED.load(Ordering::SeqCst)
+        || !crate::glibc_internal_abi::host_single_threaded_allows_st_fast()
+    {
         STRICT_HOT_MODE_MT as u64
     } else {
         STRICT_HOT_MODE_ST as u64
@@ -1077,6 +1079,8 @@ fn observe_distinct_tid(first: &AtomicI32, tid: i32) -> bool {
 #[inline]
 fn note_thread_tid(tid: i32) {
     if observe_distinct_tid(&FIRST_OBSERVED_TID, tid) {
+        crate::pthread_abi::clear_single_threaded_pthread_self_cache();
+        crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
         MULTI_THREADED.store(true, Ordering::SeqCst);
         refresh_strict_hot_mode();
     }
@@ -1190,6 +1194,7 @@ pub(crate) fn note_native_thread_backend() {
         // `init_current()` transitions through std's `DESTROYED` sentinel.
         let _ = std::thread::current();
     }
+    crate::pthread_abi::clear_single_threaded_pthread_self_cache();
     MULTI_THREADED.store(true, Ordering::SeqCst);
     crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
     // Drain creator compiler-TLS stdio caches and any parked ST fmemopen slot
@@ -1216,6 +1221,8 @@ fn note_thread_key(key: usize) {
         FIRST_OBSERVED_KEY.compare_exchange(0, key, Ordering::AcqRel, Ordering::Acquire)
         && previous != key
     {
+        crate::pthread_abi::clear_single_threaded_pthread_self_cache();
+        crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
         MULTI_THREADED.store(true, Ordering::SeqCst);
         refresh_strict_hot_mode();
     }
@@ -8807,24 +8814,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
                         // segment's immortal allocator-private sidecar.
                         let meta =
                             unsafe { &*((arena_base + meta_offset) as *const SegmentSlotMeta) };
-                        // In `STRICT_HOT_MODE_ST`, `MULTI_THREADED` is false (no second
-                        // thread exists yet) and `slot.allocator_depth == 1` with the
-                        // `AcqRel` compiler fence above excludes signal-handler reentry,
-                        // so a plain load+store is linearisable without a `lock xchg`.
-                        let previous = if hot_mode == STRICT_HOT_MODE_ST {
-                            let prev = meta.requested_size.load(Ordering::Relaxed);
-                            if prev != 0
-                                && prev != SEGMENT_SLOT_FREE
-                                && (prev as usize) <= class_size
-                            {
-                                meta.requested_size
-                                    .store(SEGMENT_SLOT_FREE, Ordering::Relaxed);
-                            }
-                            prev
-                        } else {
-                            meta.requested_size
-                                .swap(SEGMENT_SLOT_FREE, Ordering::AcqRel)
-                        };
+                        let previous = meta
+                            .requested_size
+                            .swap(SEGMENT_SLOT_FREE, Ordering::AcqRel);
                         let requested = previous as usize;
                         if previous == 0 || previous == SEGMENT_SLOT_FREE || requested > class_size
                         {

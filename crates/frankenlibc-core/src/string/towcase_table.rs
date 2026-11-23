@@ -24,6 +24,7 @@ struct BmpCaseTable<const PAGES: usize> {
 const fn build_bmp_case_table<const N: usize, const PAGES: usize>(
     deltas: &[(u32, u32); N],
 ) -> BmpCaseTable<PAGES> {
+    assert!(PAGES <= u8::MAX as usize);
     let mut dir = [0u8; 1024];
     let mut pages = [[0u16; 64]; PAGES];
     let mut next_page = 0usize;
@@ -130,6 +131,10 @@ mod tests {
             assert_eq!(towupper(wc), want_up, "towupper({wc:#x})");
             assert_eq!(towlower(wc), want_lo, "towlower({wc:#x})");
         }
+        assert_eq!(towupper(0x11_0000), 0x11_0000);
+        assert_eq!(towupper(u32::MAX), u32::MAX);
+        assert_eq!(towlower(0x11_0000), 0x11_0000);
+        assert_eq!(towlower(u32::MAX), u32::MAX);
     }
 }
 

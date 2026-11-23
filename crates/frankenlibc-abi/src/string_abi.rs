@@ -6085,8 +6085,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
 
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         return unsafe {
-            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
-            match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+            match core_memrchr(s.cast::<u8>(), c as u8, n) {
                 Some(idx) => (s as *mut u8).add(idx).cast(),
                 None => std::ptr::null_mut(),
             }
@@ -6125,10 +6124,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
             }
             return std::ptr::null_mut();
         }
-        let found = unsafe {
-            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-            frankenlibc_core::string::mem::memrchr(bytes, c as u8, scan_len)
-        };
+        let found = unsafe { core_memrchr(s.cast::<u8>(), c as u8, scan_len) };
         if clamped {
             runtime_policy::observe(
                 ApiFamily::StringMemory,
@@ -6197,8 +6193,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
-        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-        if let Some(idx) = frankenlibc_core::string::mem::memrchr(bytes, c as u8, scan_len) {
+        if let Some(idx) = core_memrchr(s.cast::<u8>(), c as u8, scan_len) {
             record_string_stage_outcome(
                 &ordering,
                 aligned,

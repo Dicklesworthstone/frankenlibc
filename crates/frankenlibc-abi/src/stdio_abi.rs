@@ -338,9 +338,13 @@ pub(crate) unsafe fn strict_decimal_int_format_count(
             }
             // One separator character, and every separator must be the SAME one:
             // mixing them is rare enough not to be worth a second scan shape.
+            // Any C-locale whitespace directive (` `, `\t`, `\n`, `\v`, `\f`, `\r`)
+            // has identical scanf semantics (skip 0+ whitespace bytes), so normalize
+            // all whitespace separators to `b' '`.
+            let sep_byte = if scanf_ascii_space(next) { b' ' } else { next };
             if sep == 0 {
-                sep = next;
-            } else if next != sep {
+                sep = sep_byte;
+            } else if sep_byte != sep {
                 return None;
             }
             i += 1;
@@ -667,19 +671,28 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
     for index in 0..fields {
         // A LITERAL separator must match exactly, and unlike the conversions it
         // does not skip whitespace first — `sscanf("1 .2", "%d.%d")` matches one
-        // field in glibc, not two. The whitespace form needs nothing here
-        // because both conversions skip leading whitespace themselves.
-        if count > 0 && sep != b' ' {
-            // SAFETY: `p` is inside the NUL-terminated input.
-            if unsafe { *p } != sep {
-                return StrictDecimalIntsScan {
-                    count: count as c_int,
-                    input_failure: false,
-                    values,
-                };
+        // field in glibc, not two. A whitespace directive consumes 0+ whitespace
+        // bytes before the next field; `%d`/`%s`/`%f`/`%lx` already skip leading
+        // whitespace themselves, whereas `%[...]` does NOT, so advance `p` here
+        // when the next conversion is `%[^X]`.
+        if count > 0 {
+            if sep != b' ' {
+                // SAFETY: `p` is inside the NUL-terminated input.
+                if unsafe { *p } != sep {
+                    return StrictDecimalIntsScan {
+                        count: count as c_int,
+                        input_failure: false,
+                        values,
+                    };
+                }
+                // SAFETY: the byte just read was the separator, not the terminator.
+                p = unsafe { p.add(1) };
+            } else if kinds[index] == b'[' {
+                // SAFETY: `p` is inside the NUL-terminated input; `scanf_ascii_space(0)` is false.
+                while unsafe { scanf_ascii_space(*p) } {
+                    p = unsafe { p.add(1) };
+                }
             }
-            // SAFETY: the byte just read was the separator, not the terminator.
-            p = unsafe { p.add(1) };
         }
         if kinds[index] == b'f' || kinds[index] == b'F' {
             // The engine's own float scanner, so hex floats, inf/nan, subnormals
@@ -715,7 +728,10 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
                         unsafe { *destinations[index].cast::<f64>() = value };
                     } else {
                         // SAFETY: `%f` was parsed, so the caller passed a `float *`.
-                        unsafe { *destinations[index].cast::<f32>() = value as f32 };
+                        unsafe {
+                            *destinations[index].cast::<f32>() =
+                                frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(value);
+                        }
                     }
                     // SAFETY: `next` is an offset the engine reached inside `slice`.
                     p = unsafe { p.add(next) };

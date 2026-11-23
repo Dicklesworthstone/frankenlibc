@@ -566,7 +566,7 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     // returned an sNaN unquieted and silent, exp2/exp10 raised FE_INVALID for
     // a quiet NaN, tan/y0/y1 returned the canonical NaN.
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f64(x);
     }
     // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
     // membrane is provably always-Allow for MathFenv and can never heal a math
@@ -674,34 +674,71 @@ fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f6
 
 #[cold]
 #[inline(never)]
-extern "C" fn trig_inf_f64(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
-    let out = unary_entry(x, base_cost_ns, f);
-    set_domain_errno();
-    out
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sin(x: f64) -> f64 {
+extern "C" fn sin_slow(x: f64) -> f64 {
     if x.is_infinite() {
-        return trig_inf_f64(x, 5, frankenlibc_core::math::sin);
+        let out = unary_entry(x, 5, frankenlibc_core::math::sin);
+        set_domain_errno();
+        return out;
     }
     unary_infallible_entry(x, 5, frankenlibc_core::math::sin)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cos(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn cos_slow(x: f64) -> f64 {
     if x.is_infinite() {
-        return trig_inf_f64(x, 5, frankenlibc_core::math::cos);
+        let out = unary_entry(x, 5, frankenlibc_core::math::cos);
+        set_domain_errno();
+        return out;
     }
     unary_infallible_entry(x, 5, frankenlibc_core::math::cos)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tan(x: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn tan_slow(x: f64) -> f64 {
     if x.is_infinite() {
-        return trig_inf_f64(x, 6, frankenlibc_core::math::tan);
+        let out = unary_entry(x, 6, frankenlibc_core::math::tan);
+        set_domain_errno();
+        return out;
     }
     unary_infallible_entry(x, 6, frankenlibc_core::math::tan)
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn atan_slow(x: f64) -> f64 {
+    unary_infallible_entry(x, 5, frankenlibc_core::math::atan)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sin(x: f64) -> f64 {
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) < 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::sin(x);
+    }
+    sin_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cos(x: f64) -> f64 {
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) < 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::cos(x);
+    }
+    cos_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tan(x: f64) -> f64 {
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) < 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::tan(x);
+    }
+    tan_slow(x)
 }
 
 #[cold]
@@ -754,7 +791,12 @@ pub unsafe extern "C" fn acos(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan(x: f64) -> f64 {
-    unary_infallible_entry(x, 5, frankenlibc_core::math::atan)
+    if runtime_policy::math_membrane_fastpath_inline()
+        && (x.to_bits() & 0x7fff_ffff_ffff_ffff) <= 0x7ff0_0000_0000_0000
+    {
+        return frankenlibc_core::math::atan(x);
+    }
+    atan_slow(x)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1006,7 +1048,7 @@ pub unsafe extern "C" fn log1p(x: f64) -> f64 {
     let bits = x.to_bits();
     // Every finite x > -1.0 (including ±0.0): strictly in domain, never sets errno.
     let in_domain = bits < 0x7ff0_0000_0000_0000
-        || (bits >= 0x8000_0000_0000_0000 && bits < 0xbff0_0000_0000_0000);
+        || (0x8000_0000_0000_0000..0xbff0_0000_0000_0000).contains(&bits);
     if runtime_policy::math_membrane_fastpath_inline() && in_domain {
         return frankenlibc_core::math::log1p(x);
     }
@@ -1734,7 +1776,7 @@ pub unsafe extern "C" fn significand(x: f64) -> f64 {
         pi_fn_raise_invalid_f64();
     }
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f64(x);
     }
     out
 }
@@ -1877,34 +1919,62 @@ fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -
 
 #[cold]
 #[inline(never)]
-extern "C" fn trig_inf_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
-    let out = unary_entry_f32(x, base_cost_ns, f);
-    set_domain_errno();
-    out
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinf(x: f32) -> f32 {
+extern "C" fn sinf_slow(x: f32) -> f32 {
     if x.is_infinite() {
-        return trig_inf_f32(x, 5, frankenlibc_core::math::sinf);
+        let out = unary_entry_f32(x, 5, frankenlibc_core::math::sinf);
+        set_domain_errno();
+        return out;
     }
     unary_entry_f32(x, 5, frankenlibc_core::math::sinf)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cosf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn cosf_slow(x: f32) -> f32 {
     if x.is_infinite() {
-        return trig_inf_f32(x, 5, frankenlibc_core::math::cosf);
+        let out = unary_entry_f32(x, 5, frankenlibc_core::math::cosf);
+        set_domain_errno();
+        return out;
     }
     unary_entry_f32(x, 5, frankenlibc_core::math::cosf)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanf(x: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn tanf_slow(x: f32) -> f32 {
     if x.is_infinite() {
-        return trig_inf_f32(x, 5, frankenlibc_core::math::tanf);
+        let out = unary_entry_f32(x, 5, frankenlibc_core::math::tanf);
+        set_domain_errno();
+        return out;
     }
     unary_entry_f32(x, 5, frankenlibc_core::math::tanf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sinf(x: f32) -> f32 {
+    if runtime_policy::math_membrane_fastpath_inline() && (x.to_bits() & 0x7fff_ffff) < 0x7f80_0000
+    {
+        return frankenlibc_core::math::sinf(x);
+    }
+    sinf_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cosf(x: f32) -> f32 {
+    if runtime_policy::math_membrane_fastpath_inline() && (x.to_bits() & 0x7fff_ffff) < 0x7f80_0000
+    {
+        return frankenlibc_core::math::cosf(x);
+    }
+    cosf_slow(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tanf(x: f32) -> f32 {
+    if runtime_policy::math_membrane_fastpath_inline() && (x.to_bits() & 0x7fff_ffff) < 0x7f80_0000
+    {
+        return frankenlibc_core::math::tanf(x);
+    }
+    tanf_slow(x)
 }
 
 #[cold]
@@ -2129,7 +2199,7 @@ pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
 extern "C" fn sinhf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::sinhf);
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 && (out.is_infinite() || out.abs() == f32::MAX) {
+    if (0x42b2_d4fd..0x7f80_0000).contains(&ax) && (out.is_infinite() || out.abs() == f32::MAX) {
         set_range_errno();
     }
     out
@@ -2140,7 +2210,7 @@ extern "C" fn sinhf_slow(x: f32) -> f32 {
 extern "C" fn coshf_slow(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::coshf);
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 && (out.is_infinite() || out.abs() == f32::MAX) {
+    if (0x42b2_d4fd..0x7f80_0000).contains(&ax) && (out.is_infinite() || out.abs() == f32::MAX) {
         set_range_errno();
     }
     out
@@ -2157,7 +2227,7 @@ extern "C" fn tanhf_slow(x: f32) -> f32 {
 extern "C" fn sinhf_overflow_or_special_abi(x: f32) -> f32 {
     let out = frankenlibc_core::math::float32::sinhf_overflow_or_special(x);
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 {
+    if (0x42b2_d4fd..0x7f80_0000).contains(&ax) {
         set_range_errno();
     }
     out
@@ -2168,7 +2238,7 @@ extern "C" fn sinhf_overflow_or_special_abi(x: f32) -> f32 {
 extern "C" fn coshf_overflow_or_special_abi(x: f32) -> f32 {
     let out = frankenlibc_core::math::float32::coshf_overflow_or_special(x);
     let ax = x.to_bits() & 0x7fff_ffff;
-    if ax >= 0x42b2_d4fd && ax < 0x7f80_0000 {
+    if (0x42b2_d4fd..0x7f80_0000).contains(&ax) {
         set_range_errno();
     }
     out
@@ -6172,7 +6242,7 @@ pub unsafe extern "C" fn cospif(x: f32) -> f32 {
     // 400k-point sweep), and the f64 path handles inf/large-x identically. A
     // NaN is only quieted: glibc's cospif does not set its sign as cospi does.
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f32(x);
     }
     unsafe { cospi(x as f64) as f32 }
 }
@@ -6228,7 +6298,7 @@ pub unsafe extern "C" fn cospif128(x: f128) -> f128 {
 pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
     // glibc: a NaN quieted; +-inf the x86 default NaN (sign set), FE_INVALID.
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f64(x);
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
@@ -6312,7 +6382,7 @@ pub unsafe extern "C" fn sinpif128(x: f128) -> f128 {
 pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
     // glibc: a NaN quieted; +-inf the x86 default NaN (sign set), FE_INVALID.
     if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
+        return quiet_nan_f64(x);
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();

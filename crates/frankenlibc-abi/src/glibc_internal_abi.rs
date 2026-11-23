@@ -562,6 +562,14 @@ pub(crate) fn init_host_single_threaded_ptr() {
         let ptr = addr as *mut std::sync::atomic::AtomicU8;
         if !ptr.is_null() {
             HOST_SINGLE_THREADED_PTR.store(ptr, std::sync::atomic::Ordering::Release);
+            // SAFETY: `ptr` points to host glibc's permanent `.data`
+            // `__libc_single_threaded` byte (`c_char` / `u8`). If the host
+            // process is already multi-threaded when FrankenLibC loads (e.g.
+            // `dlopen` from a worker or after `std::thread::spawn`), latch MT
+            // immediately so single-threaded caches never activate.
+            if unsafe { (*ptr).load(std::sync::atomic::Ordering::Acquire) } == 0 {
+                crate::malloc_abi::latch_multi_threaded_before_thread_create();
+            }
         }
     }
 }

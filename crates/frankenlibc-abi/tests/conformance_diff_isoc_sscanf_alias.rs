@@ -877,3 +877,113 @@ fn the_aliases_take_the_decimal_int_fast_path() {
         );
     }
 }
+
+#[test]
+fn strict_fast_path_float_nan_payload_and_whitespace_separators_match_glibc() {
+    let pairs: [(&str, SscanfFn, SscanfFn); 3] = [
+        (
+            "sscanf",
+            frankenlibc_abi::stdio_abi::sscanf as SscanfFn,
+            unsafe { host_fn(c"sscanf", frankenlibc_abi::stdio_abi::sscanf as *const ()) },
+        ),
+        (
+            "__isoc99_sscanf",
+            frankenlibc_abi::stdio_abi::__isoc99_sscanf as SscanfFn,
+            unsafe {
+                host_fn(
+                    c"__isoc99_sscanf",
+                    frankenlibc_abi::stdio_abi::__isoc99_sscanf as *const (),
+                )
+            },
+        ),
+        (
+            "__isoc23_sscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_sscanf as SscanfFn,
+            unsafe {
+                host_fn(
+                    c"__isoc23_sscanf",
+                    frankenlibc_abi::isoc_abi::__isoc23_sscanf as *const (),
+                )
+            },
+        ),
+    ];
+    for (name, fl_arm, host_arm) in pairs {
+        // Lone `%f` must preserve NaN payload bits via `narrow_f64_to_f32`.
+        let mut fl_f: f32 = -1.0;
+        let mut gl_f: f32 = -1.0;
+        let fl_rc = unsafe { fl_arm(c"nan(1)".as_ptr(), c"%f".as_ptr(), &mut fl_f as *mut f32) };
+        let gl_rc = unsafe { host_arm(c"nan(1)".as_ptr(), c"%f".as_ptr(), &mut gl_f as *mut f32) };
+        assert_eq!(fl_rc, gl_rc, "{name}: nan(1) %f rc mismatch");
+        assert_eq!(
+            fl_f.to_bits(),
+            gl_f.to_bits(),
+            "{name}: nan(1) %f NaN payload bits diverged: fl={:#x} glibc={:#x}",
+            fl_f.to_bits(),
+            gl_f.to_bits()
+        );
+
+        // Non-space whitespace separator (`\t`, `\n`) between `%lx` and `%d`.
+        for (input, fmt) in [
+            (c"1a 2", c"%lx\t%d"),
+            (c"deadbeef\n  -7", c"%lx\n%d"),
+            (c"0x2f\t42", c"%lX\t%d"),
+        ] {
+            let (mut fl_x, mut gl_x) = (0 as libc::c_ulong, 0 as libc::c_ulong);
+            let (mut fl_d, mut gl_d) = (-99 as c_int, -99 as c_int);
+            let fl_rc = unsafe {
+                fl_arm(
+                    input.as_ptr(),
+                    fmt.as_ptr(),
+                    &mut fl_x as *mut libc::c_ulong,
+                    &mut fl_d as *mut c_int,
+                )
+            };
+            let gl_rc = unsafe {
+                host_arm(
+                    input.as_ptr(),
+                    fmt.as_ptr(),
+                    &mut gl_x as *mut libc::c_ulong,
+                    &mut gl_d as *mut c_int,
+                )
+            };
+            assert_eq!(
+                (fl_rc, fl_x, fl_d),
+                (gl_rc, gl_x, gl_d),
+                "{name}: input={input:?} fmt={fmt:?}"
+            );
+        }
+
+        // Whitespace directive before `%[^,]` must consume 0+ whitespace bytes.
+        for (input, fmt) in [
+            (c"1a   hello,world", c"%lx %[^,]"),
+            (c"1a\thello,world", c"%lx\t%[^,]"),
+            (c"1a   ", c"%lx %[^,]"),
+            (c"1a,tail", c"%lx %[^,]"),
+        ] {
+            let (mut fl_x, mut gl_x) = (0 as libc::c_ulong, 0 as libc::c_ulong);
+            let mut fl_buf = [0x5au8; 32];
+            let mut gl_buf = [0x5au8; 32];
+            let fl_rc = unsafe {
+                fl_arm(
+                    input.as_ptr(),
+                    fmt.as_ptr(),
+                    &mut fl_x as *mut libc::c_ulong,
+                    fl_buf.as_mut_ptr().cast::<c_char>(),
+                )
+            };
+            let gl_rc = unsafe {
+                host_arm(
+                    input.as_ptr(),
+                    fmt.as_ptr(),
+                    &mut gl_x as *mut libc::c_ulong,
+                    gl_buf.as_mut_ptr().cast::<c_char>(),
+                )
+            };
+            assert_eq!(
+                (fl_rc, fl_x, fl_buf),
+                (gl_rc, gl_x, gl_buf),
+                "{name}: input={input:?} fmt={fmt:?}"
+            );
+        }
+    }
+}

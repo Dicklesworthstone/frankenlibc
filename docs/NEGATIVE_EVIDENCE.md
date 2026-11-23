@@ -42392,3 +42392,31 @@ establish the original throughput targets or integrated L1 readiness.
 
 - **GATES GREEN.** `check_baseline_isa.sh` on `af17db5a...`: `functions_with_extensions=61 unlisted=0`, `non_math_abi_math_calls=0`, `Nehalem 28/28`, `qemu64 28/28`; `incumbent_coverage_ab` conformance `pass` on all 6 families (`worst_sinhf_ulp=0`, `worst_coshf_ulp=0`, `worst_tanhf_ulp=0`, `special_values_bit_exact=true`).
 - **DISPOSITION.** KEEP. Five `bd-2g7oyh` families flipped from certified `FL_SLOWER` losses to certified `FL_FASTER` wins against live host glibc 2.43; `thrd_current` improved by 23.2% and remains honestly tracked as `FL_SLOWER`.
+
+## 2026-11-22 — `bd-2g7oyh` / `bd-dcrhgl`: `memrchr` Certified `DECIDABLE FL_FASTER` (`6W/2L/0U`), Frameless Math ABI Dispatch, Wide-Ctype BMP Paging, & Honest Pass-2 Revert of Non-Atomic ST `free()`
+
+- **LEVERS (`cfb7ed344`, `db4920f93`, `35715f5bb`, `da4bfed70`, `a7db87762`, `2cc7b7ae0`, plus Pass-2 fresh-eyes remediation).**
+  1. **`memrchr` (`da4bfed70` + Pass 2, `string_abi.rs`):** Routed `core_memrchr` through `avx2_dispatch!` (32-lane AVX2 folds out of the baseline prologue, baseline SSE2 preserved on Nehalem/qemu64) and outlined `#[cold] #[inline(never)] unsafe extern "C" fn memrchr_validating` (also wired to `core_memrchr` in hardened mode).
+  2. **Frameless Math ABI Dispatch (`cfb7ed344`, `db4920f93`, `35715f5bb`, Pass 2):** Added `extern "C"` leaf specialization in `avx2_fma_dispatch!` (`math/mod.rs`), raised `sinhf`/`coshf` overflow cutoff 1 ULP (`0x42b2_d4fd`) with directed-rounding `ERANGE` parity across all 4 `fesetround` modes, rewrote `fpclassify`/`fpclassifyf` via sign-stripping `bits << 1`, and moved domain/range/NaN checks to cold `extern "C"` helpers across `sin`, `cos`, `tan`, `atan`, `asin`, `acos`, `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `sinf`, `cosf`, `tanf`, `asinf`, `acosf`, `expf`, `logf`, `log2f`, `log10f`, `sqrtf` (`cos`/`exp`/`log`/`log2` verified 100% frameless direct `jmp *avx2_fma_twin`).
+  3. **Wide-Ctype BMP Page Tables & Strict `sscanf` Fast Path (`da4bfed70`, `a7db87762`, Pass 2):** Restored O(1) ASCII + compile-time `const fn` 64-codepoint BMP page tables in `towcase_table.rs` (50/46 pages) and `wctype_table.rs` (186 deduplicated pages) with exhaustive `0..=0x10_FFFF` + `WEOF` tests; unblocked lone `%f`/`%lf` (preserving NaN payloads via `narrow_f64_to_f32`) and `%lx`/`%lX` + whitespace separator / `%[^X]` leading-whitespace handling on strict `sscanf`/`vsscanf`/`__isoc{99,23}_sscanf`.
+  4. **REVERTED LEVER (`d0439bb01`, `malloc_abi.rs::free`):** The `STRICT_HOT_MODE_ST` non-atomic `load+store` replacement for `meta.requested_size.swap(SEGMENT_SLOT_FREE, Ordering::AcqRel)` was **reverted** in Pass 2 fresh-eyes review because `bootstrap_free_passthrough` can reenter `segment_free(None, p)` from a signal handler while `slot.allocator_depth == 1`, breaking linearisability.
+- **OBJECTS.**
+  - `fl`: `/data/tmp/cargo-target/release/libfrankenlibc_abi.so`, bytes `17,808,672`, SHA-256 `3f36e104992c8083fbf630843ff78697e33fe282af574f4498e5c7d377ef331e`.
+  - `incumbent`: live host glibc 2.43 `/usr/lib/x86_64-linux-gnu/libc.so.6` (`9941dc28...`) and `/usr/lib/x86_64-linux-gnu/libm.so.6` (`37b9e6c9...`).
+  - `bench`: `/data/tmp/cargo-target/release/examples/incumbent_coverage_ab` (`c7be99da...`), `--pin-quietest 1`, `HostWideBenchmarkGuard` `verdict=clear` pre+post (`cpu11`, `2399.9 MHz`, `samples=36`, `reps_per_arm=200_000`).
+- **SAME-INVOCATION CERTIFIED RESULTS (`hetzner2`, `nulls_hold=true`, `clears_2x_null=true`, `DECIDABLE`):**
+
+  | `memrchr` Case | `fl_median_ns` | `glibc_median_ns` | `fl/glibc` median (`CI95`) | `null_fl_fl` / `null_gl_gl` | Verdict |
+  |---|---:|---:|---|---|---|
+  | `len512_absent_fl_malloc` (headline) | `5.535` | `5.775` | **`0.958101`** (`[0.953460, 0.963012]`) | `1.001081` / `0.999331` | **`FL_FASTER`, `DECIDABLE`** |
+  | `len512_absent_incumbent_malloc` | `5.521` | `5.912` | **`0.934953`** (`[0.930132, 0.938978]`) | `1.000634` / `1.000353` | **`FL_FASTER`, `DECIDABLE`** |
+  | `len4096_absent_fl_malloc` | `26.036` | `34.143` | **`0.753379`** (`[0.738995, 0.768282]`) | `1.001036` / `1.000719` | **`FL_FASTER`, `DECIDABLE`** |
+  | `len4096_absent_incumbent_malloc` | `26.494` | `34.174` | **`0.761346`** (`[0.742221, 0.780186]`) | `1.000999` / `0.997683` | **`FL_FASTER`, `DECIDABLE`** |
+  | `len4096_hit_near_start_fl_malloc` | `22.558` | `34.040` | **`0.655466`** (`[0.650041, 0.663882]`) | `0.999949` / `1.001742` | **`FL_FASTER`, `DECIDABLE`** |
+  | `len4096_hit_near_start_incumbent_malloc` | `21.960` | `33.556` | **`0.655167`** (`[0.652881, 0.659450]`) | `0.999828` / `1.000832` | **`FL_FASTER`, `DECIDABLE`** |
+  | `len64_absent_fl_malloc` | `3.889` | `2.502` | `1.562471` (`[1.549081, 1.581693]`) | `0.999967` / `1.013703` | `FL_SLOWER`, `DECIDABLE` |
+  | `len64_absent_incumbent_malloc` | `3.868` | `2.502` | `1.551651` (`[1.529935, 1.559832]`) | `0.991369` / `0.990518` | `FL_SLOWER`, `DECIDABLE` |
+
+  - `fpclassify` (14/14), `fpclassifyf` (14/14), `thrd_current` (8/8), `sinhf_coshf` (282/282, `worst_ulp=0`), `tanhf` (141/141, `worst_ulp=0`), `isa_kernels` (21/21 kernels, 2,826/2,826), and `malloc_free --fl-deepbind --verify-only` all passed live conformance on `3f36e104992c...`; wall-clock timing on the remaining 6 non-`memrchr` families was properly blocked (`status=2`) by `HostWideBenchmarkGuard` under shared-host load (`>20%` busy) and is withheld pending a quiet window.
+- **GATES GREEN.** `check_baseline_isa.sh` on `3f36e104992c...`: `functions_with_extensions=62 unlisted=0`, `non_math_abi_math_calls=0`, `Nehalem 28/28`, `qemu64 28/28`; `libm_f32_parity_gate_test` `2/2` (62M evals), `libm_f64_cr_parity_gate_test` `2/2` (7.25M evals), `fmemopen_fread_perf_gate_test` `2/2`, `frankenlibc-core --lib -- math:: towcase_table:: wctype_table::` `196/196`, `conformance_diff_isoc_sscanf_alias` `10/10` (release).
+- **DISPOSITION.** KEEP `memrchr` (`INCOMPLETE 5W/2L/1U` -> certified `DECIDABLE FL_FASTER 6W/2L/0U`), frameless math ABI, wide-ctype BMP paging, and Pass-2 soundness fixes; REVERT non-atomic ST `free()`.

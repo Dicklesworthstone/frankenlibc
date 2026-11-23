@@ -25860,6 +25860,15 @@ pub(crate) unsafe fn clone_with_tail(
         unsafe { set_abi_errno(libc::ENOSYS) };
         return -1;
     };
+    let shares_address_space = (flags & libc::CLONE_THREAD) != 0
+        || ((flags & libc::CLONE_VM) != 0 && (flags & libc::CLONE_VFORK) == 0);
+    if shares_address_space {
+        crate::malloc_abi::latch_multi_threaded_before_thread_create();
+        frankenlibc_core::stdlib::random_sv::mark_multithreaded();
+        if (flags & libc::CLONE_SETTLS) == 0 {
+            crate::malloc_abi::note_native_thread_backend();
+        }
+    }
     match tail_count {
         0 => unsafe { host_clone(fn_ptr, stack, flags, arg) },
         1 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0]) },

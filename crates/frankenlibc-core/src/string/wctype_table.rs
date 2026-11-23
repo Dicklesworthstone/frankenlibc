@@ -47,6 +47,7 @@ const fn page_eq(a: &[u16; 64], b: &[u16; 64]) -> bool {
 const fn build_bmp_ctype_table<const N: usize, const PAGES: usize>(
     transitions: &[(u32, u16); N],
 ) -> BmpCtypeTable<PAGES> {
+    assert!(PAGES <= (u8::MAX as usize) + 1);
     let mut dir = [0u8; 1024];
     let mut pages = [[0u16; 64]; PAGES];
     let mut unique = 0usize;
