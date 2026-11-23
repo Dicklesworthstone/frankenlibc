@@ -1478,13 +1478,6 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         }
     }
 
-    // Execute the program
-    let env = if ctx.envp.is_null() {
-        unsafe { environ as *const *mut c_char }
-    } else {
-        ctx.envp
-    };
-
     let final_mask = ctx
         .spawn_attrs
         .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGMASK != 0)
@@ -1502,7 +1495,10 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
             raw_syscall::sys_execve(
                 cand_path as *const u8,
                 ctx.argv as *const *const u8,
-                env as *const *const u8,
+                // Linux and GNU treat a NULL envp as an empty environment.
+                // Inheriting environ here would disclose parent-only values
+                // to a child whose caller explicitly supplied no environment.
+                ctx.envp as *const *const u8,
             )
         }
         .err()
@@ -1512,6 +1508,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         if !ctx.is_path_search {
             unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
+        final_err = err;
         match err {
             libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
             libc::EACCES => {
@@ -1730,6 +1727,13 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
             let owned_path = unsafe { path_bytes_from_env_vector(std::ptr::null()) };
             let path_bytes = owned_path.as_slice();
             for dir in path_bytes.split(|b| *b == b':') {
+                // Match the searching exec boundary: an unrepresentably long
+                // PATH component must not hide a usable later executable.
+                // Shorter components still reach execve, whose ENAMETOOLONG
+                // is terminal (for example a single NAME_MAX+1 directory).
+                if dir.len() >= libc::PATH_MAX as usize {
+                    continue;
+                }
                 let mut full = dir.to_vec();
                 if !full.ends_with(b"/") && !full.is_empty() {
                     full.push(b'/');
@@ -1739,11 +1743,9 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
                     candidate_paths.push(c);
                 }
             }
-            if candidate_paths.is_empty()
-                && let Ok(c) = std::ffi::CString::new(file_bytes)
-            {
-                candidate_paths.push(c);
-            }
+            // An empty candidate list reports ENOENT in the child, after
+            // attributes and file actions. It must not invent a CWD lookup
+            // or mask an earlier action failure by returning in the parent.
         }
     }
 

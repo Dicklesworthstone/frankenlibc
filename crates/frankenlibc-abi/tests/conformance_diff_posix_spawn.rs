@@ -358,6 +358,293 @@ fn diff_posix_spawnp_path_lookup() {
     assert_eq!(exit_fl, exit_lc, "exit code: fl={exit_fl}, lc={exit_lc}");
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct SpawnObservation {
+    error: c_int,
+    exit_status: Option<c_int>,
+    published_pid: bool,
+}
+
+/// Compare an actual executed child (or the exact pre-exec error) through the
+/// independently resolved GNU symbol and the candidate. Reap before returning
+/// even when a later differential assertion will fail.
+fn observe_spawn(
+    host: bool,
+    search: bool,
+    file: &std::ffi::CStr,
+    args: &[&std::ffi::CStr],
+    envp: *const *mut c_char,
+) -> SpawnObservation {
+    let spawn = match (host, search) {
+        (true, true) => host_posix_spawnp_fn(),
+        (true, false) => host_posix_spawn_fn(),
+        (false, true) => fl::posix_spawnp,
+        (false, false) => fl::posix_spawn,
+    };
+    let argv: Vec<*mut c_char> = args
+        .iter()
+        .map(|arg| arg.as_ptr().cast_mut())
+        .chain(std::iter::once(std::ptr::null_mut()))
+        .collect();
+    let mut pid = -1;
+    // SAFETY: all strings and terminated vectors remain alive through spawn.
+    // A NULL envp is the GNU/Linux empty-environment extension under test.
+    let error = unsafe {
+        spawn(
+            &mut pid,
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp,
+        )
+    };
+    let exit_status = if error == 0 {
+        assert!(pid > 0, "successful spawn must publish a real child PID");
+        let mut status = 0;
+        loop {
+            // SAFETY: pid is this call's child and status is writable.
+            let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if waited == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            assert_eq!(waited, pid, "spawned child must be reaped");
+            break;
+        }
+        assert!(
+            libc::WIFEXITED(status),
+            "child terminated abnormally: {status}"
+        );
+        Some(libc::WEXITSTATUS(status))
+    } else {
+        None
+    };
+    SpawnObservation {
+        error,
+        exit_status,
+        published_pid: pid != -1,
+    }
+}
+
+#[test]
+fn diff_spawnp_search_path_and_errors() {
+    const CHILD_CASE: &str = "FRANKENLIBC_TEST_SPAWN_SEARCH_CASE";
+    const CHILD_FILE: &str = "FRANKENLIBC_TEST_SPAWN_SEARCH_FILE";
+    const CHILD_ERROR: &str = "FRANKENLIBC_TEST_SPAWN_SEARCH_ERROR";
+    if let Some(case) = std::env::var_os(CHILD_CASE) {
+        let file = CString::new(std::env::var(CHILD_FILE).unwrap()).unwrap();
+        let error = std::env::var(CHILD_ERROR).unwrap().parse().unwrap();
+        let empty = [std::ptr::null_mut()];
+        let expected = SpawnObservation {
+            error,
+            exit_status: (error == 0).then_some(0),
+            published_pid: error == 0,
+        };
+        let host = observe_spawn(true, true, &file, &[&file], empty.as_ptr());
+        assert_eq!(host, expected, "GNU contract for {case:?}");
+        let candidate = observe_spawn(false, true, &file, &[&file], empty.as_ptr());
+        assert_eq!(candidate, host, "candidate contract for {case:?}");
+        return;
+    }
+
+    // Each environment lives in a separate process, avoiding a global PATH
+    // mutation racing libtest. Retain scratch fixtures for failure diagnosis.
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "frankenlibc-spawn-search-{}-{unique}",
+        std::process::id()
+    ));
+    let good = directory.join("good");
+    let denied = directory.join("denied");
+    let noexec = directory.join("noexec");
+    for path in [&good, &denied, &noexec] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    symlink("/bin/true", good.join("probe")).unwrap();
+    std::fs::write(denied.join("probe"), b"#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(denied.join("probe"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(noexec.join("probe"), b"exit 0\n").unwrap();
+    std::fs::set_permissions(noexec.join("probe"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let missing = directory.join("missing");
+    let too_long = "x".repeat(libc::PATH_MAX as usize);
+    let cases = [
+        (
+            "long-prefix",
+            format!("{too_long}:{}", good.display()),
+            "probe".into(),
+            0,
+        ),
+        (
+            "long-middle",
+            format!("{}:{too_long}:{}", missing.display(), good.display()),
+            "probe".into(),
+            0,
+        ),
+        (
+            "name-max-directory",
+            format!("{}:{}", "x".repeat(256), good.display()),
+            "probe".into(),
+            libc::ENAMETOOLONG,
+        ),
+        (
+            "path-max-minus-one",
+            format!(
+                "{}:{}",
+                "x".repeat(libc::PATH_MAX as usize - 1),
+                good.display()
+            ),
+            "probe".into(),
+            libc::ENAMETOOLONG,
+        ),
+        (
+            "long-name",
+            good.display().to_string(),
+            "x".repeat(256),
+            libc::ENAMETOOLONG,
+        ),
+        (
+            "last-notdir",
+            format!("{}:/dev/null", missing.display()),
+            "probe".into(),
+            libc::ENOTDIR,
+        ),
+        (
+            "last-missing",
+            format!("/dev/null:{}", missing.display()),
+            "probe".into(),
+            libc::ENOENT,
+        ),
+        (
+            "denied-before-notdir",
+            format!("{}:/dev/null", denied.display()),
+            "probe".into(),
+            libc::EACCES,
+        ),
+        (
+            "notdir-before-denied",
+            format!("/dev/null:{}", denied.display()),
+            "probe".into(),
+            libc::EACCES,
+        ),
+        (
+            "denied-before-success",
+            format!("{}:{}", denied.display(), good.display()),
+            "probe".into(),
+            0,
+        ),
+        (
+            "enoexec-after-denied",
+            format!("{}:{}", denied.display(), noexec.display()),
+            "probe".into(),
+            libc::ENOEXEC,
+        ),
+        ("empty-component", String::new(), "probe".into(), 0),
+    ];
+    for mode in ["strict", "hardened"] {
+        for (case, path, file, error) in &cases {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "diff_spawnp_search_path_and_errors",
+                    "--nocapture",
+                ])
+                .current_dir(if *case == "empty-component" {
+                    &good
+                } else {
+                    &directory
+                })
+                .env("FRANKENLIBC_MODE", mode)
+                .env("PATH", path)
+                .env(CHILD_CASE, case)
+                .env(CHILD_FILE, file)
+                .env(CHILD_ERROR, error.to_string())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "mode={mode}, case={case}:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+}
+
+#[test]
+fn diff_spawn_empty_and_explicit_environments() {
+    const CHILD_ENV: &str = "FRANKENLIBC_TEST_SPAWN_ENVIRONMENT_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        for mode in ["strict", "hardened"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "diff_spawn_empty_and_explicit_environments",
+                    "--nocapture",
+                ])
+                .env("FRANKENLIBC_MODE", mode)
+                .env("PATH", "/bin:/usr/bin")
+                .env("FL_SPAWN_SENTINEL", "parent")
+                .env("FL_SPAWN_PARENT_ONLY", "present")
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "mode={mode}:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    }
+
+    assert_eq!(std::env::var("FL_SPAWN_SENTINEL").unwrap(), "parent");
+    assert_eq!(std::env::var("FL_SPAWN_PARENT_ONLY").unwrap(), "present");
+    let empty = [std::ptr::null_mut()];
+    let explicit = [
+        c"FL_SPAWN_SENTINEL=child".as_ptr().cast_mut(),
+        std::ptr::null_mut(),
+    ];
+    for search in [false, true] {
+        for (label, envp, command) in [
+            (
+                "NULL",
+                std::ptr::null(),
+                c"test -z \"${FL_SPAWN_SENTINEL+x}\" && test -z \"${FL_SPAWN_PARENT_ONLY+x}\"",
+            ),
+            (
+                "empty-vector",
+                empty.as_ptr(),
+                c"test -z \"${FL_SPAWN_SENTINEL+x}\" && test -z \"${FL_SPAWN_PARENT_ONLY+x}\"",
+            ),
+            (
+                "explicit-vector",
+                explicit.as_ptr(),
+                c"test \"$FL_SPAWN_SENTINEL\" = child && test -z \"${FL_SPAWN_PARENT_ONLY+x}\"",
+            ),
+        ] {
+            let file = if search { c"sh" } else { c"/bin/sh" };
+            let args = [c"sh", c"-c", command];
+            let host = observe_spawn(true, search, file, &args, envp);
+            assert_eq!(
+                host,
+                SpawnObservation {
+                    error: 0,
+                    exit_status: Some(0),
+                    published_pid: true
+                },
+                "GNU environment contract: search={search}, {label}"
+            );
+            let candidate = observe_spawn(false, search, file, &args, envp);
+            assert_eq!(candidate, host, "search={search}, environment={label}");
+        }
+    }
+}
+
 #[test]
 fn diff_file_actions_init_destroy_round_trip() {
     let mut fa = FileActionsBuf([0u8; FA_BYTES]);
