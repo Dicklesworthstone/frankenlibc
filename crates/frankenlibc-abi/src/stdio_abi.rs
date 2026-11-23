@@ -6633,16 +6633,17 @@ fn fgets_read_failed(written: usize, had_error: bool) -> bool {
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
 unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> usize {
-    if !s.is_readable() {
-        s.set_error();
-        unsafe { set_abi_errno(errno::EBADF) };
-        return 0;
-    }
     let io_caller = stream_io_caller(s, caller);
     let total = dst.len();
     let mut read_total = 0usize;
     while read_total < total {
-        let n = s.buffered_read_into(&mut dst[read_total..total]);
+        // GNU checks the FILE read mode at underflow, but direct descriptor
+        // reads bypass it. Do not manufacture ferror before choosing that path.
+        let n = if s.is_readable() {
+            s.buffered_read_into(&mut dst[read_total..total])
+        } else {
+            0
+        };
         if n > 0 {
             read_total += n;
             continue;
@@ -6656,6 +6657,11 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
             // EOF is sticky for underflow even if the file has grown. GNU's
             // direct descriptor reads below deliberately bypass that check.
             if s.is_eof() {
+                break;
+            }
+            if !s.is_readable() {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
                 break;
             }
             let rc = unsafe { refill_stream(s, caller) };

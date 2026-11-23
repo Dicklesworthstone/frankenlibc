@@ -282,9 +282,7 @@ fn observe_error_retry(
 
         *libc::__errno_location() = RETRY_ERRNO_SENTINEL;
         let result = match operation {
-            RetryRead::Block => {
-                (arm.fread)(bytes.as_mut_ptr().cast(), 1, request, stream) as isize
-            }
+            RetryRead::Block => (arm.fread)(bytes.as_mut_ptr().cast(), 1, request, stream) as isize,
             RetryRead::Line => {
                 let result = (arm.fgets)(bytes.as_mut_ptr().cast(), request as c_int, stream);
                 assert!(result.is_null() || result == bytes.as_mut_ptr().cast());
@@ -478,61 +476,119 @@ fn getline_keeps_its_existing_error_short_circuit() {
     }
 }
 
+const WRITE_ONLY_PAYLOAD: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz012345";
+
+fn observe_write_only_reads(
+    arm: &StdioArm,
+    mode: c_int,
+    operation: RetryRead,
+    request: usize,
+    prior_error: bool,
+) -> [(ReadAfterError, i64); 2] {
+    let mut storage = [0u8; 8];
+    // SAFETY: memfd_create produces O_RDWR, independently of the FILE's "w"
+    // mode. The descriptor and caller-owned buffer remain live until fclose.
+    unsafe {
+        let fd = libc::memfd_create(c"stdio-write-only".as_ptr(), 0);
+        assert!(fd >= 0);
+        assert_eq!(
+            libc::write(
+                fd,
+                WRITE_ONLY_PAYLOAD.as_ptr().cast(),
+                WRITE_ONLY_PAYLOAD.len()
+            ),
+            WRITE_ONLY_PAYLOAD.len() as isize
+        );
+        assert_eq!(libc::lseek(fd, 0, libc::SEEK_SET), 0);
+        let stream = (arm.fdopen)(fd, c"w".as_ptr());
+        assert!(!stream.is_null());
+        if arm.name == "fl" {
+            assert!(!fl::stdio_may_delegate_to_host_for_tests(stream));
+        }
+        assert_eq!(
+            (arm.setvbuf)(stream, storage.as_mut_ptr().cast(), mode, storage.len()),
+            0
+        );
+        if prior_error {
+            assert_eq!((arm.fgetc)(stream), libc::EOF);
+            assert_eq!(*libc::__errno_location(), libc::EBADF);
+            assert_ne!((arm.ferror)(stream), 0);
+        }
+        let observations = std::array::from_fn(|_| {
+            let mut bytes = [0xa5u8; 32];
+            *libc::__errno_location() = RETRY_ERRNO_SENTINEL;
+            let result = match operation {
+                RetryRead::Block => {
+                    (arm.fread)(bytes.as_mut_ptr().cast(), 1, request, stream) as isize
+                }
+                RetryRead::Line => isize::from(
+                    !(arm.fgets)(bytes.as_mut_ptr().cast(), request as c_int, stream).is_null(),
+                ),
+                RetryRead::AllocatedLine => unreachable!(),
+            };
+            let saved_errno = *libc::__errno_location();
+            let observation = ReadAfterError {
+                result,
+                bytes,
+                errno: saved_errno,
+                error: (arm.ferror)(stream) != 0,
+                eof: (arm.feof)(stream) != 0,
+            };
+            (observation, libc::lseek(fd, 0, libc::SEEK_CUR))
+        });
+        assert_eq!((arm.fclose)(stream), 0);
+        observations
+    }
+}
+
 #[test]
-fn retryable_error_does_not_allow_reading_write_only_streams() {
-    for arm in [host(), candidate()] {
-        for mode in [libc::_IOFBF, libc::_IONBF] {
-            for operation in [RetryRead::Block, RetryRead::Line] {
-                let mut storage = [0u8; 8];
-                // SAFETY: memfd_create produces O_RDWR, so only the FILE mode
-                // can reject reading. The descriptor and buffer live to fclose.
-                unsafe {
-                    let fd = libc::memfd_create(c"stdio-write-only".as_ptr(), 0);
-                    assert!(fd >= 0);
-                    let payload = b"secret\n";
+fn write_only_reads_match_gnu_underflow_and_direct_paths() {
+    for mode in [libc::_IOFBF, libc::_IONBF] {
+        for operation in [RetryRead::Block, RetryRead::Line] {
+            for request in [3, 8, 16] {
+                for prior_error in [false, true] {
+                    // GNU checks the FILE read mode at underflow. Its direct
+                    // fread path bypasses that check, just as it bypasses EOF;
+                    // successful direct reads preserve any old ferror value.
+                    let direct = matches!(operation, RetryRead::Block)
+                        && (mode == libc::_IONBF || request >= 8);
+                    let expected: [(ReadAfterError, i64); 2] = std::array::from_fn(|attempt| {
+                        let copied = if direct { request } else { 0 };
+                        let start = attempt * copied;
+                        let mut bytes = [0xa5; 32];
+                        bytes[..copied].copy_from_slice(&WRITE_ONLY_PAYLOAD[start..start + copied]);
+                        (
+                            ReadAfterError {
+                                result: copied as isize,
+                                bytes,
+                                errno: if direct {
+                                    RETRY_ERRNO_SENTINEL
+                                } else {
+                                    libc::EBADF
+                                },
+                                error: prior_error || !direct,
+                                eof: false,
+                            },
+                            (start + copied) as i64,
+                        )
+                    });
+                    let oracle =
+                        observe_write_only_reads(&host(), mode, operation, request, prior_error);
                     assert_eq!(
-                        libc::write(fd, payload.as_ptr().cast(), payload.len()),
-                        payload.len() as isize
+                        oracle, expected,
+                        "GNU mode={mode} operation={operation:?} request={request} prior={prior_error}"
                     );
-                    assert_eq!(libc::lseek(fd, 0, libc::SEEK_SET), 0);
-                    let stream = (arm.fdopen)(fd, c"w".as_ptr());
-                    assert!(!stream.is_null());
-                    if arm.name == "fl" {
-                        assert!(!fl::stdio_may_delegate_to_host_for_tests(stream));
-                    }
                     assert_eq!(
-                        (arm.setvbuf)(
-                            stream,
-                            storage.as_mut_ptr().cast(),
+                        observe_write_only_reads(
+                            &candidate(),
                             mode,
-                            storage.len(),
+                            operation,
+                            request,
+                            prior_error,
                         ),
-                        0
+                        oracle,
+                        "mode={mode} operation={operation:?} request={request} prior={prior_error}"
                     );
-                    for attempt in 0..2 {
-                        let mut bytes = [0xa5u8; 32];
-                        *libc::__errno_location() = RETRY_ERRNO_SENTINEL;
-                        let result = match operation {
-                            RetryRead::Block => {
-                                (arm.fread)(bytes.as_mut_ptr().cast(), 1, 3, stream) as isize
-                            }
-                            RetryRead::Line => isize::from(
-                                !(arm.fgets)(bytes.as_mut_ptr().cast(), 4, stream).is_null(),
-                            ),
-                            RetryRead::AllocatedLine => unreachable!(),
-                        };
-                        let saved_errno = *libc::__errno_location();
-                        assert_eq!(
-                            (result, saved_errno, bytes),
-                            (0, libc::EBADF, [0xa5; 32]),
-                            "{}: mode={mode} operation={operation:?} attempt={attempt}",
-                            arm.name
-                        );
-                        assert_ne!((arm.ferror)(stream), 0);
-                        assert_eq!((arm.feof)(stream), 0);
-                        assert_eq!(libc::lseek(fd, 0, libc::SEEK_CUR), 0);
-                    }
-                    assert_eq!((arm.fclose)(stream), 0);
                 }
             }
         }
