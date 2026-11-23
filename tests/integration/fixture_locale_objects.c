@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <uchar.h>
@@ -284,6 +285,7 @@ static void codec_provider(const char *expected) {
         {"nl_langinfo_l", (const void *)nl_langinfo_l},
         {"__ctype_get_mb_cur_max", (const void *)__ctype_get_mb_cur_max},
         {"mbrtowc", (const void *)mbrtowc}, {"mbrlen", (const void *)mbrlen},
+        {"mblen", (const void *)mblen}, {"mbtowc", (const void *)mbtowc},
         {"wcrtomb", (const void *)wcrtomb}, {"mbsinit", (const void *)mbsinit},
         {"mbrtoc16", (const void *)mbrtoc16}, {"c16rtomb", (const void *)c16rtomb},
         {"mbsrtowcs", (const void *)mbsrtowcs}, {"mbsnrtowcs", (const void *)mbsnrtowcs},
@@ -334,6 +336,18 @@ static void codec_scalars(const struct codec_case *test) {
                   v->length - split);
             CHECK(value == v->value && mbsinit(&state));
         }
+        /* Resume repeatedly, including the third and fourth input calls.
+         * This exercises accumulation beyond a single saved lead byte. */
+        memset(&state, 0, sizeof state);
+        value = 0xdddd;
+        for (size_t byte_index = 0; byte_index < v->length; ++byte_index) {
+            size_t converted = mbrtowc(&value, v->bytes + byte_index, 1, &state);
+            if (byte_index + 1 == v->length) {
+                CHECK(converted == 1 && value == v->value && mbsinit(&state));
+            } else {
+                CHECK(converted == (size_t)-2 && value == 0xdddd && !mbsinit(&state));
+            }
+        }
     }
     mbstate_t state = {0};
     wchar_t value = 0xdddd;
@@ -370,6 +384,77 @@ static void codec_scalars(const struct codec_case *test) {
         CHECK(c16rtomb(encoded, 0xde00, &state) == 4 && mbsinit(&state));
         CHECK(!memcmp(encoded, "\x94\x39\xfc\x36", 4));
     }
+}
+
+static void codec_guard_pages(const struct codec_case *test) {
+    long page_size = sysconf(_SC_PAGESIZE);
+    CHECK(page_size > 0);
+    size_t page = (size_t)page_size;
+    char *mapping = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapping != MAP_FAILED);
+    CHECK(mprotect(mapping + page, page, PROT_NONE) == 0);
+
+    for (size_t i = 0; i < test->count; ++i) {
+        const struct codec_vector *v = &test->vectors[i];
+        char *input = mapping + page - v->length;
+        memcpy(input, v->bytes, v->length);
+        mbstate_t state = {0};
+        wchar_t value = 0xdddd;
+        errno = 717;
+        CHECK(mbrtowc(&value, input, (size_t)-1, &state) == v->length);
+        CHECK(value == v->value && mbsinit(&state) && errno == 717);
+        CHECK(mbrlen(input, (size_t)-1, &state) == v->length);
+        CHECK(mblen(input, (size_t)-1) == (int)v->length);
+        CHECK(mbtowc(NULL, NULL, 0) == 0);
+        value = 0xdddd;
+        CHECK(mbtowc(&value, input, (size_t)-1) == (int)v->length);
+        CHECK(value == v->value);
+
+        for (size_t split = 1; split < v->length; ++split) {
+            memset(&state, 0, sizeof state);
+            value = 0xdddd;
+            input = mapping + page - split;
+            memcpy(input, v->bytes, split);
+            CHECK(mbrtowc(&value, input, split, &state) == (size_t)-2);
+            CHECK(value == 0xdddd && !mbsinit(&state));
+            size_t remaining = v->length - split;
+            input = mapping + page - remaining;
+            memcpy(input, v->bytes + split, remaining);
+            CHECK(mbrtowc(&value, input, remaining, &state) == remaining);
+            CHECK(value == v->value && mbsinit(&state));
+        }
+    }
+
+    mbstate_t state = {0};
+    wchar_t value = 0xdddd;
+    CHECK(mbrtowc(&value, mapping + page, 0, &state) == (size_t)-2);
+    CHECK(value == 0xdddd && mbsinit(&state));
+    mapping[page - 1] = 0;
+    CHECK(mbrtowc(&value, mapping + page - 1, (size_t)-1, &state) == 0);
+    CHECK(value == 0 && mbsinit(&state));
+    mapping[page - 1] = (char)0xff;
+    value = 0xdddd;
+    errno = 717;
+    CHECK(mbrtowc(&value, mapping + page - 1, (size_t)-1, &state) == (size_t)-1);
+    CHECK(value == 0xdddd && errno == EILSEQ);
+
+    /* These prefixes become invalid at byte two; no decoder may inspect the
+     * inaccessible byte three even though the caller's bound is SIZE_MAX. */
+    const char *invalid = test->width == 2 ? "\x82\x00" :
+                          test->width == 3 ? "\x8f\x00" : "\x81\x20";
+    memcpy(mapping + page - 2, invalid, 2);
+    memset(&state, 0, sizeof state);
+    value = 0xdddd;
+    errno = 717;
+    CHECK(mbrtowc(&value, mapping + page - 2, (size_t)-1, &state) == (size_t)-1);
+    CHECK(value == 0xdddd && errno == EILSEQ);
+    memset(&state, 0, sizeof state);
+    CHECK(mbrtowc(&value, invalid, 1, &state) == (size_t)-2);
+    errno = 717;
+    CHECK(mbrtowc(&value, mapping + page - 1, 1, &state) == (size_t)-1);
+    CHECK(value == 0xdddd && errno == EILSEQ);
+    CHECK(munmap(mapping, 2 * page) == 0);
 }
 
 static void codec_bulk(const struct codec_case *test) {
@@ -487,6 +572,7 @@ static void multibyte(unsigned index, const char *provider) {
     CHECK(uselocale(selected) == LC_GLOBAL_LOCALE);
     CHECK(MB_CUR_MAX == test->width && !strcmp(setlocale(LC_CTYPE, NULL), "C"));
     codec_scalars(test);
+    codec_guard_pages(test);
     codec_bulk(test);
     codec_streams(test, selected);
     CHECK(uselocale(LC_GLOBAL_LOCALE) == selected);

@@ -3798,6 +3798,28 @@ mod codec {
         debug_assert!(n >= 1);
         let pcount = pending_prefix.len();
         let codec = active_multibyte_codec();
+        if let MultibyteCodec::Stateless(codec) = codec {
+            // Named multibyte codecs can need two, three, or four bytes. Ask
+            // the decoder after each byte so shorter characters and invalid
+            // prefixes never cause a speculative read into the next page.
+            let width = codec.max_width();
+            if pcount >= width
+                || (pcount > 0 && !matches!(codec.decode(pending_prefix), Utf8Step::Incomplete))
+            {
+                return &[];
+            }
+            out[..pcount].copy_from_slice(pending_prefix);
+            let take = n.min(width - pcount);
+            for idx in 0..take {
+                // SAFETY: the previous prefix was incomplete, and this byte
+                // is within both the caller's bound and the codec's width.
+                out[pcount + idx] = unsafe { *s.add(idx) };
+                if !matches!(codec.decode(&out[..=pcount + idx]), Utf8Step::Incomplete) {
+                    return &out[..=pcount + idx];
+                }
+            }
+            return &out[..pcount + take];
+        }
         if !matches!(codec, MultibyteCodec::Utf8) {
             if pcount > 0 {
                 return &[];
@@ -4741,9 +4763,9 @@ pub unsafe extern "C" fn mbrtowc(
         return usize::MAX;
     }
 
-    // RFC 3629-strict decode: `Incomplete` (truncated-but-valid prefix) ->
-    // accumulate and return (size_t)-2; `Invalid` -> EILSEQ. The decoder is the
-    // single source of truth shared with mbtowc and the conformance harness.
+    // Decode using the selected locale: `Incomplete` accumulates bytes and
+    // returns (size_t)-2; `Invalid` reports EILSEQ. This shares the native
+    // mappings with mbtowc, string conversions, and the stream codecs.
     match codec::utf8_decode_step(decode_slice) {
         wchar_core::Utf8Step::Char { wc, len } => {
             if len <= pcount && pcount > 0 {

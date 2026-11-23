@@ -205,15 +205,23 @@ fn open_memstream_publication_allocation_failure() {
         rlim_cur: (vm_kib * 1024 + 1024 * 1024).min(previous.rlim_cur),
         rlim_max: previous.rlim_max,
     };
+    // RLIMIT_AS prevents new mappings, but the hardened allocator may satisfy
+    // several requests from an existing arena. Retain those allocations until
+    // after the operation so publication cannot reuse the probe's storage.
+    // Fixed storage keeps exhaustion bounded without allocating under the limit.
+    let mut retained = [std::ptr::null_mut(); 64];
     assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &constrained) }, 0);
     // Do not allocate assertion/reporting strings before restoring the limit.
-    // The probe rejects an environment that can satisfy this request from a
-    // pre-existing free arena, instead of mistaking it for a tested failure.
+    // Reaching the bound without observing failure still rejects the premise;
+    // a successful allocation is never mistaken for tested error handling.
     let (allocation_failed, result, error, stream_error, position) = unsafe {
-        let probe = malloc_abi::malloc(PAYLOAD + 5);
-        let allocation_failed = probe.is_null();
-        if !probe.is_null() {
-            malloc_abi::free(probe);
+        let mut allocation_failed = false;
+        for probe in &mut retained {
+            *probe = malloc_abi::malloc(PAYLOAD + 5);
+            if probe.is_null() {
+                allocation_failed = true;
+                break;
+            }
         }
         *errno_abi::__errno_location() = libc::EDOM;
         let result = match operation.as_str() {
@@ -237,6 +245,11 @@ fn open_memstream_publication_allocation_failure() {
         (allocation_failed, result, error, stream_error, position)
     };
     assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) }, 0);
+    for probe in retained {
+        // SAFETY: each non-null probe is a distinct live native allocation;
+        // releasing it after restoring RLIMIT_AS also permits recovery below.
+        unsafe { malloc_abi::free(probe) };
+    }
     assert!(
         allocation_failed,
         "the bounded allocation must actually fail"
