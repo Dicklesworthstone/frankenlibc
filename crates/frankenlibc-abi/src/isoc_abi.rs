@@ -561,52 +561,52 @@ pub unsafe extern "C" fn __isoc23_wcstoumax(
     unsafe { crate::wchar_abi::wcstoul_with_binary_prefix(nptr, endptr, base, true) }
 }
 
-/// `__isoc23_wcstol_l` — C23 locale alias for wcstol (locale ignored).
+/// `__isoc23_wcstol_l` — explicit LC_CTYPE with C23 binary-prefix syntax.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_wcstol_l(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_long {
-    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
-    unsafe { __isoc23_wcstol(nptr, endptr, base) }
+    // SAFETY: preserve the wide-string, endptr and explicit-locale contracts.
+    unsafe { crate::wchar_abi::wcstol_l_with_binary_prefix(nptr, endptr, base, locale, true) }
 }
 
-/// `__isoc23_wcstoul_l` — C23 locale alias for wcstoul (locale ignored).
+/// `__isoc23_wcstoul_l` — unsigned explicit-locale C23 conversion.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_wcstoul_l(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_ulong {
-    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
-    unsafe { __isoc23_wcstoul(nptr, endptr, base) }
+    // SAFETY: preserve the wide-string, endptr and explicit-locale contracts.
+    unsafe { crate::wchar_abi::wcstoul_l_with_binary_prefix(nptr, endptr, base, locale, true) }
 }
 
-/// `__isoc23_wcstoll_l` — C23 locale alias for wcstoll (locale ignored).
+/// `__isoc23_wcstoll_l` — signed long-long explicit-locale C23 conversion.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_wcstoll_l(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_longlong {
-    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
-    unsafe { __isoc23_wcstoll(nptr, endptr, base) }
+    // SAFETY: Linux LP64 long and long long share the return representation.
+    unsafe { __isoc23_wcstol_l(nptr, endptr, base, locale) as c_longlong }
 }
 
-/// `__isoc23_wcstoull_l` — C23 locale alias for wcstoull (locale ignored).
+/// `__isoc23_wcstoull_l` — unsigned long-long explicit-locale C23 conversion.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_wcstoull_l(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_ulonglong {
-    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
-    unsafe { __isoc23_wcstoull(nptr, endptr, base) }
+    // SAFETY: Linux LP64 unsigned long and long long share the representation.
+    unsafe { __isoc23_wcstoul_l(nptr, endptr, base, locale) as c_ulonglong }
 }
 
 // ===========================================================================

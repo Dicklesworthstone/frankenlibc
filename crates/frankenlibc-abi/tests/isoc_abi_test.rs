@@ -255,33 +255,52 @@ fn isoc23_wcstoumax_hex() {
 // __isoc23_wcstol_l locale variants
 // ---------------------------------------------------------------------------
 
+fn with_c_locale(check: impl FnOnce(*mut std::ffi::c_void)) {
+    // SAFETY: construct a valid locale_t owned by the tested implementation;
+    // a null locale argument is not a valid GNU *_l conversion contract.
+    let locale = unsafe {
+        frankenlibc_abi::locale_abi::newlocale(libc::LC_ALL_MASK, c"C".as_ptr(), ptr::null_mut())
+    };
+    assert!(!locale.is_null());
+    check(locale);
+    // SAFETY: no conversion retains this locale and the test owns the handle.
+    unsafe { frankenlibc_abi::locale_abi::freelocale(locale) };
+}
+
 #[test]
 fn isoc23_wcstol_l_decimal() {
     let ws: Vec<WcharT> = vec![b'3' as WcharT, b'3' as WcharT, 0];
-    let val = unsafe { __isoc23_wcstol_l(wchar_slice(&ws), ptr::null_mut(), 10, ptr::null_mut()) };
-    assert_eq!(val, 33);
+    with_c_locale(|locale| {
+        let val = unsafe { __isoc23_wcstol_l(wchar_slice(&ws), ptr::null_mut(), 10, locale) };
+        assert_eq!(val, 33);
+    });
 }
 
 #[test]
 fn isoc23_wcstoul_l_basic() {
     let ws: Vec<WcharT> = vec![b'1' as WcharT, b'0' as WcharT, 0];
-    let val = unsafe { __isoc23_wcstoul_l(wchar_slice(&ws), ptr::null_mut(), 10, ptr::null_mut()) };
-    assert_eq!(val, 10);
+    with_c_locale(|locale| {
+        let val = unsafe { __isoc23_wcstoul_l(wchar_slice(&ws), ptr::null_mut(), 10, locale) };
+        assert_eq!(val, 10);
+    });
 }
 
 #[test]
 fn isoc23_wcstoll_l_basic() {
     let ws: Vec<WcharT> = vec![b'8' as WcharT, b'8' as WcharT, 0];
-    let val = unsafe { __isoc23_wcstoll_l(wchar_slice(&ws), ptr::null_mut(), 10, ptr::null_mut()) };
-    assert_eq!(val, 88i64);
+    with_c_locale(|locale| {
+        let val = unsafe { __isoc23_wcstoll_l(wchar_slice(&ws), ptr::null_mut(), 10, locale) };
+        assert_eq!(val, 88i64);
+    });
 }
 
 #[test]
 fn isoc23_wcstoull_l_basic() {
     let ws: Vec<WcharT> = vec![b'4' as WcharT, b'4' as WcharT, 0];
-    let val =
-        unsafe { __isoc23_wcstoull_l(wchar_slice(&ws), ptr::null_mut(), 10, ptr::null_mut()) };
-    assert_eq!(val, 44u64);
+    with_c_locale(|locale| {
+        let val = unsafe { __isoc23_wcstoull_l(wchar_slice(&ws), ptr::null_mut(), 10, locale) };
+        assert_eq!(val, 44u64);
+    });
 }
 
 // ---------------------------------------------------------------------------

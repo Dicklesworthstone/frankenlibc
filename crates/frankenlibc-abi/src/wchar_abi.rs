@@ -5642,6 +5642,28 @@ unsafe fn wide_parse_int<T: Copy>(
     (value, consumed, status)
 }
 
+/// The core integer engines consume C-syntax digits. Only their leading
+/// whitespace depends on LC_CTYPE, so snapshot that facet at the boundary and
+/// keep the existing single-pass C fast paths unchanged. Do not use Unicode's
+/// general whitespace property: glibc deliberately excludes nonbreaking spaces.
+///
+/// # Safety
+/// `nptr` points to the caller's readable, NUL-terminated wide string.
+unsafe fn wide_integer_leading_space(nptr: *const libc::wchar_t, locale: NumericLocale) -> usize {
+    if locale.wide_is_c() {
+        return 0;
+    }
+    let mut leading = 0;
+    loop {
+        // SAFETY: each read precedes the first NUL in the caller's string.
+        let wc = unsafe { *nptr.add(leading) as u32 };
+        if wc == 0 || !locale.wide_is_space(wc) {
+            return leading;
+        }
+        leading += 1;
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstol(
     nptr: *const libc::wchar_t,
@@ -5660,6 +5682,26 @@ pub(crate) unsafe fn wcstol_with_binary_prefix(
     base: c_int,
     allow_binary_prefix: bool,
 ) -> std::ffi::c_long {
+    // SAFETY: preserve the public string/endptr contract with a stable snapshot
+    // of the active thread or process locale, without changing either one.
+    unsafe {
+        wcstol_in(
+            nptr,
+            endptr,
+            base,
+            allow_binary_prefix,
+            NumericLocale::current(),
+        )
+    }
+}
+
+unsafe fn wcstol_in(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+    allow_binary_prefix: bool,
+    locale: NumericLocale,
+) -> std::ffi::c_long {
     if nptr.is_null() {
         if !endptr.is_null() {
             // SAFETY: caller-provided endptr is writable when non-null.
@@ -5667,15 +5709,26 @@ pub(crate) unsafe fn wcstol_with_binary_prefix(
         }
         return 0;
     }
+    // GNU validates the base before inspecting input and leaves endptr alone.
+    if base != 0 && !(2..=36).contains(&base) {
+        // SAFETY: writes this thread's ABI errno.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    }
+
+    // SAFETY: nptr retains the public NUL-terminated wide-string contract.
+    let leading = unsafe { wide_integer_leading_space(nptr, locale) };
+    // SAFETY: leading stops at the first nonspace or NUL, inside the string.
+    let start = unsafe { nptr.add(leading) };
 
     // Single-pass fast path for base 10/16 (parse_wcstol_fast); the two-pass
     // wide_numeric_token_len + wcstol_impl fallback handles base 0 and other bases.
     // SAFETY: nptr is non-null and retains the public wide-string contract;
     // both paths bound consumed by the input's measured numeric prefix.
     let (value, consumed, status) = unsafe {
-        match parse_wcstol_fast(nptr as *const u32, base) {
+        match parse_wcstol_fast(start as *const u32, base) {
             Some(r) => r,
-            None => wide_parse_int(nptr, base, allow_binary_prefix, |s, b| {
+            None => wide_parse_int(start, base, allow_binary_prefix, |s, b| {
                 frankenlibc_core::stdlib::conversion::wcstol_impl_with_binary_prefix(
                     s,
                     b,
@@ -5684,6 +5737,9 @@ pub(crate) unsafe fn wcstol_with_binary_prefix(
             }),
         }
     };
+    // A sign/prefix without any digit consumes nothing, including skipped
+    // locale whitespace. Successful and overflowing parses include that prefix.
+    let consumed = if consumed == 0 { 0 } else { leading + consumed };
 
     // glibc leaves *endptr untouched on an invalid base (it validates the base
     // before any parsing); every other status writes the consumed position.
@@ -5720,6 +5776,25 @@ pub(crate) unsafe fn wcstoul_with_binary_prefix(
     base: c_int,
     allow_binary_prefix: bool,
 ) -> std::ffi::c_ulong {
+    // SAFETY: preserve the caller's pointer contract with the active snapshot.
+    unsafe {
+        wcstoul_in(
+            nptr,
+            endptr,
+            base,
+            allow_binary_prefix,
+            NumericLocale::current(),
+        )
+    }
+}
+
+unsafe fn wcstoul_in(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+    allow_binary_prefix: bool,
+    locale: NumericLocale,
+) -> std::ffi::c_ulong {
     if nptr.is_null() {
         if !endptr.is_null() {
             // SAFETY: caller-provided endptr is writable when non-null.
@@ -5727,15 +5802,25 @@ pub(crate) unsafe fn wcstoul_with_binary_prefix(
         }
         return 0;
     }
+    if base != 0 && !(2..=36).contains(&base) {
+        // SAFETY: writes this thread's ABI errno, without inspecting input.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    }
+
+    // SAFETY: nptr is the caller's readable terminated wide string.
+    let leading = unsafe { wide_integer_leading_space(nptr, locale) };
+    // SAFETY: leading points inside that string, at nonspace or NUL.
+    let start = unsafe { nptr.add(leading) };
 
     // Single-pass fast path for base 10/16 (parse_wcstoul_fast); base 0/other fall back to
     // the two-pass wide_numeric_token_len + wcstoul_impl.
     // SAFETY: nptr is non-null and retains the public wide-string contract;
     // both paths bound consumed by the input's measured numeric prefix.
     let (value, consumed, status) = unsafe {
-        match parse_wcstoul_fast(nptr as *const u32, base) {
+        match parse_wcstoul_fast(start as *const u32, base) {
             Some(r) => r,
-            None => wide_parse_int(nptr, base, allow_binary_prefix, |s, b| {
+            None => wide_parse_int(start, base, allow_binary_prefix, |s, b| {
                 frankenlibc_core::stdlib::conversion::wcstoul_impl_with_binary_prefix(
                     s,
                     b,
@@ -5744,6 +5829,7 @@ pub(crate) unsafe fn wcstoul_with_binary_prefix(
             }),
         }
     };
+    let consumed = if consumed == 0 { 0 } else { leading + consumed };
 
     // glibc leaves *endptr untouched on an invalid base (it validates the base
     // before any parsing); every other status writes the consumed position.
@@ -9695,9 +9781,36 @@ pub unsafe extern "C" fn wcstol_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_long {
-    unsafe { wcstol(nptr, endptr, base) }
+    // SAFETY: forward the public pointers and explicit locale to the shared body.
+    unsafe { wcstol_l_with_binary_prefix(nptr, endptr, base, locale, false) }
+}
+
+/// Explicit-locale signed body shared by legacy and C23 exports.
+///
+/// # Safety
+/// The caller supplies the same string/endptr and locale contracts as wcstol_l.
+pub(crate) unsafe fn wcstol_l_with_binary_prefix(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+    locale: *mut c_void,
+    allow_binary_prefix: bool,
+) -> c_long {
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        // SAFETY: errno is thread-local; a non-null endptr is writable by contract.
+        unsafe {
+            set_abi_errno(libc::EINVAL);
+            if !endptr.is_null() {
+                *endptr = nptr.cast_mut();
+            }
+        }
+        return 0;
+    };
+    // SAFETY: the snapshot is independent of the caller's ambient locale, and
+    // the shared parser retains the original pointer and prefix contracts.
+    unsafe { wcstol_in(nptr, endptr, base, allow_binary_prefix, locale) }
 }
 
 /// `wcstoul_l` — locale-aware wide string to unsigned long.
@@ -9706,9 +9819,35 @@ pub unsafe extern "C" fn wcstoul_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_ulong {
-    unsafe { wcstoul(nptr, endptr, base) }
+    // SAFETY: forward the original pointers and explicit locale.
+    unsafe { wcstoul_l_with_binary_prefix(nptr, endptr, base, locale, false) }
+}
+
+/// Explicit-locale unsigned body shared by legacy and C23 exports.
+///
+/// # Safety
+/// The caller supplies the same string/endptr and locale contracts as wcstoul_l.
+pub(crate) unsafe fn wcstoul_l_with_binary_prefix(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+    locale: *mut c_void,
+    allow_binary_prefix: bool,
+) -> c_ulong {
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        // SAFETY: errno is thread-local; a non-null endptr is writable by contract.
+        unsafe {
+            set_abi_errno(libc::EINVAL);
+            if !endptr.is_null() {
+                *endptr = nptr.cast_mut();
+            }
+        }
+        return 0;
+    };
+    // SAFETY: preserve the original pointer and binary-prefix contracts.
+    unsafe { wcstoul_in(nptr, endptr, base, allow_binary_prefix, locale) }
 }
 
 /// `wcstoll_l` — locale-aware wide string to long long.
@@ -9717,9 +9856,10 @@ pub unsafe extern "C" fn wcstoll_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_longlong {
-    unsafe { wcstoll(nptr, endptr, base) }
+    // SAFETY: Linux LP64 long and long long share the return representation.
+    unsafe { wcstol_l(nptr, endptr, base, locale) as c_longlong }
 }
 
 /// `wcstoull_l` — locale-aware wide string to unsigned long long.
@@ -9728,9 +9868,10 @@ pub unsafe extern "C" fn wcstoull_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_ulonglong {
-    unsafe { wcstoull(nptr, endptr, base) }
+    // SAFETY: Linux LP64 unsigned long and long long share the representation.
+    unsafe { wcstoul_l(nptr, endptr, base, locale) as c_ulonglong }
 }
 
 /// `wcstof_l` — locale-aware wide string to float.

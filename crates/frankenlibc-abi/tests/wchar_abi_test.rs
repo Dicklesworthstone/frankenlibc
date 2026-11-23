@@ -1656,11 +1656,19 @@ fn mbrtoc16_decodes_ascii() {
 // ── Locale _l conversion variants ───────────────────────────────────────────
 
 #[test]
-fn wcsto_l_null_locale_variants_match_base() {
+fn wcsto_l_c_locale_variants_match_base() {
     let signed = wstr(b"-123x");
     let unsigned = wstr(b"255z");
     let mut end: *mut libc::wchar_t = std::ptr::null_mut();
-    let loc = std::ptr::null_mut();
+    // SAFETY: *_l conversions require a live locale_t, not a null placeholder.
+    let loc = unsafe {
+        frankenlibc_abi::locale_abi::newlocale(
+            libc::LC_ALL_MASK,
+            c"C".as_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(!loc.is_null());
 
     let long = unsafe { wcstol_l(signed.as_ptr() as *const libc::wchar_t, &mut end, 10, loc) };
     assert_eq!(long, -123);
@@ -1694,15 +1702,27 @@ fn wcsto_l_null_locale_variants_match_base() {
         unsafe { end.offset_from(unsigned.as_ptr() as *mut libc::wchar_t) },
         3
     );
+    // SAFETY: all conversions have completed and this test owns the handle.
+    unsafe { frankenlibc_abi::locale_abi::freelocale(loc) };
 }
 
 #[test]
-fn wcstod_l_null_locale_matches_base() {
+fn wcstod_l_c_locale_matches_base() {
     let input = wstr(b"2.5");
     let mut end: *mut libc::wchar_t = std::ptr::null_mut();
-    let loc = std::ptr::null_mut();
+    // SAFETY: use the same valid GNU locale contract as the integer family.
+    let loc = unsafe {
+        frankenlibc_abi::locale_abi::newlocale(
+            libc::LC_ALL_MASK,
+            c"C".as_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(!loc.is_null());
     let v = unsafe { wcstod_l(input.as_ptr() as *const libc::wchar_t, &mut end, loc) };
     assert!((v - 2.5).abs() < 1e-10);
+    // SAFETY: the conversion has completed and this test owns the handle.
+    unsafe { frankenlibc_abi::locale_abi::freelocale(loc) };
 }
 
 // ── Existing tests (preserved) ──────────────────────────────────────────────
