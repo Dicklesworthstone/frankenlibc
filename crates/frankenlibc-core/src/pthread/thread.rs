@@ -1814,8 +1814,7 @@ mod tests {
     #[test]
     fn prepared_thread_abort_reaps_without_callbacks_or_errno_changes() {
         const CHILD: &str = "FRANKENLIBC_PREPARED_THREAD_ABORT_CHILD";
-        const TEST: &str =
-            "pthread::thread::tests::prepared_thread_abort_reaps_without_callbacks_or_errno_changes";
+        const TEST: &str = "pthread::thread::tests::prepared_thread_abort_reaps_without_callbacks_or_errno_changes";
         if std::env::var(CHILD).as_deref() != Ok("1") {
             // Other core tests also create native threads. Give the count
             // assertions their own process instead of depending on test
@@ -1855,7 +1854,10 @@ mod tests {
         let page_size = unsafe { host_page_size() } as usize;
         let mut residency = vec![0u8; (128 * 1024 + page_size) / page_size];
         let baseline = LIVE_NATIVE_THREADS.load(Ordering::Acquire);
-        assert_eq!(baseline, 1, "isolated process starts with its initial thread");
+        assert_eq!(
+            baseline, 1,
+            "isolated process starts with its initial thread"
+        );
         for _ in 0..32 {
             let prepared = unsafe {
                 prepare_thread_with_startup(

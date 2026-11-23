@@ -18551,6 +18551,23 @@ unsafe fn read_growing_account_stream_record<T>(
     parse: fn(&[u8]) -> Option<(T, bool)>,
     caller: usize,
 ) -> Result<AccountStreamRecord<T>, c_int> {
+    let mut buffer = Vec::<u8>::new();
+    // SAFETY: the caller's live FILE and lock contract is passed through.
+    unsafe { read_growing_account_stream_record_in_buffer(stream, &mut buffer, parse, caller) }
+}
+
+/// Reuse an owned line buffer without borrowing the caller's cached state
+/// across FILE callbacks. Its length records the last admitted read capacity,
+/// including growth while skipping invalid lines or reaching EOF.
+///
+/// # Safety
+/// The caller keeps the FILE live and owns its automatic or caller-managed lock.
+unsafe fn read_growing_account_stream_record_in_buffer<T>(
+    stream: *mut c_void,
+    buffer: &mut Vec<u8>,
+    parse: fn(&[u8]) -> Option<(T, bool)>,
+    caller: usize,
+) -> Result<AccountStreamRecord<T>, c_int> {
     // GNU's nonreentrant readers require a seekable FILE before consuming it.
     if unsafe { crate::stdio_abi::ftello(stream) } < 0 {
         let error = current_abi_errno();
@@ -18560,8 +18577,7 @@ unsafe fn read_growing_account_stream_record<T>(
             error
         }));
     }
-    let mut buffer = Vec::<u8>::new();
-    let mut capacity = 1024usize;
+    let mut capacity = buffer.len().max(1024);
     loop {
         buffer
             .try_reserve_exact(capacity - buffer.len())
@@ -28339,12 +28355,14 @@ pub unsafe extern "C" fn endttyent() -> c_int {
 /// The line reader may grow independently, so a long record never truncates
 /// either the returned name or its password field.
 struct FgetspentState {
+    line_buffer: Vec<u8>,
     buffer: Vec<u8>,
     entry: libc::spwd,
 }
 
 fn new_fgetspent_state() -> FgetspentState {
     FgetspentState {
+        line_buffer: Vec::new(),
         buffer: Vec::new(),
         // SAFETY: libc::spwd contains only integers and nullable pointers.
         entry: unsafe { std::mem::zeroed() },
@@ -28382,6 +28400,29 @@ fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R
                 |cell| callback(&mut cell.borrow_mut()),
             )
         })
+    }
+}
+
+/// Lend scratch storage to one read without retaining a TLS borrow across
+/// application FILE callbacks. Nested reads use their own scratch buffer;
+/// returning the larger one preserves growth across calls, streams and errors.
+struct FgetspentLineBuffer(Vec<u8>);
+
+impl FgetspentLineBuffer {
+    fn take() -> Self {
+        Self(with_fgetspent_state(|state| {
+            std::mem::take(&mut state.line_buffer)
+        }))
+    }
+}
+
+impl Drop for FgetspentLineBuffer {
+    fn drop(&mut self) {
+        with_fgetspent_state(|state| {
+            if self.0.len() > state.line_buffer.len() {
+                std::mem::swap(&mut self.0, &mut state.line_buffer);
+            }
+        });
     }
 }
 
@@ -28457,8 +28498,14 @@ pub unsafe extern "C-unwind" fn fgetspent(stream: *mut c_void) -> *mut libc::spw
     // Hold the public recursive FILE lock across every read and retry. The
     // guard and line storage remain unwind-safe through user FILE callbacks.
     let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    let mut line_buffer = FgetspentLineBuffer::take();
     let record = match unsafe {
-        read_growing_account_stream_record(stream, parse_shadow_stream_line, caller)
+        read_growing_account_stream_record_in_buffer(
+            stream,
+            &mut line_buffer.0,
+            parse_shadow_stream_line,
+            caller,
+        )
     } {
         Ok(record) => record,
         Err(error) => {

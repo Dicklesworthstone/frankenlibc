@@ -427,6 +427,11 @@ fn shadow_stream_records_and_retries_match_glibc() {
         .into_bytes(),
     ];
     cases.push(format!("#{}\nalpha:!:1:2:3:4:5:6:7\n", "c".repeat(4096)).into_bytes());
+    // GNU keeps the grown nonreentrant line buffer across FILEs, even if
+    // growth only skipped a comment before EOF. The following fitting read
+    // must preserve its incoming errno instead of repeating ERANGE growth.
+    cases.push(format!("#{}\n", "c".repeat(20000)).into_bytes());
+    cases.push(format!("#{}\nalpha:!:1:2:3:4:5:6:7\n", "c".repeat(20000)).into_bytes());
     let mut comparisons = 0;
     let mut accepted = 0;
     for (index, input) in cases.iter().enumerate() {
