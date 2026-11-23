@@ -5312,6 +5312,26 @@ pub(crate) unsafe fn fopen_mount(pathname: *const c_char, mode: *const c_char) -
     unsafe { fopen_with_mount_flags(pathname, mode, true) }
 }
 
+/// GNU's exact `,ccs=` marker selects a codec up to the next comma. A normal
+/// mode leaves orientation unset; a requested encoding fixes it at open time.
+/// Resolve only after opening the descriptor so open errors take precedence,
+/// and a failing encoding lookup retains the requested create/truncate effect.
+fn stream_codec_from_mode(
+    mode: &[u8],
+) -> Result<Option<frankenlibc_core::iconv::MultibyteCodec>, c_int> {
+    let Some(marker) = mode.windows(5).position(|part| part == b",ccs=") else {
+        return Ok(None);
+    };
+    let rest = &mode[marker + 5..];
+    let length = rest
+        .iter()
+        .position(|&byte| byte == b',')
+        .unwrap_or(rest.len());
+    frankenlibc_core::iconv::MultibyteCodec::for_stream(&rest[..length])
+        .map(Some)
+        .ok_or(errno::EINVAL)
+}
+
 unsafe fn fopen_with_mount_flags(
     pathname: *const c_char,
     mode: *const c_char,
@@ -5381,10 +5401,17 @@ unsafe fn fopen_with_mount_flags(
     // Convert to libc open flags and open the file.
     let oflags = flags_to_oflags(&open_flags);
     let create_mode: libc::mode_t = 0o666;
-    let fd = match unsafe {
+    let (fd, wide_codec) = match unsafe {
         raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, oflags, create_mode)
-    } {
-        Ok(f) => f,
+    }
+    .and_then(|fd| match stream_codec_from_mode(mode_bytes) {
+        Ok(codec) => Ok((fd, codec)),
+        Err(error) => {
+            let _ = raw_syscall::sys_close(fd);
+            Err(error)
+        }
+    }) {
+        Ok(opened) => opened,
         Err(e) => {
             // ERRNO LAST (bd-7dq39e). `observe` is bookkeeping, and it takes a
             // contended lock: a futex wait that finds the word already changed
@@ -5400,7 +5427,7 @@ unsafe fn fopen_with_mount_flags(
     };
 
     // Create stream via fdopen_native_impl_with_origin (freshly opened fd starts at offset 0).
-    let fp = fdopen_native_impl_with_origin(fd, &open_flags, true);
+    let fp = fdopen_native_impl_with_origin(fd, &open_flags, true, wide_codec);
     if fp.is_null() {
         let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         // Keep the allocation failure across descriptor cleanup and accounting.
@@ -5418,13 +5445,15 @@ unsafe fn fopen_with_mount_flags(
 /// Returns an opaque stream pointer. The fd remains owned by the caller on
 /// failure; this function never closes it.
 fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
-    fdopen_native_impl_with_origin(fd, open_flags, false)
+    // fdopen does not interpret GNU fopen's encoding suffix.
+    fdopen_native_impl_with_origin(fd, open_flags, false, None)
 }
 
 fn fdopen_native_impl_with_origin(
     fd: c_int,
     open_flags: &OpenFlags,
     freshly_opened: bool,
+    wide_codec: Option<frankenlibc_core::iconv::MultibyteCodec>,
 ) -> *mut c_void {
     const GLIBC_BUFSIZ: usize = 8192;
     let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
@@ -5459,6 +5488,10 @@ fn fdopen_native_impl_with_origin(
 
     // Create StdioStream and set initial offset for append mode.
     let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    if let Some(codec) = wide_codec {
+        stream.bind_wide_codec(codec);
+        stream.set_orientation(1);
+    }
     if !matches!(buf_mode, BufMode::None) {
         stream.set_buffering(buf_mode, buf_size);
     }
@@ -5799,6 +5832,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
             .remove_stream(id);
         drop(file_lock);
         maybe_unregister_dynamic_native_stream(stream);
+        drop(cell);
         if let Some(error) = saved_errno {
             unsafe { set_abi_errno(error) };
         }
@@ -6000,14 +6034,14 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
     // NULL stream: flush all open streams.
     if stream.is_null() {
         #[allow(unused_mut)]
-        let mut host_fail = false;
+        let mut host_error = None;
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fflush) = unsafe { host_fflush_fn() } {
             let rc = unsafe { host_fflush(std::ptr::null_mut()) };
             if rc != 0 {
-                host_fail = true;
                 unsafe { sync_host_errno(errno::EBADF) };
+                host_error = Some(unsafe { *crate::errno_abi::__errno_location() });
             }
         }
         // Fast path: if `REGISTRY_PTR` has never been initialized, no
@@ -6015,13 +6049,17 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         // forcing `StreamRegistry::new()` (`fstat`/`ioctl`/`lseek`/allocations)
         // during `fflush(NULL)` or `exit()`.
         if REGISTRY_PTR.load(Ordering::Acquire).is_null() {
-            let failed = host_fail;
+            let failed = host_error.is_some();
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, failed);
+            if let Some(error) = host_error {
+                unsafe { set_abi_errno(error) };
+            }
             return if failed { libc::EOF } else { 0 };
         }
-        let any_fail = !unsafe { flush_native_streams(caller, false) };
-        let failed = any_fail || host_fail;
-        let saved_errno = failed.then(|| unsafe { *crate::errno_abi::__errno_location() });
+        let native_ok = unsafe { flush_native_streams(caller, false) };
+        let native_error = (!native_ok).then(|| unsafe { *crate::errno_abi::__errno_location() });
+        let saved_errno = native_error.or(host_error);
+        let failed = saved_errno.is_some();
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, failed);
         if let Some(error) = saved_errno {
             unsafe { set_abi_errno(error) };
@@ -18545,10 +18583,17 @@ pub unsafe extern "C-unwind" fn freopen(
     // Open the new file.
     let oflags = flags_to_oflags(&open_flags);
     let create_mode: libc::mode_t = 0o666;
-    let mut fd = match unsafe {
+    let (mut fd, wide_codec) = match unsafe {
         raw_syscall::sys_openat(libc::AT_FDCWD, path_ptr as *const u8, oflags, create_mode)
-    } {
-        Ok(f) => f,
+    }
+    .and_then(|fd| match stream_codec_from_mode(mode_bytes) {
+        Ok(codec) => Ok((fd, codec)),
+        Err(error) => {
+            let _ = raw_syscall::sys_close(fd);
+            Err(error)
+        }
+    }) {
+        Ok(opened) => opened,
         Err(e) => {
             drop(reg);
             // Failure closes the original descriptor, including stdin/out/err;
@@ -18608,7 +18653,11 @@ pub unsafe extern "C-unwind" fn freopen(
         fd = target_fd;
     }
 
-    let new_stream = fd_stream(fd, open_flags, std_stream_buf_mode(fd));
+    let mut new_stream = fd_stream(fd, open_flags, std_stream_buf_mode(fd));
+    if let Some(codec) = wide_codec {
+        new_stream.bind_wide_codec(codec);
+        new_stream.set_orientation(1);
+    }
     // Keep the caller's FILE * valid and truthful: same handle, new fd and
     // mode bits, EOF/ERR/orientation reset (bd-rc0923-epic-eeuy4f.1).
     let handle = if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {

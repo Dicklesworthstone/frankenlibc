@@ -96,6 +96,10 @@ jobs:
             -- --test-threads=1 --nocapture 2>&1 | tee artifacts/stdio-regressions/printf-core.log
           grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' \
             artifacts/stdio-regressions/printf-core.log
+          cargo test -p frankenlibc-core "${features[@]}" --lib stream_codec \
+            -- --test-threads=1 --nocapture 2>&1 | tee artifacts/stdio-regressions/stream-codec.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+            artifacts/stdio-regressions/stream-codec.log
           cargo test -p frankenlibc-abi "${features[@]}" --test conformance_diff_shadow_lines \
             -- --test-threads=1 --nocapture 2>&1 | tee artifacts/stdio-regressions/shadow.log
           grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
@@ -534,7 +538,9 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
           for mode in strict hardened; do
-            for target in conformance_diff_stdio_printf conformance_diff_dprintf conformance_diff_swprintf conformance_diff_fgetpos open_wmemstream_differential_test; do
+            for target in conformance_diff_stdio_printf conformance_diff_dprintf conformance_diff_swprintf conformance_diff_fgetpos \
+                open_wmemstream_differential_test open_memstream_differential_test \
+                conformance_diff_wcstol_l conformance_diff_wide_stdio; do
               FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
                 --test "$target" -- --test-threads=1 --nocapture \
                 2>&1 | tee "artifacts/stdio-layout/$target-$mode.log"

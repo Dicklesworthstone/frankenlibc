@@ -197,7 +197,10 @@ fn open_memstream_publication_allocation_failure() {
         rlim_cur: 0,
         rlim_max: 0,
     };
-    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) }, 0);
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) },
+        0
+    );
     let constrained = libc::rlimit {
         rlim_cur: (vm_kib * 1024 + 1024 * 1024).min(previous.rlim_cur),
         rlim_max: previous.rlim_max,
@@ -221,24 +224,56 @@ fn open_memstream_publication_allocation_failure() {
             _ => libc::_exit(99),
         };
         let error = *errno_abi::__errno_location();
-        let stream_error = if operation == "close" { 0 } else { fl::ferror(stream) };
-        let position = if operation == "close" { 0 } else { fl::ftell(stream) };
+        let stream_error = if operation == "close" {
+            0
+        } else {
+            fl::ferror(stream)
+        };
+        let position = if operation == "close" {
+            0
+        } else {
+            fl::ftell(stream)
+        };
         (allocation_failed, result, error, stream_error, position)
     };
     assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) }, 0);
-    assert!(allocation_failed, "the bounded allocation must actually fail");
-    assert_eq!(result, libc::EOF, "{operation} must report publication failure");
-    assert_eq!(error, libc::ENOMEM, "{operation} must preserve the allocation error");
-    assert_eq!(pointer, previous_pointer, "failure must retain the published buffer");
+    assert!(
+        allocation_failed,
+        "the bounded allocation must actually fail"
+    );
+    assert_eq!(
+        result,
+        libc::EOF,
+        "{operation} must report publication failure"
+    );
+    assert_eq!(
+        error,
+        libc::ENOMEM,
+        "{operation} must preserve the allocation error"
+    );
+    assert_eq!(
+        pointer, previous_pointer,
+        "failure must retain the published buffer"
+    );
     assert_eq!(size, 4, "failure must retain the published size");
     // SAFETY: the failed publication must leave the previous allocation live.
-    assert_eq!(unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), 5) }, b"seed\0");
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), 5) },
+        b"seed\0"
+    );
 
     if operation != "close" {
-        assert_ne!(stream_error, 0, "failure must set the stream error indicator");
+        assert_ne!(
+            stream_error, 0,
+            "failure must set the stream error indicator"
+        );
         assert_eq!(position, (PAYLOAD + 4) as libc::c_long);
         unsafe { fl::clearerr(stream) };
-        assert_eq!(unsafe { fl::fflush(stream) }, 0, "retry after recovery must succeed");
+        assert_eq!(
+            unsafe { fl::fflush(stream) },
+            0,
+            "retry after recovery must succeed"
+        );
         assert_eq!(size, PAYLOAD + 4);
         // SAFETY: a successful flush publishes the complete initialized extent.
         let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), size + 1) };
@@ -253,4 +288,117 @@ fn open_memstream_publication_allocation_failure() {
         malloc_abi::free(pointer.cast());
         libc::alarm(0);
     }
+}
+
+#[cfg(not(feature = "standalone"))]
+#[test]
+fn fflush_all_preserves_host_error_after_successful_native_flush() {
+    const NAME: &str = "fflush_all_preserves_host_error_after_successful_native_flush";
+    const CHILD: &str = "FRANKENLIBC_FLUSH_ALL_HOST_ERROR_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        for mode in ["strict", "hardened"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD, "1")
+                .env("FRANKENLIBC_MODE", mode)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{mode}: {:?}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        }
+        return;
+    }
+
+    unsafe extern "C-unwind" fn successful_write_changes_errno(
+        cookie: *mut libc::c_void,
+        _bytes: *const libc::c_char,
+        length: usize,
+    ) -> isize {
+        // SAFETY: this subprocess keeps the byte counter live until fclose.
+        // Successful callbacks may change errno; that must not erase a
+        // different stream's failure during the same fflush(NULL).
+        unsafe {
+            *cookie.cast::<usize>() += length;
+            *libc::__errno_location() = libc::EDOM;
+            *frankenlibc_abi::errno_abi::__errno_location() = libc::EDOM;
+        }
+        length as isize
+    }
+
+    // Isolate process-global fflush and guard against callback lock regressions.
+    unsafe { libc::alarm(30) };
+    let host = unsafe { libc::fopen(c"/dev/full".as_ptr(), c"w".as_ptr()) };
+    assert!(!host.is_null());
+    let mut host_buffer = [0u8; 4096];
+    assert_eq!(
+        unsafe {
+            libc::setvbuf(
+                host,
+                host_buffer.as_mut_ptr().cast(),
+                libc::_IOFBF,
+                host_buffer.len(),
+            )
+        },
+        0
+    );
+    let mut written = 0usize;
+    let cookie = unsafe {
+        fl::fopencookie(
+            (&mut written as *mut usize).cast(),
+            c"w".as_ptr(),
+            fl::CookieIoFuncs {
+                write: Some(successful_write_changes_errno),
+                ..fl::CookieIoFuncs::default()
+            },
+        )
+    };
+    assert!(!cookie.is_null());
+    assert_eq!(
+        unsafe { fl::setvbuf(cookie, std::ptr::null_mut(), libc::_IOFBF, 4096) },
+        0
+    );
+    assert_eq!(
+        unsafe { libc::fwrite(c"host".as_ptr().cast(), 1, 4, host) },
+        4
+    );
+    assert_eq!(unsafe { libc::ferror(host) }, 0);
+    assert_eq!(
+        unsafe { fl::fwrite(c"native".as_ptr().cast(), 1, 6, cookie) },
+        6
+    );
+    assert_eq!(
+        written, 0,
+        "the successful native write must still be pending"
+    );
+
+    let result = unsafe { fl::fflush(std::ptr::null_mut()) };
+    let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let native_error = unsafe { fl::ferror(cookie) };
+    let host_error = unsafe { libc::ferror(host) };
+    // Close both streams before reporting any assertion failure, so no later
+    // test or process shutdown inherits the deliberately failing host stream.
+    let native_close = unsafe { fl::fclose(cookie) };
+    unsafe {
+        libc::fclose(host);
+        libc::alarm(0);
+    }
+    assert_eq!(
+        written, 6,
+        "native output must still flush after host failure"
+    );
+    assert_eq!(native_error, 0);
+    assert_ne!(host_error, 0);
+    assert_eq!(native_close, 0);
+    assert_eq!(result, libc::EOF);
+    assert_eq!(
+        error,
+        libc::ENOSPC,
+        "host failure must survive successful native flush"
+    );
 }

@@ -2940,8 +2940,52 @@ pub enum MultibyteCodec {
 }
 
 impl MultibyteCodec {
+    /// Resolve the external encoding requested by GNU stdio's `,ccs=` mode.
+    ///
+    /// Unlike locale multibyte functions, streams can use fixed-width Unicode
+    /// encodings whose NUL takes more than one byte. BOM-selecting, stateful,
+    /// and decomposing encodings still require per-stream conversion state and
+    /// are rejected here. Aliases share a bounded, process-lifetime codec cache;
+    /// repeatedly opening a stream must not leak a fresh single-byte table.
+    #[must_use]
+    pub fn for_stream(name: &[u8]) -> Option<Self> {
+        let encoding = classify_encoding(name).encoding?;
+        match encoding {
+            Encoding::Ascii => return Some(Self::Ascii),
+            Encoding::Utf8 => return Some(Self::Utf8),
+            Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be => {
+                return Some(Self::Stateless(StatelessMultibyteCodec {
+                    encoding,
+                    max_width: 4,
+                    ascii_compatible: false,
+                }));
+            }
+            Encoding::Ucs2Le | Encoding::Ucs2Be => {
+                return Some(Self::Stateless(StatelessMultibyteCodec {
+                    encoding,
+                    max_width: 2,
+                    ascii_compatible: false,
+                }));
+            }
+            _ => {}
+        }
+        if let Some(codec) = StatelessMultibyteCodec::from_name(name) {
+            return Some(Self::Stateless(codec));
+        }
+
+        static CODECS: std::sync::Mutex<Vec<(Encoding, &'static SingleByteCodec)>> =
+            std::sync::Mutex::new(Vec::new());
+        let mut codecs = CODECS.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some((_, codec)) = codecs.iter().find(|(cached, _)| *cached == encoding) {
+            return Some(Self::SingleByte(codec));
+        }
+        let codec = Box::leak(Box::new(SingleByteCodec::from_name(name)?));
+        codecs.push((encoding, codec));
+        Some(Self::SingleByte(codec))
+    }
+
     /// Decode one external character, distinguishing an incomplete prefix
-    /// from invalid input. NUL is a character consuming one external byte.
+    /// from invalid input. NUL consumes its encoding's external width.
     #[inline]
     #[must_use]
     pub fn decode(self, bytes: &[u8]) -> crate::string::wchar::Utf8Step {
@@ -3030,12 +3074,12 @@ impl MultibyteCodec {
     }
 }
 
-/// A locale codec whose only restart state is an incomplete character prefix.
+/// A codec whose only restart state is an incomplete character prefix.
 ///
 /// These native iconv engines map each external character to exactly one wide
-/// character, use a single NUL byte, and have no shift state. Stateful and
-/// decomposing encodings require a different `mbstate_t` representation and
-/// are deliberately not admitted by this type.
+/// character and have no shift state. Locale selection additionally requires
+/// single-byte NUL; explicit stream encodings may use fixed-width Unicode.
+/// Stateful and decomposing encodings need a different state representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatelessMultibyteCodec {
     encoding: Encoding,
@@ -51472,6 +51516,85 @@ pub fn iconv_close(_cd: IconvDescriptor) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_codecs_support_fixed_width_unicode_without_changing_locale_admission() {
+        use crate::string::wchar::Utf8Step;
+        let cases: &[(&[u8], u32, &[u8], usize)] = &[
+            (b"UTF-16LE", 0x1f600, &[0x3d, 0xd8, 0, 0xde], 2),
+            (b"UTF-16BE", 0x1f600, &[0xd8, 0x3d, 0xde, 0], 2),
+            (b"UTF-32LE", 0x1f600, &[0, 0xf6, 1, 0], 4),
+            (b"UTF-32BE", 0x1f600, &[0, 1, 0xf6, 0], 4),
+            (b"UCS-2LE", 0x20ac, &[0xac, 0x20], 2),
+            (b"UCS-2BE", 0x20ac, &[0x20, 0xac], 2),
+        ];
+        for &(name, wc, external, nul_width) in cases {
+            assert_eq!(StatelessMultibyteCodec::from_name(name), None);
+            let codec = MultibyteCodec::for_stream(name).unwrap();
+            assert!(!codec.is_ascii_compatible());
+            for length in 0..external.len() {
+                assert_eq!(codec.decode(&external[..length]), Utf8Step::Incomplete);
+                let mut short = [0xa5; 4];
+                assert_eq!(codec.encode(wc, &mut short[..length]), None);
+                assert_eq!(short, [0xa5; 4]);
+            }
+            assert_eq!(
+                codec.decode(external),
+                Utf8Step::Char {
+                    wc,
+                    len: external.len()
+                }
+            );
+            let mut output = [0xa5; 6];
+            assert_eq!(codec.encode(wc, &mut output), Some(external.len()));
+            assert_eq!(&output[..external.len()], external);
+            assert_eq!(output[external.len()], 0xa5);
+            assert_eq!(codec.encode(0, &mut output), Some(nul_width));
+            assert_eq!(&output[..nul_width], &[0; 4][..nul_width]);
+            assert_eq!(
+                codec.decode(&output[..nul_width]),
+                Utf8Step::Char {
+                    wc: 0,
+                    len: nul_width
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn stream_codec_aliases_reuse_tables_and_reject_unsupported_state() {
+        let MultibyteCodec::SingleByte(latin1) = MultibyteCodec::for_stream(b"ISO-8859-1").unwrap()
+        else {
+            panic!("single-byte codec expected");
+        };
+        let MultibyteCodec::SingleByte(alias) = MultibyteCodec::for_stream(b"LATIN1").unwrap()
+        else {
+            panic!("single-byte codec expected");
+        };
+        assert!(std::ptr::eq(latin1, alias));
+        assert!(matches!(
+            MultibyteCodec::for_stream(b"UTF8"),
+            Some(MultibyteCodec::Utf8)
+        ));
+        assert!(matches!(
+            MultibyteCodec::for_stream(b"US-ASCII"),
+            Some(MultibyteCodec::Ascii)
+        ));
+        assert!(matches!(
+            MultibyteCodec::for_stream(b"SJIS"),
+            Some(MultibyteCodec::Stateless(_))
+        ));
+        for name in [
+            b"".as_slice(),
+            b"unknown-encoding",
+            b"UTF-16",
+            b"UTF-32",
+            b"ISO-2022-JP",
+            b"UTF-8//IGNORE",
+        ] {
+            assert!(MultibyteCodec::for_stream(name).is_none(), "{name:?}");
+        }
+    }
 
     #[test]
     fn retained_locale_codecs_decode_and_encode_independently() {
