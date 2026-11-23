@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-21, bound to ABI source `7adb10233`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v21 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-23, bound to ABI source `ddd25bd96`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v22 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
 Reality snapshot: total_exported=4119, implemented=2543, raw_syscall=408, wraps_host_libc=1168, glibc_call_through=0, stub=0.
 
 Declared replacement level: **L1 — Hardened Interpose**.
@@ -1691,7 +1691,7 @@ Via `thread_local! { static ERRNO: Cell<i32> = ... }`. `__errno_location()` retu
 
 | Crate | Policy |
 |---|---|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` (`413` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments) |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` (`417` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments) |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` (arena/fingerprint modules `#[allow(unsafe_code)]` with `// SAFETY:` per block) |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` (the ABI boundary is inherently unsafe; entrypoints mix membrane-gated delegation, raw syscalls, local ABI logic, and host-backed wrappers) |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` |
@@ -2298,7 +2298,7 @@ The two companion crates (`asupersync-conformance`, `ftui-harness`) are explicit
 
 | Crate | `unsafe` policy | Notes |
 |---|---|---|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` | `413` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | `417` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena / fingerprint / page-oracle modules `#[allow]` with `// SAFETY:` |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe; entrypoints use path-specific membrane, raw-syscall, local, or host-backed logic |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | The test harness never needs unsafe |
@@ -3476,7 +3476,7 @@ Edition 2024 also brings `unsafe extern "C"` defaults (which make the FFI bounda
 - Version-symbol resolution for compatibility shims that need `@@GLIBC_x.y` precision
 - One-time bootstrap discovery of host-loader state for the phase-0 startup envelope
 
-`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,168 `WrapsHostLibc` taxonomy rows record host delegation in the interpose artifact, verified against host-delegation census v21 (`status_invalid = 0`).
+`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,168 `WrapsHostLibc` taxonomy rows record host delegation in the interpose artifact, verified against host-delegation census v22 (`status_invalid = 0`).
 
 This is the practical difference between the L1 interpose artifact and the future L2/L3 replace artifact: the replace artifact removes `host_resolve.rs` entirely, since by definition no host glibc is loaded.
 
@@ -3971,9 +3971,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,951 native/direct-syscall rows (71.6%), 1,168 host-backed wrapper rows (28.4%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,916 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 261,109 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 263,268 lines |
 | `crates/frankenlibc-membrane/src/` | 114 Rust files, 91,134 lines |
-| `crates/frankenlibc-core/src/` | 205 Rust files, 1,179,936 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 205 Rust files, 1,181,047 lines including generated codec tables |
 | Runtime math controllers | 72 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

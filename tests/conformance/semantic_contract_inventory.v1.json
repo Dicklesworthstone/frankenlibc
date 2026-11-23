@@ -225,7 +225,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 24411,
+      "source_line": 25235,
       "line_marker": "Malloc debug stubs",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -252,7 +252,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 28814,
+      "source_line": 29647,
       "line_marker": "pub unsafe extern \"C\" fn argp_help(",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -416,7 +416,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 32790,
+      "source_line": 33563,
       "line_marker": "/// GNU asynchronous name/service resolution using the native resolver.",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -472,7 +472,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 20938,
+      "source_line": 21341,
       "line_marker": "__cxa_pure_virtual",
       "support_matrix_status": "Implemented",
       "semantic_class": "abort_only",
@@ -621,27 +621,27 @@
         }
       }
     },
-    "source_tree_sha256": "2fa7d565eab53079037e43a5523b7a8ba03fd9de658cda906ac34dcf589458c1",
+    "source_tree_sha256": "ab9f86ca192fdfcf942552bada7fd77274a9795149a9001d2343e59805402293",
     "version_script_sha256": "4c8e751ac3df1773f551056609e1f189dbf0b2d86da6fba534f0808bf84bb410",
     "support_rows_sha256": "3f0052f319f51398554fdd22ca7249a2909d64aaa165e6ee9ecbcd5e36920908",
-    "contract_rows_sha256": "defc3e14a042307dcdaefb504c4e4650682216fa36eafaf2e3eeea5443002f20",
+    "contract_rows_sha256": "011076e77ece7c91ad99524d583e6f72e3dc9dc779cf4714f49befc300543f1c",
     "summary": {
-      "declared_symbol_count": 4736,
-      "raw_source_symbol_count": 4731,
+      "declared_symbol_count": 4732,
+      "raw_source_symbol_count": 4732,
       "profile_source_symbol_counts": {
-        "interpose-release-linux-x86_64": 4706,
-        "standalone-release-linux-x86_64": 4710
+        "interpose-release-linux-x86_64": 4707,
+        "standalone-release-linux-x86_64": 4711
       },
       "profile_function_symbol_counts": {
-        "interpose-release-linux-x86_64": 4610,
-        "standalone-release-linux-x86_64": 4611
+        "interpose-release-linux-x86_64": 4611,
+        "standalone-release-linux-x86_64": 4612
       },
       "version_script_symbol_count": 4237,
       "support_symbol_count": 4119,
-      "group_count": 152,
-      "unknown_semantics_count": 4736,
+      "group_count": 151,
+      "unknown_semantics_count": 4732,
       "full_semantics_count": 0,
-      "unqualified_configuration_count": 26
+      "unqualified_configuration_count": 21
     },
     "groups": [
       {
@@ -1245,7 +1245,12 @@
           "svc_sendreply",
           "svc_unregister",
           "svcerr_auth",
+          "svcerr_decode",
+          "svcerr_noproc",
+          "svcerr_noprog",
           "svcerr_progvers",
+          "svcerr_systemerr",
+          "svcerr_weakauth",
           "svcfd_create",
           "svctcp_create",
           "svcudp_bufcreate",
@@ -4597,28 +4602,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-74f855425d9dc413",
-        "profiles": [],
-        "function_profiles": [],
-        "declaration_kinds": [],
-        "source_modules": [],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "Implemented",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "svcerr_decode",
-          "svcerr_noproc",
-          "svcerr_noprog",
-          "svcerr_systemerr",
-          "svcerr_weakauth"
-        ],
-        "next_action": "Resolve the data/assembly/inactive-module or target/feature declaration before claiming a provider; then review behavior under bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-75b34ed6e57bff35",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -4745,14 +4728,10 @@
           "_nss_files_getspent_r",
           "_nss_files_getspnam_r",
           "_nss_files_parse_etherent",
-          "_nss_files_parse_grent",
           "_nss_files_parse_netent",
           "_nss_files_parse_protoent",
-          "_nss_files_parse_pwent",
           "_nss_files_parse_rpcent",
           "_nss_files_parse_servent",
-          "_nss_files_parse_sgent",
-          "_nss_files_parse_spent",
           "_nss_files_setaliasent",
           "_nss_files_setetherent",
           "_nss_files_setgrent",

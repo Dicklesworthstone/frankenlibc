@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-11-21T23:05:00Z",
-  "source_commit": "7adb1023333cd3b824a8d2bd6418ca0c1753c147",
+  "generated_at_utc": "2026-11-23T01:05:00Z",
+  "source_commit": "ddd25bd9694f8777491a888cf0e7c5ac4e497e4a",
   "total_exported": 4119,
   "counts": {
     "implemented": 2543,
