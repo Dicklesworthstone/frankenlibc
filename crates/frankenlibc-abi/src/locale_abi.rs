@@ -1178,6 +1178,56 @@ pub(crate) fn named_time_locale() -> Option<frankenlibc_core::time::TimeLocale<'
     })
 }
 
+/// Retain the active monetary category independently of localeconv's mutable
+/// result object. C monetary formatting falls back to LC_NUMERIC's radix;
+/// None identifies the unchanged C/POSIX fast path with a dot radix.
+pub(crate) fn monetary_format_locale()
+-> Option<frankenlibc_core::locale::strfmon::MonetaryLocale<'static>> {
+    use frankenlibc_core::locale::strfmon::MonetaryLocale;
+
+    let monetary = named(locale_core::LC_MONETARY);
+    let numeric_radix = named(locale_core::LC_NUMERIC)
+        .and_then(|category| category.blob.string(0))
+        .filter(|radix| !radix.is_empty())
+        .unwrap_or(b".");
+    let Some(category) = monetary else {
+        return (numeric_radix != b".").then_some(MonetaryLocale {
+            decimal_point: numeric_radix,
+            ..MonetaryLocale::C
+        });
+    };
+    let string = |index| category.blob.string(index).unwrap_or(b"");
+    let byte = |index| category.blob.byte(index).unwrap_or(127);
+    let monetary_radix = string(2);
+    Some(MonetaryLocale {
+        currency_symbol: string(1),
+        int_curr_symbol: string(0),
+        decimal_point: if monetary_radix.is_empty() {
+            numeric_radix
+        } else {
+            monetary_radix
+        },
+        thousands_sep: string(3),
+        grouping: string(4),
+        positive_sign: string(5),
+        negative_sign: string(6),
+        int_frac_digits: byte(7),
+        frac_digits: byte(8),
+        p_cs_precedes: byte(9),
+        p_sep_by_space: byte(10),
+        n_cs_precedes: byte(11),
+        n_sep_by_space: byte(12),
+        p_sign_posn: byte(13),
+        n_sign_posn: byte(14),
+        int_p_cs_precedes: byte(16),
+        int_p_sep_by_space: byte(17),
+        int_n_cs_precedes: byte(18),
+        int_n_sep_by_space: byte(19),
+        int_p_sign_posn: byte(20),
+        int_n_sign_posn: byte(21),
+    })
+}
+
 /// `localeconv`'s result when LC_NUMERIC or LC_MONETARY is on a named
 /// locale. Like glibc, one process-wide struct refilled on each call.
 struct NamedLconvCell(std::cell::UnsafeCell<LConv>);

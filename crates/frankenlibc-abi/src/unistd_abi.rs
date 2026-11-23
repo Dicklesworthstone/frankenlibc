@@ -33626,8 +33626,7 @@ unsafe fn append_simple_c_locale_monetary(
 
 /// Shared backend for `strfmon`/`strfmon_l`/`__strfmon_l`: format `format`
 /// (pulling one `f64` per conversion from `pull`) into `s`/`maxsize` using the
-/// C/POSIX-locale monetary conventions implemented in
-/// `frankenlibc_core::locale::strfmon`. Returns the byte count written
+/// active LC_MONETARY category. Returns the byte count written
 /// (excluding the NUL), or `-1` with `errno` set (`EINVAL` on a malformed
 /// format, `E2BIG` if the result does not fit).
 ///
@@ -33641,9 +33640,46 @@ pub(crate) unsafe fn strfmon_emit(
     format: *const c_char,
     mut pull: impl FnMut() -> f64,
 ) -> isize {
-    if s.is_null() || format.is_null() || maxsize == 0 {
+    if s.is_null() || format.is_null() {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
+    }
+
+    let monetary_locale = crate::locale_abi::monetary_format_locale();
+    if monetary_locale.is_some() || maxsize == 0 {
+        use frankenlibc_core::locale::strfmon::{MonetaryError, MonetaryLocale, strfmon_locale};
+        // SAFETY: the ABI requires a terminated format and maxsize writable
+        // bytes. A zero budget still parses the first reached directive:
+        // malformed directives report EINVAL before output would report E2BIG.
+        let format = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
+        let output = match strfmon_locale(
+            format,
+            pull,
+            monetary_locale.unwrap_or(MonetaryLocale::C),
+            maxsize.saturating_sub(1),
+        ) {
+            Ok(output) => output,
+            Err(error) => {
+                let error = match error {
+                    MonetaryError::InvalidFormat => libc::EINVAL,
+                    MonetaryError::BufferTooSmall => libc::E2BIG,
+                    MonetaryError::NoMemory => libc::ENOMEM,
+                };
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        if maxsize == 0 {
+            // Even an empty successful result needs its terminating byte.
+            unsafe { set_abi_errno(libc::E2BIG) };
+            return -1;
+        }
+        let length = output.len();
+        unsafe {
+            std::ptr::copy_nonoverlapping(output.as_ptr(), s.cast(), length);
+            *s.add(length) = 0;
+        }
+        return length as isize;
     }
 
     // Closed C-locale specialization. `%n` and `%i` are identical when the
@@ -33772,7 +33808,7 @@ pub(crate) unsafe fn strfmon_emit(
     out.len() as isize
 }
 
-/// `strfmon` — format monetary value (C/POSIX locale).
+/// `strfmon` — format monetary values using the calling thread's locale.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfmon(
     s: *mut c_char,
@@ -33783,16 +33819,18 @@ pub unsafe extern "C" fn strfmon(
     unsafe { strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
 }
 
-/// `strfmon_l` — locale-aware monetary formatting (treated as the C locale).
+/// `strfmon_l` — monetary formatting scoped to the supplied locale object.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfmon_l(
     s: *mut c_char,
     maxsize: usize,
-    _locale: *mut c_void,
+    locale: *mut c_void,
     format: *const c_char,
     mut args: ...
 ) -> isize {
-    unsafe { strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
+    crate::locale_abi::with_locale(locale, || unsafe {
+        strfmon_emit(s, maxsize, format, || args.next_arg::<f64>())
+    })
 }
 
 // ===========================================================================

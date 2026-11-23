@@ -10,8 +10,10 @@ on:
       - 'crates/frankenlibc-abi/src/time_abi*'
       - 'crates/frankenlibc-abi/src/wchar_abi*'
       - 'crates/frankenlibc-abi/src/stdio_abi*'
+      - 'crates/frankenlibc-abi/src/unistd_abi*'
       - 'crates/frankenlibc-abi/tests/conformance_diff_c_locale_codec.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_strfmon_l.rs'
       - 'crates/frankenlibc-core/src/iconv/**'
       - 'crates/frankenlibc-core/src/locale/**'
       - 'crates/frankenlibc-core/src/stdio/scanf.rs'
@@ -104,7 +106,7 @@ jobs:
           exit "$failed"
       - name: Check named single-byte conversion and locale selection
         run: |
-          cargo test --release -p frankenlibc-abi --test conformance_diff_c_locale_codec -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/codec.log
+          cargo test --release -p frankenlibc-abi --test conformance_diff_c_locale_codec --test conformance_diff_strfmon_l -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/codec.log
       - name: Check foreign wide FILE ownership in strict and hardened modes
         run: |
           # Each test launches isolated strict and hardened children and requires one case per child.

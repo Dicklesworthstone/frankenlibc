@@ -16337,11 +16337,13 @@ pub unsafe extern "C" fn __strftime_l(
 pub unsafe extern "C" fn __strfmon_l(
     s: *mut c_char,
     maxsize: usize,
-    _l: *mut c_void,
+    locale: *mut c_void,
     format: *const c_char,
     mut args: ...
 ) -> isize {
-    unsafe { crate::unistd_abi::strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
+    crate::locale_abi::with_locale(locale, || unsafe {
+        crate::unistd_abi::strfmon_emit(s, maxsize, format, || args.next_arg::<f64>())
+    })
 }
 
 // ---------------------------------------------------------------------------

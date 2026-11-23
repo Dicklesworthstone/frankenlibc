@@ -1,4 +1,4 @@
-//! `strfmon` monetary formatting for the C/POSIX locale.
+//! `strfmon` monetary formatting using immutable LC_MONETARY data.
 //!
 //! Implements the directive grammar `%[flags][field width][#left precision]`
 //! `[.right precision]{i|n|%}` exactly as glibc renders it in the C locale,
@@ -104,9 +104,12 @@ pub fn strfmon_c_default_into(out: &mut [u8], value: f64) -> Option<usize> {
 }
 
 /// Parsed pieces of one `%` directive.
+#[derive(Clone, Copy)]
 struct Spec {
     left_justify: bool,
     use_parens: bool,
+    grouping: bool,
+    currency: bool,
     fill: u8,
     field_width: usize,
     left_prec: Option<usize>,
@@ -158,6 +161,8 @@ fn parse_spec(format: &[u8], i: &mut usize) -> Option<Spec> {
     let mut left_justify = false;
     let mut use_parens = false;
     let mut use_plus = false;
+    let mut grouping = true;
+    let mut currency = true;
     let mut fill = b' ';
     // Flags (any order, repeatable).
     loop {
@@ -167,7 +172,14 @@ fn parse_spec(format: &[u8], i: &mut usize) -> Option<Spec> {
                 fill = *format.get(*i)?; // char after '=' is the fill char
                 *i += 1;
             }
-            Some(b'^') | Some(b'!') => *i += 1, // no-ops in the C locale
+            Some(b'^') => {
+                grouping = false;
+                *i += 1;
+            }
+            Some(b'!') => {
+                currency = false;
+                *i += 1;
+            }
             Some(b'+') => {
                 // glibc rejects a repeated '+' (EINVAL). Duplicate '=', '^',
                 // '!', '-' are allowed; only '+' and '(' may not repeat.
@@ -217,12 +229,454 @@ fn parse_spec(format: &[u8], i: &mut usize) -> Option<Spec> {
     Some(Spec {
         left_justify,
         use_parens,
+        grouping,
+        currency,
         fill,
         field_width,
         left_prec,
         right_prec,
         conv,
     })
+}
+
+/// Monetary strings and layout rules from one retained locale category.
+/// Byte-valued fields use 127 for the C locale's unspecified conventions.
+#[derive(Clone, Copy, Debug)]
+pub struct MonetaryLocale<'a> {
+    pub currency_symbol: &'a [u8],
+    pub int_curr_symbol: &'a [u8],
+    pub decimal_point: &'a [u8],
+    pub thousands_sep: &'a [u8],
+    pub grouping: &'a [u8],
+    pub positive_sign: &'a [u8],
+    pub negative_sign: &'a [u8],
+    pub frac_digits: u8,
+    pub int_frac_digits: u8,
+    pub p_cs_precedes: u8,
+    pub n_cs_precedes: u8,
+    pub p_sep_by_space: u8,
+    pub n_sep_by_space: u8,
+    pub p_sign_posn: u8,
+    pub n_sign_posn: u8,
+    pub int_p_cs_precedes: u8,
+    pub int_n_cs_precedes: u8,
+    pub int_p_sep_by_space: u8,
+    pub int_n_sep_by_space: u8,
+    pub int_p_sign_posn: u8,
+    pub int_n_sign_posn: u8,
+}
+
+impl MonetaryLocale<'static> {
+    pub const C: Self = Self {
+        currency_symbol: b"",
+        int_curr_symbol: b"",
+        decimal_point: b".",
+        thousands_sep: b"",
+        grouping: b"",
+        positive_sign: b"",
+        negative_sign: b"",
+        frac_digits: 127,
+        int_frac_digits: 127,
+        p_cs_precedes: 127,
+        n_cs_precedes: 127,
+        p_sep_by_space: 127,
+        n_sep_by_space: 127,
+        p_sign_posn: 127,
+        n_sign_posn: 127,
+        int_p_cs_precedes: 127,
+        int_n_cs_precedes: 127,
+        int_p_sep_by_space: 127,
+        int_n_sep_by_space: 127,
+        int_p_sign_posn: 127,
+        int_n_sign_posn: 127,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MonetaryError {
+    InvalidFormat,
+    BufferTooSmall,
+    NoMemory,
+}
+
+/// Bound every intermediate by the caller's actual output budget. In
+/// particular a huge field width must return E2BIG without allocating it.
+struct MonetaryBuffer {
+    bytes: Vec<u8>,
+    limit: usize,
+    format_error: Option<MonetaryError>,
+}
+
+impl MonetaryBuffer {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+            format_error: None,
+        }
+    }
+
+    fn reserve(&mut self, count: usize) -> Result<(), MonetaryError> {
+        if count > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(MonetaryError::BufferTooSmall);
+        }
+        self.bytes
+            .try_reserve(count)
+            .map_err(|_| MonetaryError::NoMemory)
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> Result<(), MonetaryError> {
+        self.reserve(bytes.len())?;
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn fill(&mut self, byte: u8, count: usize) -> Result<(), MonetaryError> {
+        self.reserve(count)?;
+        self.bytes.resize(self.bytes.len() + count, byte);
+        Ok(())
+    }
+}
+
+impl fmt::Write for MonetaryBuffer {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.append(text.as_bytes()).map_err(|error| {
+            self.format_error = Some(error);
+            fmt::Error
+        })
+    }
+}
+
+/// Count grouping boundaries from the right. Zero (including the terminating
+/// NUL omitted from a category string) repeats the preceding size; CHAR_MAX
+/// stops grouping. Division handles enormous left precisions in bounded time.
+fn monetary_group_count(mut digits: usize, grouping: &[u8]) -> usize {
+    let mut count = 0;
+    let mut previous = 0usize;
+    for &group in grouping {
+        match group {
+            0 => break,
+            127..=255 => return count,
+            _ => {
+                let width = usize::from(group);
+                if digits <= width {
+                    return count;
+                }
+                digits -= width;
+                count += 1;
+                previous = width;
+            }
+        }
+    }
+    if previous != 0 && digits != 0 {
+        count += (digits - 1) / previous;
+    }
+    count
+}
+
+/// A locale field consists of short strings before and after its number.
+/// Keeping the pieces borrowed avoids allocation for signs and symbols.
+struct MonetaryAffixes<'a> {
+    prefix: [&'a [u8]; 6],
+    suffix: [&'a [u8]; 6],
+    before: usize,
+    after: usize,
+}
+
+impl<'a> MonetaryAffixes<'a> {
+    fn new() -> Self {
+        Self {
+            prefix: [b""; 6],
+            suffix: [b""; 6],
+            before: 0,
+            after: 0,
+        }
+    }
+
+    fn prefix(&mut self, bytes: &'a [u8]) {
+        self.prefix[self.before] = bytes;
+        self.before += 1;
+    }
+
+    fn suffix(&mut self, bytes: &'a [u8]) {
+        self.suffix[self.after] = bytes;
+        self.after += 1;
+    }
+
+    fn prefix_len(&self) -> Result<usize, MonetaryError> {
+        self.prefix.iter().try_fold(0usize, |sum, part| {
+            sum.checked_add(part.len())
+                .ok_or(MonetaryError::BufferTooSmall)
+        })
+    }
+}
+
+fn monetary_affixes<'a>(
+    locale: MonetaryLocale<'a>,
+    spec: &Spec,
+    negative: bool,
+) -> MonetaryAffixes<'a> {
+    let international = spec.conv == b'i';
+    let (precedes, spacing, mut position) = match (international, negative) {
+        (false, false) => (
+            locale.p_cs_precedes,
+            locale.p_sep_by_space,
+            locale.p_sign_posn,
+        ),
+        (false, true) => (
+            locale.n_cs_precedes,
+            locale.n_sep_by_space,
+            locale.n_sign_posn,
+        ),
+        (true, false) => (
+            locale.int_p_cs_precedes,
+            locale.int_p_sep_by_space,
+            locale.int_p_sign_posn,
+        ),
+        (true, true) => (
+            locale.int_n_cs_precedes,
+            locale.int_n_sep_by_space,
+            locale.int_n_sign_posn,
+        ),
+    };
+    if spec.use_parens {
+        position = if negative { 0 } else { 5 };
+    } else if position > 4 {
+        position = 1;
+    }
+    let sign = if negative {
+        if locale.negative_sign.is_empty() {
+            b"-".as_slice()
+        } else {
+            locale.negative_sign
+        }
+    } else {
+        locale.positive_sign
+    };
+    let (symbol, space) = if international {
+        let split = locale.int_curr_symbol.len().min(3);
+        (
+            &locale.int_curr_symbol[..split],
+            locale.int_curr_symbol.get(3..4).unwrap_or(b" "),
+        )
+    } else {
+        (locale.currency_symbol, b" ".as_slice())
+    };
+    let symbol = if spec.currency { symbol } else { b"" };
+    let mut parts = MonetaryAffixes::new();
+    if negative && position == 0 {
+        parts.prefix(b"(");
+        parts.suffix(b")");
+    }
+    // The cases describe the documented symbol/sign positions. In GNU's
+    // empty-sign and ! forms, spacing attached to a sign position remains
+    // observable even when that sign or the currency symbol is suppressed.
+    if precedes != 0 {
+        if matches!(position, 1 | 3) {
+            parts.prefix(sign);
+            if spacing == 2 {
+                parts.prefix(b" ");
+            }
+        }
+        parts.prefix(symbol);
+        if position == 4 {
+            if spacing == 2 && !symbol.is_empty() {
+                parts.prefix(space);
+            }
+            parts.prefix(sign);
+            if spacing == 1 {
+                parts.prefix(b" ");
+            }
+        } else if spacing == 1 && !symbol.is_empty() {
+            parts.prefix(space);
+        }
+        if position == 2 {
+            parts.suffix(sign);
+        }
+    } else {
+        if position == 1 {
+            parts.prefix(sign);
+        }
+        // The closing parenthesis must follow the complete currency suffix.
+        parts.after = 0;
+        if position == 3 {
+            if spacing == 1 {
+                parts.suffix(b" ");
+            }
+            parts.suffix(sign);
+        }
+        if !symbol.is_empty() {
+            if (position == 3 && spacing == 2) || (position != 3 && spacing == 1) {
+                parts.suffix(space);
+            }
+            parts.suffix(symbol);
+        }
+        if matches!(position, 2 | 4) {
+            if spacing == 2 {
+                parts.suffix(b" ");
+            }
+            parts.suffix(sign);
+        }
+        if negative && position == 0 {
+            parts.suffix(b")");
+        }
+    }
+    parts
+}
+
+fn monetary_number(
+    value: f64,
+    precision: usize,
+    spec: &Spec,
+    locale: MonetaryLocale<'_>,
+    limit: usize,
+) -> Result<Vec<u8>, MonetaryError> {
+    let grouping = if spec.grouping && !locale.thousands_sep.is_empty() {
+        locale.grouping
+    } else {
+        b""
+    };
+    let left_width = spec.left_prec.map_or(Ok(0), |digits| {
+        digits
+            .checked_add(monetary_group_count(digits, grouping))
+            .ok_or(MonetaryError::BufferTooSmall)
+    })?;
+    if left_width > limit || (value.is_finite() && precision > limit) {
+        return Err(MonetaryError::BufferTooSmall);
+    }
+    let mut raw = MonetaryBuffer::new(limit);
+    // The numeric string retains a negative zero or NaN sign, whereas
+    // placement of the locale sign/parentheses uses the strict < 0 test.
+    let magnitude = if value < 0.0 { value.abs() } else { value };
+    if magnitude.is_nan() {
+        if magnitude.is_sign_negative() {
+            raw.append(b"-")?;
+        }
+        raw.append(b"nan")?;
+    } else if magnitude.is_infinite() {
+        raw.append(b"inf")?;
+    } else {
+        // A binary64 expansion is exact within 1074 fractional digits. Rust's
+        // formatter rejects a precision above u16::MAX; render a bounded exact
+        // body, then append every additional requested zero without truncation.
+        let exact_precision = precision.min(1100);
+        if core::write!(&mut raw, "{magnitude:.exact_precision$}").is_err() {
+            return Err(raw.format_error.unwrap_or(MonetaryError::BufferTooSmall));
+        }
+        raw.fill(b'0', precision - exact_precision)?;
+    }
+    let mut number = MonetaryBuffer::new(limit);
+    if !value.is_finite() {
+        let width = if precision != 0 {
+            left_width
+                .checked_add(precision)
+                .and_then(|n| n.checked_add(1))
+                .ok_or(MonetaryError::BufferTooSmall)?
+        } else {
+            left_width
+        };
+        number.fill(b' ', width.saturating_sub(raw.bytes.len()))?;
+        number.append(&raw.bytes)?;
+        return Ok(number.bytes);
+    }
+    let point = raw.bytes.iter().position(|&byte| byte == b'.');
+    let integer = &raw.bytes[..point.unwrap_or(raw.bytes.len())];
+    let digit_count = integer.len() - usize::from(integer.first() == Some(&b'-'));
+    let groups = monetary_group_count(digit_count, grouping);
+    number.fill(spec.fill, left_width.saturating_sub(integer.len() + groups))?;
+    // There are at most 309 integer digits in a double. Checking the number
+    // of boundaries in each suffix avoids an allocation for group indices.
+    let mut remaining_groups = groups;
+    for (index, &byte) in integer.iter().enumerate() {
+        number.append(core::slice::from_ref(&byte))?;
+        let suffix = integer.len() - index - 1;
+        if remaining_groups > 0 && monetary_group_count(suffix, grouping) < remaining_groups {
+            number.append(locale.thousands_sep)?;
+            remaining_groups -= 1;
+        }
+    }
+    if let Some(point) = point {
+        number.append(locale.decimal_point)?;
+        number.append(&raw.bytes[point + 1..])?;
+    }
+    Ok(number.bytes)
+}
+
+/// Format against one LC_MONETARY snapshot, with a bound excluding the NUL.
+/// The ABI owns the output pointer and locale selection; this engine performs
+/// only safe, fallible byte construction and does not consult global state.
+pub fn strfmon_locale(
+    format: &[u8],
+    mut pull: impl FnMut() -> f64,
+    locale: MonetaryLocale<'_>,
+    max_output: usize,
+) -> Result<Vec<u8>, MonetaryError> {
+    let mut output = MonetaryBuffer::new(max_output);
+    let mut at = 0;
+    while at < format.len() {
+        if format[at] != b'%' {
+            output.append(&format[at..at + 1])?;
+            at += 1;
+            continue;
+        }
+        at += 1;
+        if format.get(at) == Some(&b'%') {
+            output.append(b"%")?;
+            at += 1;
+            continue;
+        }
+        let spec = parse_spec(format, &mut at).ok_or(MonetaryError::InvalidFormat)?;
+        let fractional = match spec.conv {
+            b'n' => locale.frac_digits,
+            b'i' => locale.int_frac_digits,
+            _ => return Err(MonetaryError::InvalidFormat),
+        };
+        let precision = spec.right_prec.unwrap_or(if fractional >= 127 {
+            2
+        } else {
+            usize::from(fractional)
+        });
+        let remaining = max_output - output.bytes.len();
+        if spec.field_width > remaining {
+            return Err(MonetaryError::BufferTooSmall);
+        }
+        let value = pull();
+        let negative = value < 0.0;
+        let parts = monetary_affixes(locale, &spec, negative);
+        let align = if spec.left_prec.is_some() {
+            // GNU's # alignment reserves the locale's full sign/currency
+            // prefix even under !. This matters when the currency switches
+            // sides between positive and negative amounts (for example VND).
+            let alignment_spec = Spec {
+                currency: true,
+                ..spec
+            };
+            monetary_affixes(locale, &alignment_spec, !negative)
+                .prefix_len()?
+                .saturating_sub(monetary_affixes(locale, &alignment_spec, negative).prefix_len()?)
+        } else {
+            0
+        };
+        let number = monetary_number(value, precision, &spec, locale, remaining)?;
+        let mut field = MonetaryBuffer::new(remaining);
+        field.fill(b' ', align)?;
+        for part in &parts.prefix[..parts.before] {
+            field.append(part)?;
+        }
+        field.append(&number)?;
+        for part in &parts.suffix[..parts.after] {
+            field.append(part)?;
+        }
+        let padding = spec.field_width.saturating_sub(field.bytes.len());
+        if !spec.left_justify {
+            output.fill(b' ', padding)?;
+        }
+        output.append(&field.bytes)?;
+        if spec.left_justify {
+            output.fill(b' ', padding)?;
+        }
+    }
+    Ok(output.bytes)
 }
 
 /// Read a run of ASCII digits as an unsigned value; `None` if no digit is
@@ -419,5 +873,283 @@ mod tests {
     fn exact_default_emitter_reports_small_output() {
         let mut out = [0u8; 3];
         assert_eq!(strfmon_c_default_into(&mut out, 12.0), None);
+    }
+
+    const DOLLAR: MonetaryLocale<'static> = MonetaryLocale {
+        currency_symbol: b"$",
+        int_curr_symbol: b"USD ",
+        decimal_point: b".",
+        thousands_sep: b",",
+        grouping: &[3, 3],
+        positive_sign: b"",
+        negative_sign: b"-",
+        frac_digits: 2,
+        int_frac_digits: 2,
+        p_cs_precedes: 1,
+        n_cs_precedes: 1,
+        p_sep_by_space: 0,
+        n_sep_by_space: 0,
+        p_sign_posn: 1,
+        n_sign_posn: 1,
+        int_p_cs_precedes: 1,
+        int_n_cs_precedes: 1,
+        int_p_sep_by_space: 1,
+        int_n_sep_by_space: 1,
+        int_p_sign_posn: 1,
+        int_n_sign_posn: 1,
+    };
+
+    fn monetary(format: &str, value: f64, locale: MonetaryLocale<'_>) -> String {
+        String::from_utf8(strfmon_locale(format.as_bytes(), || value, locale, 512).unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn named_monetary_grouping_precision_and_symbols() {
+        assert_eq!(monetary("%n", 1234567.89, DOLLAR), "$1,234,567.89");
+        assert_eq!(monetary("%i", -1234567.89, DOLLAR), "-USD 1,234,567.89");
+        assert_eq!(monetary("%^n", 1234567.89, DOLLAR), "$1234567.89");
+        assert_eq!(monetary("%!(n", -1234567.89, DOLLAR), "(1,234,567.89)");
+        assert_eq!(monetary("%=*#6n", 12.34, DOLLAR), " $*****12.34");
+        assert_eq!(monetary("%=*#6n", -12.34, DOLLAR), "-$*****12.34");
+        assert_eq!(monetary("%16n", 12.34, DOLLAR), "          $12.34");
+        assert_eq!(monetary("%-16n", 12.34, DOLLAR), "$12.34          ");
+        assert_eq!(monetary("%.0n", 12.5, DOLLAR), "$12");
+        assert_eq!(monetary("%.3n", 0.005, DOLLAR), "$0.005");
+        let indian = MonetaryLocale {
+            currency_symbol: "₹".as_bytes(),
+            grouping: &[3, 2, 0],
+            ..DOLLAR
+        };
+        assert_eq!(monetary("%n", 1234567.89, indian), "₹12,34,567.89");
+        assert_eq!(monetary("%=*#6n", 12.34, indian), " ₹******12.34");
+        let limited = MonetaryLocale {
+            grouping: &[3, 127],
+            ..DOLLAR
+        };
+        assert_eq!(monetary("%n", 1234567.89, limited), "$1234,567.89");
+    }
+
+    #[test]
+    fn named_monetary_multibyte_grouping_and_alignment() {
+        let euro = MonetaryLocale {
+            currency_symbol: "€".as_bytes(),
+            decimal_point: b",",
+            thousands_sep: "\u{202f}".as_bytes(),
+            p_cs_precedes: 0,
+            n_cs_precedes: 0,
+            p_sep_by_space: 1,
+            n_sep_by_space: 1,
+            ..DOLLAR
+        };
+        assert_eq!(
+            monetary("%n", 1234567.89, euro),
+            "1\u{202f}234\u{202f}567,89 €"
+        );
+        // # counts separator positions once even when a separator has 3 bytes.
+        assert_eq!(monetary("%=*#6n", 1234.0, euro), " **1\u{202f}234,00 €");
+        let asymmetric = MonetaryLocale {
+            currency_symbol: "₫".as_bytes(),
+            frac_digits: 0,
+            p_cs_precedes: 0,
+            n_cs_precedes: 1,
+            ..DOLLAR
+        };
+        // Alignment accounts for the entire opposite-sign prefix, including
+        // a currency symbol that moves across the number for negative values.
+        assert_eq!(monetary("%=*#6n", 12.34, asymmetric), "    *****12₫");
+        assert_eq!(monetary("%=*#6n", -12.34, asymmetric), "-₫*****12");
+        assert_eq!(monetary("%=*!#6n", 12.34, asymmetric), "    *****12");
+        assert_eq!(monetary("%=*!#6n", -12.34, asymmetric), "-*****12");
+        assert_eq!(monetary("%=*(!#6n", 12.34, asymmetric), "    *****12");
+        let reversed = MonetaryLocale {
+            p_cs_precedes: 1,
+            n_cs_precedes: 0,
+            ..asymmetric
+        };
+        assert_eq!(monetary("%=*!#6n", 12.34, reversed), "*****12");
+        assert_eq!(monetary("%=*!#6n", -12.34, reversed), "  -*****12");
+    }
+
+    #[test]
+    fn named_monetary_all_sign_positions_and_spacing_match_gnu() {
+        // Captured from independent GNU strfmon with private localedef locales.
+        // Order is currency-before 0/1, spacing 0/1/2, sign position 0..4.
+        let expected = [
+            ("12.34$", "(12.34$)"),
+            ("12.34$", "-12.34$"),
+            ("12.34$", "12.34$-"),
+            ("12.34$", "12.34-$"),
+            ("12.34$", "12.34$-"),
+            ("12.34 $", "(12.34 $)"),
+            ("12.34 $", "-12.34 $"),
+            ("12.34 $", "12.34 $-"),
+            ("12.34 $", "12.34 -$"),
+            ("12.34 $", "12.34 $-"),
+            ("12.34$", "(12.34$)"),
+            ("12.34$", "-12.34$"),
+            ("12.34$ ", "12.34$ -"),
+            ("12.34 $", "12.34- $"),
+            ("12.34$ ", "12.34$ -"),
+            ("$12.34", "($12.34)"),
+            ("$12.34", "-$12.34"),
+            ("$12.34", "$12.34-"),
+            ("$12.34", "-$12.34"),
+            ("$12.34", "$-12.34"),
+            ("$ 12.34", "($ 12.34)"),
+            ("$ 12.34", "-$ 12.34"),
+            ("$ 12.34", "$ 12.34-"),
+            ("$ 12.34", "-$ 12.34"),
+            ("$ 12.34", "$- 12.34"),
+            ("$12.34", "($12.34)"),
+            (" $12.34", "- $12.34"),
+            ("$12.34", "$12.34-"),
+            (" $12.34", "- $12.34"),
+            ("$ 12.34", "$ -12.34"),
+        ];
+        let mut index = 0;
+        for precedes in 0..=1 {
+            for spacing in 0..=2 {
+                for position in 0..=4 {
+                    let locale = MonetaryLocale {
+                        p_cs_precedes: precedes,
+                        n_cs_precedes: precedes,
+                        p_sep_by_space: spacing,
+                        n_sep_by_space: spacing,
+                        p_sign_posn: position,
+                        n_sign_posn: position,
+                        ..DOLLAR
+                    };
+                    assert_eq!(monetary("%n", 12.34, locale), expected[index].0);
+                    assert_eq!(monetary("%n", -12.34, locale), expected[index].1);
+                    index += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn named_monetary_nonfinite_and_signed_zero() {
+        assert_eq!(monetary("%=*#6n", f64::INFINITY, DOLLAR), " $       inf");
+        assert_eq!(
+            monetary("%=*#6n", f64::NEG_INFINITY, DOLLAR),
+            "-$       inf"
+        );
+        assert_eq!(monetary("%=*#6n", f64::NAN, DOLLAR), " $       nan");
+        assert_eq!(monetary("%=*#6n", -0.0, DOLLAR), " $*****-0.00");
+        assert_eq!(monetary("%(n", -0.0, DOLLAR), "$-0.00");
+        assert_eq!(monetary("%.4n", f64::INFINITY, DOLLAR), "$  inf");
+        assert_eq!(monetary("%.4n", f64::NEG_INFINITY, DOLLAR), "-$  inf");
+        assert_eq!(monetary("%.4n", f64::NAN, DOLLAR), "$  nan");
+        assert_eq!(monetary("%.4n", -f64::NAN, DOLLAR), "$ -nan");
+    }
+
+    #[test]
+    fn named_monetary_international_separator_is_distinct_from_sign_spacing() {
+        let locale = MonetaryLocale {
+            int_curr_symbol: b"XTS_",
+            positive_sign: b"CR",
+            negative_sign: b"",
+            int_p_sep_by_space: 2,
+            ..DOLLAR
+        };
+        assert_eq!(monetary("%i", 12.5, locale), "CR XTS12.50");
+        assert_eq!(monetary("%i", -12.5, locale), "-XTS_12.50");
+        assert_eq!(
+            monetary(
+                "%i",
+                12.5,
+                MonetaryLocale {
+                    int_p_cs_precedes: 0,
+                    int_p_sign_posn: 2,
+                    ..locale
+                }
+            ),
+            "12.50XTS CR"
+        );
+        assert_eq!(
+            monetary(
+                "%i",
+                12.5,
+                MonetaryLocale {
+                    int_p_sign_posn: 4,
+                    int_p_sep_by_space: 1,
+                    ..locale
+                }
+            ),
+            "XTSCR 12.50"
+        );
+        assert_eq!(
+            monetary(
+                "%i",
+                12.5,
+                MonetaryLocale {
+                    int_p_cs_precedes: 0,
+                    int_p_sign_posn: 3,
+                    int_p_sep_by_space: 1,
+                    ..locale
+                }
+            ),
+            "12.50 CRXTS"
+        );
+    }
+
+    #[test]
+    fn named_monetary_multiple_values_and_bounds() {
+        let format = b"%n / %(i / 100%%";
+        let mut values = [12.5, -23.75].into_iter();
+        let expected = b"$12.50 / (USD 23.75) / 100%";
+        assert_eq!(
+            strfmon_locale(format, || values.next().unwrap(), DOLLAR, expected.len()),
+            Ok(expected.to_vec())
+        );
+        for limit in 0..expected.len() {
+            let mut values = [12.5, -23.75].into_iter();
+            assert_eq!(
+                strfmon_locale(format, || values.next().unwrap(), DOLLAR, limit),
+                Err(MonetaryError::BufferTooSmall)
+            );
+        }
+        for format in [
+            b"%999999999999999999999n".as_slice(),
+            b"%#999999999999999999999n",
+            b"%.999999999999999999999n",
+        ] {
+            assert_eq!(
+                strfmon_locale(format, || 1.0, DOLLAR, 32),
+                Err(MonetaryError::BufferTooSmall)
+            );
+        }
+        for format in [b"%".as_slice(), b"%z", b"%#n", b"%+(n", b"%++n"] {
+            assert_eq!(
+                strfmon_locale(
+                    format,
+                    || panic!("invalid format pulled a value"),
+                    DOLLAR,
+                    64
+                ),
+                Err(MonetaryError::InvalidFormat)
+            );
+        }
+    }
+
+    #[test]
+    fn named_monetary_large_precision_preserves_requested_digits() {
+        let output = strfmon_locale(b"%.100000n", || 1.25, DOLLAR, 100003).unwrap();
+        assert_eq!(output.len(), 100003);
+        assert_eq!(&output[..5], b"$1.25");
+        assert!(output[5..].iter().all(|&byte| byte == b'0'));
+        assert_eq!(
+            strfmon_locale(b"%.100000n", || 1.25, DOLLAR, 100002),
+            Err(MonetaryError::BufferTooSmall)
+        );
+        for (value, label) in [(f64::INFINITY, b"inf".as_slice()), (-f64::NAN, b"-nan")] {
+            let output = strfmon_locale(b"%.100000n", || value, DOLLAR, 100002).unwrap();
+            assert_eq!(output.len(), 100002);
+            assert_eq!(output[0], b'$');
+            let number = output.len() - label.len();
+            assert!(output[1..number].iter().all(|&byte| byte == b' '));
+            assert_eq!(&output[number..], label);
+        }
     }
 }
