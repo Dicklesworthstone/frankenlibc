@@ -1368,9 +1368,15 @@ unsafe fn startup_phase0_impl(
             run_owned_main_on_host(host, main_fn, normalized_argc as c_int, ubp_av, stack_end)
         }
     } else if publish_environment && !return_to_caller {
+        // Executable constructors may have moved or cleared the published
+        // environment. Pass its current vector to main, as the hosted startup
+        // path does, instead of the original kernel-stack snapshot. Release
+        // the environment lock before entering application code; the fixture
+        // branch below must retain its caller-owned vector.
+        let main_envp = crate::stdlib_abi::with_environ_locked(|current| current);
         // SAFETY: real owned native startup; records main's unwind boundary so
         // native pthread_exit / cancellation stops cleanly above main.
-        unsafe { run_owned_main_native(main_fn, normalized_argc as c_int, ubp_av, resolved_envp) }
+        unsafe { run_owned_main_native(main_fn, normalized_argc as c_int, ubp_av, main_envp) }
     } else {
         scrub_stack_for_main();
         // SAFETY: callback + vectors are validated for the fixture path.

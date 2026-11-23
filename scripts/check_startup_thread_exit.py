@@ -12,7 +12,7 @@ import subprocess
 CASES = {
     "return": 23, "negative-return": 151, "exit": 23, "thread-exit": 0,
     "self-cancel": 0, "disabled-cancel": 0, "worker-exit": 0,
-    "worker-cancel": 0, "worker-self-cancel": 0, "fork-exit": 23,
+    "worker-cancel": 0, "worker-self-cancel": 0, "worker-last-exit": 0, "fork-exit": 23,
     "constructor-exit": 29,
 }
 
@@ -68,7 +68,7 @@ def main() -> int:
             passed &= stdout.count(b"J") == int(case.startswith("worker-"))
             expected_keys = 3 if case in (
                 "thread-exit", "self-cancel", "disabled-cancel", "worker-exit",
-                "worker-cancel", "worker-self-cancel", "fork-exit") else 0
+                "worker-cancel", "worker-self-cancel", "worker-last-exit", "fork-exit") else 0
             passed &= stdout.count(b"K") == expected_keys
         prefix = f"{label}-{build}-{case}"
         (out / f"{prefix}.out").write_bytes(stdout)
@@ -98,6 +98,13 @@ def main() -> int:
             for build in builds:
                 for case in CASES:
                     run(mode, build, case, env, references[build, case])
+            # The last native clone used to discard its handle/TLS before
+            # process callbacks. Hosted workers cannot exercise that path.
+            # C++ compiler TLS remains a separate native integration boundary.
+            native_env = dict(env, FRANKENLIBC_THREAD_NATIVE="1")
+            for build in ("c", "c-exceptions"):
+                run(f"{mode}-native", build, "worker-last-exit", native_env,
+                    references[build, "worker-last-exit"])
     report = {"diagnostic": adapter is not None, "results": results, "failures": failures,
               "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
               "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest() if library else None,

@@ -1846,6 +1846,15 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
         // created by POSIX key destructors. No signal may create new state
         // between its final drain and reclamation.
         super::thread::reclaim_native_runtime_tls(tid);
+
+        // The last worker terminates the process with exit(0) semantics. Its
+        // atexit callbacks and FILE flushing must still see the native handle,
+        // errno cell, and usable thread-specific storage. Reclaiming private
+        // values or withdrawing the handle first would switch these callbacks
+        // to the creator's compiler TLS and an invalid pthread_self().
+        // SAFETY: native teardown reaches this point once, after application
+        // destructors finish and before the current stack or handle is freed.
+        unsafe { super::thread::maybe_exit_process_as_last_native_thread() };
     }
 
     // Locale, parser cursors, scratch buffers, and policy state must remain

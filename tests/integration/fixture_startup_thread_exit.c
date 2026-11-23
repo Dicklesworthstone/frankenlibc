@@ -4,6 +4,8 @@
 #define _GNU_SOURCE
 #endif
 #include <dlfcn.h>
+#include <errno.h>
+#include <linux/futex.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdint.h>
@@ -18,20 +20,29 @@
 #ifdef __cplusplus
 #include <atomic>
 static std::atomic<int> ready(0);
+static std::atomic<int> initial_alive(1);
 #define STORE_READY() ready.store(1, std::memory_order_release)
 #define LOAD_READY() ready.load(std::memory_order_acquire)
+#define LOAD_INITIAL_ALIVE() initial_alive.load(std::memory_order_acquire)
 #else
 #include <stdatomic.h>
 static _Atomic int ready;
+static _Atomic int initial_alive = 1;
 #define STORE_READY() atomic_store_explicit(&ready, 1, memory_order_release)
 #define LOAD_READY() atomic_load_explicit(&ready, memory_order_acquire)
+#define LOAD_INITIAL_ALIVE() atomic_load_explicit(&initial_alive, memory_order_acquire)
 #endif
 
 static unsigned constructors;
 static pthread_key_t key;
+static pthread_key_t exit_key;
 static pthread_t initial_thread;
+static pthread_t exiting_worker;
+static int *exiting_worker_errno;
+static int verify_worker_identity;
 static void *expected_result;
 static int cancel_from_worker;
+static int wait_initial_kernel_exit;
 
 static void event(char ch) {
     if (syscall(SYS_write, STDOUT_FILENO, &ch, 1) != 1) _exit(119);
@@ -52,14 +63,26 @@ static void check_provider(const char *symbol, const char *expected) {
 }
 
 static void constructor_atexit(void) { event('A'); }
-static void main_atexit(void) { event('E'); }
+static void main_atexit(void) {
+    if (verify_worker_identity) {
+        /* Process callbacks still execute on the last worker. Its identity,
+         * errno cell and private key storage must outlive these callbacks. */
+        if (!pthread_equal(pthread_self(), exiting_worker) ||
+            &errno != exiting_worker_errno ||
+            pthread_getspecific(exit_key) != NULL ||
+            pthread_setspecific(exit_key, (void *)(uintptr_t)47) ||
+            pthread_getspecific(exit_key) != (void *)(uintptr_t)47) _exit(116);
+    }
+    event('E');
+}
 
 __attribute__((constructor)) static void initialize(void) {
     const char *library = getenv("FRANKENLIBC_TEST_LIBRARY");
     const char *startup = getenv("FRANKENLIBC_TEST_STARTUP_LIBRARY");
     check_provider("__libc_start_main", startup ? startup : library);
     const char *symbols[] = {"pthread_exit", "pthread_cancel", "pthread_join",
-                            "pthread_key_create", "pthread_setspecific", "exit"};
+                            "pthread_key_create", "pthread_setspecific", "exit",
+                            "pthread_self", "pthread_getspecific", "__errno_location"};
     for (unsigned i = 0; i < sizeof(symbols) / sizeof(symbols[0]); ++i)
         check_provider(symbols[i], library);
     if (++constructors != 1 || atexit(constructor_atexit) != 0 ||
@@ -89,8 +112,23 @@ static void *survivor(void *unused) {
     (void)unused;
     while (!LOAD_READY()) sched_yield();
     if (cancel_from_worker && pthread_cancel(initial_thread)) _exit(118);
-    void *result = NULL;
-    if (pthread_join(initial_thread, &result) || result != expected_result) _exit(118);
+    if (wait_initial_kernel_exit) {
+        /* The kernel clears this word after initial-thread teardown. Waiting
+         * here isolates last-worker process exit from initial-thread join
+         * support, which the separate worker-exit scenario still exercises. */
+        while (LOAD_INITIAL_ALIVE()) {
+            long waited = syscall(SYS_futex, &initial_alive, FUTEX_WAIT, 1,
+                                  NULL, NULL, 0);
+            if (waited && errno != EINTR && errno != EAGAIN) _exit(118);
+        }
+    } else {
+        void *result = NULL;
+        if (pthread_join(initial_thread, &result) || result != expected_result) _exit(118);
+    }
+    exiting_worker = pthread_self();
+    exiting_worker_errno = &errno;
+    if (pthread_setspecific(exit_key, (void *)(uintptr_t)31)) _exit(118);
+    verify_worker_identity = 1;
     event('J');
     /* Last-worker termination must also flush native FILE buffers. */
     if (fputs("B", stdout) < 0) _exit(118);
@@ -109,6 +147,7 @@ int main(int argc, char **argv, char **envp) {
         !getenv("FRANKENLIBC_MAIN_CTOR_VALUE") ||
         strcmp(getenv("FRANKENLIBC_MAIN_CTOR_VALUE"), "retained") ||
         atexit(main_atexit) || pthread_key_create(&key, key_destructor) ||
+        pthread_key_create(&exit_key, NULL) ||
         pthread_setspecific(key, (void *)1)) return 118;
     event('M');
 #ifdef __cplusplus
@@ -117,9 +156,12 @@ int main(int argc, char **argv, char **envp) {
 #endif
     const char *scenario = argv[1];
     initial_thread = pthread_self();
+    wait_initial_kernel_exit = !strcmp(scenario, "worker-last-exit");
+    if (wait_initial_kernel_exit && syscall(SYS_set_tid_address, &initial_alive) <= 0)
+        return 118;
     int worker = !strcmp(scenario, "worker-exit") ||
                  !strcmp(scenario, "worker-cancel") ||
-                 !strcmp(scenario, "worker-self-cancel");
+                 !strcmp(scenario, "worker-self-cancel") || wait_initial_kernel_exit;
     int self_cancel = !strcmp(scenario, "self-cancel") ||
                       !strcmp(scenario, "worker-self-cancel") ||
                       !strcmp(scenario, "disabled-cancel");

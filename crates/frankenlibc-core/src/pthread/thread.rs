@@ -107,11 +107,19 @@ fn decrement_live_native_threads() -> bool {
 /// # Safety
 ///
 /// Must be called at most once by an exiting native thread (or `main` exiting
-/// via `pthread_exit` / cancellation) while its stack is still mapped.
+/// via `pthread_exit` / cancellation) while its stack is still mapped. Native
+/// workers must retain their handle and private TLS through the exit hook.
 pub unsafe fn maybe_exit_process_as_last_native_thread() {
     if decrement_live_native_threads() {
         let raw = LAST_THREAD_EXIT_HOOK.load(Ordering::Acquire);
         if raw != 0 {
+            // Application key destructors have finished. Process callbacks
+            // still need this thread's identity and errno, but must not reopen
+            // cancellation after its final runtime-TLS drain.
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+            if let Some(handle) = current_thread_handle() {
+                unsafe { (*handle).exit_started.store(1, Ordering::Relaxed) };
+            }
             // SAFETY: `set_last_thread_exit_hook` stores a valid `LastThreadExitHook`.
             let hook: LastThreadExitHook = unsafe { core::mem::transmute(raw) };
             unsafe { hook() };
@@ -415,6 +423,11 @@ unsafe extern "C-unwind" fn thread_trampoline(args_raw: usize) -> usize {
         // No application code or signal handler has run. Retire the fresh
         // identity directly, without executing application TLS destructors.
         super::tls::discard_thread_tls_before_entry(current_tid);
+        // Preparation already counted this child. Unlike startup failure,
+        // this successfully prepared guard is reaped without a parent-side
+        // decrement. Its creator is still alive waiting for the reap, so
+        // retire the count without invoking the last-thread process hook.
+        let _ = decrement_live_native_threads();
         handle.state.store(THREAD_FINISHED, Ordering::Release);
         syscall::sys_exit_thread(0);
     }
@@ -626,11 +639,6 @@ pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return
     // value becomes visible only after the FINISHED/DETACHED synchronization.
     unsafe { *(*handle_ptr).retval.get() = retval };
-
-    // POSIX: when the last remaining thread in the process terminates via
-    // pthread_exit/cancellation (or returns after main exited via pthread_exit),
-    // terminate the process as if by exit(0) before unmapping this thread's stack.
-    unsafe { maybe_exit_process_as_last_native_thread() };
 
     let handle = unsafe { &*handle_ptr };
     loop {
@@ -1805,6 +1813,40 @@ mod tests {
 
     #[test]
     fn prepared_thread_abort_reaps_without_callbacks_or_errno_changes() {
+        const CHILD: &str = "FRANKENLIBC_PREPARED_THREAD_ABORT_CHILD";
+        const TEST: &str =
+            "pthread::thread::tests::prepared_thread_abort_reaps_without_callbacks_or_errno_changes";
+        if std::env::var(CHILD).as_deref() != Ok("1") {
+            // Other core tests also create native threads. Give the count
+            // assertions their own process instead of depending on test
+            // scheduling or a lock those other creators do not acquire.
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !timed_out && output.status.success() && stdout.contains("1 passed;"),
+                "prepared-thread abort: timeout={timed_out} status={}\n{stdout}\n{stderr}",
+                output.status
+            );
+            return;
+        }
         unsafe extern "C" {
             #[link_name = "__errno_location"]
             fn host_errno_location() -> *mut i32;
@@ -1812,6 +1854,8 @@ mod tests {
         let flag = AtomicU32::new(0);
         let page_size = unsafe { host_page_size() } as usize;
         let mut residency = vec![0u8; (128 * 1024 + page_size) / page_size];
+        let baseline = LIVE_NATIVE_THREADS.load(Ordering::Acquire);
+        assert_eq!(baseline, 1, "isolated process starts with its initial thread");
         for _ in 0..32 {
             let prepared = unsafe {
                 prepare_thread_with_startup(
@@ -1826,6 +1870,7 @@ mod tests {
                 )
             }
             .unwrap();
+            assert_eq!(LIVE_NATIVE_THREADS.load(Ordering::Acquire), baseline + 1);
             let handle = unsafe { &*prepared.handle() };
             let (address, size, tid) = (
                 handle.stack_base,
@@ -1834,6 +1879,11 @@ mod tests {
             );
             unsafe { *host_errno_location() = 33 }; // EDOM sentinel
             drop(prepared);
+            assert_eq!(
+                LIVE_NATIVE_THREADS.load(Ordering::Acquire),
+                baseline,
+                "aborting an unpublished thread must retire its live count"
+            );
             assert_eq!(unsafe { *host_errno_location() }, 33);
             assert_eq!(flag.load(Ordering::Acquire), 0);
             assert!(super::super::tls::table_lookup(tid).is_null());
