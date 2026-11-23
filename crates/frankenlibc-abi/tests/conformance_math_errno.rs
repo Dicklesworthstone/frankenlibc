@@ -410,9 +410,43 @@ fn math_errno_matches_glibc() {
     chk!("nextafter(0,1)", 0, fa::nextafter(0.0, 1.0));
     chk!("nextafter(1,2)", 0, fa::nextafter(1.0, 2.0));
 
-    // --- significand(0): EDOM (no normalized mantissa) ---
+    // --- significand(0 / ±inf / NaN): EDOM (no normalized mantissa; mirrors ilogb) ---
     chk!("significand(0)", EDOM, fa::significand(0.0));
+    chk!("significand(+inf)", EDOM, fa::significand(f64::INFINITY));
+    chk!(
+        "significand(-inf)",
+        EDOM,
+        fa::significand(f64::NEG_INFINITY)
+    );
+    chk!("significand(nan)", EDOM, fa::significand(f64::NAN));
     chk!("significandf(0)", EDOM, fa::significandf(0.0));
+    chk!("significandf(+inf)", EDOM, fa::significandf(f32::INFINITY));
+    chk!(
+        "significandf(-inf)",
+        EDOM,
+        fa::significandf(f32::NEG_INFINITY)
+    );
+    chk!("significandf(nan)", EDOM, fa::significandf(f32::NAN));
+
+    // --- C23 cospi/sinpi/tanpi (±inf → EDOM; tanpi half-integer poles → ERANGE) ---
+    chk!("cospi(+inf)", EDOM, fa::cospi(f64::INFINITY));
+    chk!("cospi(-inf)", EDOM, fa::cospi(f64::NEG_INFINITY));
+    chk!("cospif(+inf)", EDOM, fa::cospif(f32::INFINITY));
+    chk!("cospif(-inf)", EDOM, fa::cospif(f32::NEG_INFINITY));
+    chk!("sinpi(+inf)", EDOM, fa::sinpi(f64::INFINITY));
+    chk!("sinpi(-inf)", EDOM, fa::sinpi(f64::NEG_INFINITY));
+    chk!("sinpif(+inf)", EDOM, fa::sinpif(f32::INFINITY));
+    chk!("sinpif(-inf)", EDOM, fa::sinpif(f32::NEG_INFINITY));
+    chk!("tanpi(+inf)", EDOM, fa::tanpi(f64::INFINITY));
+    chk!("tanpi(-inf)", EDOM, fa::tanpi(f64::NEG_INFINITY));
+    chk!("tanpif(+inf)", EDOM, fa::tanpif(f32::INFINITY));
+    chk!("tanpif(-inf)", EDOM, fa::tanpif(f32::NEG_INFINITY));
+    chk!("tanpi(0.5)", ERANGE, fa::tanpi(0.5));
+    chk!("tanpi(-1.5)", ERANGE, fa::tanpi(-1.5));
+    chk!("tanpif(0.5)", ERANGE, fa::tanpif(0.5));
+    chk!("tanpif(-1.5)", ERANGE, fa::tanpif(-1.5));
+    chk!("tanpi(0.25)", 0, fa::tanpi(0.25));
+    chk!("tanpif(0.25)", 0, fa::tanpif(0.25));
 
     // --- logb(0): glibc raises FE flag only, errno stays 0 (NOT ERANGE) ---
     chk!("logb(0)", 0, fa::logb(0.0));

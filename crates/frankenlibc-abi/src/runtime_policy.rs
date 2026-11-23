@@ -4219,6 +4219,43 @@ fn record_deny(mode: SafetyLevel, ctx: RuntimeContext, decision: &RuntimeDecisio
 /// unsupported encodings, and similar domain errors must not disappear from
 /// `FRANKENLIBC_LOG` merely because they are more precise than the generic
 /// pointer/risk context available to [`decide`].
+/// Increment the semantic-denial counter without touching TLS, `mode()`, or
+/// `errno`. Callers must check `!runtime_log_is_configured()` first.
+#[inline(always)]
+pub(crate) fn record_semantic_deny_counter_only() {
+    DENIALS.fetch_add(1, AtomicOrdering::Relaxed);
+}
+
+/// Fast-path wrapper around [`record_semantic_deny`] that short-circuits
+/// directly to the denial counter when `FRANKENLIBC_LOG` is unset, keeping
+/// callers frameless without touching TLS, `mode()`, or `errno`.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+pub(crate) fn record_semantic_deny_fast(
+    symbol: &'static str,
+    family: ApiFamily,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    errno_value: c_int,
+    reason: &'static str,
+) {
+    if !frankenlibc_membrane::heal::runtime_log_is_configured() {
+        DENIALS.fetch_add(1, AtomicOrdering::Relaxed);
+        return;
+    }
+    record_semantic_deny(
+        symbol,
+        family,
+        addr_hint,
+        requested_bytes,
+        is_write,
+        errno_value,
+        reason,
+    );
+}
+
 #[cold]
 pub(crate) fn record_semantic_deny(
     symbol: &'static str,
@@ -4229,6 +4266,10 @@ pub(crate) fn record_semantic_deny(
     errno_value: c_int,
     reason: &'static str,
 ) {
+    if !frankenlibc_membrane::heal::runtime_log_is_configured() {
+        DENIALS.fetch_add(1, AtomicOrdering::Relaxed);
+        return;
+    }
     let signal_context = frankenlibc_membrane::heal::runtime_log_signal_context();
     let signal_safe_path = signal_context.requires_signal_safe_path();
     // Preserve errno before selecting the process mode.  The normal-path

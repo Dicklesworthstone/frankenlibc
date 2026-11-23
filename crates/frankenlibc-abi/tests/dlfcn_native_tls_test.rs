@@ -108,7 +108,7 @@ impl Loader {
     }
     fn tls_info(self, handle: *mut c_void) -> (usize, *mut c_void) {
         let mut module = 0usize;
-        let mut base = std::ptr::null_mut();
+        let mut base: *mut c_void = std::ptr::null_mut();
         unsafe {
             assert_eq!(dlinfo(handle, 9, (&raw mut module).cast()), 0);
             assert_eq!(dlinfo(handle, 10, (&raw mut base).cast()), 0);

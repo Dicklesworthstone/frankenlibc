@@ -1176,13 +1176,38 @@ pub fn scan_input_with_radix(
     scan_input_impl::<true, false, _>(input, directives, Some(radix), |_, _, _| Ok(()))
 }
 
-/// The engine's `%f` spec, built ONCE.
+/// The engine's `%lf` (`f64`) spec, built ONCE.
 ///
 /// The previous attempt built this per call — including its 16-byte
 /// `Option<usize>` width — and called `bind_route`, a table lookup plus a length
 /// check, every time. That setup, not the parsing, is what put the float field
 /// 1265 instructions per call above its own ceiling and got the lever rejected.
 fn default_float_spec() -> &'static ScanSpec {
+    static SPEC: std::sync::OnceLock<ScanSpec> = std::sync::OnceLock::new();
+    SPEC.get_or_init(|| {
+        let mut spec = ScanSpec {
+            suppress: false,
+            width: None,
+            argument_index: None,
+            length: LengthMod::L,
+            conversion: b'f',
+            scanset: None,
+            simple_set: SimpleScanSet::None,
+            wide_input: false,
+            binary_prefix: false,
+            alloc: false,
+            route: ScanfRoute::invalid(),
+        };
+        // A `%lf` route always binds. If it ever stopped, `scan_float` would
+        // decline every input and the differential would go red, rather than
+        // values silently going wrong.
+        let _ = spec.bind_route();
+        spec
+    })
+}
+
+/// The engine's `%f` (`f32`, single-rounded) spec, built ONCE.
+fn default_float32_spec() -> &'static ScanSpec {
     static SPEC: std::sync::OnceLock<ScanSpec> = std::sync::OnceLock::new();
     SPEC.get_or_init(|| {
         let mut spec = ScanSpec {
@@ -1198,18 +1223,15 @@ fn default_float_spec() -> &'static ScanSpec {
             alloc: false,
             route: ScanfRoute::invalid(),
         };
-        // A `%f` route always binds. If it ever stopped, `scan_float` would
-        // decline every input and the differential would go red, rather than
-        // values silently going wrong.
         let _ = spec.bind_route();
         spec
     })
 }
 
-/// Scan ONE default-width float from `input` at `pos`, returning its value and
-/// the position just past it.
+/// Scan ONE default-width `double` (`%lf`) from `input` at `pos`, returning its
+/// value and the position just past it.
 ///
-/// Exists so the ABI's strict fast paths can serve a `%f`/`%lf` field WITHOUT
+/// Exists so the ABI's strict fast paths can serve a `%lf` field WITHOUT
 /// reimplementing the float grammar — hex floats, `inf`/`infinity`/`nan`,
 /// subnormals, the sign rules. It calls the engine's own `scan_float` through
 /// the shared spec above, and a fast path cannot do this itself because
@@ -1224,8 +1246,8 @@ pub fn scan_default_float(input: &[u8], pos: usize) -> Option<(f64, usize)> {
     }
 }
 
-/// The default float field with the same explicit radix used by the full
-/// scanner, including byte-accurate consumption of multibyte radix strings.
+/// The default `double` (`%lf`) field with the same explicit radix used by the
+/// full scanner, including byte-accurate consumption of multibyte radix strings.
 pub fn scan_default_float_with_radix(
     input: &[u8],
     pos: usize,
@@ -1233,6 +1255,33 @@ pub fn scan_default_float_with_radix(
 ) -> Option<(f64, usize)> {
     match scan_float_with_radix(input, pos, default_float_spec(), false, radix) {
         Some((Some(ScanValue::Float(value)), next)) => Some((value, next)),
+        _ => None,
+    }
+}
+
+/// Scan ONE default-width single-precision `float` (`%f`) from `input` at `pos`,
+/// rounded directly to binary32 (no intermediate `f64` double rounding) while
+/// preserving glibc NaN payloads.
+pub fn scan_default_float_f32(input: &[u8], pos: usize) -> Option<(f32, usize)> {
+    match scan_float(input, pos, default_float32_spec()) {
+        Some((Some(ScanValue::Float(value)), next)) => {
+            Some((crate::stdlib::conversion::narrow_f64_to_f32(value), next))
+        }
+        _ => None,
+    }
+}
+
+/// The default single-precision `float` (`%f`) field with an explicit locale
+/// radix, rounded directly to binary32 without intermediate `f64` double rounding.
+pub fn scan_default_float_f32_with_radix(
+    input: &[u8],
+    pos: usize,
+    radix: &[u8],
+) -> Option<(f32, usize)> {
+    match scan_float_with_radix(input, pos, default_float32_spec(), false, radix) {
+        Some((Some(ScanValue::Float(value)), next)) => {
+            Some((crate::stdlib::conversion::narrow_f64_to_f32(value), next))
+        }
         _ => None,
     }
 }
@@ -3129,9 +3178,18 @@ fn scan_float_c_radix(
     }
 
     // Parse the accepted token straight out of `input`.
+    // For single-precision `%f` (`LengthMod::None`), parse directly to `f32`
+    // and widen losslessly (`f64::from`) so borderline midpoints and subnormals
+    // never suffer intermediate `f64` double rounding.
     let s = core::str::from_utf8(input.get(tok_start..value_end.unwrap_or(i))?).ok()?;
-    let magnitude: f64 = s.parse().ok()?;
-    let val = if negative { -magnitude } else { magnitude };
+    let val = if spec.length == LengthMod::None {
+        let magnitude: f32 = s.parse().ok()?;
+        let signed = if negative { -magnitude } else { magnitude };
+        f64::from(signed)
+    } else {
+        let magnitude: f64 = s.parse().ok()?;
+        if negative { -magnitude } else { magnitude }
+    };
 
     Some((Some(float_scan_value(spec, val, &input[pos..i])), i))
 }
@@ -3199,6 +3257,7 @@ fn scan_hex_float(
     }
 
     // Parse binary exponent (p/P followed by optional sign and decimal digits).
+    let mut hex_value_end = i;
     let mut bin_exp: i32 = 0;
     if i < input.len() && chars_read < max_chars && (input[i] == b'p' || input[i] == b'P') {
         i += 1;
@@ -3221,11 +3280,15 @@ fn scan_hex_float(
             exp_negative = false;
         }
 
+        let exp_digits_start = i;
         while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
             let d = (input[i] - b'0') as i32;
             bin_exp = bin_exp.saturating_mul(10).saturating_add(d);
             i += 1;
             chars_read += 1;
+        }
+        if i > exp_digits_start {
+            hex_value_end = i;
         }
 
         // As for decimal exponents, GNU scanf consumes an incomplete `p`/`P`
@@ -3235,22 +3298,34 @@ fn scan_hex_float(
         }
     }
 
-    // Convert to f64: value = significand * 2^(bin_exp - 4*frac_digits). Each
-    // hex fractional digit shifts the binary point 4 bits. Scale with
-    // `libm::ldexp` (== scalbn) rather than `* 2_f64.powi(n)`: for a large
-    // negative exponent `powi` evaluates 1/2^|n|, and 2^1074 overflows to inf,
-    // so the smallest subnormal `0x1p-1074` (5e-324) wrongly underflowed to 0.
-    // ldexp handles the full subnormal/overflow range correctly.
-    //
-    // Restored under bd-2g7oyh: 8f0dda241 fixed this and 73c8da5cd reverted it
-    // (1424 insertions against 9431 deletions). The saturating arithmetic went
-    // with it — plain `bin_exp - frac_digits * 4` can overflow on an input with
-    // enough fractional digits, which is reachable from untrusted text.
-    let total_exp = bin_exp.saturating_sub(frac_digits.saturating_mul(4));
-    let mut val = libm::ldexp(significand as f64, total_exp);
-    if negative {
-        val = -val;
-    }
+    let val = if spec.length == LengthMod::None {
+        // Round hex floats directly to binary32 so sticky bits beyond bit 53
+        // cannot double-round through an intermediate `f64`.
+        let parsed = crate::float128::parse_binary_c(
+            &input[start_pos..hex_value_end],
+            crate::float128::BinaryFormat::Binary32,
+            crate::float128::RoundingMode::Nearest,
+        );
+        f64::from(f32::from_bits(parsed.bits as u32))
+    } else {
+        // Convert to f64: value = significand * 2^(bin_exp - 4*frac_digits). Each
+        // hex fractional digit shifts the binary point 4 bits. Scale with
+        // `libm::ldexp` (== scalbn) rather than `* 2_f64.powi(n)`: for a large
+        // negative exponent `powi` evaluates 1/2^|n|, and 2^1074 overflows to inf,
+        // so the smallest subnormal `0x1p-1074` (5e-324) wrongly underflowed to 0.
+        // ldexp handles the full subnormal/overflow range correctly.
+        //
+        // Restored under bd-2g7oyh: 8f0dda241 fixed this and 73c8da5cd reverted it
+        // (1424 insertions against 9431 deletions). The saturating arithmetic went
+        // with it — plain `bin_exp - frac_digits * 4` can overflow on an input with
+        // enough fractional digits, which is reachable from untrusted text.
+        let total_exp = bin_exp.saturating_sub(frac_digits.saturating_mul(4));
+        let mut v = libm::ldexp(significand as f64, total_exp);
+        if negative {
+            v = -v;
+        }
+        v
+    };
 
     Some((Some(float_scan_value(spec, val, &input[start_pos..i])), i))
 }

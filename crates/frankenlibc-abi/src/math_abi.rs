@@ -799,15 +799,22 @@ pub unsafe extern "C" fn atan(x: f64) -> f64 {
     atan_slow(x)
 }
 
+#[cold]
+#[inline(never)]
+extern "C" fn atan2_slow(y: f64, x: f64) -> f64 {
+    binary_entry(y, x, 6, frankenlibc_core::math::atan2)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
-    // Exact C99 axis regime: atan2(±0, positive) is the input signed zero.
-    // Returning it directly avoids the binary membrane and generic libm kernel while
-    // preserving the sign bit. Every other quadrant/special case keeps the old path.
-    if y == 0.0 && x > 0.0 && runtime_policy::math_membrane_fastpath() {
-        return y;
+    if runtime_policy::math_membrane_fastpath_inline() {
+        // Exact C99 axis regime: atan2(±0, positive) is the input signed zero.
+        if y == 0.0 && x > 0.0 {
+            return y;
+        }
+        return frankenlibc_core::math::atan2(y, x);
     }
-    binary_entry(y, x, 6, frankenlibc_core::math::atan2)
+    atan2_slow(y, x)
 }
 
 /// Same-binary benchmark hook for the pre-axis-specialization `atan2` body.
@@ -1055,8 +1062,9 @@ pub unsafe extern "C" fn log1p(x: f64) -> f64 {
     log1p_slow(x)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
+#[cold]
+#[inline(never)]
+extern "C" fn pow_slow(x: f64, y: f64) -> f64 {
     let out = binary_entry(x, y, 8, frankenlibc_core::math::pow);
     // Determine errno to set (if any) BEFORE returning, to ensure no
     // subsequent operation clobbers it.
@@ -1077,6 +1085,22 @@ pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
         unsafe { set_abi_errno(e) };
     }
     out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
+    // Strict interior box: x in [2^-31, 2^31] and |y| < 32.0 guarantees
+    // 2^-992 < x^y < 2^992, strictly positive/normal/finite in all 4 IEEE
+    // rounding modes (never zero-pole, never sets EDOM or ERANGE).
+    let x_bits = x.to_bits();
+    let y_abs_bits = y.to_bits() & 0x7fff_ffff_ffff_ffff;
+    if runtime_policy::math_membrane_fastpath_inline()
+        && x_bits.wrapping_sub(0x3e00_0000_0000_0000) <= 0x03e0_0000_0000_0000
+        && y_abs_bits < 0x4040_0000_0000_0000
+    {
+        return frankenlibc_core::math::exp::pow_fused(x, y);
+    }
+    pow_slow(x, y)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1764,15 +1788,12 @@ pub unsafe extern "C" fn gamma(x: f64) -> f64 {
 /// Extract significand scaled to [1, 2).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn significand(x: f64) -> f64 {
-    // significand(0) has no normalized mantissa: glibc reports EDOM.
-    if x == 0.0 {
-        set_domain_errno();
-    }
     let out = frankenlibc_core::math::significand(x);
-    // glibc significand(x) = scalbn(x, -ilogb(x)); ilogb(0/inf/NaN) raises
-    // FE_INVALID, which propagates. fl's core leaves the flag unset, so re-raise
-    // it on the cold path for the three special-input classes.
+    // glibc significand(x) = scalbn(x, -ilogb(x)); ilogb(0/inf/NaN) sets EDOM
+    // and raises FE_INVALID. fl's core leaves errno and the flag unset, so
+    // mirror glibc on the cold path for the three special-input classes.
     if x == 0.0 || !x.is_finite() {
+        set_domain_errno();
         pi_fn_raise_invalid_f64();
     }
     if x.is_nan() {
@@ -2020,9 +2041,18 @@ pub unsafe extern "C" fn atanf(x: f32) -> f32 {
     unary_entry_f32(x, 5, frankenlibc_core::math::atanf)
 }
 
+#[cold]
+#[inline(never)]
+extern "C" fn atan2f_slow(y: f32, x: f32) -> f32 {
+    binary_entry_f32(y, x, 6, frankenlibc_core::math::atan2f)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
-    binary_entry_f32(y, x, 6, frankenlibc_core::math::atan2f)
+    if runtime_policy::math_membrane_fastpath_inline() {
+        return frankenlibc_core::math::atan2f(y, x);
+    }
+    atan2f_slow(y, x)
 }
 
 // --- Exponential / logarithmic f32 ---
@@ -2126,8 +2156,9 @@ pub unsafe extern "C" fn log10f(x: f32) -> f32 {
     log10f_slow(x)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
+#[cold]
+#[inline(never)]
+extern "C" fn powf_slow(x: f32, y: f32) -> f32 {
     let out = binary_entry_f32(x, y, 7, frankenlibc_core::math::powf);
     if x.is_finite() && y.is_finite() {
         if x < 0.0 && !is_integral_f32(y) {
@@ -2140,6 +2171,22 @@ pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
         }
     }
     out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
+    // Strict interior box: x in [2^-15, 2^15] and |y| < 8.0 guarantees
+    // 2^-120 < x^y < 2^120, strictly positive/normal/finite in all 4 IEEE
+    // rounding modes (never sets EDOM or ERANGE).
+    let x_bits = x.to_bits();
+    let y_abs_bits = y.to_bits() & 0x7fff_ffff;
+    if runtime_policy::math_membrane_fastpath_inline()
+        && x_bits.wrapping_sub(0x3800_0000) <= 0x0f00_0000
+        && y_abs_bits < 0x4100_0000
+    {
+        return frankenlibc_core::math::float32::powf_normal_interior(x, y);
+    }
+    powf_slow(x, y)
 }
 
 // --- Float utilities f32 ---
@@ -3892,16 +3939,13 @@ pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn significandf(x: f32) -> f32 {
-    // significand(0) has no normalized mantissa: glibc reports EDOM.
-    if x == 0.0 {
-        set_domain_errno();
-    }
     let out = unary_entry_f32(x, 3, frankenlibc_core::math::significandf);
-    // ilogbf(0/inf/NaN) raises FE_INVALID inside glibc's significandf; mirror it.
-    // glibc's f32 path additionally raises FE_INEXACT on ±inf (the scalbnf scale
-    // of an infinite operand), unlike the f64 significand path. That asymmetry
-    // is real and must be preserved in both directions.
+    // ilogbf(0/inf/NaN) sets EDOM and raises FE_INVALID inside glibc's
+    // significandf; mirror both. glibc's f32 path additionally raises
+    // FE_INEXACT on ±inf (the scalbnf scale of an infinite operand), unlike
+    // the f64 significand path. That asymmetry is real and must be preserved.
     if x == 0.0 || !x.is_finite() {
+        set_domain_errno();
         pi_fn_raise_invalid_f32();
         if x.is_infinite() {
             raise_inexact_f64();
@@ -6215,6 +6259,7 @@ pub unsafe extern "C" fn cospi(x: f64) -> f64 {
         return f64::from_bits(std::hint::black_box(x).to_bits() | (1 << 63)) + 0.0;
     }
     if x.is_infinite() {
+        set_domain_errno();
         pi_fn_raise_invalid_f64();
         return f64::from_bits(0xfff8_0000_0000_0000);
     }
@@ -6301,6 +6346,7 @@ pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
         return quiet_nan_f64(x);
     }
     if x.is_infinite() {
+        set_domain_errno();
         pi_fn_raise_invalid_f64();
         return f64::from_bits(0xfff8_0000_0000_0000);
     }
@@ -6385,22 +6431,31 @@ pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
         return quiet_nan_f64(x);
     }
     if x.is_infinite() {
+        set_domain_errno();
         pi_fn_raise_invalid_f64();
         return f64::from_bits(0xfff8_0000_0000_0000);
     }
     // tanpi = sinpi/cospi: the (-1)^n factors cancel, the half-integer pole
-    // becomes ±1/±0 (auto-raising FE_DIVBYZERO → ±inf), and the integer zero
-    // becomes ±0/±1 with the correct sign.
+    // becomes ±1/±0 (auto-raising FE_DIVBYZERO → ±inf + ERANGE), and the
+    // integer zero becomes ±0/±1 with the correct sign.
     let s = unsafe { sinpi(x) };
     let c = unsafe { cospi(x) };
-    s / c
+    let out = s / c;
+    if out.is_infinite() {
+        set_range_errno();
+    }
+    out
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpif(x: f32) -> f32 {
     // Compute in double + round once, matching glibc (byte-exact, 0 ULP); the
     // direct f32 path loses huge ULP near tanpi's poles. The f64 tanpi raises
-    // FE_DIVBYZERO at the poles and FE_INVALID on inf.
-    unsafe { tanpi(x as f64) as f32 }
+    // FE_DIVBYZERO + ERANGE at the poles and FE_INVALID + EDOM on inf.
+    let out = unsafe { tanpi(x as f64) as f32 };
+    if x.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
 }
 #[cfg_attr(
     all(not(debug_assertions), not(target_arch = "x86_64")),

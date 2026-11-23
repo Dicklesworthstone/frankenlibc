@@ -757,7 +757,8 @@ const RUNTIME_LOG_DISABLED: i32 = -1;
 
 /// Owned process-wide `FRANKENLIBC_LOG` descriptor. Non-negative values are
 /// live descriptors; negative values are explicit initialization states.
-static RUNTIME_LOG_FD: AtomicI32 = AtomicI32::new(RUNTIME_LOG_UNINITIALIZED);
+#[doc(hidden)]
+pub static RUNTIME_LOG_FD: AtomicI32 = AtomicI32::new(RUNTIME_LOG_UNINITIALIZED);
 
 /// Seed the heal-logging toggle and runtime log fd if not yet initialized,
 /// avoiding `std::env::var` heap allocations during `.init_array` startup.
@@ -860,6 +861,7 @@ pub fn append_runtime_log_summary_record(line: &str) {
 }
 
 /// Whether startup opened a live runtime evidence sink.
+#[inline(always)]
 #[must_use]
 pub fn runtime_log_is_configured() -> bool {
     RUNTIME_LOG_FD.load(Ordering::Acquire) >= 0

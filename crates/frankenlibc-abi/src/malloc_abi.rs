@@ -1118,6 +1118,7 @@ pub(crate) fn latch_multi_threaded_before_thread_create() {
 /// live thread and slots are found by kernel tid only. (Latching `MULTI_THREADED` here
 /// also stops the single-threaded cache handing such a thread its creator's slot.)
 static NATIVE_THREAD_BACKEND: AtomicBool = AtomicBool::new(false);
+static RAW_SHARED_TLS_CLONE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FIRST_OBSERVED_KEY: AtomicUsize = AtomicUsize::new(0);
 static HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID: AtomicI32 = AtomicI32::new(0);
 static HOST_ALLOCATOR_NATIVE_THREAD_DEPTH: AtomicU32 = AtomicU32::new(0);
@@ -1125,6 +1126,19 @@ static HOST_ALLOCATOR_NATIVE_THREAD_DEPTH: AtomicU32 = AtomicU32::new(0);
 #[inline(always)]
 pub(crate) fn native_thread_backend_active() -> bool {
     NATIVE_THREAD_BACKEND.load(Ordering::Relaxed)
+}
+
+#[inline(always)]
+pub(crate) fn raw_shared_tls_clone_active() -> bool {
+    RAW_SHARED_TLS_CLONE_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Latch before raw `clone()` with `CLONE_THREAD` or non-vfork `CLONE_VM` and
+/// without `CLONE_SETTLS`: those children share `%fs` compiler TLS without a
+/// managed `ThreadHandle`, so compiler-TLS caches are no longer thread-private.
+pub(crate) fn note_raw_shared_tls_clone() {
+    RAW_SHARED_TLS_CLONE_ACTIVE.store(true, Ordering::SeqCst);
+    note_native_thread_backend();
 }
 
 #[inline]
@@ -1195,6 +1209,7 @@ pub(crate) fn note_native_thread_backend() {
         let _ = std::thread::current();
     }
     crate::pthread_abi::clear_single_threaded_pthread_self_cache();
+    crate::pthread_abi::disable_pthread_self_tcb_fast();
     MULTI_THREADED.store(true, Ordering::SeqCst);
     crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
     // Drain creator compiler-TLS stdio caches and any parked ST fmemopen slot

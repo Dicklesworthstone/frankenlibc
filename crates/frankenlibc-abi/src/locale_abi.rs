@@ -2018,13 +2018,9 @@ fn active_codeset_ptr() -> *const c_char {
     ACTIVE_CODESET_PTR.load(Ordering::Acquire)
 }
 
-/// POSIX `nl_langinfo`.
-///
-/// `CODESET` follows the active locale (`ANSI_X3.4-1968` under `C`, `UTF-8`
-/// under `C.UTF-8`); `RADIXCHAR` is `"."` and `THOUSEP` is `""` in both, as in
-/// glibc's C locale. Unsupported items return `""`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
+#[cold]
+#[inline(never)]
+extern "C" fn nl_langinfo_slow(item: libc::nl_item) -> *const c_char {
     // GNU _NL_LOCALE_NAME(category) uses the final item index, not an
     // offset into a compiled category blob.
     if item as u32 & 0xffff == 0xffff {
@@ -2040,10 +2036,6 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
     if let Some(value) = named_langinfo(item) {
         return value;
     }
-    // Strict mode cannot repair or deny this scalar selector, and every result
-    // points into the immutable C-locale table. LC_TIME selectors (offsets 0..=49)
-    // and non-CODESET items are charset-independent, avoiding an Acquire load
-    // on ACTIVE_CHARSET. Hardened mode and tests retain the full policy path.
     if runtime_policy::strict_passthrough_active() {
         let offset = item.wrapping_sub(libc::ABDAY_1) as usize;
         if offset < 50 {
@@ -2059,6 +2051,41 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
         return langinfo_non_time_non_codeset(item, active_codeset_ptr);
     }
     nl_langinfo_with_policy(item)
+}
+
+/// POSIX `nl_langinfo`.
+///
+/// `CODESET` follows the active locale (`ANSI_X3.4-1968` under `C`, `UTF-8`
+/// under `C.UTF-8`); `RADIXCHAR` is `"."` and `THOUSEP` is `""` in both, as in
+/// glibc's C locale. Unsupported items return `""`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
+    // Strict-mode frameless C/C.UTF-8 fast path: when neither `uselocale` nor
+    // a named locale has been activated, every non-`_NL_LOCALE_NAME` query
+    // reads immutable C-locale tables or `ACTIVE_CODESET_PTR` with zero calls
+    // and zero callee-saved register spills.
+    if runtime_policy::strict_passthrough_active()
+        && !THREAD_LOCALE_EVER_USED.load(Ordering::Acquire)
+        && !NAMED_ANY.load(Ordering::Acquire)
+    {
+        if item == libc::CODESET {
+            return ACTIVE_CODESET_PTR.load(Ordering::Acquire);
+        }
+        let offset = item.wrapping_sub(libc::ABDAY_1) as usize;
+        if offset < 50 {
+            // SAFETY: offset is bounds-checked < 50.
+            return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
+        }
+        if item as u32 & 0xffff != 0xffff {
+            if let Some(p) = lc_time_ext_c(offset, || ACTIVE_CODESET_PTR.load(Ordering::Acquire)) {
+                return p;
+            }
+            return langinfo_non_time_non_codeset(item, || {
+                ACTIVE_CODESET_PTR.load(Ordering::Acquire)
+            });
+        }
+    }
+    nl_langinfo_slow(item)
 }
 
 // ---------------------------------------------------------------------------

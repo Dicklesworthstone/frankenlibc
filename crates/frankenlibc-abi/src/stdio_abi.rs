@@ -710,29 +710,41 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
             // with `input_end` found once above.
             let slice = unsafe { std::slice::from_raw_parts(p, remaining) };
 
-            let parsed = if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
-                // Keep the common C-locale field on its existing fast parser;
-                // resolving a named locale is only needed for a different radix.
-                frankenlibc_core::stdio::scanf::scan_default_float(slice, 0)
+            let matched_next = if kinds[index] == b'F' {
+                let parsed = if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+                    // Keep the common C-locale field on its existing fast parser;
+                    // resolving a named locale is only needed for a different radix.
+                    frankenlibc_core::stdio::scanf::scan_default_float(slice, 0)
+                } else {
+                    frankenlibc_core::stdio::scanf::scan_default_float_with_radix(
+                        slice,
+                        0,
+                        NumericLocale::current().radix,
+                    )
+                };
+                parsed.map(|(value, next)| {
+                    // SAFETY: `%lf` was parsed, so the caller passed a `double *`.
+                    unsafe { *destinations[index].cast::<f64>() = value };
+                    next
+                })
             } else {
-                frankenlibc_core::stdio::scanf::scan_default_float_with_radix(
-                    slice,
-                    0,
-                    NumericLocale::current().radix,
-                )
+                let parsed = if frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+                    frankenlibc_core::stdio::scanf::scan_default_float_f32(slice, 0)
+                } else {
+                    frankenlibc_core::stdio::scanf::scan_default_float_f32_with_radix(
+                        slice,
+                        0,
+                        NumericLocale::current().radix,
+                    )
+                };
+                parsed.map(|(value, next)| {
+                    // SAFETY: `%f` was parsed, so the caller passed a `float *`.
+                    unsafe { *destinations[index].cast::<f32>() = value };
+                    next
+                })
             };
-            match parsed {
-                Some((value, next)) => {
-                    if kinds[index] == b'F' {
-                        // SAFETY: `%lf` was parsed, so the caller passed a `double *`.
-                        unsafe { *destinations[index].cast::<f64>() = value };
-                    } else {
-                        // SAFETY: `%f` was parsed, so the caller passed a `float *`.
-                        unsafe {
-                            *destinations[index].cast::<f32>() =
-                                frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(value);
-                        }
-                    }
+            match matched_next {
+                Some(next) => {
                     // SAFETY: `next` is an offset the engine reached inside `slice`.
                     p = unsafe { p.add(next) };
                     count += 1;

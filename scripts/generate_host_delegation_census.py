@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 22
+DETECTOR_VERSION = 23
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -130,6 +130,30 @@ LOCAL_BINDING_RE = re.compile(
 )
 LOCAL_TUPLE_BINDING_RE = re.compile(
     r"\blet\s+(?:(?:Some|Ok|Err)\s*\(\s*)?\(\s*([^()\n]+?)\s*\)"
+)
+HEADER_KEYWORD_RE = re.compile(r"(?<![A-Za-z0-9_])(?<!r#)\b(if|while|match|for)\b")
+FAT_ARROW_RE = re.compile(r"=>")
+EXPR_BLOCK_PRECEDING_KEYWORDS = frozenset(
+    {
+        "async",
+        "break",
+        "const",
+        "else",
+        "for",
+        "gen",
+        "if",
+        "in",
+        "loop",
+        "match",
+        "move",
+        "mut",
+        "ref",
+        "return",
+        "try",
+        "unsafe",
+        "while",
+        "yield",
+    }
 )
 EXPORT_NAME_RE = re.compile(r'export_name\s*=\s*"([^"]+)"')
 BROADER_REFERENCE_RE = re.compile(
@@ -1429,7 +1453,9 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
             name_match = require_match(
                 r"([A-Za-z_]\w*)", parts[0], macro_name, line_no
             )
-            add_function(name_match.group(1), line_no, "send();", exported=True)
+            add_function(
+                name_match.group(1), line_no, f"send({parts[1]});", exported=True
+            )
             continue
 
         if path.name == "unistd_abi.rs" and macro_name in {
@@ -1454,7 +1480,18 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
 def _strip_angle_groups(text: str) -> str:
     out: list[str] = []
     depth = 0
+    nested = 0
     for idx, ch in enumerate(text):
+        if depth > 0:
+            if ch in "{([":
+                nested += 1
+                continue
+            if ch in "})]":
+                if nested > 0:
+                    nested -= 1
+                continue
+            if nested > 0:
+                continue
         if ch == "<":
             depth += 1
         elif ch == ">" and depth > 0 and (idx == 0 or text[idx - 1] != "-"):
@@ -1471,16 +1508,55 @@ def parse_impl_spans(mask: str) -> list[tuple[int, int, str]]:
     for impl_match in re.finditer(r"(?m)^[ \t]*(?:unsafe[ \t]+)?impl\b", mask):
         pos = impl_match.end()
         angle = 0
+        bracket = 0
+        paren = 0
+        inner_brace = 0
         brace = -1
         while pos < len(mask):
             ch = mask[pos]
+            in_nested = angle > 0 or bracket > 0 or paren > 0 or inner_brace > 0
+            if in_nested:
+                if ch == "{":
+                    inner_brace += 1
+                    pos += 1
+                    continue
+                if ch == "}":
+                    if inner_brace > 0:
+                        inner_brace -= 1
+                    pos += 1
+                    continue
+                if ch == "[":
+                    bracket += 1
+                    pos += 1
+                    continue
+                if ch == "]":
+                    if bracket > 0:
+                        bracket -= 1
+                    pos += 1
+                    continue
+                if ch == "(":
+                    paren += 1
+                    pos += 1
+                    continue
+                if ch == ")":
+                    if paren > 0:
+                        paren -= 1
+                    pos += 1
+                    continue
+                if inner_brace > 0 or bracket > 0 or paren > 0:
+                    pos += 1
+                    continue
             if ch == "<":
                 angle += 1
             elif ch == ">" and angle > 0 and (pos == 0 or mask[pos - 1] != "-"):
                 angle -= 1
-            elif angle == 0 and ch == ";":
+            elif ch == "[":
+                bracket += 1
+            elif ch == "(":
+                paren += 1
+            elif ch == ";":
                 break
-            elif angle == 0 and ch == "{":
+            elif ch == "{":
                 brace = pos
                 break
             pos += 1
@@ -1755,49 +1831,155 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             return False
         return any(start <= position < end for start, end in turbofish_arg_spans)
 
+    def brace_is_expr_block(abs_pos: int) -> bool:
+        cursor = abs_pos - 1
+        while cursor >= 0 and body_text[cursor].isspace():
+            cursor -= 1
+        if cursor < 0:
+            return False
+        ch = body_text[cursor]
+        if ch in "=+-*/%&|^<>!,:;([~@":
+            return True
+        if ch.isalnum() or ch == "_":
+            start = cursor
+            while start > 0 and (body_text[start - 1].isalnum() or body_text[start - 1] == "_"):
+                start -= 1
+            if start >= 2 and body_text[start - 2 : start] == "r#":
+                return False
+            prev = start - 1
+            while prev >= 0 and body_text[prev].isspace():
+                prev -= 1
+            if prev >= 0 and body_text[prev] == ".":
+                return False
+            if prev >= 1 and body_text[prev - 1 : prev + 1] == "::":
+                return False
+            return body_text[start : cursor + 1] in EXPR_BLOCK_PRECEDING_KEYWORDS
+        return False
+
+    closure_pre_keywords = frozenset(
+        {"move", "async", "static", "return", "yield", "in", "match", "if", "while", "else"}
+    )
+    closure_brace_bindings: dict[int, set[str]] = {}
+    for closure in re.finditer(r"\|([^|\n]*)\|", body_text):
+        c_start = closure.start()
+        c_end = closure.end()
+        if is_macro_token(c_start) or is_turbofish_type_arg(c_start):
+            continue
+        # Reject `||` logical-OR tokens and bitwise-OR expressions (`expr | x | expr`).
+        if c_start > 0 and body_text[c_start - 1] == "|":
+            continue
+        if c_end < len(body_text) and body_text[c_end] == "|":
+            continue
+        prev = c_start - 1
+        while prev >= 0 and body_text[prev].isspace():
+            prev -= 1
+        if prev >= 0:
+            pch = body_text[prev]
+            if pch in ")]}?":
+                continue
+            if pch.isalnum() or pch == "_":
+                wstart = prev
+                while wstart > 0 and (
+                    body_text[wstart - 1].isalnum() or body_text[wstart - 1] == "_"
+                ):
+                    wstart -= 1
+                if body_text[wstart : prev + 1] not in closure_pre_keywords:
+                    continue
+        # Validate parameter list strictly and require an explicit `{` block
+        # body immediately after `|params|` (optionally preceded by `-> Type`).
+        params_raw = closure.group(1).strip()
+        if not params_raw:
+            continue
+        parsed_params: list[str] = []
+        valid_params = True
+        for raw_param in params_raw.split(","):
+            raw_param = raw_param.strip()
+            if not raw_param:
+                continue
+            param_match = re.match(
+                r"^(?:(?:mut|ref)\s+)*([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[^=|,]+)?$",
+                raw_param,
+            )
+            if param_match is None:
+                valid_params = False
+                break
+            if param_match.group(1) != "_":
+                parsed_params.append(param_match.group(1))
+        if not valid_params or not parsed_params:
+            continue
+        tail = c_end
+        while tail < len(body_text) and body_text[tail].isspace():
+            tail += 1
+        if body_text[tail : tail + 2] == "->":
+            tail += 2
+            ret_angle = 0
+            ret_paren = 0
+            ret_bracket = 0
+            while tail < len(body_text):
+                tch = body_text[tail]
+                if tch == "<":
+                    ret_angle += 1
+                elif tch == ">" and ret_angle > 0 and body_text[tail - 1] != "-":
+                    ret_angle -= 1
+                elif tch == "(":
+                    ret_paren += 1
+                elif tch == ")":
+                    if ret_paren == 0:
+                        break
+                    ret_paren -= 1
+                elif tch == "[":
+                    ret_bracket += 1
+                elif tch == "]":
+                    if ret_bracket == 0:
+                        break
+                    ret_bracket -= 1
+                elif ret_angle == 0 and ret_paren == 0 and ret_bracket == 0:
+                    if tch in "{;=,)":
+                        break
+                tail += 1
+        if tail < len(body_text) and body_text[tail] == "{":
+            closure_brace_bindings.setdefault(tail, set()).update(parsed_params)
+
     active_scopes = [set(PARAM_BINDING_RE.findall(function.signature))]
     scope_is_macro = [False]
+    scope_base_depths: list[tuple[int, int]] = [(0, 0)]
     pending_bindings = [set()]
-    next_scope_bindings: set[str] = set()
+    header_stack: list[list[Any]] = []
+    paren_depth = 0
+    bracket_depth = 0
     calls_by_line: dict[int, list[tuple[str, bool]]] = {}
     line_offset = 0
     for line_idx, (line_no, _, line) in enumerate(body_lines):
-        events: list[tuple[int, int, str, str | None]] = []
+        events: list[tuple[int, int, str, Any]] = []
+        for header_kw in HEADER_KEYWORD_RE.finditer(line):
+            abs_pos = line_offset + header_kw.start()
+            if is_macro_token(abs_pos) or is_turbofish_type_arg(abs_pos):
+                continue
+            prev = abs_pos - 1
+            while prev >= 0 and body_text[prev].isspace():
+                prev -= 1
+            if prev >= 0 and body_text[prev] == ".":
+                continue
+            if prev >= 1 and body_text[prev - 1 : prev + 1] == "::":
+                continue
+            kw = header_kw.group(1)
+            events.append((header_kw.start(), 0, "header_kw", "cond" if kw in {"if", "while"} else kw))
+        for arrow in FAT_ARROW_RE.finditer(line):
+            abs_pos = line_offset + arrow.start()
+            if is_macro_token(abs_pos) or is_turbofish_type_arg(abs_pos):
+                continue
+            events.append((arrow.start(), 0, "fat_arrow", None))
         for binding in LOCAL_BINDING_RE.finditer(line):
             if is_macro_token(line_offset + binding.start()) or is_turbofish_type_arg(
                 line_offset + binding.start()
             ):
                 continue
-            statement_start = max(
-                line.rfind(";", 0, binding.start()),
-                line.rfind("{", 0, binding.start()),
-            )
-            prefix = line[statement_start + 1 : binding.start()]
-            kind = (
-                "next_scope_binding"
-                if re.search(r"\b(?:if|while)\b", prefix)
-                or "&&" in prefix
-                or "||" in prefix
-                else "binding"
-            )
-            events.append((binding.start(), 1, kind, binding.group(1)))
+            events.append((binding.start(), 1, "let_binding", binding.group(1)))
         for tuple_binding in LOCAL_TUPLE_BINDING_RE.finditer(line):
             if is_macro_token(
                 line_offset + tuple_binding.start()
             ) or is_turbofish_type_arg(line_offset + tuple_binding.start()):
                 continue
-            statement_start = max(
-                line.rfind(";", 0, tuple_binding.start()),
-                line.rfind("{", 0, tuple_binding.start()),
-            )
-            prefix = line[statement_start + 1 : tuple_binding.start()]
-            kind = (
-                "next_scope_binding"
-                if re.search(r"\b(?:if|while)\b", prefix)
-                or "&&" in prefix
-                or "||" in prefix
-                else "binding"
-            )
             for item in tuple_binding.group(1).split(","):
                 ident = re.match(
                     r"\s*(?:(?:mut|ref)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*$",
@@ -1805,21 +1987,7 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
                 )
                 if ident is not None and ident.group(1) != "_":
                     events.append(
-                        (tuple_binding.start(), 1, kind, ident.group(1))
-                    )
-        for closure in re.finditer(r"\|([^|\n]*)\|", line):
-            if is_macro_token(line_offset + closure.start()) or is_turbofish_type_arg(
-                line_offset + closure.start()
-            ):
-                continue
-            for parameter in closure.group(1).split(","):
-                binding = re.match(
-                    r"\s*(?:(?:mut|ref)\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
-                    parameter,
-                )
-                if binding is not None:
-                    events.append(
-                        (closure.end(), 1, "next_scope_binding", binding.group(1))
+                        (tuple_binding.start(), 1, "let_binding", ident.group(1))
                     )
         for local_function in FUNCTION_RE.finditer(line):
             if is_macro_token(line_offset + local_function.start()) or is_turbofish_type_arg(
@@ -1839,36 +2007,87 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
         for col, sym_path in asm_sym_events_by_idx.get(line_idx, ()):
             events.append((col, 2, "call", sym_path))
         for position, char in enumerate(line):
-            if is_macro_token(line_offset + position) or is_turbofish_type_arg(
-                line_offset + position
-            ):
+            abs_pos = line_offset + position
+            if is_macro_token(abs_pos) or is_turbofish_type_arg(abs_pos):
                 continue
             if char == "{":
-                events.append((position, 0, "open", None))
+                events.append((position, 0, "open", abs_pos))
             elif char == "}":
                 events.append((position, 0, "close", None))
             elif char == ";":
                 events.append((position, 0, "semicolon", None))
+            elif char == "(":
+                events.append((position, 0, "paren_open", None))
+            elif char == ")":
+                events.append((position, 0, "paren_close", None))
+            elif char == "[":
+                events.append((position, 0, "bracket_open", None))
+            elif char == "]":
+                events.append((position, 0, "bracket_close", None))
 
-        for _, _, kind, value in sorted(events):
-            if kind == "open":
-                active_scopes.append(set(next_scope_bindings))
-                next_scope_bindings.clear()
+        for _, _, kind, value in sorted(events, key=lambda item: (item[0], item[1])):
+            scope_depth = len(active_scopes) - 1
+            if kind == "header_kw":
+                header_stack.append([value, scope_depth, paren_depth, bracket_depth, set()])
+            elif kind == "paren_open":
+                paren_depth += 1
+            elif kind == "paren_close":
+                paren_depth = max(0, paren_depth - 1)
+            elif kind == "bracket_open":
+                bracket_depth += 1
+            elif kind == "bracket_close":
+                bracket_depth = max(0, bracket_depth - 1)
+            elif kind == "fat_arrow":
+                while (
+                    header_stack
+                    and header_stack[-1][0] == "cond"
+                    and header_stack[-1][1:4] == [scope_depth, paren_depth, bracket_depth]
+                ):
+                    header_stack.pop()
+            elif kind == "open":
+                new_scope: set[str] = set()
+                if value in closure_brace_bindings:
+                    new_scope.update(closure_brace_bindings[value])
+                elif (
+                    header_stack
+                    and header_stack[-1][1:4]
+                    == [scope_depth, paren_depth, bracket_depth]
+                    and not brace_is_expr_block(value)
+                ):
+                    hdr = header_stack.pop()
+                    if hdr[0] == "cond":
+                        new_scope.update(hdr[4])
+                active_scopes.append(new_scope)
                 scope_is_macro.append(False)
+                scope_base_depths.append((paren_depth, bracket_depth))
                 pending_bindings.append(set())
             elif kind == "close":
                 if len(active_scopes) > 1:
+                    closing_depth = len(active_scopes) - 1
+                    while header_stack and header_stack[-1][1] >= closing_depth:
+                        header_stack.pop()
                     active_scopes.pop()
                     scope_is_macro.pop()
+                    scope_base_depths.pop()
                     pending_bindings.pop()
             elif kind == "semicolon":
-                active_scopes[-1].update(pending_bindings[-1])
-                pending_bindings[-1].clear()
-                next_scope_bindings.clear()
-            elif kind == "binding":
-                pending_bindings[-1].add(value or "")
-            elif kind == "next_scope_binding":
-                next_scope_bindings.add(value or "")
+                if (paren_depth, bracket_depth) == scope_base_depths[-1]:
+                    active_scopes[-1].update(pending_bindings[-1])
+                    pending_bindings[-1].clear()
+                    while (
+                        header_stack
+                        and header_stack[-1][1:4] == [scope_depth, paren_depth, bracket_depth]
+                    ):
+                        header_stack.pop()
+            elif kind == "let_binding":
+                if (
+                    header_stack
+                    and header_stack[-1][0] == "cond"
+                    and header_stack[-1][1:4] == [scope_depth, paren_depth, bracket_depth]
+                ):
+                    header_stack[-1][4].add(value or "")
+                else:
+                    pending_bindings[-1].add(value or "")
             elif kind == "local_function":
                 target_scope = len(active_scopes) - 1
                 while target_scope > 0 and scope_is_macro[target_scope]:
@@ -2929,7 +3148,7 @@ def profile_source_view(
                 module_alias_candidates.setdefault(module_name, set()).add(source_path.stem)
                 full_module = "::".join(part for part in (parent_module, module_name) if part)
                 module_alias_candidates.setdefault(full_module, set()).add(source_path.stem)
-                if parent.stem != parent_module:
+                if parent_module and parent.stem not in {parent_module, "mod"}:
                     stem_module = "::".join(
                         part for part in (parent.stem, module_name) if part
                     )
@@ -4334,6 +4553,127 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     require(
         any(f.exported_symbol == "svcerr_decode" for f in rpc_svc_macro_fns),
         f"rpc_svc.rs failure_export! macro not recognized: {rpc_svc_macro_fns}",
+    )
+
+    # Regression checks for v23 soundness fixes:
+    # (a) cross-line `if ... && \n let Some((h, _))` must not leak `h` to outer scope,
+    # (b) scrutinee `{ h(); ... }` in `if let` must not shadow `h()`,
+    # (c) `failure_export!` must preserve its second argument expression,
+    # (d) nested `{}` / `match` / `>=` inside `impl<...> Foo<{ ... }>` must not break impl spans.
+    v23_scope_path = root / "crates/frankenlibc-abi/src/v23_scope.rs"
+    v23_scope_src = (
+        "fn host_helper() -> i32 { unsafe { libc::getuid() as i32 } }\n"
+        "fn get_pair() -> Option<(fn() -> i32, i32)> { None }\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_multiline_if_let_no_outer_leak() -> i32 {\n'
+        "    if true &&\n"
+        "        let Some((host_helper, _)) = get_pair()\n"
+        "    {\n"
+        "        return host_helper();\n"
+        "    }\n"
+        "    let _ = 1;\n"
+        "    host_helper()\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_scrutinee_block_no_shadow() -> i32 {\n'
+        "    if let Some((host_helper, _)) = {\n"
+        "        let _ = host_helper();\n"
+        "        get_pair()\n"
+        "    } {\n"
+        "        return host_helper();\n"
+        "    }\n"
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_braceless_closure_no_leak() -> i32 {\n'
+        "    if Some(1).map(|host_helper| host_helper + 1).is_some() {\n"
+        "        return host_helper();\n"
+        "    }\n"
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_array_init_semicolon_no_shadow() -> i32 {\n'
+        "    let host_helper: [i32; 1] = [host_helper()];\n"
+        "    host_helper[0]\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_braceless_closure_in_if_no_shadow() -> i32 {\n'
+        "    if let _ = |host_helper: i32| host_helper + 1 {\n"
+        "        return host_helper();\n"
+        "    }\n"
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_bitwise_or_no_closure_shadow(a: usize, b: usize) -> i32 {\n'
+        "    if a | host_helper as usize | b != 0 {\n"
+        "        return host_helper();\n"
+        "    }\n"
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_range_and_raw_ident_no_leak(x: i32, r#match: Option<i32>) -> i32 {\n'
+        "    if let Some(host_helper) = r#match && let _ = x.. {\n"
+        "        return 0;\n"
+        "    }\n"
+        "    { return host_helper(); }\n"
+        "}\n"
+    )
+    v23_scope_analysis = analyze_host_dependencies(
+        parse_functions(v23_scope_path, v23_scope_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    v23_scope_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v23_scope_analysis["symbol_rows"]
+    }
+    require(
+        v23_scope_syms.get("exported_multiline_if_let_no_outer_leak") == {"getuid"}
+        and v23_scope_syms.get("exported_scrutinee_block_no_shadow") == {"getuid"}
+        and v23_scope_syms.get("exported_braceless_closure_no_leak") == {"getuid"}
+        and v23_scope_syms.get("exported_array_init_semicolon_no_shadow") == {"getuid"}
+        and v23_scope_syms.get("exported_braceless_closure_in_if_no_shadow") == {"getuid"}
+        and v23_scope_syms.get("exported_bitwise_or_no_closure_shadow") == {"getuid"}
+        and v23_scope_syms.get("exported_range_and_raw_ident_no_leak") == {"getuid"},
+        f"v23 conditional/scrutinee/closure scope shadowing leaked: {v23_scope_syms}",
+    )
+    v23_rpc_fns = parse_functions(
+        root / "crates/frankenlibc-abi/src/rpc_svc.rs",
+        "fn send(_err: i32) {}\n"
+        "fn secret_host() -> i32 { unsafe { libc::getuid() as i32 } }\n"
+        "failure_export!(svcerr_evil, secret_host());\n",
+    )
+    v23_rpc_analysis = analyze_host_dependencies(
+        v23_rpc_fns,
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    v23_rpc_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v23_rpc_analysis["symbol_rows"]
+    }
+    require(
+        v23_rpc_syms.get("svcerr_evil") == {"getuid"},
+        f"v23 failure_export! dropped second argument expression: {v23_rpc_syms}",
+    )
+    v23_impl_spans = parse_impl_spans(
+        "impl<const N: usize> Foo<{ if N >= 1 { 1 << N } else { 0 } }> {\n"
+        "    fn a() {}\n"
+        "}\n"
+        "impl<const N: usize> Bar<{ match N { 0 => { 1 }, _ => 2 } }> {\n"
+        "    fn b() {}\n"
+        "}\n"
+        "impl<const N: usize> Baz<N> where [u8; { N + 1 }]: {\n"
+        "    fn c() {}\n"
+        "}\n"
+    )
+    require(
+        [(s[2]) for s in v23_impl_spans] == ["Foo", "Bar", "Baz"],
+        f"v23 const-generic nested braces/comparisons/where-arrays broke impl spans: {v23_impl_spans}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

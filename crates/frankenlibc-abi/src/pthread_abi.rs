@@ -429,9 +429,86 @@ static PTHREAD_SELF_FAST_RAW: Cell<libc::pthread_t> = Cell::new(0);
 /// the TLSDESC indirect call on every single-threaded `pthread_self`/`thrd_current`.
 static SINGLE_THREADED_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(feature = "owned-tls-cache", feature = "standalone"))
+))]
+static PTHREAD_SELF_TCB_FAST_DISABLED: AtomicBool = AtomicBool::new(false);
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(feature = "owned-tls-cache", feature = "standalone"))
+))]
+static INITIAL_PROCESS_MAIN_TCB: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(feature = "owned-tls-cache", feature = "standalone"))
+))]
+static MAIN_THREAD_TCB_ADDR: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(feature = "owned-tls-cache", feature = "standalone"))
+))]
+static MAIN_THREAD_TCB_VAL: AtomicUsize = AtomicUsize::new(0);
+
+/// Record the process's real initial main thread TCB during `.init_array`
+/// while still single-threaded. Only that ld.so-allocated initial TCB is
+/// immortal (never reclaimed into glibc's worker `stack_cache`), so a host
+/// worker that calls `fork()` can never populate `MAIN_THREAD_TCB_ADDR` with
+/// a reclaimable worker TCB.
+pub(crate) fn record_initial_process_main_tcb() {
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    ))]
+    if crate::glibc_internal_abi::is_process_single_threaded()
+        && raw_syscall::sys_gettid() == raw_syscall::sys_getpid()
+    {
+        let tcb = current_x86_64_tcb_self();
+        if tcb >= 4096 {
+            let _ = INITIAL_PROCESS_MAIN_TCB.compare_exchange(
+                0,
+                tcb,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
+        }
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(feature = "owned-tls-cache", feature = "standalone"))
+))]
+#[inline(always)]
+fn current_x86_64_tcb_self() -> usize {
+    let tcb: usize;
+    // SAFETY: reading fs:[0] is a side-effect-free load of the Linux x86_64
+    // TCB self pointer (identical to `malloc_abi::current_thread_key`).
+    unsafe {
+        core::arch::asm!(
+            "mov {}, qword ptr fs:[0]",
+            lateout(reg) tcb,
+            options(nostack, preserves_flags, readonly)
+        );
+    }
+    tcb
+}
+
 #[inline]
 pub(crate) fn clear_single_threaded_pthread_self_cache() {
     SINGLE_THREADED_PTHREAD_SELF.store(0, Ordering::Release);
+}
+
+#[inline]
+pub(crate) fn disable_pthread_self_tcb_fast() {
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    ))]
+    {
+        PTHREAD_SELF_TCB_FAST_DISABLED.store(true, Ordering::SeqCst);
+        MAIN_THREAD_TCB_ADDR.store(0, Ordering::SeqCst);
+    }
 }
 
 // Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
@@ -497,6 +574,28 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
     }
 }
 
+/// Read-only, non-allocating, reentrancy-safe inspection of the current
+/// thread's `PthreadTlsState` (safe inside `fork()` child setup while
+/// allocator/loader/stdio fork guards are held).
+#[inline]
+#[cfg_attr(test, allow(dead_code))]
+fn try_peek_pthread_tls<R>(f: impl FnOnce(&PthreadTlsState) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PTHREAD_OWNED_TLS.try_peek(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if cfg!(feature = "standalone") || crate::owned_tls_cache::uses_owned_tls() {
+            return PTHREAD_OWNED_TLS.try_peek(f);
+        }
+        PTHREAD_TLS
+            .try_with(|tls| tls.try_borrow().ok().map(|guard| f(&guard)))
+            .ok()
+            .flatten()
+    }
+}
+
 #[inline]
 fn global_force_native_threading_enabled() -> bool {
     #[cfg(feature = "standalone")]
@@ -525,6 +624,7 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
     {
         if core_current_thread_handle().is_some()
             || frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
+            || crate::malloc_abi::raw_shared_tls_clone_active()
             || global_force_native_threading_enabled()
             || force_native_threading_enabled()
         {
@@ -558,6 +658,28 @@ fn remember_current_pthread_self(value: libc::pthread_t) {
         && !force_native_threading_enabled()
     {
         SINGLE_THREADED_PTHREAD_SELF.store(value as usize, Ordering::Release);
+    }
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    ))]
+    if value != 0
+        && !PTHREAD_SELF_TCB_FAST_DISABLED.load(Ordering::Acquire)
+        && !frankenlibc_core::pthread::tls::native_threads_may_exist()
+        && !crate::malloc_abi::native_thread_backend_active()
+        && !crate::malloc_abi::raw_shared_tls_clone_active()
+        && !force_native_threading_enabled()
+        && raw_syscall::sys_gettid() == raw_syscall::sys_getpid()
+    {
+        let tcb = current_x86_64_tcb_self();
+        let initial_main_tcb = INITIAL_PROCESS_MAIN_TCB.load(Ordering::Acquire);
+        if tcb >= 4096 && initial_main_tcb != 0 && tcb == initial_main_tcb {
+            MAIN_THREAD_TCB_VAL.store(value as usize, Ordering::Relaxed);
+            MAIN_THREAD_TCB_ADDR.store(tcb, Ordering::SeqCst);
+            if PTHREAD_SELF_TCB_FAST_DISABLED.load(Ordering::SeqCst) {
+                MAIN_THREAD_TCB_ADDR.store(0, Ordering::SeqCst);
+            }
+        }
     }
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     if !frankenlibc_core::pthread::tls::native_threads_may_exist()
@@ -1063,24 +1185,42 @@ pub(crate) fn reset_threading_policy_in_fork_child() -> u64 {
     NATIVE_LAST_THREAD_EXITING.store(false, Ordering::Release);
     PTHREAD_TLS_ACCESS_DEPTH.store(0, Ordering::Release);
     SINGLE_THREADED_PTHREAD_SELF.store(0, Ordering::Release);
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    ))]
+    {
+        MAIN_THREAD_TCB_ADDR.store(0, Ordering::Release);
+        MAIN_THREAD_TCB_VAL.store(0, Ordering::Release);
+    }
     crate::signal_abi::reset_native_sigcancel_state_in_fork_child();
     // Only the calling thread survives `fork()` and becomes the child's main
     // thread (tid == child pid). Keep `MAIN_THREAD_FL_NAME` synced to the
     // surviving thread's preserved `pthread_self()` identity (or 0 if none was
     // cached yet, so the child populates it lazily on first query).
     let surviving_name = if let Some(handle) = core_current_thread_handle() {
+        let child_tid = raw_syscall::sys_gettid();
+        if child_tid > 0 {
+            // SAFETY: surviving native thread owns its handle across fork.
+            unsafe {
+                (*handle).tid.store(child_tid, Ordering::Release);
+                (*handle).self_tid.store(child_tid, Ordering::Release);
+            }
+        }
         handle as usize
     } else {
         let mut cached = 0usize;
         #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
         {
-            if !frankenlibc_core::pthread::tls::current_thread_is_exiting_native() {
+            if !frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
+                && !crate::malloc_abi::raw_shared_tls_clone_active()
+            {
                 cached = PTHREAD_SELF_FAST_RAW.get() as usize;
             }
         }
         if cached == 0 {
             cached =
-                try_with_pthread_tls(|tls| tls.current_pthread_self_cache as usize).unwrap_or(0);
+                try_peek_pthread_tls(|tls| tls.current_pthread_self_cache as usize).unwrap_or(0);
         }
         cached
     };
@@ -1602,15 +1742,34 @@ extern "C" fn native_pthread_self_mt_or_slow() -> libc::pthread_t {
 
 #[inline(always)]
 pub(crate) fn native_pthread_self() -> libc::pthread_t {
-    if crate::glibc_internal_abi::is_process_single_threaded()
-        && crate::runtime_policy::is_runtime_ready()
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    ))]
     {
-        let cached = SINGLE_THREADED_PTHREAD_SELF.load(Ordering::Relaxed);
-        if cached != 0 {
-            return cached as libc::pthread_t;
+        if !PTHREAD_SELF_TCB_FAST_DISABLED.load(Ordering::Acquire) {
+            let expected_tcb = MAIN_THREAD_TCB_ADDR.load(Ordering::Acquire);
+            if expected_tcb != 0 && current_x86_64_tcb_self() == expected_tcb {
+                return MAIN_THREAD_TCB_VAL.load(Ordering::Relaxed) as libc::pthread_t;
+            }
         }
+        return native_pthread_self_mt_or_slow();
     }
-    native_pthread_self_mt_or_slow()
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    )))]
+    {
+        if crate::glibc_internal_abi::is_process_single_threaded()
+            && crate::runtime_policy::is_runtime_ready()
+        {
+            let cached = SINGLE_THREADED_PTHREAD_SELF.load(Ordering::Relaxed);
+            if cached != 0 {
+                return cached as libc::pthread_t;
+            }
+        }
+        native_pthread_self_mt_or_slow()
+    }
 }
 
 #[inline]
@@ -2520,9 +2679,11 @@ unsafe fn native_pthread_create(
         return error;
     }
 
-    // Resolve and retain process-lifetime TLS destructor owners while a host
-    // creator can safely enter the host loader, before any native worker runs.
+    // Resolve and retain process-lifetime TLS destructor owners and resident
+    // forced-unwind entrypoints while a host creator can safely inspect the
+    // loader, before any native clone shares `%fs`.
     crate::dlfcn_abi::prepare_native_public_tls_destructors();
+    prepare_native_forced_unwind();
 
     // These threads share this thread's TCB self pointer; stop keying allocator
     // slots by it before the clone.
@@ -4429,6 +4590,7 @@ pub fn pthread_host_thread_handoff_futex_waits_for_tests() -> u64 {
 #[doc(hidden)]
 pub fn pthread_threading_force_native_for_tests() {
     clear_single_threaded_pthread_self_cache();
+    disable_pthread_self_tcb_fast();
     frankenlibc_core::pthread::tls::disable_tid_cache();
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     PTHREAD_SELF_FAST_RAW.set(0);
@@ -4445,6 +4607,7 @@ pub fn pthread_threading_force_native_for_tests() {
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
     clear_single_threaded_pthread_self_cache();
+    disable_pthread_self_tcb_fast();
     #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
     PTHREAD_SELF_FAST_RAW.set(0);
     with_pthread_tls(|tls| {
@@ -11558,24 +11721,8 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
 // Thread signals
 // ---------------------------------------------------------------------------
 
-/// POSIX `pthread_kill` — send signal to thread.
-///
-/// Native implementation using `tgkill(2)` syscall.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
-    // Validate signal number (0 is allowed for existence check).
-    if !(0..=64).contains(&sig) {
-        runtime_policy::record_semantic_deny(
-            "pthread_kill",
-            ApiFamily::Signal,
-            0,
-            0,
-            false,
-            libc::EINVAL,
-            "invalid_signal_number",
-        );
-        return libc::EINVAL;
-    }
+#[inline(never)]
+extern "C" fn pthread_kill_valid_sig(thread: libc::pthread_t, sig: c_int) -> c_int {
     match resolve_thread_tid(thread) {
         Some(tid) => {
             let pid = raw_syscall::sys_getpid();
@@ -11586,6 +11733,37 @@ pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_
         }
         None => libc::ESRCH,
     }
+}
+
+#[cold]
+#[inline(never)]
+extern "C" fn pthread_kill_invalid_log_deny() -> c_int {
+    runtime_policy::record_semantic_deny(
+        "pthread_kill",
+        ApiFamily::Signal,
+        0,
+        0,
+        false,
+        libc::EINVAL,
+        "invalid_signal_number",
+    );
+    libc::EINVAL
+}
+
+/// POSIX `pthread_kill` — send signal to thread.
+///
+/// Native implementation using `tgkill(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
+    // Validate signal number (0 is allowed for existence check).
+    if !(0..=64).contains(&sig) {
+        if !frankenlibc_membrane::heal::runtime_log_is_configured() {
+            runtime_policy::record_semantic_deny_counter_only();
+            return libc::EINVAL;
+        }
+        return pthread_kill_invalid_log_deny();
+    }
+    pthread_kill_valid_sig(thread, sig)
 }
 
 /// glibc reserved-namespace alias for [`pthread_kill`].
@@ -11754,6 +11932,16 @@ pub unsafe extern "C" fn pthread_yield() -> c_int {
 /// POSIX `pthread_exit` — terminate calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(any(feature = "owned-tls-cache", feature = "standalone"))
+    ))]
+    {
+        let cached_tcb = MAIN_THREAD_TCB_ADDR.load(Ordering::Acquire);
+        if cached_tcb != 0 && current_x86_64_tcb_self() == cached_tcb {
+            disable_pthread_self_tcb_fast();
+        }
+    }
     let tid = core_self_tid();
     if let Some(handle_ptr) = core_handle_for_tid(tid) {
         // SAFETY: this thread owns the live handle until final teardown. The
@@ -12468,31 +12656,170 @@ unsafe extern "C-unwind" fn owned_forced_unwind_bridge(
     }
 }
 
+#[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
+static CACHED_HOST_FORCED_UNWIND: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
+static CACHED_HOST_GET_CFA: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
+static PINNED_HOST_UNWINDER_HANDLE: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
+unsafe extern "C" fn noop_backtrace_stop(_context: *mut c_void, _arg: *mut c_void) -> c_int {
+    5 // _URC_END_OF_STACK
+}
+
+#[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
+fn clear_host_dlerror_if_available() {
+    type HostDlerror = unsafe extern "C" fn() -> *const std::ffi::c_char;
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlerror") {
+        // SAFETY: `dlerror` takes no arguments and clears the calling host thread's error record.
+        let host_dlerror: HostDlerror = unsafe { core::mem::transmute(addr) };
+        let _ = unsafe { host_dlerror() };
+    }
+}
+
+/// Pin and cache the resident `libgcc_s.so.1` forced-unwind pair on a hosted
+/// creator BEFORE any native clone shares `%fs`.
+///
+/// Holding an `RTLD_NOLOAD` handle prevents `libgcc_s.so.1` from being unloaded
+/// while cached function pointers remain live, avoids lockless `_r_debug.r_map`
+/// walks, warms `libgcc_s`'s internal `pthread_once` register-size table on the
+/// creator's own `%fs`, and ensures native clones never call glibc `dlvsym`
+/// (whose `_dlerror_run()` races on the shared `%fs` `dlerror` allocation).
+fn prepare_native_forced_unwind() {
+    #[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
+    {
+        if core_current_thread_handle().is_some()
+            || crate::malloc_abi::raw_shared_tls_clone_active()
+            || CACHED_HOST_FORCED_UNWIND.load(Ordering::Acquire) != 0
+            || crate::dlfcn_abi::hosted_dlerror_pointer_outstanding()
+        {
+            return;
+        }
+        type HostDlopen = unsafe extern "C" fn(*const std::ffi::c_char, c_int) -> *mut c_void;
+        type HostDlvsym = unsafe extern "C" fn(
+            *mut c_void,
+            *const std::ffi::c_char,
+            *const std::ffi::c_char,
+        ) -> *mut c_void;
+        type HostDlclose = unsafe extern "C" fn(*mut c_void) -> c_int;
+        type BacktraceFn = unsafe extern "C" fn(
+            unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
+            *mut c_void,
+        ) -> c_int;
+        let Some(open_addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
+            return;
+        };
+        let Some(vsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlvsym") else {
+            return;
+        };
+        // SAFETY: ELF-resolved host dynamic-linker entrypoints on a hosted thread.
+        let host_dlopen: HostDlopen = unsafe { core::mem::transmute(open_addr) };
+        let host_dlvsym: HostDlvsym = unsafe { core::mem::transmute(vsym_addr) };
+        let handle = unsafe {
+            host_dlopen(
+                c"libgcc_s.so.1".as_ptr(),
+                libc::RTLD_NOW | libc::RTLD_NOLOAD,
+            )
+        };
+        if handle.is_null() {
+            clear_host_dlerror_if_available();
+            return;
+        }
+        let forced = unsafe {
+            host_dlvsym(
+                handle,
+                c"_Unwind_ForcedUnwind".as_ptr(),
+                c"GCC_3.0".as_ptr(),
+            )
+        } as usize;
+        let get_cfa =
+            unsafe { host_dlvsym(handle, c"_Unwind_GetCFA".as_ptr(), c"GCC_3.3".as_ptr()) }
+                as usize;
+        let backtrace =
+            unsafe { host_dlvsym(handle, c"_Unwind_Backtrace".as_ptr(), c"GCC_3.3".as_ptr()) }
+                as usize;
+        // Clear any residual host dlerror (e.g. if a symbol lookup missed).
+        clear_host_dlerror_if_available();
+        if forced != 0 && get_cfa != 0 {
+            if backtrace != 0 {
+                // Warm `uw_init_context_1` -> `pthread_once(&once_regsizes, ...)`
+                // once on this hosted creator's own `%fs` before cloning.
+                let bt: BacktraceFn = unsafe { core::mem::transmute(backtrace) };
+                let _ = unsafe { bt(noop_backtrace_stop, std::ptr::null_mut()) };
+            }
+            if PINNED_HOST_UNWINDER_HANDLE
+                .compare_exchange(0, handle as usize, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                CACHED_HOST_GET_CFA.store(get_cfa, Ordering::Relaxed);
+                CACHED_HOST_FORCED_UNWIND.store(forced, Ordering::Release);
+            } else if let Some(close_addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose")
+            {
+                // Another hosted thread already published and pinned the winner.
+                let host_dlclose: HostDlclose = unsafe { core::mem::transmute(close_addr) };
+                let _ = unsafe { host_dlclose(handle) };
+            }
+        } else if let Some(close_addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose") {
+            let host_dlclose: HostDlclose = unsafe { core::mem::transmute(close_addr) };
+            let _ = unsafe { host_dlclose(handle) };
+        }
+    }
+}
+
 #[inline]
 unsafe fn resolve_forced_unwind_pair() -> (ForcedUnwindRawFn, GetCfaRawFn) {
     #[cfg(all(not(feature = "standalone"), not(feature = "owned-unwind-stub")))]
     {
-        // Probe only already-loaded objects via RTLD_NEXT; never dlopen libgcc_s.so.1.
-        let forced = unsafe {
-            crate::host_resolve::host_dlvsym_next_raw(
-                c"_Unwind_ForcedUnwind".as_ptr(),
-                c"GCC_3.0".as_ptr(),
-            )
+        let mut forced = CACHED_HOST_FORCED_UNWIND.load(Ordering::Acquire);
+        let mut get_cfa = if forced != 0 {
+            CACHED_HOST_GET_CFA.load(Ordering::Relaxed)
+        } else {
+            0
         };
-        let get_cfa = unsafe {
-            crate::host_resolve::host_dlvsym_next_raw(
-                c"_Unwind_GetCFA".as_ptr(),
-                c"GCC_3.3".as_ptr(),
-            )
-        };
-        if !forced.is_null() && !get_cfa.is_null() {
-            // SAFETY: both symbols resolved from the resident platform unwinder.
+        let is_hosted = core_current_thread_handle().is_none()
+            && !crate::malloc_abi::raw_shared_tls_clone_active();
+        if (forced == 0 || get_cfa == 0) && is_hosted {
+            prepare_native_forced_unwind();
+            forced = CACHED_HOST_FORCED_UNWIND.load(Ordering::Acquire);
+            if forced != 0 {
+                get_cfa = CACHED_HOST_GET_CFA.load(Ordering::Relaxed);
+            }
+        }
+        if forced != 0 && get_cfa != 0 {
+            // SAFETY: both symbols belong to the permanently pinned resident unwinder.
             return unsafe {
                 (
-                    core::mem::transmute::<*mut c_void, ForcedUnwindRawFn>(forced),
-                    core::mem::transmute::<*mut c_void, GetCfaRawFn>(get_cfa),
+                    core::mem::transmute::<usize, ForcedUnwindRawFn>(forced),
+                    core::mem::transmute::<usize, GetCfaRawFn>(get_cfa),
                 )
             };
+        }
+        // Fallback for hosted threads using a non-`libgcc_s.so.1` unwinder
+        // (e.g. `libunwind` or static executable): probe directly without
+        // caching an unpinned handle, and never run this on native/raw clones.
+        if is_hosted && !crate::dlfcn_abi::hosted_dlerror_pointer_outstanding() {
+            let next_forced = unsafe {
+                crate::host_resolve::host_dlvsym_next_raw(
+                    c"_Unwind_ForcedUnwind".as_ptr(),
+                    c"GCC_3.0".as_ptr(),
+                )
+            } as usize;
+            let next_get_cfa = unsafe {
+                crate::host_resolve::host_dlvsym_next_raw(
+                    c"_Unwind_GetCFA".as_ptr(),
+                    c"GCC_3.3".as_ptr(),
+                )
+            } as usize;
+            if next_forced != 0 && next_get_cfa != 0 {
+                return unsafe {
+                    (
+                        core::mem::transmute::<usize, ForcedUnwindRawFn>(next_forced),
+                        core::mem::transmute::<usize, GetCfaRawFn>(next_get_cfa),
+                    )
+                };
+            }
+            clear_host_dlerror_if_available();
         }
     }
     // Owned Resume/accessors interpret our private exception and context

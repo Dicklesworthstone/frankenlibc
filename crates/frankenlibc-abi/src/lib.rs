@@ -406,6 +406,7 @@ unsafe extern "C" fn frankenlibc_abi_stdio_init_entry(
         let _ = host_resolve::host_errno_location_raw();
         glibc_internal_abi::init_host_single_threaded_ptr();
     }
+    pthread_abi::record_initial_process_main_tcb();
     // SAFETY: this runs during process initialization before user code and
     // publishes the stdio globals/aliases onto stable NativeFile storage while
     // patching host libio exit handling for the exported _IO symbols.

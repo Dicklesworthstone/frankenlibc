@@ -509,6 +509,20 @@ pub(crate) unsafe fn read_cp(fd: c_int, buf: *mut c_void, count: usize) -> libc:
         return unsafe { sys_read_fd(fd, buf, count) };
     }
 
+    // Strict-mode deployed fast path: strict mode never denies or clamps
+    // valid read calls; skip `decide()`/`observe()` overhead while keeping
+    // the cancellation-point window directly inside this `#[inline(always)]`
+    // body so `at_cancellation_point` observes the real caller return address.
+    if runtime_policy::strict_passthrough_active() {
+        return match unsafe { crate::pthread_abi::cancellation_point_read(fd, buf.cast(), count) } {
+            Ok(read) => read,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                -1
+            }
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         buf as usize,
@@ -582,6 +596,18 @@ pub(crate) unsafe fn write_cp(fd: c_int, buf: *const c_void, count: usize) -> li
     // Fast path during early startup: bypass membrane, do raw syscall.
     if runtime_policy::bootstrap_passthrough_active() {
         return unsafe { sys_write_fd(fd, buf, count) };
+    }
+
+    // Strict-mode deployed fast path: see `read_cp`.
+    if runtime_policy::strict_passthrough_active() {
+        return match unsafe { crate::pthread_abi::cancellation_point_write(fd, buf.cast(), count) }
+        {
+            Ok(written) => written,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                -1
+            }
+        };
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -26117,7 +26143,7 @@ pub(crate) unsafe fn clone_with_tail(
         crate::malloc_abi::latch_multi_threaded_before_thread_create();
         frankenlibc_core::stdlib::random_sv::mark_multithreaded();
         if (flags & libc::CLONE_SETTLS) == 0 {
-            crate::malloc_abi::note_native_thread_backend();
+            crate::malloc_abi::note_raw_shared_tls_clone();
         }
     }
     match tail_count {

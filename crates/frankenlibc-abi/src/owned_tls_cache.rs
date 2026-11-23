@@ -174,6 +174,29 @@ where
         !slot.is_null() && unsafe { (*slot).accessed.get() }
     }
 
+    /// Read-only, non-allocating, reentrancy-safe inspection of an already
+    /// initialized per-thread slot. Never creates keys, allocates memory, or
+    /// calls host pthread hooks, making it safe inside `fork()` child setup
+    /// while allocator/loader/stdio fork guards are held.
+    pub(crate) fn try_peek<R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        let key = self.key.load(Ordering::Acquire);
+        if key == 0 {
+            return None;
+        }
+        let raw =
+            tls::internal_tls_getspecific(InternalTlsKey { id: key }) as *const OwnedTlsSlot<T>;
+        if raw.is_null() {
+            return None;
+        }
+        // SAFETY: only this thread can access or destroy its key value.
+        let slot = unsafe { &*raw };
+        if slot.accessed.get() || !slot.initialized.get() {
+            return None;
+        }
+        // SAFETY: initialized and not mutably borrowed on this thread.
+        Some(f(unsafe { (*slot.value.get()).assume_init_ref() }))
+    }
+
     fn key(&self) -> InternalTlsKey {
         let mut key = self.key.load(Ordering::Acquire);
         if key != 0 {

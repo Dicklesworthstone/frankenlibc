@@ -23,9 +23,18 @@ use super::{Mapping, map_layout::IMAGE_PAGE_SIZE, raw_syscall};
 use crate::owned_unwind_abi::{__deregister_frame, __register_frame};
 
 #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[repr(C)]
+struct DwarfEhBases {
+    tbase: *const c_void,
+    dbase: *const c_void,
+    func: *const c_void,
+}
+
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe extern "C" {
     fn __register_frame(frame: *mut c_void);
     fn __deregister_frame(frame: *mut c_void);
+    fn _Unwind_Find_FDE(pc: *const c_void, bases: *mut DwarfEhBases) -> *const c_void;
 }
 
 #[derive(Debug, Default)]
@@ -101,6 +110,32 @@ impl Frames {
         // code. The guard owns its registration until the mapping is retired.
         // Normalized records remain live until Drop has deregistered their address.
         unsafe { __register_frame(registered_start as *mut c_void) };
+        // Eagerly sort the newly registered FDE table on the hosted `dlopen()`
+        // thread while it owns its own `%fs` allocator tcache. Otherwise,
+        // `libgcc_s::_Unwind_Find_FDE` lazily calls `init_object` ->
+        // `malloc@plt`/`free@plt` on the first forced unwind through this DSO;
+        // if that unwind runs on a native clone sharing the creator's `%fs`,
+        // host glibc `tcache` mutations race with the creator and abort.
+        #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none()
+            && !crate::malloc_abi::raw_shared_tls_clone_active()
+        {
+            let probe_pc = object
+                .program_headers
+                .iter()
+                .find(|ph| ph.is_load() && ph.p_flags.is_executable() && ph.p_memsz != 0)
+                .and_then(|ph| usize::try_from(ph.p_vaddr).ok())
+                .and_then(|vaddr| mapping.base.checked_add(vaddr))
+                .unwrap_or(mapping.base);
+            let mut bases = DwarfEhBases {
+                tbase: std::ptr::null(),
+                dbase: std::ptr::null(),
+                func: std::ptr::null(),
+            };
+            // SAFETY: `_Unwind_Find_FDE` is read-only on `probe_pc` and writes
+            // only into our stack `DwarfEhBases`; `__register_frame` succeeded.
+            let _ = unsafe { _Unwind_Find_FDE(probe_pc as *const c_void, &mut bases) };
+        }
         Some(Self {
             start: registered_start,
             _synthetic: synthetic,

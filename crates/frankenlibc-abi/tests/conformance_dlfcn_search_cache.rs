@@ -6,5 +6,8 @@
 ))]
 
 #[allow(dead_code)]
+static OPERATIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[allow(dead_code)]
 #[path = "../src/dlfcn_search.rs"]
 mod search;

@@ -478,6 +478,15 @@ fn logf_kernel(ix: u32) -> f32 {
     y as f32
 }
 
+/// Zero-branch fast path for `powf(base, exponent)` when the caller has
+/// already proven `base` is a positive normal `f32` in `[2^-15, 2^15]` and
+/// `|exponent| < 8.0` (so `|exponent * log2(base)| < 120 < 126`, guaranteeing
+/// no overflow, underflow, subnormal scaling, or special-case dispatch).
+#[inline(always)]
+pub fn powf_normal_interior(base: f32, exponent: f32) -> f32 {
+    powf_exp2_inline(f64::from(exponent) * powf_log2_inline(base.to_bits()))
+}
+
 #[inline]
 pub fn powf(base: f32, exponent: f32) -> f32 {
     // glibc 2.43's powf is this kernel (ARM optimized-routines, 0.82 ULP) for

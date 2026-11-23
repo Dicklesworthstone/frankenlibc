@@ -908,19 +908,29 @@ fn strict_fast_path_float_nan_payload_and_whitespace_separators_match_glibc() {
         ),
     ];
     for (name, fl_arm, host_arm) in pairs {
-        // Lone `%f` must preserve NaN payload bits via `narrow_f64_to_f32`.
-        let mut fl_f: f32 = -1.0;
-        let mut gl_f: f32 = -1.0;
-        let fl_rc = unsafe { fl_arm(c"nan(1)".as_ptr(), c"%f".as_ptr(), &mut fl_f as *mut f32) };
-        let gl_rc = unsafe { host_arm(c"nan(1)".as_ptr(), c"%f".as_ptr(), &mut gl_f as *mut f32) };
-        assert_eq!(fl_rc, gl_rc, "{name}: nan(1) %f rc mismatch");
-        assert_eq!(
-            fl_f.to_bits(),
-            gl_f.to_bits(),
-            "{name}: nan(1) %f NaN payload bits diverged: fl={:#x} glibc={:#x}",
-            fl_f.to_bits(),
-            gl_f.to_bits()
-        );
+        // Lone `%f` must preserve NaN payload bits AND avoid f64->f32 double rounding
+        // on borderline binary32 midpoints and subnormals.
+        for input in [
+            c"nan(1)",
+            c"-nan(1)",
+            c"0x1.00000100000001p0",
+            c"1.0000000596046447753906250000000000000001",
+            c"1.0000001788139343261718749999999999999999",
+            c"7.00649232162408535461864791644958065640130970938257885878534141944895541342930300743319094181060791015626e-46",
+        ] {
+            let mut fl_f: f32 = -1.0;
+            let mut gl_f: f32 = -1.0;
+            let fl_rc = unsafe { fl_arm(input.as_ptr(), c"%f".as_ptr(), &mut fl_f as *mut f32) };
+            let gl_rc = unsafe { host_arm(input.as_ptr(), c"%f".as_ptr(), &mut gl_f as *mut f32) };
+            assert_eq!(fl_rc, gl_rc, "{name}: {input:?} %f rc mismatch");
+            assert_eq!(
+                fl_f.to_bits(),
+                gl_f.to_bits(),
+                "{name}: {input:?} %f bits diverged: fl={:#x} glibc={:#x}",
+                fl_f.to_bits(),
+                gl_f.to_bits()
+            );
+        }
 
         // Non-space whitespace separator (`\t`, `\n`) between `%lx` and `%d`.
         for (input, fmt) in [

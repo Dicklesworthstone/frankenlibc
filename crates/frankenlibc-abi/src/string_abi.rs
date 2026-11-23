@@ -230,19 +230,25 @@ fn string_raw_passthrough_active() -> bool {
 /// well, so the dispatcher inlined at a call site is just the test and a call,
 /// not the baseline body's register and stack setup paid on every call.
 macro_rules! avx2_dispatch {
+    ($(#[$attr:meta])* $vis:vis unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> *mut c_void => $body:ident;) => {
+        crate::string_abi::avx2_dispatch!(@impl [extern "C"] $(#[$attr])* $vis unsafe fn $name($($arg: $ty),*) -> *mut c_void => $body;);
+    };
     ($(#[$attr:meta])* $vis:vis unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
+        crate::string_abi::avx2_dispatch!(@impl [] $(#[$attr])* $vis unsafe fn $name($($arg: $ty),*) -> $ret => $body;);
+    };
+    (@impl [$($abi:tt)*] $(#[$attr:meta])* $vis:vis unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
         $(#[$attr])*
         #[allow(unreachable_code)]
-        $vis unsafe fn $name($($arg: $ty),*) -> $ret {
+        $vis unsafe $($abi)* fn $name($($arg: $ty),*) -> $ret {
             #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
             {
                 #[target_feature(enable = "avx2")]
-                unsafe fn avx2_twin($($arg: $ty),*) -> $ret {
+                unsafe $($abi)* fn avx2_twin($($arg: $ty),*) -> $ret {
                     // SAFETY: forwarded from the caller's contract.
                     unsafe { $body($($arg),*) }
                 }
                 #[inline(never)]
-                unsafe fn baseline($($arg: $ty),*) -> $ret {
+                unsafe $($abi)* fn baseline($($arg: $ty),*) -> $ret {
                     // SAFETY: forwarded from the caller's contract.
                     unsafe { $body($($arg),*) }
                 }
@@ -6021,15 +6027,97 @@ avx2_dispatch! {
     /// `frankenlibc_core::string::mem::memrchr` over `n` readable bytes at `s`,
     /// compiled with AVX2 on CPUs that have it so 32-lane panels and folds run
     /// at full width without bloating the baseline `memrchr` prologue.
-    #[inline(always)]
-    unsafe fn core_memrchr(s: *const u8, needle: u8, n: usize) -> Option<usize> => core_memrchr_body;
+    /// Returns `*mut c_void` directly via `extern "C"` twins so `memrchr` can
+    /// sibling tail-call into the AVX2/baseline dispatcher with zero stack frame.
+    #[inline(never)]
+    unsafe fn core_memrchr_ptr(s: *const c_void, c: c_int, n: usize) -> *mut c_void => core_memrchr_ptr_body;
 }
 
 #[inline(always)]
-unsafe fn core_memrchr_body(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+unsafe fn core_memrchr_ptr_body(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     // SAFETY: the caller guarantees `n` readable bytes at `s`.
-    let bytes = unsafe { std::slice::from_raw_parts(s, n) };
-    frankenlibc_core::string::mem::memrchr(bytes, needle, n)
+    let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
+    match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+        Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Inline baseline SSE2 reverse scan for `1 <= n <= 64`: avoids the GOT
+/// CPUID check, indirect call, and callee-saved register spills on short
+/// `memrchr` spans while staying 100% within baseline x86-64 SSE2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn memrchr_short_sse2(s: *const u8, needle: u8, n: usize) -> *mut c_void {
+    use core::arch::x86_64::{_mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8};
+    debug_assert!(n > 0 && n <= 64);
+    if n >= 16 {
+        let v_needle = unsafe { _mm_set1_epi8(needle as i8) };
+        if n >= 32 {
+            let m3 = unsafe {
+                _mm_movemask_epi8(_mm_cmpeq_epi8(
+                    _mm_loadu_si128(s.add(n - 16).cast()),
+                    v_needle,
+                )) as u32
+            };
+            let m2 = unsafe {
+                _mm_movemask_epi8(_mm_cmpeq_epi8(
+                    _mm_loadu_si128(s.add(n - 32).cast()),
+                    v_needle,
+                )) as u32
+            };
+            let hi = (m3 << 16) | m2;
+            if hi != 0 {
+                let idx = (n - 32) + (31 - hi.leading_zeros() as usize);
+                return unsafe { (s as *mut u8).add(idx).cast() };
+            }
+            if n == 32 {
+                return std::ptr::null_mut();
+            }
+            let m1 = unsafe {
+                _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(s.add(16).cast()), v_needle))
+                    as u32
+            };
+            let m0 = unsafe {
+                _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(s.cast()), v_needle)) as u32
+            };
+            let lo = (m1 << 16) | m0;
+            if lo != 0 {
+                let idx = 31 - lo.leading_zeros() as usize;
+                return unsafe { (s as *mut u8).add(idx).cast() };
+            }
+            return std::ptr::null_mut();
+        }
+        let m1 = unsafe {
+            _mm_movemask_epi8(_mm_cmpeq_epi8(
+                _mm_loadu_si128(s.add(n - 16).cast()),
+                v_needle,
+            )) as u32
+        };
+        if m1 != 0 {
+            let idx = (n - 16) + (31 - m1.leading_zeros() as usize);
+            return unsafe { (s as *mut u8).add(idx).cast() };
+        }
+        if n == 16 {
+            return std::ptr::null_mut();
+        }
+        let m0 = unsafe {
+            _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(s.cast()), v_needle)) as u32
+        };
+        if m0 != 0 {
+            let idx = 31 - m0.leading_zeros() as usize;
+            return unsafe { (s as *mut u8).add(idx).cast() };
+        }
+        return std::ptr::null_mut();
+    }
+    let mut i = n;
+    while i > 0 {
+        i -= 1;
+        if unsafe { *s.add(i) } == needle {
+            return unsafe { (s as *mut u8).add(i).cast() };
+        }
+    }
+    std::ptr::null_mut()
 }
 
 /// POSIX `memrchr` (GNU extension) -- locates last occurrence of byte `c` in first `n` bytes of `s`.
@@ -6048,12 +6136,12 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
         if n == 0 || s.is_null() {
             return std::ptr::null_mut();
         }
-        return unsafe {
-            match core_memrchr(s.cast::<u8>(), c as u8, n) {
-                Some(idx) => (s as *mut u8).add(idx).cast(),
-                None => std::ptr::null_mut(),
-            }
-        };
+        #[cfg(target_arch = "x86_64")]
+        if n <= 64 {
+            // SAFETY: caller guarantees `n` readable bytes at non-null `s`.
+            return unsafe { memrchr_short_sse2(s.cast::<u8>(), c as u8, n) };
+        }
+        return unsafe { core_memrchr_ptr(s, c, n) };
     }
 
     // Cold tail lives in its own frame. The validating path below needs six
@@ -6084,12 +6172,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
     }
 
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
-        return unsafe {
-            match core_memrchr(s.cast::<u8>(), c as u8, n) {
-                Some(idx) => (s as *mut u8).add(idx).cast(),
-                None => std::ptr::null_mut(),
-            }
-        };
+        return unsafe { core_memrchr_ptr(s, c, n) };
     };
 
     let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
@@ -6124,7 +6207,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
             }
             return std::ptr::null_mut();
         }
-        let found = unsafe { core_memrchr(s.cast::<u8>(), c as u8, scan_len) };
+        let found = unsafe { core_memrchr_ptr(s, c, scan_len) };
         if clamped {
             runtime_policy::observe(
                 ApiFamily::StringMemory,
@@ -6133,10 +6216,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
                 true,
             );
         }
-        return match found {
-            Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
-            None => std::ptr::null_mut(),
-        };
+        return found;
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("memrchr");
@@ -6193,7 +6273,8 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
-        if let Some(idx) = core_memrchr(s.cast::<u8>(), c as u8, scan_len) {
+        let found = core_memrchr_ptr(s, c, scan_len);
+        if !found.is_null() {
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -6206,7 +6287,7 @@ unsafe extern "C" fn memrchr_validating(s: *const c_void, c: c_int, n: usize) ->
                 runtime_policy::scaled_cost(6, scan_len),
                 clamped,
             );
-            return (s as *mut u8).add(idx).cast();
+            return found;
         }
     }
     record_string_stage_outcome(
@@ -6457,6 +6538,12 @@ unsafe fn strlen_validating(s: *const c_char, membrane_token: StringMembraneToke
 // strnlen
 // ---------------------------------------------------------------------------
 
+#[inline(never)]
+unsafe extern "C" fn strnlen_long(s: *const c_char, n: usize) -> usize {
+    // SAFETY: forwarded from `strnlen`'s contract.
+    unsafe { scan_c_string_nul_or_bound_long(s, n).0 }
+}
+
 /// POSIX `strnlen` -- computes string length up to at most `n` bytes.
 ///
 /// # Safety
@@ -6477,11 +6564,14 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
         if s.is_null() {
             return 0;
         }
-        // SAFETY: `n` is strnlen's ceiling, not a readability promise, which is
-        // precisely `scan_c_string_nul_or_bound`'s contract. `scan_c_string`
-        // itself would be wrong here — it may load a whole window under `n` and
-        // fault past the terminator (bounded_scan_guard_page_safety).
-        return unsafe { scan_c_string_nul_or_bound(s, n).0 };
+        // SAFETY: `n` is strnlen's ceiling, not a readability promise. When
+        // `[s, s+n)` stays inside one page and below `SCAN_TWIN_MIN_SPAN`,
+        // run the baseline scanner inline; otherwise sibling tail-call
+        // `strnlen_long` (`extern "C"`) so the hot path stays frameless.
+        if n < SCAN_TWIN_MIN_SPAN && n <= SCAN_PAGE - (s as usize & (SCAN_PAGE - 1)) {
+            return unsafe { scan_c_string_body(s, Some(n)).0 };
+        }
+        return unsafe { strnlen_long(s, n) };
     }
 
     // Cold tail in its own frame: see `memrchr_validating`. This entry opened
@@ -6492,8 +6582,9 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
     unsafe { strnlen_validating(s, n) }
 }
 
+#[cold]
 #[inline(never)]
-unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
+unsafe extern "C" fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     if s.is_null() {
         let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
         record_string_stage_outcome(

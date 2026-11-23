@@ -192,7 +192,9 @@ pub(super) fn hosted_dlerror_pointer_outstanding() -> bool {
     }
     #[cfg(feature = "owned-tls-cache")]
     {
-        DLERROR_OWNED_TLS.with(|state| state.pending != 0 || state.stable != 0)
+        DLERROR_OWNED_TLS
+            .try_peek(|state| state.pending != 0 || state.stable != 0)
+            .unwrap_or(false)
     }
 }
 
