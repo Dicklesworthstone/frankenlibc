@@ -11,6 +11,7 @@
 //! Bead: CONFORMANCE: libc spawn.h diff matrix.
 
 use std::ffi::{CString, c_char, c_int, c_void};
+use std::os::fd::AsRawFd;
 
 use frankenlibc_abi::process_abi as fl;
 
@@ -654,6 +655,302 @@ fn diff_posix_spawn_without_setsid_keeps_the_spawner_session() {
         f_sid, g_sid,
         "child session without SETSID: fl={f_sid} glibc={g_sid} (spawner={own_sid})"
     );
+}
+
+/// Exercise the same cgroup contract through PID and pidfd, direct and PATH
+/// searching entry points. All children are reaped before assertions in callers.
+fn spawn_cgroup_probe(
+    host: bool,
+    search: bool,
+    pidfd: bool,
+    descriptor: Option<c_int>,
+    flags: libc::c_short,
+) -> c_int {
+    type SetCgroupFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+    use frankenlibc_abi::glibc_internal_abi;
+    use frankenlibc_abi::unistd_abi;
+
+    let (symbol, candidate): (&std::ffi::CStr, SpawnFn) = match (search, pidfd) {
+        (false, false) => (c"posix_spawn", fl::posix_spawn),
+        (true, false) => (c"posix_spawnp", fl::posix_spawnp),
+        (false, true) => (c"pidfd_spawn", glibc_internal_abi::pidfd_spawn),
+        (true, true) => (c"pidfd_spawnp", glibc_internal_abi::pidfd_spawnp),
+    };
+    let mut api = if host { glibc_api() } else { fl_api() };
+    api.spawn = if host {
+        unsafe { host_fn(symbol, candidate as *const ()) }
+    } else {
+        candidate
+    };
+    let set_cgroup: SetCgroupFn = if host {
+        unsafe {
+            host_fn(
+                c"posix_spawnattr_setcgroup_np",
+                unistd_abi::posix_spawnattr_setcgroup_np as *const (),
+            )
+        }
+    } else {
+        unistd_abi::posix_spawnattr_setcgroup_np
+    };
+    let mut attr = AttrBuf([0; ATTR_BYTES]);
+    let attrp = attr.0.as_mut_ptr().cast();
+    assert_eq!(unsafe { (api.attr_init)(attrp) }, 0);
+    if let Some(fd) = descriptor {
+        assert_eq!(unsafe { set_cgroup(attrp, fd) }, 0);
+    }
+    assert_eq!(unsafe { (api.attr_setflags)(attrp, flags) }, 0);
+    let path = if search { c"true" } else { c"/bin/true" };
+    let argv = [c"true".as_ptr().cast_mut(), std::ptr::null_mut()];
+    let envp = [std::ptr::null_mut()];
+    let mut child = -1;
+    let result = unsafe {
+        (api.spawn)(
+            &mut child,
+            path.as_ptr(),
+            std::ptr::null(),
+            attrp,
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    assert_eq!(unsafe { (api.attr_destroy)(attrp) }, 0);
+    if result == 0 {
+        if pidfd {
+            assert!(
+                child >= 0,
+                "successful pidfd_spawn must publish a descriptor"
+            );
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let waited = unsafe {
+                libc::waitid(libc::P_PIDFD, child as libc::id_t, &mut info, libc::WEXITED)
+            };
+            unsafe { libc::close(child) };
+            assert_eq!(waited, 0);
+            assert_eq!(info.si_code, libc::CLD_EXITED);
+            assert_eq!(unsafe { info.si_status() }, 0);
+        } else {
+            assert!(child > 0, "successful spawn must publish a child PID");
+            assert_eq!(waitpid_status(child), 0);
+        }
+    }
+    result
+}
+
+#[test]
+fn diff_spawn_cgroup_descriptor_requires_enabling_flag() {
+    let fd = std::fs::File::open("/dev/null").unwrap();
+    for search in [false, true] {
+        for pidfd in [false, true] {
+            for descriptor in [fd.as_raw_fd(), -1, c_int::MIN] {
+                let host = spawn_cgroup_probe(true, search, pidfd, Some(descriptor), 0);
+                assert_eq!(host, 0, "inactive cgroup attribute must not affect spawn");
+                let candidate = spawn_cgroup_probe(false, search, pidfd, Some(descriptor), 0);
+                assert_eq!(
+                    candidate, host,
+                    "search={search}, pidfd={pidfd}, fd={descriptor}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn diff_spawn_cgroup_attributes_store_values_independently_of_flags() {
+    type SetCgroupFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+    type GetCgroupFn = unsafe extern "C" fn(*const c_void, *mut c_int) -> c_int;
+    type GetFlagsFn = unsafe extern "C" fn(*const c_void, *mut libc::c_short) -> c_int;
+    use frankenlibc_abi::unistd_abi;
+
+    for host in [true, false] {
+        let api = if host { glibc_api() } else { fl_api() };
+        let set_cgroup: SetCgroupFn = if host {
+            unsafe {
+                host_fn(
+                    c"posix_spawnattr_setcgroup_np",
+                    unistd_abi::posix_spawnattr_setcgroup_np as *const (),
+                )
+            }
+        } else {
+            unistd_abi::posix_spawnattr_setcgroup_np
+        };
+        let get_cgroup: GetCgroupFn = if host {
+            unsafe {
+                host_fn(
+                    c"posix_spawnattr_getcgroup_np",
+                    unistd_abi::posix_spawnattr_getcgroup_np as *const (),
+                )
+            }
+        } else {
+            unistd_abi::posix_spawnattr_getcgroup_np
+        };
+        let get_flags: GetFlagsFn = if host {
+            unsafe {
+                host_fn(
+                    c"posix_spawnattr_getflags",
+                    fl::posix_spawnattr_getflags as *const (),
+                )
+            }
+        } else {
+            fl::posix_spawnattr_getflags
+        };
+        let mut attr = AttrBuf([0; ATTR_BYTES]);
+        let attrp = attr.0.as_mut_ptr().cast();
+        assert_eq!(unsafe { (api.attr_init)(attrp) }, 0);
+        let mut value = -99;
+        assert_eq!(unsafe { get_cgroup(attrp, &mut value) }, 0);
+        assert_eq!(
+            value, 0,
+            "host={host}: GNU initialization zeroes the cgroup value"
+        );
+        for flags in [0, 0x100, 0] {
+            assert_eq!(unsafe { (api.attr_setflags)(attrp, flags) }, 0);
+            for descriptor in [c_int::MIN, -2, -1, 0, c_int::MAX] {
+                assert_eq!(unsafe { set_cgroup(attrp, descriptor) }, 0);
+                assert_eq!(unsafe { get_cgroup(attrp, &mut value) }, 0);
+                assert_eq!(value, descriptor, "host={host}");
+                let mut actual_flags = -1;
+                assert_eq!(unsafe { get_flags(attrp, &mut actual_flags) }, 0);
+                assert_eq!(actual_flags, flags, "setter must not activate SETCGROUP");
+            }
+        }
+        assert_eq!(unsafe { (api.attr_destroy)(attrp) }, 0);
+    }
+}
+
+#[test]
+fn diff_spawn_cgroup_rejects_non_cgroup_without_writing_files() {
+    // Only a scratch directory is used. A cgroup.procs-shaped ordinary file
+    // must never become an emulation of atomic kernel cgroup placement.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "frankenlibc-spawn-cgroup-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let control = directory.join("cgroup.procs");
+    const CONTENTS: &[u8] = b"unchanged ordinary file\n";
+    std::fs::write(&control, CONTENTS).unwrap();
+    let fd = std::fs::File::open(&directory).unwrap();
+    for search in [false, true] {
+        for pidfd in [false, true] {
+            for descriptor in [None, Some(fd.as_raw_fd())] {
+                let host = spawn_cgroup_probe(true, search, pidfd, descriptor, 0x100);
+                assert_ne!(host, 0, "invalid cgroup must not create a child");
+                let candidate = spawn_cgroup_probe(false, search, pidfd, descriptor, 0x100);
+                assert_eq!(std::fs::read(&control).unwrap(), CONTENTS);
+                assert_eq!(
+                    candidate, host,
+                    "search={search}, pidfd={pidfd}, fd={descriptor:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn diff_spawn_cgroup_clone3_failure_never_falls_back() {
+    const CHILD_ENV: &str = "FRANKENLIBC_TEST_SPAWN_CGROUP_CLONE3_ERROR";
+    let Some(error) = std::env::var_os(CHILD_ENV) else {
+        // seccomp is confined to fresh test subprocesses. A genuine unavailable
+        // or denied clone3 must not be emulated by spawning outside the cgroup.
+        for error in [libc::ENOSYS, libc::E2BIG, libc::EPERM] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "diff_spawn_cgroup_clone3_failure_never_falls_back",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, error.to_string())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "clone3 error {error}:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    };
+    let error = error.to_str().unwrap().parse::<c_int>().unwrap();
+    let filter = [
+        libc::sock_filter {
+            code: 0x20,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        }, // load syscall nr
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone3 as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ERRNO | error as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ALLOW,
+        },
+    ];
+    let program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_ptr().cast_mut(),
+    };
+    // SAFETY: this disposable subprocess installs a validated four-instruction
+    // filter that only returns an error for clone3 and allows every other call.
+    unsafe {
+        assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+        assert_eq!(
+            libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program),
+            0
+        );
+        assert_eq!(
+            libc::syscall(libc::SYS_clone3, std::ptr::null::<c_void>(), 0),
+            -1
+        );
+        assert_eq!(
+            *libc::__errno_location(),
+            error,
+            "fault filter must execute"
+        );
+    }
+    let fd = std::fs::File::open("/dev/null").unwrap();
+    let expected = if error == libc::ENOSYS {
+        libc::EOPNOTSUPP
+    } else {
+        error
+    };
+    for search in [false, true] {
+        for pidfd in [false, true] {
+            for host in [true, false] {
+                assert_eq!(
+                    spawn_cgroup_probe(host, search, pidfd, Some(fd.as_raw_fd()), 0x100),
+                    expected,
+                    "host={host}, search={search}, pidfd={pidfd}, clone3 errno={error}"
+                );
+            }
+        }
+        if error == libc::ENOSYS {
+            // Without SETCGROUP ordinary spawn must retain its working
+            // legacy-clone fallback, even when the descriptor was configured.
+            for host in [true, false] {
+                assert_eq!(
+                    spawn_cgroup_probe(host, search, false, Some(fd.as_raw_fd()), 0),
+                    0
+                );
+            }
+        }
+    }
 }
 
 #[test]

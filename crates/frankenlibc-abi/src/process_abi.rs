@@ -897,8 +897,12 @@ struct SpawnAttrs {
     schedpolicy: c_int,
     schedparam_priority: c_int,
     cgroup_fd: c_int,
-    has_cgroup: bool,
 }
+
+/// GNU cgroup placement is opt-in independently of the stored descriptor.
+const POSIX_SPAWN_SETCGROUP: libc::c_short = 0x100;
+/// Linux clone3 creates the child in this cgroup before it can execute.
+const CLONE_INTO_CGROUP: u64 = 0x2_0000_0000;
 
 /// Magic value to tag our internal pointers.
 const SPAWN_FA_MAGIC: u64 = 0x4652_414e_4b46_4131; // "FRANKFA1"
@@ -968,8 +972,7 @@ pub unsafe extern "C" fn posix_spawnattr_init(attrp: *mut c_void) -> c_int {
         sigmask: 0,
         schedpolicy: 0,
         schedparam_priority: 0,
-        cgroup_fd: -1,
-        has_cgroup: false,
+        cgroup_fd: 0,
     });
     let raw = Box::into_raw(attr);
     let p = attrp as *mut u8;
@@ -1340,23 +1343,6 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         return error;
     }
 
-    if attr.has_cgroup {
-        let cgroup_name = b"cgroup.procs\0";
-        let fd = match unsafe {
-            raw_syscall::sys_openat(attr.cgroup_fd, cgroup_name.as_ptr(), libc::O_WRONLY, 0)
-        } {
-            Ok(f) => f,
-            Err(e) => return e,
-        };
-
-        let current = b"0";
-        let write_res = unsafe { raw_syscall::sys_write(fd, current.as_ptr(), current.len()) };
-        let close_res = raw_syscall::sys_close(fd);
-        if write_res.is_err() || close_res.is_err() {
-            return write_res.err().or(close_res.err()).unwrap_or(libc::EIO);
-        }
-    }
-
     0
 }
 
@@ -1557,7 +1543,9 @@ unsafe extern "C" fn legacy_spawn_child(ctx: usize) -> usize {
 /// Create the spawn child with `CLONE_VM | CLONE_VFORK | extra_flags` on its
 /// own stack, running `spawn_child_main(ctx)`; returns the child pid in the
 /// parent once the child has exec'd or exited. Prefer clone3, falling back to
-/// legacy clone only when the kernel or a syscall filter reports ENOSYS.
+/// legacy clone only when the kernel or a syscall filter reports ENOSYS and
+/// no cgroup placement was requested. Placement must be atomic with creation;
+/// moving an already running child through cgroup.procs is not equivalent.
 ///
 /// A full fork copied the parent's page tables for every spawn, although
 /// the child only execs: posix_spawn of /bin/true ran ~4.6 ms vs glibc's
@@ -1570,6 +1558,7 @@ unsafe fn clone_spawn_child(
     ctx: &SpawnChildContext<'_>,
     extra_flags: u64,
     pidfd: *mut c_int,
+    cgroup: Option<c_int>,
 ) -> Result<c_int, c_int> {
     const CLONE_VM: u64 = 0x0000_0100;
     const CLONE_VFORK: u64 = 0x0000_4000;
@@ -1590,6 +1579,7 @@ unsafe fn clone_spawn_child(
         exit_signal: libc::SIGCHLD as u64,
         stack: stack as u64,
         stack_size: SPAWN_CHILD_STACK_SIZE as u64,
+        cgroup: cgroup.map_or(0, |fd| fd as u64),
         ..raw_syscall::CloneArgs::default()
     };
     let ret: isize;
@@ -1616,7 +1606,12 @@ unsafe fn clone_spawn_child(
             lateout("r11") _,
         );
     }
-    let result = if ret == -(libc::ENOSYS as isize) {
+    let result = if ret == -(libc::ENOSYS as isize) && cgroup.is_some() {
+        // GNU's SETCGROUP contract has no legacy-clone fallback. Preserve
+        // other kernel errors, including invalid descriptors and E2BIG on
+        // older clone3 argument layouts, without creating an unplaced child.
+        Err(libc::EOPNOTSUPP)
+    } else if ret == -(libc::ENOSYS as isize) {
         // clone3 did not create a child. Reuse its dedicated stack for the
         // legacy clone trampoline, which pops the entry point and argument.
         // CLONE_PIDFD writes atomically through clone's parent_tid argument;
@@ -1697,6 +1692,9 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
             None => return libc::EINVAL,
         }
     };
+    let cgroup = spawn_attrs
+        .filter(|attr| attr.flags & POSIX_SPAWN_SETCGROUP != 0)
+        .map(|attr| attr.cgroup_fd);
 
     let (path_len, terminated) = unsafe {
         crate::util::scan_c_string(path, crate::malloc_abi::known_remaining(path as usize))
@@ -1779,7 +1777,7 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     // closefrom is handled separately by excluding this private descriptor.
     if use_pipe
         && let Err(error) = spawn_protocol::reserve_error_fd(&mut err_pipe[1], |fd| {
-            spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
+            cgroup == Some(fd)
                 || spawn_actions.is_some_and(|fa| {
                     fa.actions.iter().any(|action| match action {
                         SpawnFileAction::Close(value)
@@ -1824,21 +1822,26 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     // Use CLONE_PIDFD when a pidfd is wanted, so the parent receives
     // it in the same kernel operation that creates the child: pidfd_open
     // after the fact has a PID-reuse race for very short-lived children.
-    let extra_flags = if want_pidfd {
+    let mut extra_flags = if want_pidfd {
         raw_syscall::CLONE_PIDFD
     } else {
         0
     };
+    if cgroup.is_some() {
+        extra_flags |= CLONE_INTO_CGROUP;
+    }
 
     #[cfg(target_arch = "x86_64")]
-    let spawned = unsafe { clone_spawn_child(&child_context, extra_flags, &mut child_pidfd) };
+    let spawned =
+        unsafe { clone_spawn_child(&child_context, extra_flags, &mut child_pidfd, cgroup) };
     #[cfg(not(target_arch = "x86_64"))]
     let spawned = {
-        let result = if want_pidfd {
+        let result = if want_pidfd || cgroup.is_some() {
             let args = raw_syscall::CloneArgs {
                 flags: extra_flags,
                 pidfd: (&mut child_pidfd as *mut i32).cast::<()>() as u64,
                 exit_signal: libc::SIGCHLD as u64,
+                cgroup: cgroup.map_or(0, |fd| fd as u64),
                 ..raw_syscall::CloneArgs::default()
             };
             unsafe { raw_syscall::sys_clone3(&args, std::mem::size_of::<raw_syscall::CloneArgs>()) }
@@ -1850,7 +1853,11 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
             let _ = raw_syscall::sys_close(err_pipe[0]);
             unsafe { spawn_child_main(&child_context) };
         }
-        result
+        if result == Err(libc::ENOSYS) && cgroup.is_some() {
+            Err(libc::EOPNOTSUPP)
+        } else {
+            result
+        }
     };
     let child_pid = match spawned {
         Ok(pid) => pid,
@@ -2181,7 +2188,7 @@ pub unsafe fn posix_spawnattr_getcgroup_np_impl(attrp: *const c_void, cgroup: *m
         return libc::EINVAL;
     }
     unsafe {
-        *cgroup = if attr.has_cgroup { attr.cgroup_fd } else { -1 };
+        *cgroup = attr.cgroup_fd;
     }
     0
 }
@@ -2190,10 +2197,9 @@ pub unsafe fn posix_spawnattr_setcgroup_np_impl(attrp: *mut c_void, cgroup: c_in
     let Some(attr) = (unsafe { read_spawn_attrs_mut(attrp) }) else {
         return libc::EINVAL;
     };
-    if cgroup < 0 {
-        return libc::EINVAL;
-    }
+    // Like GNU's other spawn attributes, this stores a value; clone3 validates
+    // it only when SETCGROUP is active. Even negative descriptors are inert
+    // when the flag is clear, and must remain observable through the getter.
     attr.cgroup_fd = cgroup;
-    attr.has_cgroup = true;
     0
 }

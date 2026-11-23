@@ -541,7 +541,12 @@ fn spawnattr_cgroup_default_and_roundtrip() {
     let mut cgroup = 123;
     let rc = unsafe { posix_spawnattr_getcgroup_np(attr.as_ptr().cast(), &mut cgroup) };
     assert_eq!(rc, 0);
-    assert_eq!(cgroup, -1, "default cgroup fd should be unset");
+    // Independent GNU 2.41 accessor probe: init zeroes this attribute; the
+    // SETCGROUP flag, not a sentinel descriptor, decides whether it is used.
+    assert_eq!(
+        cgroup, 0,
+        "default cgroup fd should match GNU initialization"
+    );
 
     let dev_null = std::fs::File::open("/dev/null").unwrap();
     let rc =
