@@ -48,6 +48,7 @@ mod g {
     // fopencookie callback unwind through them (as glibc's do).
     unsafe extern "C-unwind" {
         pub fn fread(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
+        pub fn fread_unlocked(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fflush(f: *mut c_void) -> c_int;
         pub fn setvbuf(f: *mut c_void, buf: *mut c_char, mode: c_int, size: usize) -> c_int;
@@ -135,6 +136,207 @@ unsafe extern "C-unwind" fn line_cookie_close(cookie: *mut c_void) -> c_int {
     // SAFETY: the state remains live until the single fclose below completes.
     unsafe { (*cookie.cast::<LineCookie>()).closed += 1 };
     0
+}
+
+#[derive(Debug, PartialEq)]
+struct CookieReadObservation {
+    elements: usize,
+    bytes: [u8; 8],
+    error: bool,
+    eof: bool,
+    errno: c_int,
+    callback_called: bool,
+}
+
+unsafe fn observe_cookie_fread(
+    native: bool,
+    unlocked: bool,
+    stream: *mut c_void,
+    state: *const LineCookie,
+    size: usize,
+    count: usize,
+) -> CookieReadObservation {
+    assert!(size * count <= 8);
+    let read = match (native, unlocked) {
+        (true, false) => fl::fread,
+        (true, true) => fl::fread_unlocked,
+        (false, false) => g::fread,
+        (false, true) => g::fread_unlocked,
+    };
+    let error = if native { fl::ferror } else { g::ferror };
+    let eof = if native { fl::feof } else { g::feof };
+    let mut bytes = [0xa5; 8];
+    // SAFETY: the sequence below retains the cookie and FILE through close.
+    // Read the counter only before and after the callback, without keeping a
+    // reference to cookie state across a callback that mutates it.
+    unsafe {
+        let previous_calls = (*state).calls;
+        plant_errno();
+        let elements = read(bytes.as_mut_ptr().cast(), size, count, stream);
+        let errno = read_errno();
+        CookieReadObservation {
+            elements,
+            bytes,
+            error: error(stream) != 0,
+            eof: eof(stream) != 0,
+            errno,
+            callback_called: (*state).calls != previous_calls,
+        }
+    }
+}
+
+fn cookie_fread_sequence(
+    native: bool,
+    unlocked: bool,
+    buffer_mode: c_int,
+    scenario: &str,
+) -> (Vec<CookieReadObservation>, c_int, usize) {
+    let mut state = LineCookie {
+        data: b"abc",
+        position: 0,
+        calls: 0,
+        closed: 0,
+        error: if scenario == "retry-error" {
+            libc::EIO
+        } else {
+            0
+        },
+    };
+    let funcs = CookieIoFuncs {
+        read: Some(line_cookie_read),
+        close: Some(line_cookie_close),
+        ..CookieIoFuncs::default()
+    };
+    let open_mode = match scenario {
+        "write-only" => c"w",
+        "append-only" => c"a",
+        _ => c"r",
+    };
+    // SAFETY: cookie state and all buffers stay live through the provider's
+    // fclose. Every request fits the eight-byte output used by the observer.
+    unsafe {
+        let cookie = std::ptr::addr_of_mut!(state);
+        let stream = if native {
+            fl::fopencookie(cookie.cast(), open_mode.as_ptr(), funcs)
+        } else {
+            g::fopencookie(cookie.cast(), open_mode.as_ptr(), funcs)
+        };
+        assert!(!stream.is_null());
+        let set_buffer = if native { fl::setvbuf } else { g::setvbuf };
+        let clear = if native { fl::clearerr } else { g::clearerr };
+        let push = if native { fl::ungetc } else { g::ungetc };
+        let close = if native { fl::fclose } else { g::fclose };
+        assert_eq!(set_buffer(stream, std::ptr::null_mut(), buffer_mode, 0), 0);
+        let read =
+            |size, count| observe_cookie_fread(native, unlocked, stream, cookie, size, count);
+        let observations = match scenario {
+            "write-only" | "append-only" => vec![read(0, 2), read(2, 0), read(1, 2)],
+            "sticky-eof" => {
+                let mut observations = vec![read(2, 2)];
+                // The backend gains new input, but EOF is a stream state: a
+                // subsequent fread must not call it until EOF is cleared.
+                state.data = b"abcde";
+                observations.push(read(1, 2));
+                clear(stream);
+                observations.push(read(1, 2));
+                observations.push(read(1, 1));
+                assert_eq!(push(b'P' as c_int, stream), b'P' as c_int);
+                observations.push(read(1, 2));
+                observations
+            }
+            "retry-error" => {
+                let mut observations = vec![read(1, 4)];
+                state.data = b"abcde";
+                // Unlike EOF, an error indicator must not suppress a new
+                // input attempt; successful input retains the old ferror.
+                observations.push(read(1, 1));
+                observations
+            }
+            _ => unreachable!(),
+        };
+        (observations, close(stream), state.closed)
+    }
+}
+
+#[test]
+fn cookie_fread_write_only_never_invokes_read_hook() {
+    assert_ne!(g::fread as *const (), fl::fread as *const ());
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for unlocked in [false, true] {
+            for scenario in ["write-only", "append-only"] {
+                let host = cookie_fread_sequence(false, unlocked, mode, scenario);
+                assert_eq!((host.1, host.2), (0, 1));
+                for (index, observation) in host.0.iter().enumerate() {
+                    assert_eq!(observation.elements, 0);
+                    assert_eq!(observation.bytes, [0xa5; 8]);
+                    assert!(!observation.callback_called && !observation.eof);
+                    assert_eq!(observation.error, index == 2);
+                    assert_eq!(
+                        observation.errno,
+                        if index == 2 {
+                            libc::EBADF
+                        } else {
+                            SENTINEL_ERRNO
+                        }
+                    );
+                }
+                assert_eq!(cookie_fread_sequence(true, unlocked, mode, scenario), host);
+            }
+        }
+    }
+}
+
+#[test]
+fn cookie_fread_eof_stays_set_until_clearerr_or_pushback() {
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for unlocked in [false, true] {
+            let host = cookie_fread_sequence(false, unlocked, mode, "sticky-eof");
+            assert_eq!((host.1, host.2), (0, 1));
+            assert_eq!(
+                host.0.iter().map(|o| o.elements).collect::<Vec<_>>(),
+                [1, 0, 2, 0, 1]
+            );
+            assert_eq!(
+                host.0.iter().map(|o| o.eof).collect::<Vec<_>>(),
+                [true, true, false, true, true]
+            );
+            assert_eq!(
+                host.0[0].bytes,
+                [b'a', b'b', b'c', 0xa5, 0xa5, 0xa5, 0xa5, 0xa5]
+            );
+            assert_eq!(host.0[1].bytes, [0xa5; 8]);
+            assert!(!host.0[1].callback_called);
+            assert_eq!(&host.0[2].bytes[..2], b"de");
+            assert_eq!(host.0[4].bytes[0], b'P');
+            assert!(host.0.iter().all(|o| !o.error && o.errno == SENTINEL_ERRNO));
+            assert_eq!(
+                cookie_fread_sequence(true, unlocked, mode, "sticky-eof"),
+                host
+            );
+        }
+    }
+}
+
+#[test]
+fn cookie_fread_previous_error_allows_retry_and_stays_visible() {
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for unlocked in [false, true] {
+            let host = cookie_fread_sequence(false, unlocked, mode, "retry-error");
+            assert_eq!((host.1, host.2), (0, 1));
+            assert_eq!((host.0[0].elements, host.0[0].errno), (3, libc::EIO));
+            assert_eq!((host.0[1].elements, host.0[1].errno), (1, SENTINEL_ERRNO));
+            assert_eq!(host.0[1].bytes[0], b'd');
+            assert!(
+                host.0
+                    .iter()
+                    .all(|o| o.error && !o.eof && o.callback_called)
+            );
+            assert_eq!(
+                cookie_fread_sequence(true, unlocked, mode, "retry-error"),
+                host
+            );
+        }
+    }
 }
 
 fn observe_cookie_lines(native: bool, mode: c_int, delimiter: u8) -> CookieLineSequence {

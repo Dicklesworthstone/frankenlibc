@@ -7597,9 +7597,31 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
             return 0;
         }
 
-        let buffered = stream_cell(id)
-            .map(|cell| cell.lock().buffered_read_into(dst))
-            .unwrap_or(0);
+        let Some(cell) = stream_cell(id) else {
+            // SAFETY: only the calling thread's errno slot is modified.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        };
+        let buffered = {
+            let mut s = cell.lock();
+            if !s.is_readable() {
+                s.set_error();
+                // A read hook does not grant read permission to a FILE
+                // opened for output. Reject before invoking application code
+                // or touching its destination, just as the character path does.
+                // SAFETY: only the calling thread's errno slot is modified.
+                unsafe { set_abi_errno(errno::EBADF) };
+                return 0;
+            }
+            let buffered = s.buffered_read_into(dst);
+            // EOF is sticky even if the cookie later supplies more data.
+            // clearerr, successful seeking or pushback can clear it. An old
+            // error indicator alone, however, must still permit a read retry.
+            if s.is_eof() {
+                return buffered.checked_div(size).unwrap_or(0);
+            }
+            buffered
+        };
         let mut read_total = buffered;
         let mut reached_eof = false;
         let mut had_error = false;
