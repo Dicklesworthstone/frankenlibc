@@ -26,6 +26,9 @@ struct StdioArm {
     fscanf: unsafe extern "C-unwind" fn(*mut c_void, *const c_char, ...) -> c_int,
     getline: unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize,
     fclose: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    fflush: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    fflush_unlocked: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    fileno: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
     setvbuf: unsafe extern "C-unwind" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int,
     fread: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
     fseek: unsafe extern "C-unwind" fn(*mut c_void, c_long, c_int) -> c_int,
@@ -48,6 +51,9 @@ fn candidate() -> StdioArm {
         fscanf: fl::fscanf,
         getline: fl::getline,
         fclose: fl::fclose,
+        fflush: fl::fflush,
+        fflush_unlocked: fl::fflush_unlocked,
+        fileno: fl::fileno,
         setvbuf: fl::setvbuf,
         fread: fl::fread,
         fseek: fl::fseek,
@@ -74,6 +80,12 @@ fn host() -> StdioArm {
             fscanf: dlsym_oracle::host_fn(c"fscanf", fl::fscanf as *const ()),
             getline: dlsym_oracle::host_fn(c"getline", fl::getline as *const ()),
             fclose: dlsym_oracle::host_fn(c"fclose", fl::fclose as *const ()),
+            fflush: dlsym_oracle::host_fn(c"fflush", fl::fflush as *const ()),
+            fflush_unlocked: dlsym_oracle::host_fn(
+                c"fflush_unlocked",
+                fl::fflush_unlocked as *const (),
+            ),
+            fileno: dlsym_oracle::host_fn(c"fileno", fl::fileno as *const ()),
             setvbuf: dlsym_oracle::host_fn(c"setvbuf", fl::setvbuf as *const ()),
             fread: dlsym_oracle::host_fn(c"fread", fl::fread as *const ()),
             fseek: dlsym_oracle::host_fn(c"fseek", fl::fseek as *const ()),
@@ -205,6 +217,238 @@ fn fread_unbuffered_request_preserves_gnu_eof_bypass() {
 }
 
 const RETRY_ERRNO_SENTINEL: c_int = 0x5eed;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InputSyncOperation {
+    Flush,
+    FlushUnlocked,
+    Rebuffer,
+    Close,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InputSyncBackend {
+    Regular,
+    Closed,
+    InvalidSeek,
+    Pipe,
+}
+
+#[derive(Debug, PartialEq)]
+struct InputSyncObservation {
+    result: c_int,
+    errno: c_int,
+    state: Option<(bool, bool, c_int)>,
+}
+
+fn observe_input_sync(
+    arm: &StdioArm,
+    backend: InputSyncBackend,
+    operation: InputSyncOperation,
+) -> InputSyncObservation {
+    let mut initial_buffer = [0u8; 8];
+    let mut replacement_buffer = [0u8; 16];
+    // SAFETY: every descriptor belongs exclusively to this probe. The stream
+    // retains its backing buffers through fclose, including a failed setvbuf.
+    // The Closed case executes in a dedicated test subprocess so another test
+    // cannot reuse the deliberately retired descriptor before fclose.
+    unsafe {
+        let fd = if backend == InputSyncBackend::Pipe {
+            let mut pipe = [-1; 2];
+            assert_eq!(libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC), 0);
+            assert_eq!(libc::write(pipe[1], b"abcdef".as_ptr().cast(), 6), 6);
+            assert_eq!(libc::close(pipe[1]), 0);
+            pipe[0]
+        } else {
+            let fd = libc::memfd_create(c"fl-input-sync".as_ptr(), libc::MFD_CLOEXEC);
+            assert!(fd >= 0);
+            assert_eq!(libc::write(fd, b"abcdef".as_ptr().cast(), 6), 6);
+            assert_eq!(libc::lseek(fd, 0, libc::SEEK_SET), 0);
+            fd
+        };
+        let stream = (arm.fdopen)(fd, c"r".as_ptr());
+        assert!(!stream.is_null());
+        if arm.name == "fl" {
+            assert!(!fl::stdio_may_delegate_to_host_for_tests(stream));
+        }
+        assert_eq!((arm.fileno)(stream), fd);
+        assert_eq!(
+            (arm.setvbuf)(
+                stream,
+                initial_buffer.as_mut_ptr().cast(),
+                libc::_IOFBF,
+                initial_buffer.len(),
+            ),
+            0
+        );
+        assert_eq!((arm.fgetc)(stream), c_int::from(b'a'));
+        match backend {
+            InputSyncBackend::Closed => assert_eq!(libc::close(fd), 0),
+            InputSyncBackend::InvalidSeek => {
+                // Moving the shared descriptor behind stdio makes the
+                // necessary relative rewind fail with EINVAL. Input already
+                // buffered by stdio must survive that synchronization error.
+                assert_eq!(libc::lseek(fd, 0, libc::SEEK_SET), 0);
+            }
+            InputSyncBackend::Regular | InputSyncBackend::Pipe => {}
+        }
+        *libc::__errno_location() = RETRY_ERRNO_SENTINEL;
+        let result = match operation {
+            InputSyncOperation::Flush => (arm.fflush)(stream),
+            InputSyncOperation::FlushUnlocked => (arm.fflush_unlocked)(stream),
+            InputSyncOperation::Rebuffer => (arm.setvbuf)(
+                stream,
+                replacement_buffer.as_mut_ptr().cast(),
+                libc::_IOFBF,
+                replacement_buffer.len(),
+            ),
+            InputSyncOperation::Close => (arm.fclose)(stream),
+        };
+        let errno = *libc::__errno_location();
+        let state = if operation == InputSyncOperation::Close {
+            None
+        } else {
+            let error = (arm.ferror)(stream) != 0;
+            let eof = (arm.feof)(stream) != 0;
+            let next = (arm.fgetc)(stream);
+            let _ = (arm.fclose)(stream);
+            Some((error, eof, next))
+        };
+        InputSyncObservation {
+            result,
+            errno,
+            state,
+        }
+    }
+}
+
+fn input_sync_child(test: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_INPUT_SYNC_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(test) {
+        return true;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(CHILD, test)
+        .output()
+        .expect("run isolated input synchronization probe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed;"),
+        "{test}: {}\n{}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
+#[test]
+fn input_fflush_reports_seek_errors_without_discarding_buffered_bytes() {
+    if !input_sync_child("input_fflush_reports_seek_errors_without_discarding_buffered_bytes") {
+        return;
+    }
+    for operation in [InputSyncOperation::Flush, InputSyncOperation::FlushUnlocked] {
+        for (backend, result, errno) in [
+            (InputSyncBackend::Regular, 0, RETRY_ERRNO_SENTINEL),
+            (InputSyncBackend::Closed, -1, libc::EBADF),
+            (InputSyncBackend::InvalidSeek, -1, libc::EINVAL),
+            (InputSyncBackend::Pipe, 0, libc::ESPIPE),
+        ] {
+            let oracle = observe_input_sync(&host(), backend, operation);
+            assert_eq!(
+                oracle,
+                InputSyncObservation {
+                    result,
+                    errno,
+                    state: Some((false, false, c_int::from(b'b'))),
+                },
+                "GNU {backend:?} {operation:?}"
+            );
+            assert_eq!(
+                observe_input_sync(&candidate(), backend, operation),
+                oracle,
+                "{backend:?} {operation:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn input_setvbuf_preserves_old_buffer_when_synchronization_fails() {
+    if !input_sync_child("input_setvbuf_preserves_old_buffer_when_synchronization_fails") {
+        return;
+    }
+    for (backend, result, errno, next) in [
+        (
+            InputSyncBackend::Regular,
+            0,
+            RETRY_ERRNO_SENTINEL,
+            c_int::from(b'b'),
+        ),
+        (InputSyncBackend::Closed, -1, libc::EBADF, c_int::from(b'b')),
+        (
+            InputSyncBackend::InvalidSeek,
+            -1,
+            libc::EINVAL,
+            c_int::from(b'b'),
+        ),
+        (InputSyncBackend::Pipe, 0, libc::ESPIPE, libc::EOF),
+    ] {
+        let oracle = observe_input_sync(&host(), backend, InputSyncOperation::Rebuffer);
+        assert_eq!(
+            oracle,
+            InputSyncObservation {
+                result,
+                errno,
+                state: Some((false, false, next)),
+            },
+            "GNU {backend:?}"
+        );
+        assert_eq!(
+            observe_input_sync(&candidate(), backend, InputSyncOperation::Rebuffer),
+            oracle,
+            "{backend:?}"
+        );
+    }
+}
+
+#[test]
+fn input_fclose_reports_close_failure_but_ignores_input_reposition_failure() {
+    if !input_sync_child("input_fclose_reports_close_failure_but_ignores_input_reposition_failure")
+    {
+        return;
+    }
+    for backend in [
+        InputSyncBackend::Regular,
+        InputSyncBackend::Closed,
+        InputSyncBackend::InvalidSeek,
+        InputSyncBackend::Pipe,
+    ] {
+        let oracle = observe_input_sync(&host(), backend, InputSyncOperation::Close);
+        assert_eq!(
+            oracle,
+            InputSyncObservation {
+                result: if backend == InputSyncBackend::Closed {
+                    -1
+                } else {
+                    0
+                },
+                errno: if backend == InputSyncBackend::Closed {
+                    libc::EBADF
+                } else {
+                    RETRY_ERRNO_SENTINEL
+                },
+                state: None,
+            },
+            "GNU {backend:?}"
+        );
+        assert_eq!(
+            observe_input_sync(&candidate(), backend, InputSyncOperation::Close),
+            oracle,
+            "{backend:?}"
+        );
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum RetryRead {

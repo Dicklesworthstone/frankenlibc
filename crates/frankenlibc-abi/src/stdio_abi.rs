@@ -4768,11 +4768,13 @@ unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bo
 /// `_IO_file_sync` does (POSIX 2008 fflush on a seekable input stream). A
 /// program that reads a line with stdio and then execs a child, or reads the
 /// fd directly, must see the fd right after that line -- fl left it after the
-/// whole read-ahead. Non-seekable fds are left alone (lseek fails); EOF stays.
-fn sync_input_position(stream: &mut StdioStream) {
+/// whole read-ahead. A failed seek preserves buffered input and reports its
+/// errno without publishing it: fflush/setvbuf and fclose have different error
+/// contracts. EOF stays set after successful synchronization.
+fn sync_input_position(stream: &mut StdioStream) -> Result<(), c_int> {
     let fd = stream.fd();
     if fd < 0 || stream.is_mem_backed() || stream.readable_buffered() == 0 {
-        return;
+        return Ok(());
     }
     // Back up over the unread bytes relative to where the descriptor is, as
     // glibc does (lseek(fd, read_ptr - read_end, SEEK_CUR)). An absolute seek
@@ -4781,12 +4783,26 @@ fn sync_input_position(stream: &mut StdioStream) {
     // starts at 0 — so close_stdin left a shared fd mid-line (gnulib
     // test-yesno).
     let unread = stream.readable_buffered() as i64;
-    if let Ok(pos) = raw_syscall::sys_lseek(fd, -unread, libc::SEEK_CUR) {
-        let eof = stream.is_eof();
-        let _ = stream.prepare_seek();
-        stream.set_offset(pos);
-        if eof {
-            stream.set_eof();
+    let pos = raw_syscall::sys_lseek(fd, -unread, libc::SEEK_CUR)?;
+    let eof = stream.is_eof();
+    let _ = stream.prepare_seek();
+    stream.set_offset(pos);
+    if eof {
+        stream.set_eof();
+    }
+    Ok(())
+}
+
+/// GNU fflush and buffer replacement publish input-seek errors. ESPIPE is
+/// tolerated without discarding unread input; other failures reject the
+/// operation. A positioning failure alone does not set the I/O error flag.
+fn flush_input_position(stream: &mut StdioStream) -> bool {
+    match sync_input_position(stream) {
+        Ok(()) => true,
+        Err(error) => {
+            // SAFETY: only the calling thread's errno slot is modified.
+            unsafe { set_abi_errno(error) };
+            error == errno::ESPIPE
         }
     }
 }
@@ -5841,7 +5857,9 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
 
     let fd = s.fd();
     // Input: leave the fd at the stream's position (glibc _IO_file_close_it).
-    sync_input_position(s);
+    // Closing ignores an input-reposition failure and does not publish its
+    // errno; flush and close failures below still determine fclose's result.
+    let _ = sync_input_position(s);
     let flushed = unsafe { flush_stream_for_caller(s, caller) };
     let mut close_error = if flushed {
         None
@@ -5998,8 +6016,8 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
     {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            let ok = unsafe { flush_stream_for_caller(&mut s, caller) };
-            sync_input_position(&mut s);
+            let ok = unsafe { flush_stream_for_caller(&mut s, caller) }
+                && flush_input_position(&mut s);
             return if ok { 0 } else { libc::EOF };
         }
     }
@@ -6105,8 +6123,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         if s.effective_orientation() < 0 {
             stream_cell_cache_store(stream, &cell);
         }
-        let ok = unsafe { flush_stream_for_caller(s, caller) };
-        sync_input_position(s);
+        let ok = unsafe { flush_stream_for_caller(s, caller) } && flush_input_position(s);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
         if ok { 0 } else { libc::EOF }
     } else {
@@ -8779,8 +8796,7 @@ pub unsafe extern "C-unwind" fn setvbuf(
                         flushed
                     } else {
                         let flushed = unsafe { flush_stream(&mut s) };
-                        sync_input_position(&mut s);
-                        flushed
+                        flushed && flush_input_position(&mut s)
                     }
                 };
                 synced && s.rebuffer(buf_mode, requested_size, keep)

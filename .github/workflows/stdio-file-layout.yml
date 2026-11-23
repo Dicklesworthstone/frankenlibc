@@ -29,6 +29,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_shadow_lines.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_eof.rs'
       - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/stdio_locking_stress_test.rs'
@@ -152,7 +153,12 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
               --test conformance_diff_fopencookie -- --test-threads=1 --nocapture \
               2>&1 | tee "$log"
-            grep -Eq '^test result: ok\. 9 passed; 0 failed; 0 ignored;' "$log"
+            grep -Eq '^test result: ok\. 12 passed; 0 failed; 0 ignored;' "$log"
+            log="artifacts/cookie-callbacks/input-sync-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_stdio_eof input_ -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"
           done
       - uses: actions/upload-artifact@v4
         if: always()
