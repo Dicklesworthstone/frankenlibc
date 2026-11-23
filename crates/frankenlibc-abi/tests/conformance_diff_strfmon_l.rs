@@ -571,3 +571,85 @@ fn strfmon_l_c_locale_matches_glibc() {
         (fl.freelocale)(floc);
     }
 }
+
+#[test]
+fn strfmon_c_general_precision_and_bounds_match_glibc() {
+    let (gnu, fl) = (host(), native());
+    let gloc = new_locale(gnu, libc::LC_ALL_MASK, c"C");
+    let floc = new_locale(fl, libc::LC_ALL_MASK, c"C");
+    // Plain strfmon and both explicit aliases exercise the same generic path.
+    let fold = unsafe { (fl.uselocale)(floc) };
+    let calls = [None, Some((0, floc)), Some((1, floc))];
+
+    // A legal precision beyond Rust's formatter limit used to abort through
+    // the unbounded C fallback even with an adequately sized output buffer.
+    let expected = render(gnu, Some((0, gloc)), c"%.100000n", [1.25, 0.0], 100003);
+    assert_eq!(expected.0, 100002);
+    assert_eq!(&expected.2[..4], b"1.25");
+    assert!(expected.2[4..100002].iter().all(|&byte| byte == b'0'));
+    for call in calls {
+        assert_eq!(
+            render(fl, call, c"%.100000n", [1.25, 0.0], 100003),
+            expected
+        );
+    }
+
+    // GNU's short-buffer handling can write outside its declared capacity;
+    // never give its huge-precision formatter a small physical allocation.
+    // The native path must reject these requests before allocating the field.
+    for format in [c"%.100000n", c"%.1000000000n", c"%#1000000000n"] {
+        for capacity in [0, 1, 16] {
+            for call in calls {
+                assert_eq!(
+                    render(fl, call, format, [1.25, 0.0], capacity),
+                    (-1, libc::E2BIG, Vec::new()),
+                    "{format:?}, capacity={capacity}"
+                );
+            }
+        }
+    }
+    for call in calls {
+        assert_eq!(
+            render(fl, call, c"%.100000n", [1.25, 0.0], 100002),
+            (-1, libc::E2BIG, Vec::new()),
+            "terminator must fit"
+        );
+    }
+
+    for (format, values, capacity) in [
+        (c"%.4n", [f64::INFINITY, 0.0], 64),
+        (c"%.4n", [f64::NEG_INFINITY, 0.0], 64),
+        (c"%#6.4n", [f64::NAN, 0.0], 64),
+        (c"%#6.4n", [-f64::NAN, 0.0], 64),
+        (c"%.4n", [-0.0, 0.0], 64),
+        (c"%n %q", [-0.0, 0.0], 6),
+        (c"%n %q", [-0.0, 0.0], 7),
+        (c"%n %q", [0.0, 0.0], 6),
+    ] {
+        let expected = render(gnu, Some((0, gloc)), format, values, capacity);
+        for call in calls {
+            assert_eq!(
+                render(fl, call, format, values, capacity),
+                expected,
+                "{format:?}, {values:?}, capacity={capacity}"
+            );
+        }
+    }
+    for capacity in 0..=48 {
+        let format = c"%=*18#6.4n / %i";
+        let values = [-1234.5, 2.5];
+        let expected = render(gnu, Some((0, gloc)), format, values, capacity);
+        for call in calls {
+            assert_eq!(
+                render(fl, call, format, values, capacity),
+                expected,
+                "multiple conversions, capacity={capacity}"
+            );
+        }
+    }
+    unsafe {
+        (fl.uselocale)(fold);
+        (gnu.freelocale)(gloc);
+        (fl.freelocale)(floc);
+    }
+}

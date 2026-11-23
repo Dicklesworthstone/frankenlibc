@@ -33793,11 +33793,24 @@ pub(crate) unsafe fn strfmon_emit(
     }
 
     let fmt_bytes = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
-    let Some(out) = frankenlibc_core::locale::strfmon::strfmon_c(fmt_bytes, pull) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
+    use frankenlibc_core::locale::strfmon::{MonetaryError, MonetaryLocale, strfmon_locale};
+    // Stage at most the full caller capacity, then reserve the NUL only on
+    // success. A later invalid directive must still report EINVAL when the
+    // preceding literal fills the final byte ("%n %q", -0.0, maxsize 6).
+    // Width/precision are bounded before allocation or float formatting.
+    let out = match strfmon_locale(fmt_bytes, pull, MonetaryLocale::C, maxsize) {
+        Ok(out) => out,
+        Err(error) => {
+            let error = match error {
+                MonetaryError::InvalidFormat => libc::EINVAL,
+                MonetaryError::BufferTooSmall => libc::E2BIG,
+                MonetaryError::NoMemory => libc::ENOMEM,
+            };
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
     };
-    if out.len() + 1 > maxsize {
+    if out.len() >= maxsize {
         unsafe { set_abi_errno(libc::E2BIG) };
         return -1;
     }
