@@ -26,6 +26,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_shadow_lines.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs'
       - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
@@ -63,6 +64,44 @@ defaults:
     shell: bash
 
 jobs:
+  stdio-regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cache: [default, owned]
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Preserve complete shadow records
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-regressions
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          cargo test -p frankenlibc-abi "${features[@]}" --test conformance_diff_shadow_lines \
+            -- --test-threads=1 --nocapture 2>&1 | tee artifacts/stdio-regressions/shadow.log
+          grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
+            artifacts/stdio-regressions/shadow.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stdio-regressions-${{ matrix.cache }}
+          path: artifacts/stdio-regressions/
+
   cookie-callbacks:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

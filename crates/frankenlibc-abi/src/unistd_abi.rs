@@ -28335,37 +28335,32 @@ pub unsafe extern "C" fn endttyent() -> c_int {
     1
 }
 
-/// `fgetspent` — read shadow entry from stream.
-///
-/// Native implementation: reads a line from the FILE stream and parses it as /etc/shadow format.
+/// Thread-owned result storage for the nonreentrant shadow stream reader.
+/// The line reader may grow independently, so a long record never truncates
+/// either the returned name or its password field.
 struct FgetspentState {
-    buffer: [u8; 1024],
+    buffer: Vec<u8>,
     entry: libc::spwd,
 }
 
 fn new_fgetspent_state() -> FgetspentState {
     FgetspentState {
-        buffer: [0; 1024],
-        // SAFETY: `libc::spwd` is a C record type and all-zero is the empty
-        // scratch entry state before fields are populated below.
+        buffer: Vec::new(),
+        // SAFETY: libc::spwd contains only integers and nullable pointers.
         entry: unsafe { std::mem::zeroed() },
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed shadow-entry scratch state
-// per thread id. `entry` raw pointers are always rebuilt to point into the
-// same boxed state's `buffer` before the pointer is returned.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: each cache entry belongs to one actual thread owner. Published
+// pointers refer to that owner's stable state and private backing buffer.
 unsafe impl Send for FgetspentState {}
 
-#[cfg(feature = "owned-tls-cache")]
 static FGETSPENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<FgetspentState> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_fgetspent_state);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    // Keep cold result storage out of static TLS without a Box TLS destructor.
     static FGETSPENT_TLS: crate::util::TlsHeapCell<std::cell::RefCell<FgetspentState>> =
         const { crate::util::TlsHeapCell::new() };
 }
@@ -28378,6 +28373,9 @@ fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return FGETSPENT_STATE_OWNED_TLS.with(callback);
+        }
         FGETSPENT_TLS.with(|slot| {
             slot.with_init(
                 || std::cell::RefCell::new(new_fgetspent_state()),
@@ -28387,131 +28385,174 @@ fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R
     }
 }
 
+fn parse_shadow_stream_line(
+    line: &[u8],
+) -> Option<(frankenlibc_core::pwd::shadow::ShadowEntry, bool)> {
+    // Retain the existing file parser's numeric and comment contracts. Unlike
+    // the passwd/group stream parsers it rejects overflowing numeric fields.
+    frankenlibc_core::pwd::shadow::parse_shadow_line(line).map(|entry| (entry, false))
+}
+
+fn shadow_stream_buffer_len(entry: &frankenlibc_core::pwd::shadow::ShadowEntry) -> Option<usize> {
+    entry
+        .name
+        .len()
+        .checked_add(1)?
+        .checked_add(entry.passwd.len())?
+        .checked_add(1)
+}
+
+/// Pack a complete owned record after admitting both strings and terminators.
+///
+/// # Safety
+/// The caller grants writable spwd storage and capacity bytes at buffer. The
+/// entry owns its strings, independently of either destination.
+unsafe fn pack_shadow_stream_record(
+    entry: &frankenlibc_core::pwd::shadow::ShadowEntry,
+    output: *mut libc::spwd,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> c_int {
+    let Some(needed) = shadow_stream_buffer_len(entry) else {
+        return libc::ERANGE;
+    };
+    if needed > capacity {
+        return libc::ERANGE;
+    }
+    let password_offset = entry.name.len() + 1;
+    // SAFETY: the complete layout was checked above; the parsed strings cannot
+    // alias the caller's output, including when buffer held the input line.
+    let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.cast::<u8>(), needed) };
+    bytes[..entry.name.len()].copy_from_slice(&entry.name);
+    bytes[entry.name.len()] = 0;
+    bytes[password_offset..needed - 1].copy_from_slice(&entry.passwd);
+    bytes[needed - 1] = 0;
+    // SAFETY: the caller owns output, and both published strings are complete.
+    unsafe {
+        output.write(libc::spwd {
+            sp_namp: buffer,
+            sp_pwdp: buffer.add(password_offset),
+            sp_lstchg: entry.lstchg,
+            sp_min: entry.min,
+            sp_max: entry.max,
+            sp_warn: entry.warn,
+            sp_inact: entry.inact,
+            sp_expire: entry.expire,
+            sp_flag: entry.flag,
+        });
+    }
+    0
+}
+
+/// Read a complete shadow entry, growing private storage for long records.
+/// Seek and retry use the same FILE contract as the passwd/group readers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
+pub unsafe extern "C-unwind" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut errno_restore = ErrnoRestore(current_abi_errno());
     if stream.is_null() {
+        errno_restore.0 = libc::EINVAL;
         return std::ptr::null_mut();
     }
-
-    let mut line_buf = [0u8; 1024];
-    loop {
-        let line_ptr = unsafe {
-            crate::stdio_abi::fgets(
-                line_buf.as_mut_ptr().cast(),
-                line_buf.len() as c_int,
-                stream,
-            )
-        };
-        if line_ptr.is_null() {
+    // Hold the public recursive FILE lock across every read and retry. The
+    // guard and line storage remain unwind-safe through user FILE callbacks.
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    let record = match unsafe {
+        read_growing_account_stream_record(stream, parse_shadow_stream_line, caller)
+    } {
+        Ok(record) => record,
+        Err(error) => {
+            errno_restore.0 = error;
             return std::ptr::null_mut();
         }
-        let len = unsafe { crate::string_abi::strlen(line_ptr) };
-        let line_bytes = unsafe { std::slice::from_raw_parts(line_ptr as *const u8, len) };
-        let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line_bytes) else {
-            continue;
+    };
+    // No FILE callbacks run while the thread-owned result storage is borrowed.
+    let result = with_fgetspent_state(|state| {
+        let needed = shadow_stream_buffer_len(&record.entry).ok_or(libc::ERANGE)?;
+        if state.buffer.len() < needed {
+            state
+                .buffer
+                .try_reserve_exact(needed - state.buffer.len())
+                .map_err(|_| libc::ENOMEM)?;
+            state.buffer.resize(needed, 0);
+        }
+        // SAFETY: state owns its typed result and the fully sized byte buffer.
+        let rc = unsafe {
+            pack_shadow_stream_record(
+                &record.entry,
+                &raw mut state.entry,
+                state.buffer.as_mut_ptr().cast(),
+                state.buffer.len(),
+            )
         };
-
-        return with_fgetspent_state(|state| {
-            let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
-            if needed > state.buffer.len() {
-                return std::ptr::null_mut();
-            }
-            state.buffer[..parsed.name.len()].copy_from_slice(&parsed.name);
-            state.buffer[parsed.name.len()] = 0;
-            let pass_off = parsed.name.len() + 1;
-            state.buffer[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
-            state.buffer[pass_off + parsed.passwd.len()] = 0;
-
-            state.entry.sp_namp = state.buffer.as_mut_ptr() as *mut c_char;
-            state.entry.sp_pwdp = state.buffer[pass_off..].as_mut_ptr() as *mut c_char;
-            state.entry.sp_lstchg = parsed.lstchg;
-            state.entry.sp_min = parsed.min;
-            state.entry.sp_max = parsed.max;
-            state.entry.sp_warn = parsed.warn;
-            state.entry.sp_inact = parsed.inact;
-            state.entry.sp_expire = parsed.expire;
-            state.entry.sp_flag = parsed.flag;
-            &mut state.entry as *mut libc::spwd
-        });
+        if rc == 0 {
+            Ok(&raw mut state.entry)
+        } else {
+            Err(rc)
+        }
+    });
+    match result {
+        Ok(entry) => {
+            errno_restore.0 = record.success_errno;
+            entry
+        }
+        Err(error) => {
+            errno_restore.0 = error;
+            std::ptr::null_mut()
+        }
     }
 }
 
-/// `fgetspent_r` — reentrant read shadow entry from stream.
-///
-/// Native implementation: reads a line and parses shadow format into caller's buffer.
+/// Reentrant shadow stream reader. An undersized seekable record is retained
+/// for a larger-buffer retry; a failed rewind remains an explicit stream error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetspent_r(
+pub unsafe extern "C-unwind" fn fgetspent_r(
     stream: *mut libc::FILE,
     result_buf: *mut libc::spwd,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut libc::spwd,
 ) -> c_int {
-    if !tracked_object_fits::<*mut libc::spwd>(result as *const *mut libc::spwd) {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut errno_restore = ErrnoRestore(current_abi_errno());
+    if !tracked_object_fits(result) {
+        errno_restore.0 = libc::EINVAL;
         return libc::EINVAL;
     }
+    // SAFETY: result is a checked writable pointer slot.
     unsafe { *result = std::ptr::null_mut() };
-    if stream.is_null()
-        || result_buf.is_null()
-        || buffer.is_null()
-        || !tracked_object_fits::<libc::spwd>(result_buf)
-    {
+    if stream.is_null() || buffer.is_null() || !tracked_object_fits(result_buf) {
+        errno_restore.0 = libc::EINVAL;
         return libc::EINVAL;
     }
-
-    let mut line_buf = [0u8; 1024];
-    loop {
-        let line_ptr = unsafe {
-            crate::stdio_abi::fgets(
-                line_buf.as_mut_ptr().cast(),
-                line_buf.len() as c_int,
-                stream.cast(),
-            )
-        };
-        if line_ptr.is_null() {
-            return libc::ENOENT;
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let stream = stream.cast::<c_void>();
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    let record = match unsafe {
+        read_account_stream_record(stream, buffer, capacity, parse_shadow_stream_line, caller)
+    } {
+        Ok(record) => record,
+        Err(error) => {
+            errno_restore.0 = error;
+            return error;
         }
-        let len = unsafe { crate::string_abi::strlen(line_ptr) };
-        let line_bytes = unsafe { std::slice::from_raw_parts(line_ptr as *const u8, len) };
-        let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line_bytes) else {
-            continue;
+    };
+    // SAFETY: both output objects were admitted, and the parsed record owns
+    // its bytes independently of the input line in the caller's buffer.
+    let rc = unsafe { pack_shadow_stream_record(&record.entry, result_buf, buffer, capacity) };
+    if rc == 0 {
+        // SAFETY: publish only after the full record has been written.
+        unsafe { *result = result_buf };
+        errno_restore.0 = record.success_errno;
+        0
+    } else {
+        let error = if rc == libc::ERANGE {
+            unsafe { retry_account_stream_line(stream, record.position) }
+        } else {
+            rc
         };
-        let needed = match parsed
-            .name
-            .len()
-            .checked_add(1)
-            .and_then(|offset| offset.checked_add(parsed.passwd.len()))
-            .and_then(|offset| offset.checked_add(1))
-        {
-            Some(needed) => needed,
-            None => return libc::ERANGE,
-        };
-        let effective_buflen = tracked_output_capacity(buffer, buflen);
-        if needed > effective_buflen {
-            return libc::ERANGE;
-        }
-        let buf_slice =
-            unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, effective_buflen) };
-        buf_slice[..parsed.name.len()].copy_from_slice(&parsed.name);
-        buf_slice[parsed.name.len()] = 0;
-        let pass_off = parsed.name.len() + 1;
-        buf_slice[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
-        buf_slice[pass_off + parsed.passwd.len()] = 0;
-
-        let sp = result_buf;
-        unsafe {
-            (*sp).sp_namp = buffer;
-            (*sp).sp_pwdp = buffer.add(pass_off);
-            (*sp).sp_lstchg = parsed.lstchg;
-            (*sp).sp_min = parsed.min;
-            (*sp).sp_max = parsed.max;
-            (*sp).sp_warn = parsed.warn;
-            (*sp).sp_inact = parsed.inact;
-            (*sp).sp_expire = parsed.expire;
-            (*sp).sp_flag = parsed.flag;
-            *result = sp;
-        }
-        return 0;
+        errno_restore.0 = error;
+        error
     }
 }
 
