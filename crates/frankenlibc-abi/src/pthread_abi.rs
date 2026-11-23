@@ -2433,18 +2433,24 @@ fn clock_convert_between(
     let clock_now = clock_gettime_checked(from_clockid)?;
     let target_now = clock_gettime_checked(to_clockid)?;
     let deadline = unsafe { &*abstime };
-    let mut result = libc::timespec {
-        tv_sec: target_now.tv_sec + (deadline.tv_sec - clock_now.tv_sec),
-        tv_nsec: target_now.tv_nsec + (deadline.tv_nsec - clock_now.tv_nsec),
-    };
-    if result.tv_nsec >= 1_000_000_000 {
-        result.tv_sec += 1;
-        result.tv_nsec -= 1_000_000_000;
-    } else if result.tv_nsec < 0 {
-        result.tv_sec -= 1;
-        result.tv_nsec += 1_000_000_000;
-    }
-    Ok(result)
+    // Epoch offsets can push a valid time_t deadline outside time_t's range.
+    // Widen before every operation, then clamp the translated instant so an
+    // extreme future deadline never wraps into the past or panics in the ABI.
+    const NS_PER_SECOND: i128 = 1_000_000_000;
+    let translated = (i128::from(target_now.tv_sec) + i128::from(deadline.tv_sec)
+        - i128::from(clock_now.tv_sec))
+        * NS_PER_SECOND
+        + i128::from(target_now.tv_nsec)
+        + i128::from(deadline.tv_nsec)
+        - i128::from(clock_now.tv_nsec);
+    let translated = translated.clamp(
+        i128::from(libc::time_t::MIN) * NS_PER_SECOND,
+        i128::from(libc::time_t::MAX) * NS_PER_SECOND + NS_PER_SECOND - 1,
+    );
+    Ok(libc::timespec {
+        tv_sec: translated.div_euclid(NS_PER_SECOND) as libc::time_t,
+        tv_nsec: translated.rem_euclid(NS_PER_SECOND) as libc::c_long,
+    })
 }
 
 fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
@@ -2452,10 +2458,9 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
         return false;
     }
     let ts = unsafe { &*abstime };
-    // The remaining conversion-based mutex paths require a nonnegative input.
-    // Condition, rwlock and join waits validate nanoseconds separately and
-    // pass a clamped expired deadline to the kernel without epoch arithmetic.
-    ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec)
+    // Negative seconds describe an expired instant, not an invalid timespec.
+    // A free mutex must still be acquired before the timeout is considered.
+    (0..1_000_000_000).contains(&ts.tv_nsec)
 }
 
 /// Futex wait with an absolute CLOCK_REALTIME deadline.
@@ -2477,10 +2482,9 @@ fn futex_wait_timed(
         }
     };
     let deadline = unsafe { &*abstime };
-    // Use checked_sub so that extreme tv_sec values (already filtered by
-    // absolute_timespec_valid, but kept defensive for untrusted callers)
-    // produce ETIMEDOUT instead of panicking in debug or wrapping to a
-    // ~9e18-second "infinite" timeout in release. (bd-dc9mc)
+    // Extreme negative tv_sec values are valid expired deadlines. Use
+    // checked_sub so they produce ETIMEDOUT instead of panicking in debug or
+    // wrapping to a ~9e18-second "infinite" timeout in release. (bd-dc9mc)
     let Some(sec_diff) = deadline.tv_sec.checked_sub(now.tv_sec) else {
         unsafe { set_abi_errno(libc::ETIMEDOUT) };
         return -1;
@@ -3809,7 +3813,12 @@ fn realtime_remaining_ns(deadline: &libc::timespec) -> i64 {
             &mut now as *mut libc::timespec as *mut u8,
         )
     };
-    (deadline.tv_sec - now.tv_sec).saturating_mul(1_000_000_000) + (deadline.tv_nsec - now.tv_nsec)
+    // Saturating only the seconds multiplication leaves both the preceding
+    // subtraction and the final nanoseconds addition vulnerable to overflow.
+    let remaining = (i128::from(deadline.tv_sec) - i128::from(now.tv_sec)) * 1_000_000_000
+        + i128::from(deadline.tv_nsec)
+        - i128::from(now.tv_nsec);
+    remaining.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 /// Block while `word == expected` for at most `timeout_ns` (None: forever).
@@ -4003,6 +4012,11 @@ fn ext_acquire(
         }
         let mut timeout = robust.then_some(ROBUST_OWNER_POLL_NS);
         if let Some(deadline) = deadline {
+            // Free acquisition and ordinary robust recovery take precedence
+            // over timeout validation; only a blocking wait needs this field.
+            if !(0..1_000_000_000).contains(&deadline.tv_nsec) {
+                return libc::EINVAL;
+            }
             let remaining = realtime_remaining_ns(deadline);
             if remaining <= 0 {
                 return libc::ETIMEDOUT;
@@ -4031,6 +4045,15 @@ fn ext_pi_acquire(
         }
         if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
             return libc::ENOTRECOVERABLE;
+        }
+        // Immediate acquisition and the caller's self-ownership checks have
+        // already run. For an occupied PI word, GNU rejects malformed or
+        // negative deadlines before even granting dead-owner recovery. Keep
+        // that ordering ahead of our userspace takeover as well as the futex.
+        if deadline.is_some_and(|deadline| {
+            deadline.tv_sec < 0 || !(0..1_000_000_000).contains(&deadline.tv_nsec)
+        }) {
+            return libc::EINVAL;
         }
         if robust {
             let observed = m.word.load(Ordering::Acquire);
@@ -11231,9 +11254,8 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     if mutex.is_null() || abstime.is_null() {
         return libc::EINVAL;
     }
-    if !absolute_timespec_valid(abstime) {
-        return libc::EINVAL;
-    }
+    // Validate the timeout only when a wait is needed. Immediate acquisition,
+    // recursive ownership and errorcheck failures take precedence over it.
     // Adopt static initializers as lock/trylock do: glibc takes a timed lock on
     // a PTHREAD_MUTEX_INITIALIZER mutex (a static C++ std::timed_mutex).
     if !ensure_managed_default_mutex(mutex) {
@@ -11318,6 +11340,9 @@ fn timed_futex_lock_normal(word: &AtomicI32, abstime: *const libc::timespec) -> 
         .is_ok()
     {
         return 0;
+    }
+    if !absolute_timespec_valid(abstime) {
+        return libc::EINVAL;
     }
 
     loop {
@@ -11515,7 +11540,14 @@ pub unsafe extern "C" fn pthread_mutex_clocklock(
     if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
         return libc::EINVAL;
     }
-    if clockid == libc::CLOCK_REALTIME {
+    // Forward malformed nanoseconds without normalizing them: timedlock must
+    // first attempt immediate ownership transitions, then reject a blocking
+    // wait. Negative deadlines are expired on both clocks; preserve that sign
+    // for PI's EINVAL and ordinary mutexes' ETIMEDOUT without epoch arithmetic.
+    if clockid == libc::CLOCK_REALTIME
+        || !absolute_timespec_valid(abstime)
+        || unsafe { (*abstime).tv_sec } < 0
+    {
         return unsafe { pthread_mutex_timedlock(mutex, abstime) };
     }
     // Convert to CLOCK_REALTIME deadline.
@@ -13445,10 +13477,7 @@ fn test_robust_mutex_unpublished_owner(
 /// OWNER_DIED. The live holder's word must remain unchanged; an ownerless
 /// OWNER_DIED word must still be recoverable.
 #[doc(hidden)]
-pub fn __test_pi_mutex_owner_died_handoff(
-    live_holder: bool,
-    waiters: bool,
-) -> (c_int, i32, i32) {
+pub fn __test_pi_mutex_owner_died_handoff(live_holder: bool, waiters: bool) -> (c_int, i32, i32) {
     let current_tid = raw_syscall::sys_gettid();
     let holder = if live_holder { current_tid } else { 0 };
     let contender = if live_holder {

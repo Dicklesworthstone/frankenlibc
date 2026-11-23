@@ -3961,8 +3961,12 @@ fn mutex_timedlock_rejects_invalid_abstime_nanoseconds() {
             tv_sec: 1,
             tv_nsec: 1_000_000_000,
         };
+        // An available mutex does not use the deadline. Only the second,
+        // contended call rejects its malformed nanoseconds.
+        assert_eq!(pthread_mutex_timedlock(&mut mutex, &ts), 0);
         assert_eq!(pthread_mutex_timedlock(&mut mutex, &ts), libc::EINVAL);
 
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
         assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
     }
 }
@@ -5559,7 +5563,10 @@ fn robust_mutex_pi_owner_died_handoff_preserves_live_owner() {
     for waiters in [false, true] {
         let (result, before, after) = __test_pi_mutex_owner_died_handoff(true, waiters);
         assert_eq!(result, libc::EBUSY, "waiters: {waiters}");
-        assert_eq!(after, before, "a live kernel-handoff owner must retain its word");
+        assert_eq!(
+            after, before,
+            "a live kernel-handoff owner must retain its word"
+        );
     }
 
     let (result, before, after) = __test_pi_mutex_owner_died_handoff(false, false);
@@ -5567,7 +5574,10 @@ fn robust_mutex_pi_owner_died_handoff_preserves_live_owner() {
     assert_eq!(before, 0x4000_0000);
     // SAFETY: gettid has no pointer arguments and returns this thread's kernel TID.
     let current_tid = unsafe { libc::syscall(libc::SYS_gettid) } as i32;
-    assert_eq!(after, current_tid, "an ownerless word must still be recoverable");
+    assert_eq!(
+        after, current_tid,
+        "an ownerless word must still be recoverable"
+    );
 }
 
 #[test]
