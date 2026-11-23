@@ -1281,6 +1281,10 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
         "nss_files_get_by_str_stub",
         "nss_files_get_by_int_stub",
     }
+    unistd_nss_parser_macros = {
+        "nss_files_parse_netdb": "nss_parse_netdb_line();",
+        "nss_files_parse_account": "nss_parse_account_line();",
+    }
 
     for invocation in MACRO_INVOCATION_RE.finditer(mask):
         if inside_definition(invocation.start()):
@@ -1455,6 +1459,25 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
             )
             add_function(
                 name_match.group(1), line_no, f"send({parts[1]});", exported=True
+            )
+            continue
+
+        if path.name == "unistd_abi.rs" and macro_name in unistd_nss_parser_macros:
+            line_no = text.count("\n", 0, body_start) + 1
+            parts = split_top_level(body)
+            if len(parts) != 2:
+                raise ValueError(
+                    f"unrecognized {macro_name}! declaration at {path}:{line_no}"
+                )
+            name_match = require_match(
+                r"([A-Za-z_]\w*)", parts[0], macro_name, line_no
+            )
+            require_match(r"([A-Za-z_]\w*)", parts[1], macro_name, line_no)
+            add_function(
+                name_match.group(1),
+                line_no,
+                unistd_nss_parser_macros[macro_name],
+                exported=True,
             )
             continue
 
@@ -4674,6 +4697,29 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     require(
         [(s[2]) for s in v23_impl_spans] == ["Foo", "Bar", "Baz"],
         f"v23 const-generic nested braces/comparisons/where-arrays broke impl spans: {v23_impl_spans}",
+    )
+    v23_nss_fns = parse_functions(
+        root / "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "fn nss_parse_netdb_line() { unsafe { let _ = libc::getuid(); } }\n"
+        "fn nss_parse_account_line() { unsafe { let _ = libc::getgid(); } }\n"
+        "nss_files_parse_netdb!(_nss_files_parse_servent, Service);\n"
+        "nss_files_parse_account!(_nss_files_parse_pwent, Passwd);\n",
+    )
+    v23_nss_analysis = analyze_host_dependencies(
+        v23_nss_fns,
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    v23_nss_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v23_nss_analysis["symbol_rows"]
+    }
+    require(
+        v23_nss_syms.get("_nss_files_parse_servent") == {"getuid"}
+        and v23_nss_syms.get("_nss_files_parse_pwent") == {"getgid"},
+        f"v23 unistd_abi.rs nss_files_parse_* macros did not trace bodies: {v23_nss_syms}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

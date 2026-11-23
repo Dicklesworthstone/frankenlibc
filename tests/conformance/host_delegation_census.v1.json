@@ -2563,7 +2563,7 @@
         },
         {
           "code": "support_matrix_coverage_incomplete",
-          "count": 679
+          "count": 688
         }
       ],
       "cfg_diagnostic_count": 0,
@@ -3022,6 +3022,15 @@
           "_nss_files_getspnam_r",
           "_nss_files_init",
           "_nss_files_initgroups_dyn",
+          "_nss_files_parse_etherent",
+          "_nss_files_parse_grent",
+          "_nss_files_parse_netent",
+          "_nss_files_parse_protoent",
+          "_nss_files_parse_pwent",
+          "_nss_files_parse_rpcent",
+          "_nss_files_parse_servent",
+          "_nss_files_parse_sgent",
+          "_nss_files_parse_spent",
           "_nss_files_setaliasent",
           "_nss_files_setetherent",
           "_nss_files_setgrent",
@@ -3256,16 +3265,16 @@
           "user_from_uid",
           "vis"
         ],
-        "missing_from_support_matrix_count": 583,
-        "source_export_function_count": 4606,
-        "source_unique_export_symbol_count": 4606,
+        "missing_from_support_matrix_count": 592,
+        "source_export_function_count": 4615,
+        "source_unique_export_symbol_count": 4615,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "3d2a8ab90d93f0fe13ed1ba7d70a0a52251899b5a12f2283b5e30eac87db1ea5",
+        "support_matrix_sha256": "30a33dbb736db8c0d476ddcb0c076b68fef50c63a60d50655ac565a0d4278af4",
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [],
-      "function_count": 10406,
+      "function_count": 10415,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>",
@@ -18268,9 +18277,9 @@
         "ynf64x": 5,
         "ynl": 5
       },
-      "resolved_call_edge_count": 21971,
+      "resolved_call_edge_count": 21980,
       "summary": {
-        "exported_function_count": 4606,
+        "exported_function_count": 4615,
         "exported_symbol_with_host_dependency_count": 1695,
         "exported_symbol_with_unknown_call_edge_count": 0,
         "host_dependency_callsite_count": 18541,
@@ -19455,7 +19464,7 @@
       "admission_blockers": [
         {
           "code": "support_matrix_coverage_incomplete",
-          "count": 680
+          "count": 689
         }
       ],
       "cfg_diagnostic_count": 0,
@@ -19915,6 +19924,15 @@
           "_nss_files_getspnam_r",
           "_nss_files_init",
           "_nss_files_initgroups_dyn",
+          "_nss_files_parse_etherent",
+          "_nss_files_parse_grent",
+          "_nss_files_parse_netent",
+          "_nss_files_parse_protoent",
+          "_nss_files_parse_pwent",
+          "_nss_files_parse_rpcent",
+          "_nss_files_parse_servent",
+          "_nss_files_parse_sgent",
+          "_nss_files_parse_spent",
           "_nss_files_setaliasent",
           "_nss_files_setetherent",
           "_nss_files_setgrent",
@@ -20149,16 +20167,16 @@
           "user_from_uid",
           "vis"
         ],
-        "missing_from_support_matrix_count": 584,
-        "source_export_function_count": 4607,
-        "source_unique_export_symbol_count": 4607,
+        "missing_from_support_matrix_count": 593,
+        "source_export_function_count": 4616,
+        "source_unique_export_symbol_count": 4616,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "3d2a8ab90d93f0fe13ed1ba7d70a0a52251899b5a12f2283b5e30eac87db1ea5",
+        "support_matrix_sha256": "30a33dbb736db8c0d476ddcb0c076b68fef50c63a60d50655ac565a0d4278af4",
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [],
-      "function_count": 10325,
+      "function_count": 10334,
       "host_dependencies_by_symbol": {},
       "profile": {
         "features": [
@@ -20192,9 +20210,9 @@
         }
       },
       "reachable_terminal_counts_by_symbol": {},
-      "resolved_call_edge_count": 21424,
+      "resolved_call_edge_count": 21433,
       "summary": {
-        "exported_function_count": 4607,
+        "exported_function_count": 4616,
         "exported_symbol_with_host_dependency_count": 0,
         "exported_symbol_with_unknown_call_edge_count": 0,
         "host_dependency_callsite_count": 0,
@@ -20750,7 +20768,7 @@
   ],
   "summary": {
     "broader_source_reference_count": 203,
-    "exported_symbol_count": 4673,
+    "exported_symbol_count": 4682,
     "exported_symbol_with_unknown_call_edge_count": 0,
     "host_delegating_symbol_count": 36,
     "host_delegation_callsite_count": 50,
