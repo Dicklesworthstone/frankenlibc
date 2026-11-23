@@ -100,6 +100,62 @@ fn queued_pushback_precedes_the_main_window_without_losing_bytes() {
 }
 
 #[test]
+fn ungetc_precedes_queued_rollback_and_remaining_read_buffer() {
+    let mut stream = StdioStream::new(
+        3,
+        OpenFlags {
+            readable: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(stream.fill_read_buffer(b"tail"), 4);
+    assert_eq!(stream.buffered_read(2), b"ta");
+    stream.pushback_read_bytes(b"abc");
+    stream.set_offset(1);
+    stream.set_eof();
+    stream.set_error();
+    assert!(stream.ungetc(b'Q'));
+    assert!(stream.ungetc(b'R'));
+    assert!(!stream.is_eof());
+    assert!(stream.is_error());
+    assert_eq!(stream.buffered_read(7), b"RQabcil");
+    assert_eq!(stream.offset(), 6);
+}
+
+#[test]
+fn ungetc_memory_line_readers_advance_through_queued_bytes() {
+    use frankenlibc_core::stdio::ReadUntil;
+    for bounded in [false, true] {
+        let mut stream = memory_input(b"abcdef");
+        assert_eq!(stream.mem_read(6), b"abcdef");
+        stream.unread_bytes(b"\nB", false);
+        assert!(stream.ungetc(b'A'));
+        assert_eq!(stream.offset(), 3);
+        if bounded {
+            let mut output = [0xa5; 4];
+            assert_eq!(
+                stream.read_into_slice(b'\n', &mut output),
+                (2, ReadUntil::Found)
+            );
+            assert_eq!(&output, b"A\n\xa5\xa5");
+        } else {
+            let mut output = Vec::new();
+            assert_eq!(
+                stream.read_until_delim(b'\n', &mut output),
+                ReadUntil::Found
+            );
+            assert_eq!(output, b"A\n");
+        }
+        assert_eq!(stream.offset(), 5);
+        assert_eq!(stream.mem_read(1), b"B");
+        assert_eq!(stream.offset(), 6);
+        assert!(!stream.is_eof());
+        assert!(stream.mem_read(1).is_empty());
+        assert!(stream.is_eof());
+    }
+}
+
+#[test]
 fn seek_preparation_discards_pushback_and_refill_exposes_only_new_bytes() {
     let mut stream = input();
     stream.consume_window(2);

@@ -621,7 +621,7 @@ pub struct StdioStream {
     offset: i64,
     /// One-byte pushback for ungetc (layered on top of buffer).
     ungetc_byte: Option<u8>,
-    /// Multi-byte pushback for ABI helpers that must return over-read bytes.
+    /// Overflow pushback and bytes returned by scanner or wide-read rollback.
     read_pushback: VecDeque<u8>,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
@@ -1523,11 +1523,7 @@ impl StdioStream {
         // A pending ungetc byte is logically first (mirrors buffered_read/mem_read).
         if let Some(b) = self.ungetc_byte.take() {
             out.push(b);
-            if let Some(ref backing) = self.mem_backing {
-                self.offset = backing.position() as i64;
-            } else {
-                self.advance_offset(1);
-            }
+            self.advance_offset(1);
             if b == delim {
                 return ReadUntil::Found;
             }
@@ -1617,11 +1613,7 @@ impl StdioStream {
         if let Some(b) = self.ungetc_byte.take() {
             dst[written] = b;
             written += 1;
-            if let Some(ref backing) = self.mem_backing {
-                self.offset = backing.position() as i64;
-            } else {
-                self.advance_offset(1);
-            }
+            self.advance_offset(1);
             if b == delim {
                 return (written, ReadUntil::Found);
             }
@@ -1761,7 +1753,8 @@ impl StdioStream {
         self.buffer.capacity()
     }
 
-    /// Push a byte back (ungetc). Returns false if already one pushed back.
+    /// Push a byte back (ungetc), growing overflow storage when necessary.
+    /// Returns false if that storage cannot be allocated, without consuming input.
     pub fn ungetc(&mut self, byte: u8) -> bool {
         // Like glibc, back the read position up over the byte just consumed
         // (storing `byte` there; a seek discards the buffer, so the slot is
@@ -1777,14 +1770,21 @@ impl StdioStream {
         let pushed = if in_buffer {
             true
         } else if let Some(existing) = self.ungetc_byte {
-            // Push the existing byte into the buffer, and replace ungetc_byte
-            // with the new byte, maintaining LIFO order.
-            if self.buffer.unget(existing) {
-                self.ungetc_byte = Some(byte);
-                true
-            } else {
-                false
+            // Keep the older side byte before any queued scanner/wide-read
+            // rollback. Moving it into the ordinary buffer is safe only when
+            // no queue precedes that buffer; otherwise it would be reordered.
+            let buffered = self.read_pushback.is_empty()
+                && !self.is_mem_backed()
+                && !self.flags.last_write
+                && self.buffer.unget(existing);
+            if !buffered {
+                if self.read_pushback.try_reserve(1).is_err() {
+                    return false;
+                }
+                self.read_pushback.push_front(existing);
             }
+            self.ungetc_byte = Some(byte);
+            true
         } else {
             self.ungetc_byte = Some(byte);
             true

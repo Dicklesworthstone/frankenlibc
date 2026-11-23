@@ -5,7 +5,7 @@
 //! path can read newly appended bytes with the old EOF indicator still set.
 //! Run this target in both strict and hardened modes.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_long, c_void};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -18,13 +18,18 @@ struct StdioArm {
     name: &'static str,
     fopen: unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void,
     fdopen: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void,
+    fmemopen: unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void,
     fopencookie: unsafe extern "C" fn(*mut c_void, *const c_char, fl::CookieIoFuncs) -> *mut c_void,
     fgetc: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    ungetc: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
     fgets: unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char,
+    fscanf: unsafe extern "C-unwind" fn(*mut c_void, *const c_char, ...) -> c_int,
     getline: unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize,
     fclose: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
     setvbuf: unsafe extern "C-unwind" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int,
     fread: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
+    fseek: unsafe extern "C-unwind" fn(*mut c_void, c_long, c_int) -> c_int,
+    ftell: unsafe extern "C-unwind" fn(*mut c_void) -> c_long,
     feof: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
     ferror: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
     clearerr: unsafe extern "C-unwind" fn(*mut c_void),
@@ -35,13 +40,18 @@ fn candidate() -> StdioArm {
         name: "fl",
         fopen: fl::fopen,
         fdopen: fl::fdopen,
+        fmemopen: fl::fmemopen,
         fopencookie: fl::fopencookie,
         fgetc: fl::fgetc,
+        ungetc: fl::ungetc,
         fgets: fl::fgets,
+        fscanf: fl::fscanf,
         getline: fl::getline,
         fclose: fl::fclose,
         setvbuf: fl::setvbuf,
         fread: fl::fread,
+        fseek: fl::fseek,
+        ftell: fl::ftell,
         feof: fl::feof,
         ferror: fl::ferror,
         clearerr: fl::clearerr,
@@ -56,13 +66,18 @@ fn host() -> StdioArm {
             name: "glibc",
             fopen: dlsym_oracle::host_fn(c"fopen", fl::fopen as *const ()),
             fdopen: dlsym_oracle::host_fn(c"fdopen", fl::fdopen as *const ()),
+            fmemopen: dlsym_oracle::host_fn(c"fmemopen", fl::fmemopen as *const ()),
             fopencookie: dlsym_oracle::host_fn(c"fopencookie", fl::fopencookie as *const ()),
             fgetc: dlsym_oracle::host_fn(c"fgetc", fl::fgetc as *const ()),
+            ungetc: dlsym_oracle::host_fn(c"ungetc", fl::ungetc as *const ()),
             fgets: dlsym_oracle::host_fn(c"fgets", fl::fgets as *const ()),
+            fscanf: dlsym_oracle::host_fn(c"fscanf", fl::fscanf as *const ()),
             getline: dlsym_oracle::host_fn(c"getline", fl::getline as *const ()),
             fclose: dlsym_oracle::host_fn(c"fclose", fl::fclose as *const ()),
             setvbuf: dlsym_oracle::host_fn(c"setvbuf", fl::setvbuf as *const ()),
             fread: dlsym_oracle::host_fn(c"fread", fl::fread as *const ()),
+            fseek: dlsym_oracle::host_fn(c"fseek", fl::fseek as *const ()),
+            ftell: dlsym_oracle::host_fn(c"ftell", fl::ftell as *const ()),
             feof: dlsym_oracle::host_fn(c"feof", fl::feof as *const ()),
             ferror: dlsym_oracle::host_fn(c"ferror", fl::ferror as *const ()),
             clearerr: dlsym_oracle::host_fn(c"clearerr", fl::clearerr as *const ()),
@@ -591,6 +606,347 @@ fn write_only_reads_match_gnu_underflow_and_direct_paths() {
                     );
                 }
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PushbackBackend {
+    Descriptor,
+    Memory,
+    Cookie,
+}
+
+unsafe extern "C-unwind" fn seekable_cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: the fixture owns this descriptor and supplies a live offset slot.
+    unsafe {
+        let position = libc::lseek(*cookie.cast::<c_int>(), *offset, whence);
+        if position < 0 {
+            -1
+        } else {
+            *offset = position;
+            0
+        }
+    }
+}
+
+struct PushbackStreamGuard<'a> {
+    arm: &'a StdioArm,
+    stream: *mut c_void,
+}
+
+impl Drop for PushbackStreamGuard<'_> {
+    fn drop(&mut self) {
+        if !self.stream.is_null() {
+            // SAFETY: the guard drops before the fixture's backing/context,
+            // including when an assertion in the operation unwinds.
+            unsafe { (self.arm.fclose)(self.stream) };
+        }
+    }
+}
+
+fn with_pushback_stream<T>(
+    arm: &StdioArm,
+    backend: PushbackBackend,
+    mode: c_int,
+    payload: &[u8],
+    run: impl FnOnce(*mut c_void) -> T,
+) -> T {
+    let mut memory = payload.to_vec();
+    let mut storage = [0u8; 8];
+    let mut descriptor;
+    // SAFETY: memory, stdio storage and the cookie context outlive the stream.
+    // Descriptor/cookie streams own their fd until their provider closes it.
+    unsafe {
+        let stream = match backend {
+            PushbackBackend::Memory => {
+                (arm.fmemopen)(memory.as_mut_ptr().cast(), memory.len(), c"r".as_ptr())
+            }
+            PushbackBackend::Descriptor | PushbackBackend::Cookie => {
+                descriptor = libc::memfd_create(c"stdio-pushback".as_ptr(), 0);
+                assert!(descriptor >= 0);
+                assert_eq!(
+                    libc::write(descriptor, payload.as_ptr().cast(), payload.len()),
+                    payload.len() as isize
+                );
+                assert_eq!(libc::lseek(descriptor, 0, libc::SEEK_SET), 0);
+                if matches!(backend, PushbackBackend::Cookie) {
+                    (arm.fopencookie)(
+                        (&mut descriptor as *mut c_int).cast(),
+                        c"r".as_ptr(),
+                        fl::CookieIoFuncs {
+                            read: Some(pipe_cookie_read),
+                            seek: Some(seekable_cookie_seek),
+                            close: Some(pipe_cookie_close),
+                            ..Default::default()
+                        },
+                    )
+                } else {
+                    (arm.fdopen)(descriptor, c"r".as_ptr())
+                }
+            }
+        };
+        assert!(!stream.is_null(), "{}: {backend:?}", arm.name);
+        let mut close = PushbackStreamGuard { arm, stream };
+        if arm.name == "fl" {
+            assert!(!fl::stdio_may_delegate_to_host_for_tests(stream));
+        }
+        assert_eq!(
+            (arm.setvbuf)(stream, storage.as_mut_ptr().cast(), mode, storage.len()),
+            0
+        );
+        let result = run(stream);
+        let closed = (arm.fclose)(stream);
+        close.stream = std::ptr::null_mut();
+        assert_eq!(closed, 0);
+        result
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PushbackObservation {
+    position_after_push: Option<c_long>,
+    position_after_read: c_long,
+    eof_after_push: bool,
+    bytes: Vec<u8>,
+    tail: Vec<u8>,
+    eof_after_tail: bool,
+    error: bool,
+}
+
+fn observe_deep_pushback(
+    arm: &StdioArm,
+    backend: PushbackBackend,
+    mode: c_int,
+    payload: &[u8],
+    pushed: &[u8],
+    consumed: usize,
+) -> PushbackObservation {
+    with_pushback_stream(arm, backend, mode, payload, |stream| {
+        // SAFETY: the fixture owns this stream; all fixed-size reads fit the
+        // destinations. No operation shares FILE or backing storage across arms.
+        unsafe {
+            for &byte in &payload[..consumed] {
+                assert_eq!((arm.fgetc)(stream), c_int::from(byte));
+            }
+            if consumed == payload.len() {
+                assert_eq!((arm.fgetc)(stream), libc::EOF);
+                assert_ne!((arm.feof)(stream), 0);
+            }
+            for (index, &byte) in pushed.iter().enumerate() {
+                assert_eq!(
+                    (arm.ungetc)(c_int::from(byte), stream),
+                    c_int::from(byte),
+                    "{}: {backend:?} mode={mode} consumed={consumed} push={index}",
+                    arm.name
+                );
+            }
+            let position_after_push = (consumed >= pushed.len()).then(|| (arm.ftell)(stream));
+            let eof_after_push = (arm.feof)(stream) != 0;
+            let mut bytes = Vec::with_capacity(pushed.len());
+            for _ in 0..16 {
+                let byte = (arm.fgetc)(stream);
+                assert!((0..=255).contains(&byte));
+                bytes.push(byte as u8);
+            }
+            let mut middle = [0u8; 128];
+            assert_eq!(
+                (arm.fread)(middle.as_mut_ptr().cast(), 1, middle.len(), stream),
+                middle.len()
+            );
+            bytes.extend_from_slice(&middle);
+            // The pushed alphabet contains no newline or NUL. Finish with a
+            // bounded fgets to exercise the line reader's shared pushback queue.
+            let mut line = [0xa5u8; 369];
+            assert_eq!(
+                (arm.fgets)(line.as_mut_ptr().cast(), line.len() as c_int, stream),
+                line.as_mut_ptr().cast()
+            );
+            assert_eq!(line[368], 0);
+            bytes.extend_from_slice(&line[..368]);
+            let position_after_read = (arm.ftell)(stream);
+            let mut tail = [0xa5u8; 1025];
+            let count = (arm.fread)(tail.as_mut_ptr().cast(), 1, tail.len(), stream);
+            assert!(tail[count..].iter().all(|&byte| byte == 0xa5));
+            PushbackObservation {
+                position_after_push,
+                position_after_read,
+                eof_after_push,
+                bytes,
+                tail: tail[..count].to_vec(),
+                eof_after_tail: (arm.feof)(stream) != 0,
+                error: (arm.ferror)(stream) != 0,
+            }
+        }
+    })
+}
+
+#[test]
+fn ungetc_grows_beyond_the_stream_buffer_and_preserves_lifo() {
+    let payload: Vec<u8> = (0..1024).map(|i| b'a' + (i % 26) as u8).collect();
+    let pushed: Vec<u8> = (0..512).map(|i| b'A' + (i % 26) as u8).collect();
+    for backend in [
+        PushbackBackend::Descriptor,
+        PushbackBackend::Memory,
+        PushbackBackend::Cookie,
+    ] {
+        for mode in [libc::_IOFBF, libc::_IONBF] {
+            for consumed in [0, 512, 1024] {
+                let oracle =
+                    observe_deep_pushback(&host(), backend, mode, &payload, &pushed, consumed);
+                assert_eq!(
+                    oracle,
+                    PushbackObservation {
+                        position_after_push: (consumed >= pushed.len())
+                            .then(|| (consumed - pushed.len()) as c_long),
+                        position_after_read: consumed as c_long,
+                        eof_after_push: false,
+                        bytes: pushed.iter().rev().copied().collect(),
+                        tail: payload[consumed..].to_vec(),
+                        eof_after_tail: true,
+                        error: false,
+                    },
+                    "GNU {backend:?} mode={mode} consumed={consumed}"
+                );
+                assert_eq!(
+                    observe_deep_pushback(&candidate(), backend, mode, &payload, &pushed, consumed,),
+                    oracle,
+                    "{backend:?} mode={mode} consumed={consumed}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ungetc_seek_discards_deep_pushback_from_the_logical_position() {
+    let payload: Vec<u8> = (0..1024).map(|i| b'a' + (i % 26) as u8).collect();
+    for backend in [
+        PushbackBackend::Descriptor,
+        PushbackBackend::Memory,
+        PushbackBackend::Cookie,
+    ] {
+        for mode in [libc::_IOFBF, libc::_IONBF] {
+            let observe = |arm: &StdioArm| {
+                with_pushback_stream(arm, backend, mode, &payload, |stream| {
+                    // SAFETY: the fixture retains every object until fclose.
+                    unsafe {
+                        for &byte in &payload[..768] {
+                            assert_eq!((arm.fgetc)(stream), c_int::from(byte));
+                        }
+                        for _ in 0..512 {
+                            assert_eq!((arm.ungetc)(c_int::from(b'X'), stream), c_int::from(b'X'));
+                        }
+                        let before = (arm.ftell)(stream);
+                        let relative = (arm.fseek)(stream, 0, libc::SEEK_CUR);
+                        let after_relative = (arm.ftell)(stream);
+                        let first = (arm.fgetc)(stream);
+                        for _ in 0..64 {
+                            assert_eq!((arm.ungetc)(c_int::from(b'Y'), stream), c_int::from(b'Y'));
+                        }
+                        let absolute = (arm.fseek)(stream, 512, libc::SEEK_SET);
+                        let after_absolute = (arm.ftell)(stream);
+                        let second = (arm.fgetc)(stream);
+                        (
+                            before,
+                            relative,
+                            after_relative,
+                            first,
+                            absolute,
+                            after_absolute,
+                            second,
+                            (arm.feof)(stream) != 0,
+                            (arm.ferror)(stream) != 0,
+                        )
+                    }
+                })
+            };
+            let oracle = observe(&host());
+            assert_eq!(
+                oracle,
+                (
+                    256,
+                    0,
+                    256,
+                    c_int::from(payload[256]),
+                    0,
+                    512,
+                    c_int::from(payload[512]),
+                    false,
+                    false
+                ),
+                "GNU {backend:?} mode={mode}"
+            );
+            assert_eq!(observe(&candidate()), oracle, "{backend:?} mode={mode}");
+        }
+    }
+}
+
+#[test]
+fn ungetc_preserves_scanner_rollback_ahead_of_pending_input() {
+    let payload: Vec<u8> = (0..1024).map(|i| b'a' + (i % 26) as u8).collect();
+    let mut replay = vec![b'Z'; 512];
+    replay[..4].copy_from_slice(b"42x\n");
+    for backend in [
+        PushbackBackend::Descriptor,
+        PushbackBackend::Memory,
+        PushbackBackend::Cookie,
+    ] {
+        for mode in [libc::_IOFBF, libc::_IONBF] {
+            let observe = |arm: &StdioArm| {
+                with_pushback_stream(arm, backend, mode, &payload, |stream| {
+                    // SAFETY: the stream and all destinations remain live. The
+                    // single integer destination matches the variadic format.
+                    unsafe {
+                        for &byte in &payload[..512] {
+                            assert_eq!((arm.fgetc)(stream), c_int::from(byte));
+                        }
+                        for &byte in replay.iter().rev() {
+                            assert_eq!((arm.ungetc)(c_int::from(byte), stream), c_int::from(byte));
+                        }
+                        let mut value: c_int = -1;
+                        assert_eq!(
+                            (arm.fscanf)(stream, c"%d".as_ptr(), &mut value as *mut c_int),
+                            1
+                        );
+                        assert_eq!(value, 42);
+                        assert_eq!((arm.ftell)(stream), 2);
+                        // scanf restored its lookahead 'x' ahead of a long
+                        // pending queue. New ungetc bytes must precede both.
+                        assert_eq!((arm.ungetc)(c_int::from(b'Q'), stream), c_int::from(b'Q'));
+                        assert_eq!((arm.ungetc)(c_int::from(b'R'), stream), c_int::from(b'R'));
+                        let mut line = [0xa5u8; 8];
+                        assert_eq!(
+                            (arm.fgets)(line.as_mut_ptr().cast(), line.len() as c_int, stream),
+                            line.as_mut_ptr().cast()
+                        );
+                        assert_eq!(&line, b"RQx\n\0\xa5\xa5\xa5");
+                        let position = (arm.ftell)(stream);
+                        let mut tail = [0xa5u8; 1021];
+                        let count = (arm.fread)(tail.as_mut_ptr().cast(), 1, tail.len(), stream);
+                        assert!(count <= tail.len());
+                        assert!(tail[count..].iter().all(|&byte| byte == 0xa5));
+                        (
+                            position,
+                            tail[..count].to_vec(),
+                            (arm.feof)(stream) != 0,
+                            (arm.ferror)(stream) != 0,
+                        )
+                    }
+                })
+            };
+            let oracle = observe(&host());
+            let expected_tail = [&replay[4..], &payload[512..]].concat();
+            assert_eq!(
+                oracle,
+                (4, expected_tail, true, false),
+                "GNU {backend:?} mode={mode}"
+            );
+            assert_eq!(observe(&candidate()), oracle, "{backend:?} mode={mode}");
         }
     }
 }
