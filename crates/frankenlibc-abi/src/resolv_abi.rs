@@ -3007,9 +3007,7 @@ fn native_dns_query(
     qtype_val: u16,
     server: std::net::SocketAddr,
     timeout: std::time::Duration,
-    trust_ad: bool,
-    use_vc: bool,
-    no_aaaa: bool,
+    options: frankenlibc_core::dns_transport::QueryOptions,
 ) -> Result<frankenlibc_core::dns_transport::QueryReply, frankenlibc_core::dns_transport::QueryError>
 {
     use frankenlibc_core::dns_transport::QueryError;
@@ -3027,9 +3025,8 @@ fn native_dns_query(
         None => server,
     };
 
-    let result = frankenlibc_core::dns_transport::query(
-        hostname, qtype_val, server, timeout, trust_ad, use_vc, no_aaaa,
-    );
+    let result =
+        frankenlibc_core::dns_transport::query(hostname, qtype_val, server, timeout, options);
     let counter = match &result {
         Ok(reply) if reply.rcode == rcode::NXDOMAIN => &DNS_METRICS.queries_nxdomain,
         Ok(_) => &DNS_METRICS.queries_success,
@@ -3037,9 +3034,11 @@ fn native_dns_query(
             &DNS_METRICS.queries_timeout
         }
         Err(QueryError::Io(_)) => &DNS_METRICS.queries_send_error,
-        Err(QueryError::ResponseCode(_) | QueryError::RetryableResponse(_)) => {
-            &DNS_METRICS.queries_dns_error
-        }
+        Err(
+            QueryError::ResponseCode(_)
+            | QueryError::ExtendedResponseCode(_)
+            | QueryError::RetryableResponse(_),
+        ) => &DNS_METRICS.queries_dns_error,
         Err(_) => &DNS_METRICS.queries_parse_error,
     };
     counter.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3168,9 +3167,12 @@ fn native_dns_resolve(
                         kind,
                         server,
                         timeout,
-                        trust_ad,
-                        use_vc,
-                        config.no_aaaa,
+                        frankenlibc_core::dns_transport::QueryOptions {
+                            trust_ad,
+                            use_vc,
+                            no_aaaa: config.no_aaaa,
+                            edns0: config.edns0,
+                        },
                     )
                 },
             )?;
@@ -3244,11 +3246,23 @@ fn reverse_hosts_lookup<T>(
 /// Resolve a files-only reverse miss through the validated native PTR engine.
 fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
     use frankenlibc_core::dns_transport::ResolveError;
+    let config = native_dns_config();
     frankenlibc_core::dns_transport::reverse_with(
         address,
-        &native_dns_config(),
+        &config,
         |name, kind, server, timeout, trust_ad, use_vc| {
-            native_dns_query(name, kind, server, timeout, trust_ad, use_vc, false)
+            native_dns_query(
+                name,
+                kind,
+                server,
+                timeout,
+                frankenlibc_core::dns_transport::QueryOptions {
+                    trust_ad,
+                    use_vc,
+                    no_aaaa: false,
+                    edns0: config.edns0,
+                },
+            )
         },
     )
     .map_err(|error| match error {

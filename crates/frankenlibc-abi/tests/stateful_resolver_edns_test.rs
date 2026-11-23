@@ -459,3 +459,256 @@ fn edns_initialization_honors_res_options_without_process_wide_test_races() {
         .unwrap();
     assert!(status.success());
 }
+
+/// Native host lookup does not call the public res_query APIs. Exercise its
+/// actual A/AAAA/PTR wire traffic, including configuration-file/environment
+/// selection, so implementing OPT only for caller-owned res_state cannot pass.
+#[test]
+fn native_host_lookups_honor_edns_configuration_and_preserve_no_aaaa() {
+    use frankenlibc_abi::resolv_abi;
+    use frankenlibc_abi::resolv_state::RES_USE_EDNS0;
+    use std::ffi::CStr;
+    use std::ptr;
+
+    const CHILD: &str = "FRANKENLIBC_NATIVE_EDNS_TEST_CHILD";
+    if let Some(scenario) = std::env::var_os(CHILD) {
+        let no_aaaa = scenario == "no-aaaa";
+        // SAFETY: zero initializes valid hints and an empty output list. Both
+        // remain live until the returned chain has been read and freed.
+        unsafe {
+            let mut hints: libc::addrinfo = std::mem::zeroed();
+            hints.ai_family = libc::AF_UNSPEC;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            let mut result = ptr::null_mut();
+            assert_eq!(
+                resolv_abi::getaddrinfo(
+                    c"native-edns.hermetic.test.".as_ptr(),
+                    c"443".as_ptr(),
+                    &hints,
+                    &mut result,
+                ),
+                0,
+            );
+            let mut families = Vec::new();
+            let mut current = result;
+            while !current.is_null() {
+                families.push((*current).ai_family);
+                match (*current).ai_family {
+                    libc::AF_INET => {
+                        let address = &*(*current).ai_addr.cast::<libc::sockaddr_in>();
+                        assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [192, 0, 2, 90]);
+                    }
+                    libc::AF_INET6 => {
+                        let address = &*(*current).ai_addr.cast::<libc::sockaddr_in6>();
+                        assert_eq!(
+                            address.sin6_addr.s6_addr,
+                            "2001:db8::90"
+                                .parse::<std::net::Ipv6Addr>()
+                                .unwrap()
+                                .octets(),
+                        );
+                    }
+                    family => panic!("unexpected address family {family}"),
+                }
+                current = (*current).ai_next;
+            }
+            resolv_abi::freeaddrinfo(result);
+            families.sort_unstable();
+            assert_eq!(
+                families,
+                if no_aaaa {
+                    vec![libc::AF_INET]
+                } else {
+                    vec![libc::AF_INET, libc::AF_INET6]
+                },
+            );
+
+            if no_aaaa {
+                hints.ai_family = libc::AF_INET6;
+                result = ptr::null_mut();
+                assert_eq!(
+                    resolv_abi::getaddrinfo(
+                        c"ipv6-only.hermetic.test.".as_ptr(),
+                        c"443".as_ptr(),
+                        &hints,
+                        &mut result,
+                    ),
+                    libc::EAI_NONAME,
+                );
+                assert!(
+                    result.is_null(),
+                    "translated A answers cannot become IPv6 results"
+                );
+            }
+
+            let mut address: libc::sockaddr_in = std::mem::zeroed();
+            address.sin_family = libc::AF_INET as _;
+            address.sin_addr.s_addr = u32::from_ne_bytes([192, 0, 2, 90]);
+            let mut hostname = [0 as std::ffi::c_char; 128];
+            assert_eq!(
+                resolv_abi::getnameinfo(
+                    (&address as *const libc::sockaddr_in).cast(),
+                    std::mem::size_of_val(&address) as _,
+                    hostname.as_mut_ptr(),
+                    hostname.len() as _,
+                    ptr::null_mut(),
+                    0,
+                    libc::NI_NAMEREQD,
+                ),
+                0,
+            );
+            assert_eq!(
+                CStr::from_ptr(hostname.as_ptr()).to_bytes(),
+                b"native-edns.reverse.test"
+            );
+        }
+        return;
+    }
+
+    for (scenario, file_options, environment_options, mode, edns, trust_ad) in [
+        ("default", "", "", "strict", false, false),
+        ("trust-only", "trust-ad", "", "hardened", false, true),
+        ("file-edns", "edns0", "", "strict", true, false),
+        (
+            "environment-edns",
+            "",
+            "edns0 trust-ad",
+            "hardened",
+            true,
+            true,
+        ),
+        ("no-aaaa", "edns0 no-aaaa", "", "strict", true, false),
+    ] {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "frankenlibc-native-edns-{}-{stamp}-{scenario}",
+            std::process::id(),
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let resolver = directory.join("resolv.conf");
+        let nsswitch = directory.join("nsswitch.conf");
+        std::fs::write(
+            &resolver,
+            format!("nameserver 127.0.0.1\noptions timeout:1 attempts:1 {file_options}\n"),
+        )
+        .unwrap();
+        std::fs::write(&nsswitch, b"hosts: dns\n").unwrap();
+        let socket = udp();
+        let port = socket.local_addr().unwrap().port();
+        let worker = thread::spawn(move || {
+            let mut observed = Vec::new();
+            for _ in 0..3 {
+                let mut buffer = [0u8; 512];
+                let (length, peer) = socket.recv_from(&mut buffer).unwrap();
+                let sent = &buffer[..length];
+                let decoded = DnsMessage::decode(sent).unwrap();
+                let question = &decoded.questions[0];
+                let projected = question.qname == b"ipv6-only.hermetic.test";
+                let enabled = edns && !projected;
+                let options = if enabled { RES_USE_EDNS0 } else { 0 }
+                    | if trust_ad { RES_TRUSTAD } else { 0 };
+                assert_edns_query(sent, options, 1200);
+                observed.push((question.qname.clone(), question.qtype));
+                let reply = native_host_answer(sent, question.qtype, enabled);
+                assert_eq!(reply.len() > 512, enabled, "exercise full EDNS UDP replies");
+                socket.send_to(&reply, peer).unwrap();
+            }
+            observed
+        });
+
+        // Only the child sees the private files and ephemeral DNS endpoint.
+        // Its configuration is fixed before any ABI path initializes TLS.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "native_host_lookups_honor_edns_configuration_and_preserve_no_aaaa",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, scenario)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolver)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env("FRANKENLIBC_MODE", mode)
+            .env("LOCALDOMAIN", "")
+            .env("RES_OPTIONS", environment_options)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut timed_out = false;
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                timed_out = true;
+                child.kill().unwrap();
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let observed = worker.join().expect("native DNS fixture thread");
+        assert!(
+            !timed_out && output.status.success(),
+            "{scenario}: timed_out={timed_out} status={}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+        let mut expected = vec![
+            (b"native-edns.hermetic.test".to_vec(), 1),
+            (b"90.2.0.192.in-addr.arpa".to_vec(), 12),
+        ];
+        expected.push(if scenario == "no-aaaa" {
+            (b"ipv6-only.hermetic.test".to_vec(), 1)
+        } else {
+            (b"native-edns.hermetic.test".to_vec(), 28)
+        });
+        let mut observed = observed;
+        observed.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(observed, expected, "{scenario}: exact native DNS queries");
+    }
+}
+
+fn native_host_answer(query: &[u8], kind: u16, edns: bool) -> Vec<u8> {
+    let mut end = 12;
+    while query[end] != 0 {
+        end += usize::from(query[end]) + 1;
+    }
+    end += 5;
+    let mut reply = query[..end].to_vec();
+    reply[2] |= 0x80;
+    reply[3] = 0x80;
+    reply[6..12].fill(0);
+    reply[7] = 1;
+    reply.extend_from_slice(&[0xc0, 12]);
+    reply.extend_from_slice(&kind.to_be_bytes());
+    reply.extend_from_slice(&[0, 1, 0, 0, 0, 60]);
+    let data = match kind {
+        1 => vec![192, 0, 2, 90],
+        28 => "2001:db8::90"
+            .parse::<std::net::Ipv6Addr>()
+            .unwrap()
+            .octets()
+            .to_vec(),
+        12 => b"\x0bnative-edns\x07reverse\x04test\0".to_vec(),
+        other => panic!("unexpected native DNS question {other}"),
+    };
+    reply.extend_from_slice(&(data.len() as u16).to_be_bytes());
+    reply.extend_from_slice(&data);
+    if edns {
+        reply[11] = 2;
+        reply.extend_from_slice(&[0, 0, 41, 4, 176, 0, 0, 0, 0, 0, 0]);
+        // A private-use opaque RR makes this a valid >512-byte response.
+        // The resolver must retain the complete datagram while returning
+        // only the requested address/PTR data, not the additional RR.
+        reply.extend_from_slice(&[0xc0, 12, 255, 0, 0, 1, 0, 0, 0, 60, 2, 88]);
+        reply.extend_from_slice(&[0xa5; 600]);
+    }
+    reply
+}

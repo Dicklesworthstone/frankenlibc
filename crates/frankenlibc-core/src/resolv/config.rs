@@ -8,7 +8,7 @@
 //! - `domain <name>`: Local domain name
 //! - `search <name>...`: Search list for hostname lookup
 //! - `options <opt>...`: Various options (ndots, timeout, attempts, rotate,
-//!   use-vc, trust-ad, no-aaaa)
+//!   use-vc, trust-ad, no-aaaa, edns0)
 //!
 //! # Default Behavior
 //!
@@ -79,6 +79,9 @@ pub struct ResolverConfig {
     /// nameserver endpoints are unaffected. An IPv6-only DNS lookup still
     /// sends A to distinguish a missing name from a transient server failure.
     pub no_aaaa: bool,
+    /// Advertise EDNS version 0 and a bounded UDP response size. This does
+    /// not request DNSSEC records or grant trust to the response's AD bit.
+    pub edns0: bool,
 }
 
 impl Default for ResolverConfig {
@@ -94,6 +97,7 @@ impl Default for ResolverConfig {
             use_vc: false,
             trust_ad: false,
             no_aaaa: false,
+            edns0: false,
         }
     }
 }
@@ -112,6 +116,7 @@ impl ResolverConfig {
             use_vc: false,
             trust_ad: false,
             no_aaaa: false,
+            edns0: false,
         }
     }
 
@@ -257,6 +262,8 @@ impl ResolverConfig {
             self.no_aaaa = true;
         } else if opt.starts_with(b"-no-aaaa") {
             self.no_aaaa = false;
+        } else if opt.starts_with(b"edns0") {
+            self.edns0 = true;
         }
         // Other options are silently ignored
     }
@@ -344,6 +351,7 @@ mod tests {
         assert_eq!(config.timeout, 5);
         assert_eq!(config.attempts, 2);
         assert!(!config.no_aaaa);
+        assert!(!config.edns0);
     }
 
     #[test]
@@ -427,6 +435,24 @@ mod tests {
         assert!(config.no_aaaa);
         config.apply_overrides(None, Some(b"-no-aaaa-extra"));
         assert!(!config.no_aaaa);
+    }
+
+    #[test]
+    fn edns0_file_and_environment_options_do_not_enable_ad_trust() {
+        let mut config = ResolverConfig::parse(b"options edns0\n");
+        assert!(config.edns0);
+        assert!(!config.trust_ad);
+        assert!(!config.use_vc);
+        config.apply_overrides(None, Some(b"no-edns0"));
+        assert!(config.edns0, "GNU does not recognize no-edns0");
+
+        let mut config = ResolverConfig::parse(b"options no-edns0\n");
+        assert!(!config.edns0);
+        config.apply_overrides(None, Some(b"edns0=1"));
+        assert!(config.edns0, "GNU boolean options accept a matching prefix");
+        assert!(!config.trust_ad);
+        config.apply_overrides(None, Some(b"trust-ad"));
+        assert!(config.edns0 && config.trust_ad);
     }
 
     #[test]

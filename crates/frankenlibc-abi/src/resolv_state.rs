@@ -167,7 +167,9 @@ fn transport_errno(error: &QueryError) -> c_int {
     match error {
         QueryError::InvalidQuery => libc::EINVAL,
         QueryError::InvalidResponse => libc::EMSGSIZE,
-        QueryError::ResponseCode(_) | QueryError::RetryableResponse(_) => libc::EAGAIN,
+        QueryError::ResponseCode(_)
+        | QueryError::ExtendedResponseCode(_)
+        | QueryError::RetryableResponse(_) => libc::EAGAIN,
         QueryError::Io(error) => error.raw_os_error().unwrap_or_else(|| match error.kind() {
             ErrorKind::TimedOut | ErrorKind::WouldBlock => libc::ETIMEDOUT,
             ErrorKind::ConnectionRefused => libc::ECONNREFUSED,
@@ -218,8 +220,9 @@ fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2], bool) {
         localdomain.as_ref().map(|value| value.as_bytes()),
         options.as_ref().map(|value| value.as_bytes()),
     );
-    // EDNS is a public res_state option, not part of the address-only
-    // ResolverConfig. Read it from the same fresh file/environment snapshot.
+    // Read the public res_state options from the same fresh file/environment
+    // snapshot. Retain this API's existing tokenization while hostname
+    // lookups also honor EDNS through ResolverConfig.
     // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
     let mut edns0 = false;
     let mut explicit_timing = [false; 2];
