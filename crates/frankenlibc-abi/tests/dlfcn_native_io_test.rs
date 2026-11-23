@@ -9,7 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::{
     dirent_abi as dirs, dlfcn_abi as dl, errno_abi as errno, fortify_abi as checked,
-    glibc_internal_abi as internal, io_abi as io, malloc_abi as malloc, unistd_abi as unistd,
+    glibc_internal_abi as internal, io_abi as io, malloc_abi as malloc, process_abi as process,
+    stdlib_abi as stdlib, unistd_abi as unistd,
 };
 use frankenlibc_core::elf::ElfLoader;
 
@@ -467,6 +468,497 @@ struct Fixture {
     dir: PathBuf,
     path: PathBuf,
 }
+
+// A process plugin must keep spawn's opaque attributes and file actions in
+// the same provider as the functions that consume them. The native fixture
+// has no DT_NEEDED libraries, so it cannot mask missing process bindings with
+// a host-loaded dependency. Link the GNU reference to libc explicitly: an
+// unversioned GNU relocation can select legacy spawn@2.2.5 instead of the
+// modern default that this protocol and its dlvsym checks exercise.
+const PROCESS_SOURCE: &str = r#"#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+
+/* These public declarations also permit older development headers with a
+   newer GNU runtime, which is common in the conformance environment. */
+extern int pidfd_spawn(int *, const char *, const posix_spawn_file_actions_t *,
+                       const posix_spawnattr_t *, char *const[], char *const[]);
+extern int pidfd_spawnp(int *, const char *, const posix_spawn_file_actions_t *,
+                        const posix_spawnattr_t *, char *const[], char *const[]);
+extern int posix_spawnattr_getcgroup_np(const posix_spawnattr_t *, int *);
+extern int posix_spawnattr_setcgroup_np(posix_spawnattr_t *, int);
+
+void *process_function(unsigned index) {
+    static void *const functions[] = {
+        (void *)posix_spawn, (void *)posix_spawnp,
+        (void *)pidfd_spawn, (void *)pidfd_spawnp,
+        (void *)posix_spawnattr_init, (void *)posix_spawnattr_destroy,
+        (void *)posix_spawnattr_getflags, (void *)posix_spawnattr_setflags,
+        (void *)posix_spawnattr_getsigdefault, (void *)posix_spawnattr_setsigdefault,
+        (void *)posix_spawnattr_getsigmask, (void *)posix_spawnattr_setsigmask,
+        (void *)posix_spawnattr_getpgroup, (void *)posix_spawnattr_setpgroup,
+        (void *)posix_spawnattr_getschedparam, (void *)posix_spawnattr_setschedparam,
+        (void *)posix_spawnattr_getschedpolicy, (void *)posix_spawnattr_setschedpolicy,
+        (void *)posix_spawnattr_getcgroup_np, (void *)posix_spawnattr_setcgroup_np,
+        (void *)posix_spawn_file_actions_init, (void *)posix_spawn_file_actions_destroy,
+        (void *)posix_spawn_file_actions_addclose, (void *)posix_spawn_file_actions_adddup2,
+        (void *)posix_spawn_file_actions_addopen, (void *)posix_spawn_file_actions_addchdir_np,
+        (void *)posix_spawn_file_actions_addfchdir_np,
+        (void *)posix_spawn_file_actions_addclosefrom_np,
+        (void *)posix_spawn_file_actions_addtcsetpgrp_np,
+        (void *)wait, (void *)waitpid, (void *)wait3, (void *)wait4, (void *)waitid,
+        (void *)getpid, (void *)getppid, (void *)getpgrp, (void *)getpgid, (void *)getsid,
+        (void *)fork, (void *)_Fork, (void *)execve, (void *)execv, (void *)execvp,
+        (void *)execvpe, (void *)execl, (void *)execlp, (void *)execle,
+        (void *)system, (void *)setpgid, (void *)setpgrp, (void *)setsid
+    };
+    return index < sizeof functions / sizeof functions[0] ? functions[index] : 0;
+}
+
+void *process_dynamic(const char *name, const char *version, int *error) {
+    (void)dlerror();
+    void *result = version ? dlvsym(RTLD_DEFAULT, name, version)
+                           : dlsym(RTLD_DEFAULT, name);
+    /* Keep the lookup in this native caller's relocation domain. */
+    __asm__ __volatile__("" : "+r" (result) : : "memory");
+    *error = dlerror() != 0;
+    return result;
+}
+
+static int start_child(unsigned form, int *child, const char *path,
+                       const posix_spawn_file_actions_t *actions,
+                       const posix_spawnattr_t *attr, char *const argv[],
+                       char *const envp[]) {
+    switch (form) {
+        case 0: return posix_spawn(child, path, actions, attr, argv, envp);
+        case 1: return posix_spawnp(child, path, actions, attr, argv, envp);
+        case 2: return pidfd_spawn(child, path, actions, attr, argv, envp);
+        default: return pidfd_spawnp(child, path, actions, attr, argv, envp);
+    }
+}
+
+int process_spawn_protocol(const char *directory, unsigned *counts) {
+    CHECK(getpid() > 0 && getppid() > 0);
+    CHECK(getpgrp() == getpgid(0) && getsid(0) > 0);
+    for (unsigned form = 0; form < 4; ++form) {
+        for (unsigned reap = 0; reap < (form < 2 ? 5u : 1u); ++reap) {
+            posix_spawnattr_t attr;
+            posix_spawn_file_actions_t actions;
+            CHECK(posix_spawnattr_init(&attr) == 0);
+            CHECK(posix_spawn_file_actions_init(&actions) == 0);
+            short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK |
+                          POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSCHEDPARAM |
+                          POSIX_SPAWN_SETSCHEDULER, actual_flags = -1;
+            CHECK(posix_spawnattr_setflags(&attr, flags) == 0);
+            CHECK(posix_spawnattr_getflags(&attr, &actual_flags) == 0 && actual_flags == flags);
+            pid_t group = -1;
+            CHECK(posix_spawnattr_setpgroup(&attr, 0) == 0);
+            CHECK(posix_spawnattr_getpgroup(&attr, &group) == 0 && group == 0);
+            /* GNU/Linux's signal set public object starts with the kernel
+               signal bits. Avoid importing an unrelated signal API here. */
+            sigset_t signals = {0}, observed = {0};
+            ((unsigned long *)&signals)[0] = 1UL << (SIGUSR1 - 1);
+            CHECK(posix_spawnattr_setsigmask(&attr, &signals) == 0);
+            CHECK(posix_spawnattr_getsigmask(&attr, &observed) == 0);
+            CHECK(((unsigned long *)&observed)[0] == ((unsigned long *)&signals)[0]);
+            CHECK(posix_spawnattr_setsigdefault(&attr, &signals) == 0);
+            CHECK(posix_spawnattr_getsigdefault(&attr, &observed) == 0);
+            CHECK(((unsigned long *)&observed)[0] == ((unsigned long *)&signals)[0]);
+            struct sched_param priority = {.sched_priority = 0}, observed_priority;
+            int policy = -1, cgroup = 123;
+            CHECK(posix_spawnattr_setschedparam(&attr, &priority) == 0);
+            CHECK(posix_spawnattr_getschedparam(&attr, &observed_priority) == 0);
+            CHECK(observed_priority.sched_priority == 0);
+            CHECK(posix_spawnattr_setschedpolicy(&attr, SCHED_OTHER) == 0);
+            CHECK(posix_spawnattr_getschedpolicy(&attr, &policy) == 0 && policy == SCHED_OTHER);
+            CHECK(posix_spawnattr_setcgroup_np(&attr, -1) == 0);
+            CHECK(posix_spawnattr_getcgroup_np(&attr, &cgroup) == 0 && cgroup == -1);
+            CHECK(posix_spawnattr_getflags(&attr, &actual_flags) == 0 && actual_flags == flags);
+
+            int ends[2], dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            CHECK(dir >= 0 && pipe2(ends, O_CLOEXEC) == 0);
+            CHECK(posix_spawn_file_actions_addchdir_np(&actions, "/") == 0);
+            CHECK(posix_spawn_file_actions_addfchdir_np(&actions, dir) == 0);
+            CHECK(posix_spawn_file_actions_addopen(&actions, 0, "input", O_RDONLY, 0) == 0);
+            CHECK(posix_spawn_file_actions_adddup2(&actions, ends[1], 1) == 0);
+            CHECK(posix_spawn_file_actions_addclose(&actions, ends[0]) == 0);
+            CHECK(posix_spawn_file_actions_addclose(&actions, ends[1]) == 0);
+            CHECK(posix_spawn_file_actions_addclosefrom_np(&actions, 3) == 0);
+            char *argv[] = {"sh", "-c",
+                "IFS= read -r line; test \"$line\" = spawn-input || exit 93; "
+                "test \"$FLC_SPAWN_TOKEN\" = token || exit 94; "
+                "printf 'native-spawn-ok\\n'; exit 37", 0};
+            char *envp[] = {"PATH=/usr/bin:/bin", "FLC_SPAWN_TOKEN=token", 0};
+            int child = -77;
+            int result = start_child(form, &child, form & 1 ? "sh" : "/bin/sh",
+                                     &actions, &attr, argv, envp);
+            CHECK(close(ends[1]) == 0 && close(dir) == 0);
+            CHECK(posix_spawn_file_actions_destroy(&actions) == 0);
+            CHECK(posix_spawnattr_destroy(&attr) == 0);
+            if (result != 0) { close(ends[0]); return __LINE__; }
+
+            int status = -1;
+            struct rusage usage = {0};
+            siginfo_t info = {0};
+            pid_t waited = -1;
+            if (form >= 2) {
+                CHECK(waitid(P_PIDFD, child, &info, WEXITED | WNOWAIT) == 0);
+                CHECK(info.si_pid > 0 && getpgid(info.si_pid) == info.si_pid);
+                CHECK(info.si_code == CLD_EXITED && info.si_status == 37);
+                CHECK(waitid(P_PIDFD, child, &info, WEXITED) == 0);
+                CHECK(close(child) == 0);
+                ++counts[1];
+            } else {
+                CHECK(child > 0 && getpgid(child) == child);
+                switch (reap) {
+                    case 0: waited = waitpid(child, &status, 0); break;
+                    case 1: waited = wait(&status); break;
+                    case 2: waited = wait3(&status, 0, &usage); break;
+                    case 3: waited = wait4(child, &status, 0, &usage); break;
+                    default:
+                        CHECK(waitid(P_PID, child, &info, WEXITED | WNOWAIT) == 0);
+                        CHECK(info.si_pid == child && info.si_code == CLD_EXITED && info.si_status == 37);
+                        waited = waitpid(child, &status, 0); break;
+                }
+                CHECK(waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 37);
+                ++counts[0];
+            }
+            char payload[32] = {0};
+            CHECK(read(ends[0], payload, sizeof payload) == 16);
+            const char expected[] = "native-spawn-ok\n";
+            for (unsigned i = 0; i < sizeof expected; ++i) CHECK(payload[i] == expected[i]);
+            CHECK(read(ends[0], payload, 1) == 0 && close(ends[0]) == 0);
+            ++counts[2];
+        }
+        char *argv[] = {"missing", 0}, *envp[] = {0};
+        int child = -77;
+        CHECK(start_child(form, &child, "/frankenlibc-no-such-process", 0, 0, argv, envp) == ENOENT);
+        /* No PID or pidfd may be published on error. The pidfd output's
+           negative sentinel is not a portable part of the error contract. */
+        CHECK(form < 2 ? child == -77 : child < 0);
+        ++counts[3];
+    }
+
+    /* The terminal action must also resolve in this provider. Its execution
+       on a regular file is an error, and must not publish a child PID. */
+    posix_spawn_file_actions_t actions;
+    CHECK(posix_spawn_file_actions_init(&actions) == 0);
+    CHECK(posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0) == 0);
+    CHECK(posix_spawn_file_actions_addtcsetpgrp_np(&actions, 0) == 0);
+    int child = -77;
+    char *argv[] = {"true", 0}, *envp[] = {0};
+    int result = posix_spawn(&child, "/bin/true", &actions, 0, argv, envp);
+    CHECK(posix_spawn_file_actions_destroy(&actions) == 0);
+    CHECK(result == ENOTTY && child == -77);
+    errno = 0;
+    CHECK(waitpid(-1, 0, WNOHANG) == -1 && errno == ECHILD);
+    ++counts[3];
+    return 0;
+}
+
+static int replace_image(unsigned form, int missing) {
+    const char *path = missing ? "/frankenlibc-no-such-process" : "/bin/sh";
+    const char *file = missing ? path : "sh";
+    char script[] = "test \"$FLC_EXEC_TOKEN\" = \"$1\" || exit 92; "
+                    "printf '%s\\n' \"$2\"; exit 29";
+    char *token = form == 0 || form == 3 || form == 6 ? "explicit" : "inherited";
+    char *argv[] = {"sh", "-c", script, "frankenlibc", token, "native-exec-ok", 0};
+    /* execvpe searches the parent's PATH even with a different child PATH. */
+    char *envp[] = {"FLC_EXEC_TOKEN=explicit", "PATH=/frankenlibc-no-such-path", 0};
+    switch (form) {
+        case 0: return execve(path, argv, envp);
+        case 1: return execv(path, argv);
+        case 2: return execvp(file, argv);
+        case 3: return execvpe(file, argv, envp);
+        /* Enough variadic args to cross the register/stack boundary. */
+        case 4: return execl(path, "sh", "-c", script, "frankenlibc", token,
+                            "native-exec-ok", (char *)0);
+        case 5: return execlp(file, "sh", "-c", script, "frankenlibc", token,
+                             "native-exec-ok", (char *)0);
+        default: return execle(path, "sh", "-c", script, "frankenlibc", token,
+                              "native-exec-ok", (char *)0, envp);
+    }
+}
+
+int process_fork_exec_protocol(unsigned *counts) {
+    CHECK(setenv("FLC_EXEC_TOKEN", "inherited", 1) == 0);
+    for (unsigned primitive = 0; primitive < 2; ++primitive) {
+        for (unsigned form = 0; form < 7; ++form) {
+            int ends[2];
+            CHECK(pipe2(ends, O_CLOEXEC) == 0);
+            pid_t child = primitive ? _Fork() : fork();
+            CHECK(child >= 0);
+            if (child == 0) {
+                if (close(ends[0]) != 0 || dup2(ends[1], 1) != 1 || close(ends[1]) != 0)
+                    _exit(101);
+                switch (form % 3) {
+                    case 0: if (setpgid(0, 0) != 0) _exit(102); break;
+                    case 1: if (setpgrp() != 0) _exit(103); break;
+                    default:
+                        if (setsid() != getpid() || getsid(0) != getpid()) _exit(104);
+                        break;
+                }
+                if (getpgid(0) != getpid() || getpgrp() != getpid()) _exit(105);
+                (void)replace_image(form, 0);
+                _exit(106); /* A successful exec never returns. */
+            }
+            CHECK(close(ends[1]) == 0);
+            int status = -1;
+            CHECK(waitpid(child, &status, 0) == child);
+            CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 29);
+            char output[32] = {0};
+            CHECK(read(ends[0], output, sizeof output) == 15);
+            const char expected[] = "native-exec-ok\n";
+            for (unsigned i = 0; i < sizeof expected; ++i) CHECK(output[i] == expected[i]);
+            CHECK(read(ends[0], output, 1) == 0 && close(ends[0]) == 0);
+            ++counts[primitive];
+        }
+    }
+    for (unsigned form = 0; form < 7; ++form) {
+        errno = 0;
+        CHECK(replace_image(form, 1) == -1 && errno == ENOENT);
+        ++counts[2];
+    }
+    CHECK(system(0) != 0);
+    int status = system("test \"$FLC_EXEC_TOKEN\" = inherited || exit 92; exit 29");
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 29);
+    CHECK(unsetenv("FLC_EXEC_TOKEN") == 0);
+    errno = 0;
+    CHECK(waitpid(-1, 0, WNOHANG) == -1 && errno == ECHILD);
+    ++counts[3];
+    return 0;
+}
+"#;
+
+fn process_symbols() -> Vec<(&'static str, &'static str, *const ())> {
+    macro_rules! symbols {
+        ($($module:ident::$name:ident => $version:literal),* $(,)?) => {
+            vec![$((stringify!($name), $version, $module::$name as *const ())),*]
+        };
+    }
+    symbols![
+        process::posix_spawn => "GLIBC_2.15",
+        process::posix_spawnp => "GLIBC_2.15",
+        internal::pidfd_spawn => "GLIBC_2.39",
+        internal::pidfd_spawnp => "GLIBC_2.39",
+        process::posix_spawnattr_init => "GLIBC_2.2.5",
+        process::posix_spawnattr_destroy => "GLIBC_2.2.5",
+        process::posix_spawnattr_getflags => "GLIBC_2.2.5",
+        process::posix_spawnattr_setflags => "GLIBC_2.2.5",
+        process::posix_spawnattr_getsigdefault => "GLIBC_2.2.5",
+        process::posix_spawnattr_setsigdefault => "GLIBC_2.2.5",
+        process::posix_spawnattr_getsigmask => "GLIBC_2.2.5",
+        process::posix_spawnattr_setsigmask => "GLIBC_2.2.5",
+        process::posix_spawnattr_getpgroup => "GLIBC_2.2.5",
+        process::posix_spawnattr_setpgroup => "GLIBC_2.2.5",
+        process::posix_spawnattr_getschedparam => "GLIBC_2.2.5",
+        process::posix_spawnattr_setschedparam => "GLIBC_2.2.5",
+        process::posix_spawnattr_getschedpolicy => "GLIBC_2.2.5",
+        process::posix_spawnattr_setschedpolicy => "GLIBC_2.2.5",
+        unistd::posix_spawnattr_getcgroup_np => "GLIBC_2.39",
+        unistd::posix_spawnattr_setcgroup_np => "GLIBC_2.39",
+        process::posix_spawn_file_actions_init => "GLIBC_2.2.5",
+        process::posix_spawn_file_actions_destroy => "GLIBC_2.2.5",
+        process::posix_spawn_file_actions_addclose => "GLIBC_2.2.5",
+        process::posix_spawn_file_actions_adddup2 => "GLIBC_2.2.5",
+        process::posix_spawn_file_actions_addopen => "GLIBC_2.2.5",
+        process::posix_spawn_file_actions_addchdir_np => "GLIBC_2.29",
+        process::posix_spawn_file_actions_addfchdir_np => "GLIBC_2.29",
+        unistd::posix_spawn_file_actions_addclosefrom_np => "GLIBC_2.34",
+        unistd::posix_spawn_file_actions_addtcsetpgrp_np => "GLIBC_2.35",
+        process::wait => "GLIBC_2.2.5",
+        process::waitpid => "GLIBC_2.2.5",
+        process::wait3 => "GLIBC_2.2.5",
+        process::wait4 => "GLIBC_2.2.5",
+        process::waitid => "GLIBC_2.2.5",
+        unistd::getpid => "GLIBC_2.2.5",
+        unistd::getppid => "GLIBC_2.2.5",
+        unistd::getpgrp => "GLIBC_2.2.5",
+        unistd::getpgid => "GLIBC_2.2.5",
+        unistd::getsid => "GLIBC_2.2.5",
+        process::fork => "GLIBC_2.2.5",
+        unistd::_Fork => "GLIBC_2.34",
+        process::execve => "GLIBC_2.2.5",
+        unistd::execv => "GLIBC_2.2.5",
+        process::execvp => "GLIBC_2.2.5",
+        process::execvpe => "GLIBC_2.11",
+        unistd::execl => "GLIBC_2.2.5",
+        unistd::execlp => "GLIBC_2.2.5",
+        unistd::execle => "GLIBC_2.2.5",
+        stdlib::system => "GLIBC_2.2.5",
+        unistd::setpgid => "GLIBC_2.2.5",
+        unistd::setpgrp => "GLIBC_2.2.5",
+        unistd::setsid => "GLIBC_2.2.5",
+    ]
+}
+
+fn process_fixture(got: bool, native: bool) -> Fixture {
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-native-process-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let source = dir.join("fixture.c");
+    let path = dir.join("fixture.so");
+    std::fs::write(&source, PROCESS_SOURCE).unwrap();
+    std::fs::write(dir.join("input"), b"spawn-input\n").unwrap();
+    let mut command = Command::new("gcc");
+    command.args([
+        "-shared",
+        "-fPIC",
+        "-nostdlib",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-builtin",
+        "-Wl,--hash-style=both",
+    ]);
+    if got {
+        command.arg("-fno-plt");
+    }
+    command.arg(&source);
+    if !native {
+        command.arg("-lc");
+    }
+    let output = command.arg("-o").arg(&path).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let object = ElfLoader::new(0)
+        .parse(&std::fs::read(&path).unwrap())
+        .unwrap();
+    if native {
+        assert!(
+            object.needed_libraries.is_empty(),
+            "host runtime dependency"
+        );
+    } else {
+        assert_eq!(object.needed_libraries, ["libc.so.6"]);
+    }
+    for (name, _, _) in process_symbols() {
+        assert!(
+            object
+                .undefined_symbols()
+                .any(|(_, s)| object.symbol_name(s) == Some(name)),
+            "fixture did not import {name}"
+        );
+    }
+    Fixture { dir, path }
+}
+
+fn process_protocol(api: Api, got: bool) {
+    let fixture = process_fixture(got, api.native);
+    let handle = api.open(&fixture.path);
+    type Run = unsafe extern "C" fn(*const c_char, *mut u32) -> c_int;
+    // SAFETY: these signatures match the C fixture, which stays loaded until
+    // all children are reaped and all returned pointers have been checked.
+    let (function, dynamic, run): (Function, Dynamic, Run) = unsafe {
+        (
+            std::mem::transmute(api.symbol(handle, c"process_function")),
+            std::mem::transmute(api.symbol(handle, c"process_dynamic")),
+            std::mem::transmute(api.symbol(handle, c"process_spawn_protocol")),
+        )
+    };
+    for (index, (name, version, native)) in process_symbols().into_iter().enumerate() {
+        let name = CString::new(name).unwrap();
+        let version = CString::new(version).unwrap();
+        // SAFETY: index is in the fixture's function table; each named entry
+        // has an independently resolved GNU address or the exact native ABI.
+        let direct = unsafe { function(index as u32) };
+        let expected = if api.native {
+            native.cast_mut().cast()
+        } else {
+            unsafe { dlsym_oracle::host_addr(&name, native) }
+        };
+        assert_eq!(direct, expected, "wrong process provider: {name:?}");
+        for required in [std::ptr::null(), version.as_ptr()] {
+            let mut error = -1;
+            assert_eq!(
+                unsafe { dynamic(name.as_ptr(), required, &mut error) },
+                direct
+            );
+            assert_eq!(error, 0);
+        }
+        let mut error = -1;
+        assert!(
+            unsafe {
+                dynamic(
+                    name.as_ptr(),
+                    c"FRANKENLIBC_MISSING_PROCESS_VERSION".as_ptr(),
+                    &mut error,
+                )
+            }
+            .is_null()
+        );
+        assert_eq!(error, 1);
+        if api.native && version.as_bytes() != b"GLIBC_2.2.5" {
+            assert!(
+                unsafe { dynamic(name.as_ptr(), c"GLIBC_2.2.5".as_ptr(), &mut error) }.is_null(),
+                "modern process interface must not claim old compatibility semantics: {name:?}"
+            );
+            assert_eq!(error, 1);
+        }
+    }
+    let directory = CString::new(fixture.dir.as_os_str().as_bytes()).unwrap();
+    let mut counts = [0; 4];
+    // SAFETY: directory and the four writable counters remain live; the
+    // enclosing isolated process has a deadline for the whole protocol.
+    let result = unsafe { run(directory.as_ptr(), counts.as_mut_ptr()) };
+    assert_eq!(
+        result, 0,
+        "process protocol C line; native={} counts={counts:?}; retained {:?}",
+        api.native, fixture.dir
+    );
+    assert_eq!(counts, [10, 2, 12, 5]);
+    type ForkExec = unsafe extern "C" fn(*mut u32) -> c_int;
+    // SAFETY: the fixture forks and reaps every child before returning. The
+    // four output counters remain live across the complete protocol.
+    let fork_exec: ForkExec =
+        unsafe { std::mem::transmute(api.symbol(handle, c"process_fork_exec_protocol")) };
+    let mut exec_counts = [0; 4];
+    let result = unsafe { fork_exec(exec_counts.as_mut_ptr()) };
+    assert_eq!(
+        result, 0,
+        "fork/exec protocol C line; native={} counts={exec_counts:?}; retained {:?}",
+        api.native, fixture.dir
+    );
+    assert_eq!(exec_counts, [7, 7, 7, 1]);
+    api.close(handle);
+    println!(
+        "native={} got={got}: 27 children, 5 rejected spawns, 7 failed execs; retained {:?}",
+        api.native, fixture.dir
+    );
+}
+
+#[test]
+fn native_process_plt_spawn_and_reap() {
+    isolated("native_process_plt_spawn_and_reap", |api| {
+        process_protocol(api, false)
+    });
+}
+
+#[test]
+fn native_process_got_spawn_and_reap() {
+    isolated("native_process_got_spawn_and_reap", |api| {
+        process_protocol(api, true)
+    });
+}
+
 impl Fixture {
     fn new(got: bool) -> Self {
         let dir = std::env::temp_dir().join(format!(
