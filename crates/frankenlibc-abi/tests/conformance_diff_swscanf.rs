@@ -2690,7 +2690,17 @@ mod locale_scanning {
                 let kinds: &[&str] = if left {
                     &["d", "s"]
                 } else {
-                    &["d", "s", "literal", "bare_s", "precision_s"]
+                    &[
+                        "d",
+                        "s",
+                        "literal",
+                        "bare_s",
+                        "precision_s",
+                        "precision_f",
+                        "precision_e",
+                        "precision_g",
+                        "precision_a",
+                    ]
                 };
                 for &kind in kinds {
                     let text = if kind == "literal" {
@@ -2699,6 +2709,8 @@ mod locale_scanning {
                         "P%n%s%nQ".to_owned()
                     } else if kind == "precision_s" {
                         format!("P%n%.{width}s%nQ")
+                    } else if let Some(conversion) = kind.strip_prefix("precision_") {
+                        format!("P%n%#.{width}{conversion}%nQ")
                     } else {
                         format!("P%n%{}{width}{kind}%nQ", if left { "-" } else { "" })
                     };
@@ -2757,6 +2769,17 @@ mod locale_scanning {
                                     )
                                 } else if kind == "literal" {
                                     print(&mut output, format.as_ptr(), &mut before, &mut after)
+                                } else if matches!(
+                                    kind,
+                                    "precision_f" | "precision_e" | "precision_g" | "precision_a"
+                                ) {
+                                    print(
+                                        &mut output,
+                                        format.as_ptr(),
+                                        &mut before,
+                                        1.5_f64,
+                                        &mut after,
+                                    )
                                 } else {
                                     print(
                                         &mut output,
@@ -2809,6 +2832,97 @@ mod locale_scanning {
                             expected = Some(observed);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn huge_hex_float_precision_uses_one_output_allocation() {
+        if !isolated("huge_hex_float_precision_uses_one_output_allocation") {
+            return;
+        }
+        type SnprintfFn =
+            unsafe extern "C-unwind" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+        // SAFETY: resolve the independent GNU provider before restricting
+        // allocation, with the exact public variadic snprintf ABI.
+        let host_print: SnprintfFn =
+            unsafe { host_fn(c"snprintf", stdio_abi::snprintf as *const ()) };
+        let entries = [
+            ("host", host_print, host().errno),
+            (
+                "native",
+                stdio_abi::snprintf as SnprintfFn,
+                errno_abi::__errno_location as ErrnoFn,
+            ),
+        ];
+        // The first pair warms both providers. A 48 MiB hex fraction fits in
+        // the later 64 MiB headroom once, but not in both a temporary body and
+        // the render buffer. The old second, infallible copy aborted here.
+        // A bounded snprintf destination still reports the full output count.
+        for precision in [4, 48 * 1024 * 1024] {
+            let mut expected = None;
+            for (engine, print, errno) in entries {
+                let (mut before, mut after) = (SENTINEL, SENTINEL);
+                let mut output = [0x5au8; 32];
+                let status = std::fs::read_to_string("/proc/self/status").unwrap();
+                let vm_kib = status
+                    .lines()
+                    .find(|line| line.starts_with("VmSize:"))
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .expect("Linux supplies VmSize")
+                    .parse::<libc::rlim_t>()
+                    .unwrap();
+                let ceiling = vm_kib
+                    .checked_mul(1024)
+                    .and_then(|bytes| bytes.checked_add(64 * 1024 * 1024))
+                    .unwrap();
+                let mut previous = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                // SAFETY: the initialized limit structure is writable and
+                // this isolated child owns its process's soft resource limit.
+                assert_eq!(
+                    unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) },
+                    0
+                );
+                let constrained = libc::rlimit {
+                    rlim_cur: ceiling.min(previous.rlim_cur),
+                    rlim_max: previous.rlim_max,
+                };
+                // SAFETY: keep the hard limit and restore the original soft
+                // limit before any assertion, observation allocation or unwind.
+                assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &constrained) }, 0);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                    // SAFETY: the terminated format matches the two live %n
+                    // destinations, promoted precision and finite double.
+                    *errno() = 23;
+                    let rc = print(
+                        output.as_mut_ptr().cast(),
+                        output.len(),
+                        c"P%n%.*a%n".as_ptr(),
+                        &mut before,
+                        precision as c_int,
+                        -1.5_f64,
+                        &mut after,
+                    );
+                    (rc, *errno(), before, after)
+                }));
+                // SAFETY: restore the exact original limit read above.
+                assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) }, 0);
+                let result = result.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+                eprintln!("{engine} hex precision={precision}: {result:?}");
+                assert_eq!(
+                    result,
+                    (precision as c_int + 9, 23, 1, precision as c_int + 9),
+                    "{engine} full count and completed %n stores"
+                );
+                let observed = (result, output);
+                if let Some(expected) = expected.as_ref() {
+                    assert_eq!(&observed, expected, "{engine} precision={precision}");
+                } else {
+                    expected = Some(observed);
                 }
             }
         }

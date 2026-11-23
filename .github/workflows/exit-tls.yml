@@ -9,6 +9,7 @@ on:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
       - 'crates/frankenlibc-core/src/pthread/tls.rs'
+      - 'crates/frankenlibc-core/src/pthread/thread.rs'
       - 'crates/frankenlibc-core/src/syscall/mod.rs'
       - 'tests/integration/fixture_exit_tls*'
       - 'tests/integration/fixture_startup_thread_exit.c'
@@ -61,7 +62,9 @@ jobs:
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           cp target/release/libfrankenlibc_abi.so "$root/"
           cargo test -p frankenlibc-core --lib "${args[@]}" pthread::tls::tests::fork_child_ -- --test-threads=1 2>&1 | tee "$root/fork-keys.log"
-          grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/fork-keys.log"
+          grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$root/fork-keys.log"
+          cargo test -p frankenlibc-core --lib "${args[@]}" pthread::thread::tests::prepared_thread_ -- --test-threads=1 2>&1 | tee "$root/prepared-threads.log"
+          grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/prepared-threads.log"
           python3 scripts/check_startup_thread_exit.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/startup"
           cc -O2 -pthread tests/integration/fixture_pthread_cancel.c -ldl -o "$root/pthread-cancel"
           for mode in strict hardened; do

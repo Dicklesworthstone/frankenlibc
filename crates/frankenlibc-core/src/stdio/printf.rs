@@ -701,7 +701,9 @@ impl FormatSpec {
             // The radix first: it may be the very byte the separator is.
             let mut uncounted = 0;
             if let Some(dp) = DecimalPoint::active() {
-                dp.replace_in(&mut rendered);
+                if !dp.replace_in(&mut rendered) {
+                    return true;
+                }
                 uncounted += dp.len - 1;
             }
             let (sign, body) = match rendered.first() {
@@ -1887,10 +1889,15 @@ impl DecimalPoint {
     }
 
     /// Replace the rendered radix "." (a float has at most one) in `body`.
-    fn replace_in(&self, body: &mut Vec<u8>) {
+    fn replace_in(&self, body: &mut Vec<u8>) -> bool {
         if let Some(at) = body.iter().position(|&b| b == b'.') {
+            if body.try_reserve(self.len - 1).is_err() {
+                note_render_alloc_failure();
+                return false;
+            }
             body.splice(at..=at, self.as_bytes().iter().copied());
         }
+        true
     }
 
     /// `replace_in` for a float already emitted, padded, at `buf[start..]`. A
@@ -1900,6 +1907,11 @@ impl DecimalPoint {
         let Some(at) = buf[start..].iter().position(|&b| b == b'.') else {
             return;
         };
+        if buf.try_reserve(self.len - 1).is_err() {
+            buf.truncate(start);
+            note_render_alloc_failure();
+            return;
+        }
         buf.splice(start + at..=start + at, self.as_bytes().iter().copied());
         let mut extra = self.len - 1;
         while extra > 0 && buf.len() > start && buf[start] == b' ' {
@@ -2290,6 +2302,10 @@ struct VecWriter<'a>(&'a mut Vec<u8>);
 
 impl core::fmt::Write for VecWriter<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        if self.0.try_reserve(s.len()).is_err() {
+            note_render_alloc_failure();
+            return Err(core::fmt::Error);
+        }
         self.0.extend_from_slice(s.as_bytes());
         Ok(())
     }
@@ -2327,11 +2343,12 @@ fn float_grouping(spec: &FormatSpec) -> Option<NumericGrouping> {
 /// further digit is '0' (see [`format_float_huge_precision`]).
 const EXACT_FLOAT_DIGITS: usize = 1_100;
 
-/// [`format_float_with_dot`] for `precision > EXACT_FLOAT_DIGITS`: render the
-/// unpadded body at EXACT_FLOAT_DIGITS, splice in the `precision -
-/// EXACT_FLOAT_DIGITS` zeros where the fraction ends (before the exponent for
-/// %e and %g's exponent form, before 'p' for %a; %g without `#` drops trailing
-/// zeros, so it needs none), then apply the field width.
+/// [`format_float_with_dot`] for `precision > EXACT_FLOAT_DIGITS`: render a
+/// bounded exact body, then append the extra zeros directly to the destination
+/// before its exponent. %g without `#` drops trailing zeros and needs no extra
+/// storage. Reserve the entire field before writing it so allocation failure
+/// leaves completed output intact and never allocates a second precision-sized
+/// temporary beside the destination.
 fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, buf: &mut Vec<u8>) {
     let conv = spec.conversion.to_ascii_lowercase();
     let inner_flags = FormatFlags {
@@ -2348,38 +2365,59 @@ fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, 
         None,
     );
     let mut body = Vec::new();
-    format_float_with_dot(value, &inner, &mut body);
-    let splice = match conv {
-        b'f' | b'e' | b'a' => true,
-        b'g' => spec.flags.alt_form,
-        _ => false,
-    };
-    if splice {
-        let extra = precision - EXACT_FLOAT_DIGITS;
-        let marker: &[u8] = if conv == b'a' { b"pP" } else { b"eE" };
-        let at = match conv {
-            b'f' => body.len(),
-            _ => body
-                .iter()
-                .rposition(|b| marker.contains(b))
-                .unwrap_or(body.len()),
-        };
-        // Fail the call rather than abort when the memory is not there.
-        if body.try_reserve(extra).is_ok() {
-            body.splice(at..at, core::iter::repeat_n(b'0', extra));
-        } else {
-            note_render_alloc_failure();
-        }
+    // A binary64 exact body is bounded independently of the requested
+    // precision, including its integer digits, sign, radix and grouping.
+    if body.try_reserve(4096).is_err() {
+        note_render_alloc_failure();
+        return;
     }
-    let pad_total = resolve_width(spec).saturating_sub(body.len());
-    if pad_total == 0 {
-        buf.extend_from_slice(&body);
-    } else if spec.flags.left_justify {
-        buf.extend_from_slice(&body);
-        pad(buf, b' ', pad_total);
-    } else if spec.flags.zero_pad {
-        // Zeros go after the sign (and %a's "0x").
-        let mut pre = usize::from(matches!(body.first(), Some(b'-' | b'+' | b' ')));
+    format_float_with_dot(value, &inner, &mut body);
+    let failure = take_render_failure();
+    if failure != 0 {
+        note_render_failure(failure);
+        return;
+    }
+    let extra = match conv {
+        b'f' | b'e' | b'a' => precision - EXACT_FLOAT_DIGITS,
+        b'g' if spec.flags.alt_form => precision - EXACT_FLOAT_DIGITS,
+        _ => 0,
+    };
+    let marker: &[u8] = if conv == b'a' { b"pP" } else { b"eE" };
+    let at = if conv == b'f' {
+        body.len()
+    } else {
+        body.iter()
+            .rposition(|b| marker.contains(b))
+            .unwrap_or(body.len())
+    };
+    let Some(content_len) = body.len().checked_add(extra) else {
+        note_render_alloc_failure();
+        return;
+    };
+    let field_len = content_len.max(resolve_width(spec));
+    // Non-grouped fields are localized by format_float after this function.
+    // Include that bounded radix expansion now, otherwise a full large buffer
+    // could double for one extra byte after the recoverable allocation check.
+    let radix_extra = if float_grouping(spec).is_none() {
+        DecimalPoint::active().map_or(0, |point| point.len - 1)
+    } else {
+        0
+    };
+    let Some(reserve_len) = field_len.checked_add(radix_extra) else {
+        note_render_alloc_failure();
+        return;
+    };
+    if buf.try_reserve(reserve_len).is_err() {
+        note_render_alloc_failure();
+        return;
+    }
+    let pad_total = field_len - content_len;
+    let zero_pad = spec.flags.zero_pad && !spec.flags.left_justify;
+    let mut pre = 0;
+    if zero_pad {
+        // Field zeros go after the sign and hex prefix; precision zeros go
+        // before the exponent. Both insertions fit the reservation above.
+        pre = usize::from(matches!(body.first(), Some(b'-' | b'+' | b' ')));
         if conv == b'a'
             && body[pre..].len() >= 2
             && body[pre] == b'0'
@@ -2387,12 +2425,21 @@ fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, 
         {
             pre += 2;
         }
-        buf.extend_from_slice(&body[..pre]);
-        pad(buf, b'0', pad_total);
-        buf.extend_from_slice(&body[pre..]);
-    } else {
-        pad(buf, b' ', pad_total);
-        buf.extend_from_slice(&body);
+    }
+    // Every append below is covered by the single checked reservation. The
+    // small exact body never grows with the caller's width or precision.
+    if !spec.flags.left_justify && !zero_pad {
+        buf.extend(core::iter::repeat_n(b' ', pad_total));
+    }
+    buf.extend_from_slice(&body[..pre]);
+    if zero_pad {
+        buf.extend(core::iter::repeat_n(b'0', pad_total));
+    }
+    buf.extend_from_slice(&body[pre..at]);
+    buf.extend(core::iter::repeat_n(b'0', extra));
+    buf.extend_from_slice(&body[at..]);
+    if spec.flags.left_justify {
+        buf.extend(core::iter::repeat_n(b' ', pad_total));
     }
 }
 
@@ -2403,17 +2450,19 @@ fn format_fixed_nearest(value: f64, precision: usize, buf: &mut Vec<u8>, flags: 
     use core::fmt::Write as _;
     let abs = value.abs();
     if value.is_sign_negative() {
-        buf.push(b'-');
+        buf.push_bytes(b"-");
     } else if flags.force_sign {
-        buf.push(b'+');
+        buf.push_bytes(b"+");
     } else if flags.space_sign {
-        buf.push(b' ');
+        buf.push_bytes(b" ");
     }
     // Exact integral values need only integer digits and fractional zeros.
     if is_integral_f64(abs) && abs < 18446744073709551616.0 {
-        let _ = write!(VecWriter(buf), "{}", abs as u64);
-        buf.push(b'.');
-        buf.extend(core::iter::repeat_n(b'0', precision));
+        if write!(VecWriter(buf), "{}", abs as u64).is_err() {
+            return;
+        }
+        buf.push_bytes(b".");
+        pad(buf, b'0', precision);
         return;
     }
     // A dyadic terminating within `precision` bits also has exact scaled
@@ -2430,12 +2479,11 @@ fn format_fixed_nearest(value: f64, precision: usize, buf: &mut Vec<u8>, flags: 
             if ds.len() > precision {
                 let point = ds.len() - precision;
                 buf.push_bytes(&ds[..point]);
-                buf.push(b'.');
+                buf.push_bytes(b".");
                 buf.push_bytes(&ds[point..]);
             } else {
-                buf.push(b'0');
-                buf.push(b'.');
-                buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
+                buf.push_bytes(b"0.");
+                pad(buf, b'0', precision - ds.len());
                 buf.push_bytes(ds);
             }
             return;
@@ -2720,7 +2768,9 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         let mut body = body.into_bytes();
         let mut uncounted = 0;
         if let Some(dp) = DecimalPoint::active() {
-            dp.replace_in(&mut body);
+            if !dp.replace_in(&mut body) {
+                return;
+            }
             uncounted += dp.len - 1;
         }
         uncounted += g.uncounted_in_float(&body);
@@ -3337,7 +3387,7 @@ fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
     // old 1 MiB cap silently cut such fields short (and the return count with
     // them). A field too large for the memory available is dropped rather than
     // aborting the process on an infallible allocation, and the call fails.
-    if count > 4096 && buf.try_reserve(count).is_err() {
+    if buf.try_reserve(count).is_err() {
         note_render_alloc_failure();
         return;
     }
@@ -6051,6 +6101,152 @@ mod tests {
     }
 
     #[test]
+    fn huge_precision_float_padding_preserves_sign_and_exponent() {
+        for precision in [EXACT_FLOAT_DIGITS + 1, 1_200] {
+            for (conv, lead, exponent, significant) in [
+                (b'f', "1.5", "", false),
+                (b'F', "1.5", "", false),
+                (b'e', "1.5", "e+00", false),
+                (b'E', "1.5", "E+00", false),
+                (b'g', "1.5", "", true),
+                (b'G', "1.5", "", true),
+                (b'a', "0x1.8", "p+0", false),
+                (b'A', "0X1.8", "P+0", false),
+            ] {
+                let zeros = precision - if significant { 2 } else { 1 };
+                for (value, sign, force_sign, space_sign) in [
+                    (-1.5, "-", false, false),
+                    (1.5, "+", true, false),
+                    (1.5, " ", false, true),
+                ] {
+                    let body = format!("{sign}{lead}{}{exponent}", "0".repeat(zeros));
+                    for (left_justify, zero_pad) in
+                        [(false, false), (true, false), (false, true), (true, true)]
+                    {
+                        let spec = FormatSpec::new(
+                            FormatFlags {
+                                left_justify,
+                                zero_pad,
+                                force_sign,
+                                space_sign,
+                                alt_form: true,
+                                ..FormatFlags::default()
+                            },
+                            Width::Fixed(body.len() + 9),
+                            Precision::Fixed(precision),
+                            LengthMod::None,
+                            conv,
+                            None,
+                        );
+                        let expected = if left_justify {
+                            format!("{body}         ")
+                        } else if zero_pad {
+                            let split = sign.len()
+                                + if conv.eq_ignore_ascii_case(&b'a') {
+                                    2
+                                } else {
+                                    0
+                                };
+                            format!("{}000000000{}", &body[..split], &body[split..])
+                        } else {
+                            format!("         {body}")
+                        };
+                        let _ = take_render_failure();
+                        let mut buf = b"prefix:".to_vec();
+                        format_float(value, &spec, &mut buf);
+                        assert_eq!(
+                            &buf[7..],
+                            expected.as_bytes(),
+                            "conversion={} precision={precision} flags={:?}",
+                            conv as char,
+                            spec.flags
+                        );
+                        assert_eq!(&buf[..7], b"prefix:");
+                        assert_eq!(take_render_failure(), 0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn huge_precision_multibyte_radix_preserves_width() {
+        struct NumericReset;
+        impl Drop for NumericReset {
+            fn drop(&mut self) {
+                clear_thread_numeric();
+            }
+        }
+        let _reset = NumericReset;
+        set_thread_numeric("٫".as_bytes(), b"", b"");
+        let precision = EXACT_FLOAT_DIGITS + 1;
+        let body = format!("-0x1٫8{}p+0", "0".repeat(precision - 1));
+        for left_justify in [false, true] {
+            for width in [0, body.len() + 9] {
+                let spec = FormatSpec::new(
+                    FormatFlags {
+                        left_justify,
+                        ..FormatFlags::default()
+                    },
+                    Width::Fixed(width),
+                    Precision::Fixed(precision),
+                    LengthMod::None,
+                    b'a',
+                    None,
+                );
+                let _ = take_render_failure();
+                let mut buf = b"prefix:".to_vec();
+                format_float(-1.5, &spec, &mut buf);
+                let expected = if width == 0 {
+                    body.clone()
+                } else if left_justify {
+                    format!("{body}         ")
+                } else {
+                    format!("         {body}")
+                };
+                assert_eq!(&buf[..7], b"prefix:");
+                assert_eq!(&buf[7..], expected.as_bytes());
+                assert_eq!(take_render_failure(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn unreservable_float_field_preserves_completed_output() {
+        for (width, precision) in [
+            (Width::None, usize::MAX),
+            (Width::Fixed(usize::MAX), EXACT_FLOAT_DIGITS + 1),
+        ] {
+            for conv in *b"fegaFEGA" {
+                for (left_justify, zero_pad) in [(false, false), (true, false), (false, true)] {
+                    let spec = FormatSpec::new(
+                        FormatFlags {
+                            left_justify,
+                            zero_pad,
+                            alt_form: true,
+                            ..FormatFlags::default()
+                        },
+                        width,
+                        Precision::Fixed(precision),
+                        LengthMod::None,
+                        conv,
+                        None,
+                    );
+                    let _ = take_render_failure();
+                    let mut buf = b"completed".to_vec();
+                    format_float(-1.5, &spec, &mut buf);
+                    assert_eq!(
+                        buf, b"completed",
+                        "failed field must not append partial digits"
+                    );
+                    assert_eq!(take_render_failure(), crate::errno::ENOMEM);
+                    assert_eq!(take_render_failure(), 0, "failure is consumed once");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn format_float_does_not_panic_on_huge_precision() {
         // Exercise %f, %e, %g, %a at prec = 65536 (the first panicking value)
         // and at prec = usize::MAX / 2 (pathological) — neither must panic.
@@ -6064,15 +6260,23 @@ mod tests {
                     conv,
                     None,
                 );
-                let mut buf = Vec::new();
-                // Must return without panicking. Output is allowed to be
-                // truncated — we only pin the no-abort contract.
+                let _ = take_render_failure();
+                let mut buf = b"prefix:".to_vec();
                 format_float(1.5_f64, &spec, &mut buf);
-                assert!(
-                    !buf.is_empty(),
-                    "%{}: format_float produced empty output at prec={prec}",
-                    conv as char
-                );
+                if prec == usize::MAX / 2 && !conv.eq_ignore_ascii_case(&b'g') {
+                    assert_eq!(buf, b"prefix:", "failed precision preserves prior output");
+                    assert_eq!(take_render_failure(), crate::errno::ENOMEM);
+                } else {
+                    assert!(
+                        buf.len() > 7,
+                        "%{}: format_float produced no output at prec={prec}",
+                        conv as char
+                    );
+                    assert_eq!(take_render_failure(), 0);
+                    if conv.eq_ignore_ascii_case(&b'g') {
+                        assert_eq!(&buf[7..], b"1.5", "%g strips the excess precision");
+                    }
+                }
             }
         }
     }
