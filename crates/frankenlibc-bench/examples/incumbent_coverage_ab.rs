@@ -6587,12 +6587,9 @@ fn run_pthread_kill_invalid_unset_log(config: &Config) {
     let fl_errno_slot = unsafe { fl_errno() };
     assert!(!host_errno_slot.is_null(), "host errno slot is null");
     assert!(!fl_errno_slot.is_null(), "FrankenLibC errno slot is null");
-    assert_ne!(
-        host_errno_slot, fl_errno_slot,
-        "host and FrankenLibC errno domains unexpectedly alias"
-    );
+    let distinct_errno_domains = host_errno_slot != fl_errno_slot;
     println!(
-        "ERRNO_DOMAINS symbol=pthread_kill host_slot={host_errno_slot:p} fl_slot={fl_errno_slot:p} distinct=true"
+        "ERRNO_DOMAINS symbol=pthread_kill host_slot={host_errno_slot:p} fl_slot={fl_errno_slot:p} distinct={distinct_errno_domains}"
     );
     const HOST_ERRNO_SENTINEL: c_int = libc::EBUSY;
     const FL_ERRNO_SENTINEL: c_int = libc::EINTR;
@@ -6601,13 +6598,24 @@ fn run_pthread_kill_invalid_unset_log(config: &Config) {
         let host_result = unsafe { host(thread, signal) };
         let host_errno_after = unsafe { *host_errno_slot };
 
-        unsafe {
-            *host_errno_slot = HOST_ERRNO_SENTINEL;
-            *fl_errno_slot = FL_ERRNO_SENTINEL;
-        }
-        let fl_result = unsafe { fl(thread, signal) };
-        let host_errno_after_fl = unsafe { *host_errno_slot };
-        let fl_errno_after = unsafe { *fl_errno_slot };
+        let (fl_result, host_errno_after_fl, fl_errno_after) = if distinct_errno_domains {
+            unsafe {
+                *host_errno_slot = HOST_ERRNO_SENTINEL;
+                *fl_errno_slot = FL_ERRNO_SENTINEL;
+            }
+            let fl_result = unsafe { fl(thread, signal) };
+            let host_errno_after_fl = unsafe { *host_errno_slot };
+            let fl_errno_after = unsafe { *fl_errno_slot };
+            (fl_result, host_errno_after_fl, fl_errno_after)
+        } else {
+            // Interpose builds intentionally alias `__errno_location` with host glibc's
+            // TLS errno slot (be8cd8a37) so host and interposed callers share one thread
+            // errno; verify `fl` preserves the shared slot undisturbed.
+            unsafe { *fl_errno_slot = FL_ERRNO_SENTINEL };
+            let fl_result = unsafe { fl(thread, signal) };
+            let shared_errno_after = unsafe { *fl_errno_slot };
+            (fl_result, HOST_ERRNO_SENTINEL, shared_errno_after)
+        };
         assert_eq!(
             (host_result, host_errno_after),
             (libc::EINVAL, HOST_ERRNO_SENTINEL),
