@@ -342,6 +342,133 @@ enum nss_status FN(getprotoent_r)(struct protoent *out, char *buf, size_t len,
   return status;
 }
 
+static enum nss_status fill_rpc(const char *name, int number, int large,
+                               struct rpcent *out, char *buf, size_t len,
+                               int *errnop) {
+  size_t pad = (sizeof(char *) - (uintptr_t)buf % sizeof(char *)) % sizeof(char *);
+  size_t count = large ? 3 : 2;
+  size_t need = pad + (count + 1) * sizeof(char *) + strlen(name) + 1 +
+                sizeof "fltest-rpc" + sizeof "shared-rpc" +
+                (large ? 3073 : 0);
+  if (len < need) { *errnop = ERANGE; return NSS_STATUS_TRYAGAIN; }
+  char **aliases = (char **)(buf + pad);
+  char *cur = (char *)(aliases + count + 1), *end = buf + len;
+  out->r_name = put(&cur, end, name);
+  out->r_number = number;
+  out->r_aliases = aliases;
+  aliases[0] = put(&cur, end, "fltest-rpc");
+  aliases[1] = put(&cur, end, "shared-rpc");
+  if (large) {
+    aliases[2] = cur;
+    memset(cur, 'r', 3072);
+    cur[3072] = '\0';
+  }
+  aliases[count] = NULL;
+  *errnop = 0;
+  return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status FN(getrpcbyname_r)(const char *name, struct rpcent *out,
+                                  char *buf, size_t len, int *errnop) {
+  trace("getrpcbyname_r", name);
+  enum nss_status status;
+  if (forced(&status, errnop)) return status;
+  if (!strcmp(name, "fltest-errno-none")) return NSS_STATUS_NOTFOUND;
+  if (!strcmp(name, "fltest-errno-again")) return NSS_STATUS_TRYAGAIN;
+  if (!strcmp(name, "fltest-errno-unavail")) return NSS_STATUS_UNAVAIL;
+  if (!strcmp(name, "fltest-again")) { *errnop = EAGAIN; return NSS_STATUS_TRYAGAIN; }
+  if (!strcmp(name, "fltest-unavail")) { *errnop = ENOSYS; return NSS_STATUS_UNAVAIL; }
+  if (!strcmp(name, "fltest-errno-success") || !strcmp(name, "fltest-errno-written")) {
+    int saved = *errnop;
+    status = fill_rpc("errno-unchanged", 145003, 0, out, buf, len, errnop);
+    if (status == NSS_STATUS_SUCCESS)
+      *errnop = !strcmp(name, "fltest-errno-written") ? EIO : saved;
+    return status;
+  }
+  if (!strcmp(name, "fltest-chain-success") || !strcmp(name, "fltest-chain-notfound")) {
+    if (strcmp(STR(SERVICE), "fltest")) return NSS_STATUS_UNAVAIL;
+    if (!strcmp(name, "fltest-chain-notfound")) {
+      *errnop = EIO;
+      return NSS_STATUS_NOTFOUND;
+    }
+    status = fill_rpc("chain", 145004, 0, out, buf, len, errnop);
+    if (status == NSS_STATUS_SUCCESS) *errnop = EIO;
+    return status;
+  }
+  int large = !strcmp(name, "fltest-large-rpc");
+  if (!strcmp(name, "portmapper"))
+    return fill_rpc("module-portmapper", 146000, 0, out, buf, len, errnop);
+  if (!strcmp(name, "fltest-negative"))
+    return fill_rpc("negative", -7, 0, out, buf, len, errnop);
+  if (!strcmp(name, "fltest-wide"))
+    return fill_rpc("wide", 2147483647, 0, out, buf, len, errnop);
+  if (!large && strcmp(name, "fltest-rpc-record") && strcmp(name, "fltest-rpc") &&
+      strcmp(name, "shared-rpc")) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  return fill_rpc("fltest-rpc-record", large ? 145002 : 145001,
+                  large, out, buf, len, errnop);
+}
+
+enum nss_status FN(getrpcbynumber_r)(int number, struct rpcent *out,
+                                    char *buf, size_t len, int *errnop) {
+  trace("getrpcbynumber_r", NULL);
+  enum nss_status status;
+  if (forced(&status, errnop)) return status;
+  const char *name = number == -7 ? "negative" : number == 2147483647 ? "wide"
+                     : number == 100000 ? "module-portmapper" : "fltest-rpc-record";
+  if (number != -7 && number != 2147483647 && number != 100000 &&
+      number != 145001 && number != 145002) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  return fill_rpc(name, number, number == 145002, out, buf, len, errnop);
+}
+
+static size_t rpc_enum_cursor;
+static int (*rpc_enum_reentry)(void);
+static int rpc_enum_callback_ran;
+
+void FN(set_rpc_enum_reentry)(int (*callback)(void)) {
+  rpc_enum_reentry = callback;
+}
+
+#ifndef NO_RPC_SET
+enum nss_status FN(setrpcent)(int stayopen) {
+  (void)stayopen;
+  trace("setrpcent", "");
+  rpc_enum_cursor = 0;
+  rpc_enum_callback_ran = 0;
+  return netdb_enum_status("FLTEST_RPC_ENUM", "set", &errno);
+}
+#endif
+
+#ifndef NO_RPC_END
+enum nss_status FN(endrpcent)(void) {
+  trace("endrpcent", "");
+  rpc_enum_cursor = 0;
+  return NSS_STATUS_SUCCESS;
+}
+#endif
+
+enum nss_status FN(getrpcent_r)(struct rpcent *out, char *buf, size_t len,
+                               int *errnop) {
+  trace("getrpcent_r", "");
+  enum nss_status status = netdb_enum_status("FLTEST_RPC_ENUM", "get", errnop);
+  if (status != NSS_STATUS_SUCCESS) return status;
+  if (rpc_enum_cursor >= 2) return NSS_STATUS_NOTFOUND;
+  if (rpc_enum_reentry && !rpc_enum_callback_ran) {
+    rpc_enum_callback_ran = 1;
+    if (rpc_enum_reentry()) { *errnop = EIO; return NSS_STATUS_UNAVAIL; }
+  }
+  int large = rpc_enum_cursor != 0;
+  status = fill_rpc(large ? STR(SERVICE) "-rpc-large" : STR(SERVICE) "-rpc-small",
+                   large ? 145002 : 145001, large, out, buf, len, errnop);
+  if (status == NSS_STATUS_SUCCESS) ++rpc_enum_cursor;
+  return status;
+}
+
 static const unsigned char host_v4[2][4] = {
     {192, 0, 2, 41}, {192, 0, 2, 42},
 };

@@ -55,12 +55,12 @@ struct ConfigCache {
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 8],
+    parsed: [Option<Arc<Vec<Service>>>; 9],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
     /// Process-local overrides are independent of the on-disk image. A
     /// fingerprint or path change must never erase an explicit selection.
-    overrides: [Option<Arc<Vec<Service>>>; 8],
+    overrides: [Option<Arc<Vec<Service>>>; 9],
     hosts_override: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     hosts_parsed: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     /// GNU freezes the whole configuration on the first successful runtime
@@ -73,9 +73,9 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None, None, None, None, None],
+    parsed: [None, None, None, None, None, None, None, None, None],
     initgroups_explicit: None,
-    overrides: [None, None, None, None, None, None, None, None],
+    overrides: [None, None, None, None, None, None, None, None, None],
     hosts_override: None,
     hosts_parsed: None,
     frozen: false,
@@ -108,6 +108,7 @@ pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), Confi
         b"publickey" => Database::Publickey,
         b"services" => Database::Services,
         b"protocols" => Database::Protocols,
+        b"rpc" => Database::Rpc,
         b"netgroup" => Database::Netgroup,
         _ => return Err(ConfigureError::UnknownDatabase),
     };
@@ -129,7 +130,7 @@ fn freeze_config(cache: &mut ConfigCache, read: fn(&ConfigCache) -> Option<Vec<u
     if !cache.frozen {
         cache.snapshot = read(cache);
         cache.frozen = true;
-        cache.parsed = [None, None, None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -167,6 +168,7 @@ fn database_slot(database: Database) -> usize {
         Database::Services => 5,
         Database::Netgroup => 6,
         Database::Protocols => 7,
+        Database::Rpc => 8,
     }
 }
 
@@ -277,7 +279,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -1061,6 +1063,7 @@ pub(crate) enum NetdbDatabase {
     Services,
     Protocols,
     Hosts,
+    Rpc,
 }
 
 impl NetdbDatabase {
@@ -1069,6 +1072,7 @@ impl NetdbDatabase {
             Self::Services => services(Database::Services),
             Self::Protocols => services(Database::Protocols),
             Self::Hosts => Arc::new(hosts_policy().enumeration_sources()),
+            Self::Rpc => services(Database::Rpc),
         }
     }
 
@@ -1077,6 +1081,7 @@ impl NetdbDatabase {
             Self::Services => ("setservent", "getservent_r", "endservent"),
             Self::Protocols => ("setprotoent", "getprotoent_r", "endprotoent"),
             Self::Hosts => ("sethostent", "gethostent_r", "endhostent"),
+            Self::Rpc => ("setrpcent", "getrpcent_r", "endrpcent"),
         }
     }
 }
@@ -1110,6 +1115,10 @@ impl NetdbEnumeration {
                 }
                 NetdbDatabase::Protocols => {
                     let next: GetEntFn<libc::protoent> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+                NetdbDatabase::Rpc => {
+                    let next: GetEntFn<crate::unistd_abi::RpcEnt> = core::mem::transmute(self.next);
                     next(output.cast(), buffer, capacity, error)
                 }
                 NetdbDatabase::Hosts => {
@@ -1162,6 +1171,61 @@ pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_
     // SAFETY: these NSS end callbacks take no arguments and return nss_status.
     let function: EndEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function() })
+}
+
+/// Dispatch an RPC lookup with the caller's exact buffer. Provider errno
+/// remains live across source transitions; the public wrapper clears it only
+/// after a final successful lookup or definitive miss.
+///
+/// # Safety
+/// The complete rpcent object and buf[..len] are writable for the callback.
+pub(crate) unsafe fn rpc_entry_r(
+    service: &[u8],
+    key: crate::unistd_abi::RpcLookup<'_>,
+    out: *mut crate::unistd_abi::RpcEnt,
+    buf: *mut c_char,
+    len: usize,
+) -> Answer<()> {
+    use crate::unistd_abi::{RpcEnt, RpcLookup};
+    let function = match key {
+        RpcLookup::Name(_) => "getrpcbyname_r",
+        RpcLookup::Number(_) => "getrpcbynumber_r",
+    };
+    let Some(address) = module_function(service, function) else {
+        return Answer::Unavailable(missing_source());
+    };
+    // SAFETY: the canonical errno cell belongs to this thread.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    // SAFETY: the lookup name determines the installed module's signature.
+    // Caller storage and the terminated key remain live across the callback.
+    let status = unsafe {
+        match key {
+            RpcLookup::Name(name) => {
+                let mut terminated = name.to_vec();
+                terminated.push(0);
+                let call: ByNameFn<RpcEnt> = core::mem::transmute(address);
+                call(terminated.as_ptr().cast(), out, buf, len, error)
+            }
+            RpcLookup::Number(number) => {
+                type ByNumber = unsafe extern "C" fn(
+                    c_int,
+                    *mut RpcEnt,
+                    *mut c_char,
+                    usize,
+                    *mut c_int,
+                ) -> c_int;
+                let call: ByNumber = core::mem::transmute(address);
+                call(number, out, buf, len, error)
+            }
+        }
+    };
+    match classify(status, unsafe { *error }) {
+        Raw::Range => Answer::BufferTooSmall,
+        Raw::Status(Status::Success, _) => Answer::Found(()),
+        Raw::Status(Status::NotFound, _) => Answer::NotFound,
+        Raw::Status(Status::TryAgain, error) => Answer::TryAgain(error),
+        Raw::Status(Status::Unavailable, error) => Answer::Unavailable(error),
+    }
 }
 
 #[derive(Clone, Copy)]

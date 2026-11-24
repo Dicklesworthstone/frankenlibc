@@ -1,5 +1,5 @@
 //! Name Service Switch dispatch policy for passwd, group, shadow, initgroups
-//! services, protocols, netgroup and Secure RPC publickey databases.
+//! services, protocols, RPC, netgroup and Secure RPC publickey databases.
 //!
 //! Clean-room from the GNU libc manual ("The NSS Configuration File",
 //! "Actions in the NSS configuration") and behaviour measured against glibc
@@ -166,6 +166,7 @@ pub enum Database {
     Publickey,
     Services,
     Protocols,
+    Rpc,
     Netgroup,
 }
 
@@ -179,6 +180,7 @@ impl Database {
             Self::Publickey => b"publickey",
             Self::Services => b"services",
             Self::Protocols => b"protocols",
+            Self::Rpc => b"rpc",
             Self::Netgroup => b"netgroup",
         }
     }
@@ -212,6 +214,7 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
         | Database::Publickey
         | Database::Services
         | Database::Protocols
+        | Database::Rpc
         | Database::Netgroup => None,
     };
     if let Some(fallback) = fallback
@@ -500,6 +503,7 @@ mod tests {
                 "publickey" => Database::Publickey,
                 "services" => Database::Services,
                 "protocols" => Database::Protocols,
+                "rpc" => Database::Rpc,
                 "netgroup" => Database::Netgroup,
                 _ => Database::Initgroups,
             },
@@ -517,6 +521,24 @@ mod tests {
             names(&services_for(Some(b"hosts: dns\n"), Database::Group)),
             [b"files"]
         );
+    }
+
+    #[test]
+    fn rpc_uses_its_own_policy_and_files_default() {
+        assert_eq!(names(&services_for(None, Database::Rpc)), [b"files"]);
+        assert_eq!(
+            names(&services_for(Some(b"protocols: remote\n"), Database::Rpc)),
+            [b"files"]
+        );
+        assert!(services_for(Some(b"rpc:\n"), Database::Rpc).is_empty());
+        let sources = services_for(
+            Some(b"rpc: stale\nprotocols: other\nrpc: remote [NOTFOUND=return TRYAGAIN=continue] files\n"),
+            Database::Rpc,
+        );
+        assert_eq!(names(&sources), [b"remote".as_slice(), b"files"]);
+        assert_eq!(sources[0].action(Status::NotFound), Action::Return);
+        assert_eq!(sources[0].action(Status::TryAgain), Action::Continue);
+        assert_eq!(sources[0].action(Status::Success), Action::Return);
     }
 
     #[test]

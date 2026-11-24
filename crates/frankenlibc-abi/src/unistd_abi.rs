@@ -21,10 +21,10 @@ use crate::runtime_policy;
 use crate::util::scan_c_string;
 
 #[repr(C)]
-struct RpcEnt {
-    r_name: *mut c_char,
-    r_aliases: *mut *mut c_char,
-    r_number: c_int,
+pub(crate) struct RpcEnt {
+    pub(crate) r_name: *mut c_char,
+    pub(crate) r_aliases: *mut *mut c_char,
+    pub(crate) r_number: c_int,
 }
 
 #[repr(C)]
@@ -12125,7 +12125,7 @@ pub unsafe extern "C" fn _nss_files_endnetent() -> c_int {
 /// Close the native RPC enumeration source and discard any pending retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endrpcent() -> c_int {
-    unsafe { endrpcent() };
+    files_endrpcent();
     NSS_STATUS_SUCCESS
 }
 /// Close the native group-security database cursor.
@@ -22615,6 +22615,7 @@ impl NetdbIteration {
                 crate::nss_module::NetdbDatabase::Services => files_setservent(),
                 crate::nss_module::NetdbDatabase::Protocols => files_setprotoent(),
                 crate::nss_module::NetdbDatabase::Hosts => files_sethostent(),
+                crate::nss_module::NetdbDatabase::Rpc => files_setrpcent(),
             };
             Some(match error {
                 0 => NSS_STATUS_SUCCESS,
@@ -22682,6 +22683,7 @@ impl NetdbIteration {
                     crate::nss_module::NetdbDatabase::Services => files_endservent(),
                     crate::nss_module::NetdbDatabase::Protocols => files_endprotoent(),
                     crate::nss_module::NetdbDatabase::Hosts => files_endhostent(),
+                    crate::nss_module::NetdbDatabase::Rpc => files_endrpcent(),
                 }
                 true
             } else {
@@ -22792,6 +22794,17 @@ impl NetdbIteration {
                 // SAFETY: this leased state and caller storage survive the
                 // callback; no mutable TLS borrow or policy lock is retained.
                 unsafe { module.next_r(output, buffer, capacity) }
+            } else if matches!(self.database, crate::nss_module::NetdbDatabase::Rpc) {
+                // SAFETY: the caller supplies a checked rpcent and the exact
+                // writable buffer; the files provider retains its retry cursor.
+                unsafe {
+                    _nss_files_getrpcent_r(
+                        output,
+                        buffer,
+                        capacity,
+                        crate::errno_abi::__errno_location(),
+                    )
+                }
             } else if matches!(self.database, crate::nss_module::NetdbDatabase::Hosts) {
                 // SAFETY: host callers supply a checked hostent and writable
                 // buffer. The direct files provider preserves GNU's distinct
@@ -22821,6 +22834,7 @@ impl NetdbIteration {
                         unsafe { state.next_r(output, buffer, capacity, &mut result) }
                     }),
                     crate::nss_module::NetdbDatabase::Hosts => unreachable!("hosts handled above"),
+                    crate::nss_module::NetdbDatabase::Rpc => unreachable!("RPC handled above"),
                 };
                 match outcome {
                     Ok(found) => {
@@ -28103,6 +28117,8 @@ pub fn with_rpc_database_for_tests<R>(path: &std::path::Path, callback: impl FnO
 struct RpcEntryState {
     buffer: Vec<u8>,
     entry: RpcEnt,
+    iteration_buffer: Vec<u8>,
+    iteration_entry: RpcEnt,
 }
 
 fn new_rpc_entry_state() -> RpcEntryState {
@@ -28113,16 +28129,19 @@ fn new_rpc_entry_state() -> RpcEntryState {
             r_aliases: std::ptr::null_mut(),
             r_number: 0,
         },
+        iteration_buffer: Vec::new(),
+        iteration_entry: RpcEnt {
+            r_name: std::ptr::null_mut(),
+            r_aliases: std::ptr::null_mut(),
+            r_number: 0,
+        },
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed RPC scratch state per
-// thread id. Every published pointer refers into that same state's buffer,
-// and packing rebuilds the pointers after any buffer growth.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: each RPC state belongs to one actual thread owner. Published
+// pointers refer to its private result buffers, rebuilt after any growth.
 unsafe impl Send for RpcEntryState {}
 
-#[cfg(feature = "owned-tls-cache")]
 static RPC_ENTRY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcEntryState> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_rpc_entry_state);
 
@@ -28142,6 +28161,9 @@ fn with_rpc_entry_state<R>(callback: impl FnOnce(&mut RpcEntryState) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return RPC_ENTRY_OWNED_TLS.with(callback);
+        }
         RPC_ENTRY_TLS.with(|slot| {
             slot.with_init(
                 || std::cell::RefCell::new(new_rpc_entry_state()),
@@ -28149,6 +28171,116 @@ fn with_rpc_entry_state<R>(callback: impl FnOnce(&mut RpcEntryState) -> R) -> R 
             )
         })
     }
+}
+
+/// Lend keyed-result storage without retaining a mutable TLS borrow across
+/// a provider callback. A nested independent lookup receives its own buffer.
+struct RpcLookupBuffer(Vec<u8>);
+
+impl RpcLookupBuffer {
+    fn take() -> Self {
+        Self(with_rpc_entry_state(|state| std::mem::take(&mut state.buffer)))
+    }
+}
+
+impl Drop for RpcLookupBuffer {
+    fn drop(&mut self) {
+        let saved_errno = current_abi_errno();
+        let buffer = std::mem::take(&mut self.0);
+        with_rpc_entry_state(|state| state.buffer = buffer);
+        // SAFETY: storage restoration must not replace a provider's errno.
+        unsafe { set_abi_errno(saved_errno) };
+    }
+}
+
+/// RPC enumeration has one process-wide source position, just like the files
+/// cursor. Serialize different callers without retaining the registry mutex
+/// across foreign callbacks; a callback on the active owner fails reentry.
+struct RpcEnumerationState {
+    owner: c_int,
+    iteration: NetdbIteration,
+}
+
+static RPC_ENUMERATION: std::sync::Mutex<RpcEnumerationState> =
+    std::sync::Mutex::new(RpcEnumerationState {
+        owner: 0,
+        iteration: NetdbIteration::new(crate::nss_module::NetdbDatabase::Rpc),
+    });
+static RPC_ENUMERATION_AVAILABLE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Enumeration and keyed results have separate per-owner buffers. The shared
+/// traversal is leased out of its registry while the current provider runs.
+struct RpcIterationLease {
+    iteration: NetdbIteration,
+    buffer: Vec<u8>,
+}
+
+impl RpcIterationLease {
+    fn acquire() -> Option<Self> {
+        let saved_errno = current_abi_errno();
+        let owner = syscall::sys_gettid() as c_int;
+        let mut state = RPC_ENUMERATION
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.owner == owner {
+            // SAFETY: synchronization must not replace the caller's errno.
+            unsafe { set_abi_errno(saved_errno) };
+            return None;
+        }
+        while state.owner != 0 {
+            state = RPC_ENUMERATION_AVAILABLE
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        state.owner = owner;
+        let iteration = std::mem::replace(
+            &mut state.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Rpc),
+        );
+        drop(state);
+        let buffer = with_rpc_entry_state(|state| std::mem::take(&mut state.iteration_buffer));
+        // SAFETY: locking and TLS initialization must not affect provider errno.
+        unsafe { set_abi_errno(saved_errno) };
+        Some(Self { iteration, buffer })
+    }
+}
+
+impl Drop for RpcIterationLease {
+    fn drop(&mut self) {
+        let saved_errno = current_abi_errno();
+        let iteration = std::mem::replace(
+            &mut self.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Rpc),
+        );
+        let buffer = std::mem::take(&mut self.buffer);
+        with_rpc_entry_state(|state| state.iteration_buffer = buffer);
+        let mut state = RPC_ENUMERATION
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.iteration = iteration;
+        state.owner = 0;
+        drop(state);
+        RPC_ENUMERATION_AVAILABLE.notify_one();
+        // SAFETY: storage restoration must not replace a provider's errno.
+        unsafe { set_abi_errno(saved_errno) };
+    }
+}
+
+fn reserve_rpc_result(buffer: &mut Vec<u8>, capacity: usize) -> Result<(), c_int> {
+    if capacity > buffer.len() {
+        buffer
+            .try_reserve_exact(capacity - buffer.len())
+            .map_err(|_| libc::ENOMEM)?;
+        buffer.resize(capacity, 0);
+    }
+    Ok(())
+}
+
+fn larger_rpc_result(capacity: usize) -> Result<usize, c_int> {
+    capacity
+        .checked_mul(2)
+        .filter(|&size| size <= isize::MAX as usize)
+        .ok_or(libc::ENOMEM)
 }
 
 /// Size of all strings and the complete, NULL-terminated alias table.
@@ -28221,33 +28353,129 @@ unsafe fn fill_rpcent_result(
     Ok(())
 }
 
-fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> Result<*mut c_void, c_int> {
-    let needed = rpc_entry_storage_bytes(entry)?
-        .checked_add(core::mem::align_of::<*mut c_char>() - 1)
-        .ok_or(libc::ENOMEM)?;
-    with_rpc_entry_state(|state| {
-        if state.buffer.len() < needed {
-            state
-                .buffer
-                .try_reserve(needed - state.buffer.len())
-                .map_err(|_| libc::ENOMEM)?;
-            state.buffer.resize(needed, 0);
+/// Dispatch through one immutable RPC policy image, with exact caller storage.
+/// No files cursor, configuration lock or result-storage borrow spans a module.
+unsafe fn rpc_configured_lookup_r(
+    key: RpcLookup<'_>,
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    use frankenlibc_core::nss::{Answer, Database};
+    // SAFETY: initialize the caller's result before lookup or callback work.
+    if let Err(error) = unsafe { rpc_prepare_result(result_buf, buffer, result) } {
+        unsafe { set_abi_errno(error) };
+        return error;
+    }
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let sources = crate::nss_module::services(Database::Rpc);
+    let answer = frankenlibc_core::nss::lookup(
+        &sources,
+        |source| {
+            // SAFETY: complete output objects and the bounded buffer are live
+            // across each callback; only the final answer publishes result.
+            unsafe {
+                if source.name() != b"files" {
+                    return crate::nss_module::rpc_entry_r(
+                        source.name(), key, result_buf.cast(), buffer, capacity,
+                    );
+                }
+                let saved_errno = current_abi_errno();
+                let mut files_result = std::ptr::null_mut();
+                let outcome = rpc_lookup_result(
+                    key, result_buf, buffer, capacity, &mut files_result,
+                );
+                let status = rpc_nss_status(
+                    outcome,
+                    crate::errno_abi::__errno_location(),
+                    saved_errno,
+                    capacity,
+                    false,
+                );
+                let error = current_abi_errno();
+                match status {
+                    NSS_STATUS_SUCCESS => Answer::Found(()),
+                    NSS_STATUS_NOTFOUND => Answer::NotFound,
+                    NSS_STATUS_TRYAGAIN if error == libc::ERANGE => Answer::BufferTooSmall,
+                    NSS_STATUS_TRYAGAIN => Answer::TryAgain(error),
+                    _ => Answer::Unavailable(error),
+                }
+            }
+        },
+        None,
+    );
+    match answer {
+        Answer::Found(()) => {
+            // SAFETY: the final provider initialized the checked result.
+            unsafe {
+                result.write(result_buf);
+                set_abi_errno(0);
+            }
+            0
         }
-        // SAFETY: the typed record is aligned and the Vec owns enough bytes
-        // for every field, including worst-case initial pointer padding.
-        unsafe {
-            fill_rpcent_result(
-                entry,
-                (&raw mut state.entry).cast(),
-                state.buffer.as_mut_ptr().cast(),
-                state.buffer.len(),
-            )
-        }?;
-        Ok((&raw mut state.entry).cast())
-    })
+        Answer::NotFound => {
+            // SAFETY: a definitive keyed miss clears errno in GNU's API.
+            unsafe { set_abi_errno(0) };
+            0
+        }
+        Answer::Unavailable(error) | Answer::TryAgain(error) => {
+            unsafe { set_abi_errno(error) };
+            error
+        }
+        Answer::BufferTooSmall => {
+            unsafe { set_abi_errno(libc::ERANGE) };
+            libc::ERANGE
+        }
+    }
 }
 
-enum RpcLookup<'a> {
+fn rpc_lookup_nonreentrant(key: RpcLookup<'_>) -> *mut c_void {
+    let mut storage = RpcLookupBuffer::take();
+    let mut entry = std::mem::MaybeUninit::<RpcEnt>::uninit();
+    let mut capacity = storage.0.len().max(1024);
+    loop {
+        if let Err(error) = reserve_rpc_result(&mut storage.0, capacity) {
+            // SAFETY: allocation failure belongs to this caller.
+            unsafe { set_abi_errno(error) };
+            return std::ptr::null_mut();
+        }
+        let mut result = std::ptr::null_mut();
+        // SAFETY: the local output and leased scratch remain live and disjoint.
+        let rc = unsafe {
+            rpc_configured_lookup_r(
+                key,
+                entry.as_mut_ptr().cast(),
+                storage.0.as_mut_ptr().cast(),
+                capacity,
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE {
+            match larger_rpc_result(capacity) {
+                Ok(next) => capacity = next,
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    return std::ptr::null_mut();
+                }
+            }
+            continue;
+        }
+        if result.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: only a successful provider publishes a non-null result.
+        let entry = unsafe { entry.assume_init() };
+        drop(storage);
+        return with_rpc_entry_state(|state| {
+            state.entry = entry;
+            (&raw mut state.entry).cast()
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RpcLookup<'a> {
     Name(&'a [u8]),
     Number(c_int),
 }
@@ -28355,36 +28583,6 @@ fn files_setrpcent() -> c_int {
         .unwrap_or(0)
 }
 
-fn rpc_public_status(
-    outcome: Result<bool, RpcDbError>,
-    saved_errno: c_int,
-    enumeration: bool,
-) -> c_int {
-    match outcome {
-        Ok(found) => {
-            // GNU keyed lookups clear errno; enumeration preserves it at EOF.
-            unsafe { set_abi_errno(if enumeration { saved_errno } else { 0 }) };
-            if !found && enumeration {
-                libc::ENOENT
-            } else {
-                0
-            }
-        }
-        Err(RpcDbError::Open(_)) if enumeration => {
-            unsafe { set_abi_errno(saved_errno) };
-            libc::ENOENT
-        }
-        Err(RpcDbError::Read(error)) if enumeration => {
-            unsafe { set_abi_errno(error) };
-            libc::ENOENT
-        }
-        Err(error) => {
-            unsafe { set_abi_errno(error.code()) };
-            error.code()
-        }
-    }
-}
-
 unsafe fn rpc_nss_status(
     outcome: Result<bool, RpcDbError>,
     errnop: *mut c_int,
@@ -28433,50 +28631,48 @@ unsafe fn rpc_nss_status(
     }
 }
 
-/// Close the RPC enumeration source and discard any pending retry.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endrpcent() {
+fn files_endrpcent() {
     let saved_errno = current_abi_errno();
     RPC_DB
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .reset();
+    // SAFETY: closing the native cursor preserves the caller's errno.
     unsafe { set_abi_errno(saved_errno) };
 }
 
-/// Open or rewind the native RPC enumeration source.
+/// Close configured RPC providers without invalidating the last result.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setrpcent(_stayopen: c_int) {
-    let saved_errno = current_abi_errno();
-    let error = files_setrpcent();
-    unsafe { set_abi_errno(if error == 0 { saved_errno } else { error }) };
+pub unsafe extern "C" fn endrpcent() {
+    let Some(mut lease) = RpcIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot alias the active traversal.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.end();
 }
 
-/// Find a canonical RPC name or alias without truncating the returned record.
+/// Select and rewind the first available configured RPC provider.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setrpcent(stayopen: c_int) {
+    let Some(mut lease) = RpcIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.rewind(stayopen);
+}
+
+/// Find a configured RPC name or alias using growable private result storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcbyname(name: *const c_char) -> *mut c_void {
     let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         return std::ptr::null_mut();
     };
-    let outcome = rpc_lookup_entry(RpcLookup::Name(&name), None).and_then(|entry| {
-        entry.map_or(Ok(std::ptr::null_mut()), |entry| {
-            fill_rpc_tls_from_entry(&entry).map_err(RpcDbError::Output)
-        })
-    });
-    match outcome {
-        Ok(result) => {
-            unsafe { set_abi_errno(0) };
-            result
-        }
-        Err(error) => {
-            unsafe { set_abi_errno(error.code()) };
-            std::ptr::null_mut()
-        }
-    }
+    rpc_lookup_nonreentrant(RpcLookup::Name(&name))
 }
 
-/// Look up an RPC name directly into the caller's complete result storage.
+/// Look up an RPC name into the caller's exact, bounded result storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcbyname_r(
     name: *const c_char,
@@ -28485,29 +28681,26 @@ pub unsafe extern "C" fn getrpcbyname_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    let saved_errno = current_abi_errno();
-    let outcome = unsafe { rpc_name_result(name, result_buf, buffer, buflen, result) };
-    rpc_public_status(outcome, saved_errno, false)
+    // SAFETY: initialize the output even when the supplied name is invalid.
+    if let Err(error) = unsafe { rpc_prepare_result(result_buf, buffer, result) } {
+        unsafe { set_abi_errno(error) };
+        return error;
+    }
+    let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EINVAL;
+    };
+    unsafe {
+        rpc_configured_lookup_r(
+            RpcLookup::Name(&name), result_buf, buffer, buflen, result,
+        )
+    }
 }
 
-/// Find an RPC program number using dynamically sized nonreentrant storage.
+/// Find a configured RPC program number without truncating long aliases.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcbynumber(number: c_int) -> *mut c_void {
-    let outcome = rpc_lookup_entry(RpcLookup::Number(number), None).and_then(|entry| {
-        entry.map_or(Ok(std::ptr::null_mut()), |entry| {
-            fill_rpc_tls_from_entry(&entry).map_err(RpcDbError::Output)
-        })
-    });
-    match outcome {
-        Ok(result) => {
-            unsafe { set_abi_errno(0) };
-            result
-        }
-        Err(error) => {
-            unsafe { set_abi_errno(error.code()) };
-            std::ptr::null_mut()
-        }
-    }
+    rpc_lookup_nonreentrant(RpcLookup::Number(number))
 }
 
 /// Look up an RPC program number directly into caller-owned storage.
@@ -28519,49 +28712,59 @@ pub unsafe extern "C" fn getrpcbynumber_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    let saved_errno = current_abi_errno();
-    let outcome = unsafe {
-        rpc_lookup_result(
-            RpcLookup::Number(number),
-            result_buf,
-            buffer,
-            buflen,
-            result,
+    // SAFETY: the shared dispatcher validates all caller output objects.
+    unsafe {
+        rpc_configured_lookup_r(
+            RpcLookup::Number(number), result_buf, buffer, buflen, result,
         )
-    };
-    rpc_public_status(outcome, saved_errno, false)
+    }
 }
 
-/// Read the next valid RPC record, growing the answer instead of truncating it.
+/// Enumerate configured RPC sources, retaining complete records across ERANGE.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcent() -> *mut c_void {
-    let saved_errno = current_abi_errno();
-    let outcome = (|| {
-        let mut db = RPC_DB.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(entry) = db.next_entry(None)? else {
-            return Ok(std::ptr::null_mut());
+    let Some(mut lease) = RpcIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return std::ptr::null_mut();
+    };
+    let mut entry = std::mem::MaybeUninit::<RpcEnt>::uninit();
+    let mut capacity = lease.buffer.len().max(1024);
+    loop {
+        if let Err(error) = reserve_rpc_result(&mut lease.buffer, capacity) {
+            unsafe { set_abi_errno(error) };
+            return std::ptr::null_mut();
+        }
+        // SAFETY: the complete output and leased buffer survive each callback.
+        let status = unsafe {
+            lease.iteration.next_r(
+                entry.as_mut_ptr().cast(),
+                lease.buffer.as_mut_ptr().cast(),
+                capacity,
+            )
         };
-        let result = fill_rpc_tls_from_entry(&entry).map_err(RpcDbError::Output)?;
-        db.pending = false;
-        Ok(result)
-    })();
-    match outcome {
-        Ok(result) => {
-            unsafe { set_abi_errno(saved_errno) };
-            result
+        if status == NSS_STATUS_SUCCESS {
+            // SAFETY: a successful provider initialized the complete record.
+            let entry = unsafe { entry.assume_init() };
+            drop(lease);
+            return with_rpc_entry_state(|state| {
+                state.iteration_entry = entry;
+                (&raw mut state.iteration_entry).cast()
+            });
         }
-        Err(RpcDbError::Open(_)) => {
-            unsafe { set_abi_errno(saved_errno) };
-            std::ptr::null_mut()
+        if status != NSS_STATUS_TRYAGAIN || current_abi_errno() != libc::ERANGE {
+            return std::ptr::null_mut();
         }
-        Err(error) => {
-            unsafe { set_abi_errno(error.code()) };
-            std::ptr::null_mut()
+        match larger_rpc_result(capacity) {
+            Ok(next) => capacity = next,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return std::ptr::null_mut();
+            }
         }
     }
 }
 
-/// Read a complete RPC record into caller storage; ERANGE retains that record.
+/// Read into exact caller storage; a short buffer retains the provider record.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcent_r(
     result_buf: *mut c_void,
@@ -28569,9 +28772,26 @@ pub unsafe extern "C" fn getrpcent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    let saved_errno = current_abi_errno();
-    let outcome = unsafe { rpc_next_result(result_buf, buffer, buflen, result) };
-    rpc_public_status(outcome, saved_errno, true)
+    // SAFETY: clear and validate the complete output before touching a cursor.
+    if let Err(error) = unsafe { rpc_prepare_result(result_buf, buffer, result) } {
+        unsafe { set_abi_errno(error) };
+        return error;
+    }
+    let Some(mut lease) = RpcIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return libc::EDEADLK;
+    };
+    let capacity = tracked_output_capacity(buffer, buflen);
+    // SAFETY: no mutable thread-state borrow or cursor lock spans the callback.
+    let status = unsafe { lease.iteration.next_r(result_buf, buffer, capacity) };
+    if status == NSS_STATUS_SUCCESS {
+        unsafe { result.write(result_buf) };
+        0
+    } else if status == NSS_STATUS_TRYAGAIN {
+        current_abi_errno()
+    } else {
+        libc::ENOENT
+    }
 }
 
 /// `endttyent` — close tty database iteration.

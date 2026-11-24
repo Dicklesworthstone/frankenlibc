@@ -4408,3 +4408,909 @@ fn hosts_enumeration_files_retry_provider_isolation_and_reentry() {
         );
     }
 }
+
+// RPC has the same scalar field widths as protocols, but a separate public ABI
+// and different errno rules. Keep its provider pointers and result layout
+// explicit so a host/candidate comparison cannot call the same implementation.
+#[repr(C)]
+struct RpcRawRecord {
+    name: *mut c_char,
+    aliases: *mut *mut c_char,
+    number: c_int,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RpcRecord {
+    name: Vec<u8>,
+    number: c_int,
+    aliases: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RpcRequest<'a> {
+    Name(&'a CStr),
+    Number(c_int),
+    Next,
+}
+
+struct RpcApi {
+    name: unsafe extern "C" fn(*const c_char) -> *mut c_void,
+    number: unsafe extern "C" fn(c_int) -> *mut c_void,
+    name_r: unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+    ) -> c_int,
+    number_r:
+        unsafe extern "C" fn(c_int, *mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int,
+    set: unsafe extern "C" fn(c_int),
+    get: unsafe extern "C" fn() -> *mut c_void,
+    get_r: unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int,
+    end: unsafe extern "C" fn(),
+    error: unsafe extern "C" fn() -> *mut c_int,
+}
+
+fn rpc_api(host: bool) -> RpcApi {
+    unsafe extern "C" {
+        #[link_name = "getrpcbyname"]
+        fn host_name(name: *const c_char) -> *mut c_void;
+        #[link_name = "getrpcbynumber"]
+        fn host_number(number: c_int) -> *mut c_void;
+        #[link_name = "getrpcbyname_r"]
+        fn host_name_r(
+            name: *const c_char,
+            output: *mut c_void,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut c_void,
+        ) -> c_int;
+        #[link_name = "getrpcbynumber_r"]
+        fn host_number_r(
+            number: c_int,
+            output: *mut c_void,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut c_void,
+        ) -> c_int;
+        #[link_name = "setrpcent"]
+        fn host_set(stayopen: c_int);
+        #[link_name = "getrpcent"]
+        fn host_get() -> *mut c_void;
+        #[link_name = "getrpcent_r"]
+        fn host_get_r(
+            output: *mut c_void,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut c_void,
+        ) -> c_int;
+        #[link_name = "endrpcent"]
+        fn host_end();
+    }
+    use frankenlibc_abi::{errno_abi as e, unistd_abi as u};
+    assert_ne!(host_name as *const (), u::getrpcbyname as *const ());
+    assert_ne!(host_number_r as *const (), u::getrpcbynumber_r as *const ());
+    assert_ne!(host_get_r as *const (), u::getrpcent_r as *const ());
+    if host {
+        RpcApi {
+            name: host_name,
+            number: host_number,
+            name_r: host_name_r,
+            number_r: host_number_r,
+            set: host_set,
+            get: host_get,
+            get_r: host_get_r,
+            end: host_end,
+            error: libc::__errno_location,
+        }
+    } else {
+        RpcApi {
+            name: u::getrpcbyname,
+            number: u::getrpcbynumber,
+            name_r: u::getrpcbyname_r,
+            number_r: u::getrpcbynumber_r,
+            set: u::setrpcent,
+            get: u::getrpcent,
+            get_r: u::getrpcent_r,
+            end: u::endrpcent,
+            error: e::__errno_location,
+        }
+    }
+}
+
+unsafe fn rpc_record(pointer: *mut c_void, bounds: Option<(usize, usize)>) -> Option<RpcRecord> {
+    if pointer.is_null() {
+        return None;
+    }
+    // SAFETY: successful calls publish the complete C rpcent layout.
+    let entry = unsafe { &*pointer.cast::<RpcRawRecord>() };
+    let string = |pointer: *const c_char| {
+        assert!(!pointer.is_null());
+        if let Some((start, end)) = bounds {
+            let address = pointer as usize;
+            assert!((start..end).contains(&address), "RPC string escaped caller buffer");
+            // SAFETY: the complete remaining range is inside the caller buffer.
+            let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), end - address) };
+            let length = bytes.iter().position(|&byte| byte == 0).expect("terminated RPC string");
+            bytes[..length].to_vec()
+        } else {
+            // SAFETY: non-reentrant answers own terminated strings.
+            unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec()
+        }
+    };
+    assert!(!entry.aliases.is_null());
+    let mut aliases = Vec::new();
+    for index in 0..4096 {
+        let address = (entry.aliases as usize)
+            .checked_add(index * std::mem::size_of::<usize>())
+            .unwrap();
+        assert_eq!(address % std::mem::align_of::<usize>(), 0);
+        if let Some((start, end)) = bounds {
+            assert!(address >= start && address <= end);
+            assert!(std::mem::size_of::<usize>() <= end - address);
+        }
+        // SAFETY: caller-backed slots were bounded above; owned output follows
+        // the API's NULL-terminated alias-array contract.
+        let alias = unsafe { *(address as *const *const c_char) };
+        if alias.is_null() {
+            return Some(RpcRecord {
+                name: string(entry.name),
+                number: entry.number,
+                aliases,
+            });
+        }
+        aliases.push(string(alias));
+    }
+    panic!("RPC alias array was not terminated");
+}
+
+#[repr(align(16))]
+struct RpcCallerBuffer([u8; 8192 + 16]);
+
+fn rpc_call(
+    api: &RpcApi,
+    request: RpcRequest<'_>,
+    capacity: Option<usize>,
+    offset: usize,
+) -> (c_int, c_int, Option<RpcRecord>) {
+    if let Some(capacity) = capacity {
+        let mut storage = RpcCallerBuffer([0x5a; 8192 + 16]);
+        assert!(offset + capacity <= storage.0.len());
+        let mut output: RpcRawRecord = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::dangling_mut();
+        let buffer = unsafe { storage.0.as_mut_ptr().add(offset).cast::<c_char>() };
+        unsafe { *(api.error)() = 619 };
+        // SAFETY: every public API receives complete output objects and an
+        // exact, possibly short or unaligned, caller-owned buffer range.
+        let status = unsafe {
+            match request {
+                RpcRequest::Name(name) => (api.name_r)(
+                    name.as_ptr(), (&raw mut output).cast(), buffer, capacity, &mut result,
+                ),
+                RpcRequest::Number(number) => (api.number_r)(
+                    number, (&raw mut output).cast(), buffer, capacity, &mut result,
+                ),
+                RpcRequest::Next => {
+                    (api.get_r)((&raw mut output).cast(), buffer, capacity, &mut result)
+                }
+            }
+        };
+        let error = unsafe { *(api.error)() };
+        assert!(
+            storage.0[..offset]
+                .iter()
+                .chain(&storage.0[offset + capacity..])
+                .all(|&byte| byte == 0x5a),
+            "RPC wrote outside the caller's exact buffer"
+        );
+        if !result.is_null() {
+            assert_eq!(result, (&raw mut output).cast());
+            assert_eq!(status, 0);
+        }
+        let answer = unsafe {
+            rpc_record(result, Some((buffer as usize, buffer as usize + capacity)))
+        };
+        (status, error, answer)
+    } else {
+        unsafe { *(api.error)() = 619 };
+        let result = unsafe {
+            match request {
+                RpcRequest::Name(name) => (api.name)(name.as_ptr()),
+                RpcRequest::Number(number) => (api.number)(number),
+                RpcRequest::Next => (api.get)(),
+            }
+        };
+        let error = unsafe { *(api.error)() };
+        (0, error, unsafe { rpc_record(result, None) })
+    }
+}
+
+fn configure_rpc(host: bool, sources: &CStr) {
+    unsafe extern "C" {
+        fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+    }
+    let configure = if host {
+        __nss_configure_lookup
+    } else {
+        frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup
+    };
+    assert_eq!(unsafe { configure(c"rpc".as_ptr(), sources.as_ptr()) }, 0);
+}
+
+fn rpc_module_child(test: &str, dir: &Path, sources: &str, tag: &str) -> Command {
+    let mut child = host_module_child(test, dir, &format!("rpc: {sources}\n"), tag);
+    child
+        .env("FLTEST_RPC_SOURCES", sources)
+        .env_remove("LD_PRELOAD")
+        .env_remove("LD_AUDIT")
+        .env_remove("FLTEST_RPC_ENUM")
+        .env_remove("FLTEST_RPC_ISOLATION_PATH");
+    child
+}
+
+#[test]
+fn rpc_lookups_match_glibc_module_policy() {
+    const TEST: &str = "rpc_lookups_match_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_RPC_PROVIDER").unwrap() == "host";
+        let sources = std::env::var("FLTEST_RPC_SOURCES").unwrap();
+        configure_rpc(host, &CString::new(sources.as_str()).unwrap());
+        unsafe { libc::alarm(20) };
+        let api = rpc_api(host);
+        let mut transcript = String::new();
+        let queries = [
+            RpcRequest::Name(c"portmapper"),
+            RpcRequest::Name(c"PORTMAPPER"),
+            RpcRequest::Name(c"fltest-rpc-record"),
+            RpcRequest::Name(c"fltest-rpc"),
+            RpcRequest::Name(c"shared-rpc"),
+            RpcRequest::Name(c"fltest-large-rpc"),
+            RpcRequest::Name(c"fltest-negative"),
+            RpcRequest::Name(c"fltest-wide"),
+            RpcRequest::Name(c"missing-rpc"),
+            RpcRequest::Name(c"fltest-again"),
+            RpcRequest::Name(c"fltest-unavail"),
+            RpcRequest::Name(c"fltest-errno-none"),
+            RpcRequest::Name(c"fltest-errno-again"),
+            RpcRequest::Name(c"fltest-errno-unavail"),
+            RpcRequest::Name(c"fltest-errno-success"),
+            RpcRequest::Name(c"fltest-errno-written"),
+            RpcRequest::Name(c"fltest-chain-success"),
+            RpcRequest::Name(c"fltest-chain-notfound"),
+            RpcRequest::Number(100000),
+            RpcRequest::Number(145001),
+            RpcRequest::Number(145002),
+            RpcRequest::Number(-7),
+            RpcRequest::Number(c_int::MAX),
+            RpcRequest::Number(987654),
+        ];
+        for query in queries {
+            // A files scan may need space for earlier unrelated lines. Compare
+            // exact tiny budgets only when the configured module must answer.
+            let module_answer = match query {
+                RpcRequest::Name(name) => [
+                    c"portmapper",
+                    c"fltest-rpc-record",
+                    c"fltest-rpc",
+                    c"shared-rpc",
+                    c"fltest-large-rpc",
+                    c"fltest-negative",
+                    c"fltest-wide",
+                    c"fltest-errno-success",
+                    c"fltest-errno-written",
+                ]
+                .contains(&name),
+                RpcRequest::Number(number) => {
+                    matches!(number, 100000 | 145001 | 145002 | -7 | c_int::MAX)
+                }
+                RpcRequest::Next => false,
+            };
+            let mut budgets = Vec::new();
+            if sources == "fltest" || (sources.starts_with("fltest ") && module_answer) {
+                budgets.extend([(Some(0), 0), (Some(7), 1)]);
+            }
+            if sources == "fltest" {
+                budgets.push((Some(96), 3));
+            }
+            budgets.extend([(Some(8192), 1), (None, 0)]);
+            for (capacity, offset) in budgets {
+                writeln!(
+                    transcript,
+                    "{query:?} {capacity:?}/{offset} {:?}",
+                    rpc_call(&api, query, capacity, offset)
+                )
+                .unwrap();
+            }
+        }
+        if sources == "fltest" {
+            // Probe the actual one-byte success boundary at every pointer
+            // alignment, including all strings and the terminating alias slot.
+            let pointer_size = std::mem::size_of::<*mut c_char>();
+            let packed_size = 3 * pointer_size + b"fltest-rpc-record\0".len()
+                + b"fltest-rpc\0".len() + b"shared-rpc\0".len();
+            for offset in 0..pointer_size {
+                let needed = packed_size + (pointer_size - offset) % pointer_size;
+                let short = rpc_call(
+                    &api, RpcRequest::Name(c"fltest-rpc-record"), Some(needed - 1), offset,
+                );
+                assert_eq!(short, (libc::ERANGE, libc::ERANGE, None));
+                let exact = rpc_call(
+                    &api, RpcRequest::Name(c"fltest-rpc-record"), Some(needed), offset,
+                );
+                assert_eq!((exact.0, exact.1), (0, 0));
+                assert_eq!(exact.2.as_ref().unwrap().number, 145001);
+                writeln!(transcript, "exact {needed}/{offset} {short:?} {exact:?}").unwrap();
+            }
+            let large = rpc_call(&api, RpcRequest::Name(c"fltest-large-rpc"), None, 0);
+            assert_eq!(large.2.as_ref().unwrap().aliases[2], vec![b'r'; 3072]);
+        }
+        println!("RPC_LOOKUP_BEGIN\n{transcript}RPC_LOOKUP_END");
+        unsafe { libc::alarm(0) };
+        return;
+    }
+
+    let dir = host_enumeration_scratch("rpc-lookups");
+    build_modules(&dir);
+    let cases = [
+        "fltest",
+        "files",
+        "fltest files",
+        "files fltest",
+        "fltest [SUCCESS=continue] files",
+        "fltest [SUCCESS=continue] fltestnoig",
+        "fltest fltestnoig",
+        "fltest [SUCCESS=merge] files",
+        "fltest [NOTFOUND=return] files",
+        "fltest [TRYAGAIN=return] files",
+        "fltest [TRYAGAIN=continue] files",
+        "fltest [UNAVAIL=return] files",
+        "flmissing files",
+        "flmissing [UNAVAIL=return] files",
+        "compat files",
+    ];
+    let mut compared = 0;
+    for (index, sources) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("rpc-lookup-{index}-{provider}-{mode}");
+            let mut child = rpc_module_child(TEST, &dir, sources, &label);
+            child
+                .env("FLTEST_RPC_PROVIDER", provider)
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &label);
+            let stdout = std::str::from_utf8(&output.stdout).unwrap();
+            let transcript = stdout
+                .split_once("RPC_LOOKUP_BEGIN\n")
+                .and_then(|(_, rest)| rest.split_once("RPC_LOOKUP_END"))
+                .map(|(text, _)| text)
+                .expect("executed RPC lookup transcript")
+                .to_owned();
+            assert!(transcript.lines().count() >= 48);
+            if sources == "fltest" {
+                assert!(
+                    transcript.contains("number: 145001")
+                        && transcript.contains("number: 145002")
+                        && transcript.contains("number: -7")
+                        && transcript.contains("number: 2147483647"),
+                    "module answers must preserve aliases and full signed program numbers"
+                );
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(&transcript, expected, "{label}: sources={sources}");
+                compared += 1;
+            } else {
+                oracle = Some(transcript);
+            }
+        }
+    }
+    assert_eq!(compared, 30);
+    eprintln!("RPC lookups: {compared} independent GNU/candidate process comparisons");
+}
+
+fn rpc_enumeration_transcript(api: &RpcApi) -> String {
+    let mut transcript = String::new();
+    unsafe { (api.end)() };
+    for capacity in [0, 1, 7] {
+        writeln!(
+            transcript,
+            "implicit {capacity} {:?}",
+            rpc_call(api, RpcRequest::Next, Some(capacity), 1)
+        )
+        .unwrap();
+    }
+    for index in 0..7 {
+        let answer = rpc_call(api, RpcRequest::Next, Some(8192), index % 2);
+        let done = answer.2.is_none();
+        writeln!(transcript, "implicit record {index} {answer:?}").unwrap();
+        if done {
+            break;
+        }
+    }
+    unsafe {
+        (api.end)();
+        *(api.error)() = 619;
+        (api.set)(1);
+    }
+    writeln!(transcript, "set stayopen errno {}", unsafe { *(api.error)() }).unwrap();
+    for index in 0..7 {
+        let answer = rpc_call(api, RpcRequest::Next, None, 0);
+        let done = answer.2.is_none();
+        writeln!(transcript, "owned record {index} {answer:?}").unwrap();
+        if done {
+            break;
+        }
+    }
+    unsafe { (api.set)(0) };
+    writeln!(
+        transcript,
+        "short {:?}",
+        rpc_call(api, RpcRequest::Next, Some(1), 0)
+    )
+    .unwrap();
+    writeln!(
+        transcript,
+        "retry {:?}",
+        rpc_call(api, RpcRequest::Next, Some(8192), 1)
+    )
+    .unwrap();
+    unsafe {
+        (api.end)();
+        (api.set)(0);
+    }
+    writeln!(
+        transcript,
+        "early end {:?}",
+        rpc_call(api, RpcRequest::Next, Some(8192), 0)
+    )
+    .unwrap();
+    unsafe {
+        (api.end)();
+        (api.end)();
+    }
+    writeln!(
+        transcript,
+        "after end {:?}",
+        rpc_call(api, RpcRequest::Next, Some(8192), 1)
+    )
+    .unwrap();
+    unsafe { (api.end)() };
+    transcript
+}
+
+#[test]
+fn rpc_enumeration_matches_glibc_module_policy_and_isolation() {
+    const TEST: &str = "rpc_enumeration_matches_glibc_module_policy_and_isolation";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        unsafe { libc::alarm(20) };
+        #[cfg(debug_assertions)]
+        if let Some(path) = std::env::var_os("FLTEST_RPC_ISOLATION_PATH") {
+            rpc_native_isolation(&PathBuf::from(path));
+            unsafe { libc::alarm(0) };
+            println!("RPC files, buffer ownership and recursive provider isolation checked");
+            return;
+        }
+        let host = std::env::var("FLTEST_RPC_PROVIDER").unwrap() == "host";
+        let sources = CString::new(std::env::var("FLTEST_RPC_SOURCES").unwrap()).unwrap();
+        configure_rpc(host, &sources);
+        let transcript = rpc_enumeration_transcript(&rpc_api(host));
+        println!("RPC_ENUM_BEGIN\n{transcript}RPC_ENUM_END");
+        unsafe { libc::alarm(0) };
+        return;
+    }
+
+    let dir = host_enumeration_scratch("rpc-enumeration");
+    build_modules(&dir);
+    let module = Command::new("cc")
+        .args([
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-DSERVICE=fltestgetonly",
+            "-DNO_RPC_SET",
+            "-DNO_RPC_END",
+        ])
+        .arg(repo_root().join("tests/integration/fixture_nss_module_lib.c"))
+        .arg("-o")
+        .arg(dir.join("libnss_fltestgetonly.so.2"))
+        .output()
+        .expect("build get-only RPC enumeration provider");
+    assert!(
+        module.status.success(),
+        "{}",
+        String::from_utf8_lossy(&module.stderr)
+    );
+    let cases = [
+        ("fltest", "normal"),
+        ("fltest fltestnoig", "normal"),
+        ("fltest [SUCCESS=continue] fltestnoig", "normal"),
+        ("fltest [SUCCESS=merge] fltestnoig", "normal"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "normal"),
+        ("fltest [NOTFOUND=return] fltestnoig", "normal"),
+        (
+            "fltest [SUCCESS=return NOTFOUND=return UNAVAIL=return TRYAGAIN=return] fltestnoig",
+            "normal",
+        ),
+        ("fltest [UNAVAIL=return] fltestnoig", "get-unavail"),
+        ("fltest [UNAVAIL=continue] fltestnoig", "get-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-quiet-again"),
+        ("fltest fltestnoig", "get-notfound"),
+        ("fltest [NOTFOUND=return] fltestnoig", "get-notfound"),
+        ("fltest fltestnoig", "get-return"),
+        ("fltest [!SUCCESS=continue] fltestnoig", "get-return"),
+        ("fltest fltestnoig", "set-unavail"),
+        ("fltest [UNAVAIL=return] fltestnoig", "set-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "set-again"),
+        ("fltest [NOTFOUND=return] fltestnoig", "set-notfound"),
+        ("fltest fltestnoig", "set-return"),
+        ("flmissing fltest", "normal"),
+        ("flmissing", "normal"),
+        ("flmissing [UNAVAIL=return] fltest", "normal"),
+        ("fltestgetonly", "normal"),
+        ("fltestgetonly fltest", "normal"),
+        ("fltestgetonly [UNAVAIL=return] fltest", "normal"),
+        ("fltest fltestgetonly fltestnoig", "normal"),
+        ("fltest flmissing [UNAVAIL=return] fltestnoig", "normal"),
+        ("files", "normal"),
+        ("fltest files", "normal"),
+    ];
+    let mut compared = 0;
+    for (index, (sources, scenario)) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("rpc-enum-{index}-{provider}-{mode}");
+            let mut child = rpc_module_child(TEST, &dir, sources, &label);
+            child
+                .env("FLTEST_RPC_PROVIDER", provider)
+                .env("FLTEST_RPC_ENUM", scenario)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &label);
+            let stdout = std::str::from_utf8(&output.stdout).unwrap();
+            let transcript = stdout
+                .split_once("RPC_ENUM_BEGIN\n")
+                .and_then(|(_, rest)| rest.split_once("RPC_ENUM_END"))
+                .map(|(text, _)| text)
+                .expect("executed RPC enumeration transcript")
+                .to_owned();
+            assert!(transcript.lines().count() >= 10);
+            let lifecycle = String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter(|line| line.contains(":setrpcent(") || line.contains(":endrpcent("))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if sources == "fltest" {
+                assert!(
+                    transcript.contains("number: 145001") && transcript.contains("number: 145002"),
+                    "small and complete large module records must be observed"
+                );
+                assert!(String::from_utf8_lossy(&output.stderr).contains("fltest:getrpcent_r("));
+            }
+            if sources == "fltest fltestnoig" && scenario == "normal" {
+                assert!(
+                    lifecycle
+                        .iter()
+                        .filter(|line| line.contains("fltestnoig:endrpcent("))
+                        .count()
+                        >= 4,
+                    "early and repeated cleanup must reach later configured modules"
+                );
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(
+                    &(transcript, lifecycle),
+                    expected,
+                    "{label}: {sources}, {scenario}"
+                );
+                compared += 1;
+            } else {
+                oracle = Some((transcript, lifecycle));
+            }
+        }
+    }
+    assert_eq!(compared, 62);
+    eprintln!("RPC enumeration: {compared} independent GNU/candidate process comparisons");
+
+    #[cfg(debug_assertions)]
+    {
+        let path = dir.join("rpc");
+        let aliases = (0..24).map(|index| format!("files-alias-{index}")).collect::<Vec<_>>();
+        std::fs::write(
+            &path,
+            format!(
+                "{} 145011 local-first {}\nfiles-second 145012 local-second\nportmapper 100000 local-portmapper\n",
+                "f".repeat(1800),
+                aliases.join(" ")
+            ),
+        )
+        .unwrap();
+        for mode in ["strict", "hardened"] {
+            let mut child = rpc_module_child(TEST, &dir, "fltest", mode);
+            child
+                .env("FLTEST_RPC_ISOLATION_PATH", &path)
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &format!("RPC files and callback isolation {mode}"));
+            assert!(
+                String::from_utf8_lossy(&output.stdout)
+                    .contains("RPC files, buffer ownership and recursive provider isolation checked")
+            );
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+static RPC_ENUM_REENTRY_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(debug_assertions)]
+unsafe extern "C" fn rpc_enumeration_reentry() -> c_int {
+    use frankenlibc_abi::{errno_abi as e, unistd_abi as u};
+    RPC_ENUM_REENTRY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut output: RpcRawRecord = unsafe { std::mem::zeroed() };
+    let mut buffer = [0 as c_char; 1024];
+    let mut result = std::ptr::null_mut();
+    // SAFETY: the provider invokes this callback while enumeration is leased.
+    // Recursive enumeration must fail before borrowing the cursor a second time;
+    // an independent keyed query must still complete with its own result storage.
+    unsafe {
+        u::setrpcent(0);
+        if *e::__errno_location() != libc::EDEADLK {
+            return 1;
+        }
+        if !u::getrpcent().is_null() || *e::__errno_location() != libc::EDEADLK {
+            return 2;
+        }
+        if u::getrpcent_r(
+            (&raw mut output).cast(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        ) != libc::EDEADLK || !result.is_null() {
+            return 3;
+        }
+        u::endrpcent();
+        if *e::__errno_location() != libc::EDEADLK {
+            return 4;
+        }
+        let keyed = u::getrpcbyname(c"fltest-rpc".as_ptr()).cast::<RpcRawRecord>();
+        if keyed.is_null() || (*keyed).number != 145001 {
+            return 5;
+        }
+    }
+    0
+}
+
+#[cfg(debug_assertions)]
+fn rpc_native_isolation(path: &Path) {
+    use frankenlibc_abi::unistd_abi as u;
+    u::with_rpc_database_for_tests(path, || {
+        let api = rpc_api(false);
+        configure_rpc(false, c"fltest");
+        let mut output: RpcRawRecord = unsafe { std::mem::zeroed() };
+        let mut storage = [0 as c_char; 8192];
+        let mut error = 717;
+        unsafe {
+            assert_eq!(u::_nss_files_setrpcent(0), 1);
+            assert_eq!(
+                u::_nss_files_getrpcent_r(
+                    (&raw mut output).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                ),
+                1
+            );
+            assert_eq!(output.number, 145011);
+            // Closing an uninitialized public module cursor must not disturb
+            // the separately opened direct-files provider.
+            (api.end)();
+            assert_eq!(
+                u::_nss_files_getrpcent_r(
+                    (&raw mut output).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                ),
+                1
+            );
+            assert_eq!(output.number, 145012);
+            assert_eq!(u::_nss_files_endrpcent(), 1);
+            for (name, capacity, status, expected_error) in [
+                (c"local-first", storage.len(), 1, 717),
+                (c"missing-rpc", storage.len(), 0, 717),
+                (c"local-first", 1, -2, libc::ERANGE),
+            ] {
+                error = 717;
+                *(api.error)() = 619;
+                assert_eq!(
+                    u::_nss_files_getrpcbyname_r(
+                        name.as_ptr(),
+                        (&raw mut output).cast(),
+                        storage.as_mut_ptr(),
+                        capacity,
+                        &mut error,
+                    ),
+                    status
+                );
+                assert_eq!((*(api.error)(), error), (619, expected_error));
+                if status == 1 {
+                    let record = rpc_record(
+                        (&raw mut output).cast(),
+                        Some((storage.as_ptr() as usize, storage.as_ptr() as usize + capacity)),
+                    )
+                    .unwrap();
+                    assert_eq!(record.number, 145011);
+                    assert_eq!(record.name.len(), 1800);
+                    assert_eq!(record.aliases.len(), 25);
+                }
+            }
+            error = 717;
+            *(api.error)() = 619;
+            assert_eq!(
+                u::_nss_files_getrpcbynumber_r(
+                    100000,
+                    (&raw mut output).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(output.name).to_bytes(), b"portmapper");
+            assert_eq!((*(api.error)(), error), (619, 717));
+
+            (api.set)(0);
+            let published = (api.get)();
+            assert!(!published.is_null());
+            let before = rpc_record(published, None).unwrap();
+            assert_eq!(before.number, 145001);
+            let keyed = rpc_call(&api, RpcRequest::Number(c_int::MAX), None, 0).2.unwrap();
+            assert_eq!(keyed.number, c_int::MAX);
+            assert_eq!(rpc_record(published, None).unwrap(), before);
+
+            assert_eq!(u::_nss_files_setrpcent(0), 1);
+            assert_eq!(
+                u::_nss_files_getrpcent_r(
+                    (&raw mut output).cast(),
+                    storage.as_mut_ptr(),
+                    1,
+                    &mut error,
+                ),
+                -2
+            );
+            assert_eq!(error, libc::ERANGE);
+            assert_eq!(
+                u::_nss_files_getrpcent_r(
+                    (&raw mut output).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                ),
+                1
+            );
+            assert_eq!(output.number, 145011, "ERANGE must retain the pending files record");
+            assert_eq!(u::_nss_files_endrpcent(), 1);
+        }
+        let large = rpc_call(&api, RpcRequest::Next, None, 0).2.unwrap();
+        assert_eq!(large.number, 145002);
+        assert_eq!(large.aliases[2], vec![b'r'; 3072]);
+        assert!(rpc_call(&api, RpcRequest::Next, None, 0).2.is_none());
+        unsafe { (api.end)() };
+
+        // Once files is selected publicly, it deliberately shares the direct
+        // provider cursor. A short read retains its entry for either interface.
+        configure_rpc(false, c"files");
+        unsafe { (api.set)(0) };
+        assert_eq!(
+            rpc_call(&api, RpcRequest::Next, Some(1), 1),
+            (libc::ERANGE, libc::ERANGE, None)
+        );
+        unsafe {
+            assert_eq!(
+                u::_nss_files_getrpcent_r(
+                    (&raw mut output).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                ),
+                1
+            );
+            assert_eq!(output.number, 145011);
+        }
+        assert_eq!(
+            rpc_call(&api, RpcRequest::Next, Some(8192), 1).2.unwrap().number,
+            145012
+        );
+        unsafe { assert_eq!(u::_nss_files_endrpcent(), 1) };
+        assert_eq!(
+            rpc_call(&api, RpcRequest::Next, Some(8192), 0).2.unwrap().number,
+            145011
+        );
+        unsafe { (api.end)() };
+
+        configure_rpc(false, c"fltest");
+        unsafe {
+            let handle = libc::dlopen(c"libnss_fltest.so.2".as_ptr(), libc::RTLD_NOW);
+            assert!(!handle.is_null());
+            let symbol = libc::dlsym(handle, c"_nss_fltest_set_rpc_enum_reentry".as_ptr());
+            assert!(!symbol.is_null());
+            let install: unsafe extern "C" fn(Option<unsafe extern "C" fn() -> c_int>) =
+                std::mem::transmute(symbol);
+            install(Some(rpc_enumeration_reentry));
+            (api.set)(0);
+            assert_eq!(
+                rpc_call(&api, RpcRequest::Next, None, 0).2.unwrap().number,
+                145001
+            );
+            assert_eq!(
+                rpc_call(&api, RpcRequest::Next, None, 0).2.unwrap().number,
+                145002
+            );
+            assert!(rpc_call(&api, RpcRequest::Next, None, 0).2.is_none());
+            assert_eq!(
+                RPC_ENUM_REENTRY_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+                1
+            );
+            (api.end)();
+            install(None);
+            assert_eq!(libc::dlclose(handle), 0);
+        }
+
+        // The source position belongs to the process. Independent consumers
+        // must not each restart the second module when the first reaches EOF.
+        configure_rpc(false, c"fltest fltestnoig");
+        unsafe { (api.set)(0) };
+        let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let workers = (0..3)
+            .map(|_| {
+                let start = std::sync::Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let api = rpc_api(false);
+                    let mut names = Vec::new();
+                    start.wait();
+                    for _ in 0..8 {
+                        let (status, error, answer) =
+                            rpc_call(&api, RpcRequest::Next, Some(8192), 1);
+                        if status == libc::ENOENT {
+                            assert!(answer.is_none());
+                            assert_eq!(error, 619, "cursor serialization must preserve errno");
+                            return names;
+                        }
+                        assert_eq!((status, error), (0, 0));
+                        names.push(answer.expect("successful RPC enumeration needs a record").name);
+                    }
+                    panic!("configured RPC enumeration repeated records without reaching EOF");
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut names = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                b"fltest-rpc-large".to_vec(),
+                b"fltest-rpc-small".to_vec(),
+                b"fltestnoig-rpc-large".to_vec(),
+                b"fltestnoig-rpc-small".to_vec(),
+            ]
+        );
+
+        // Cleanup and rewind from a different thread affect that same cursor.
+        std::thread::spawn(|| unsafe { u::endrpcent() }).join().unwrap();
+        assert_eq!(
+            rpc_call(&api, RpcRequest::Next, Some(8192), 0).2.unwrap().name,
+            b"fltest-rpc-small"
+        );
+        std::thread::spawn(|| unsafe { u::setrpcent(0) }).join().unwrap();
+        assert_eq!(
+            rpc_call(&api, RpcRequest::Next, Some(8192), 1).2.unwrap().name,
+            b"fltest-rpc-small"
+        );
+        unsafe { (api.end)() };
+    });
+}
