@@ -17340,33 +17340,139 @@ unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
 
+/// Temporary argv storage for the variadic exec entrypoints. Small lists stay
+/// on the stack; larger lists use fallible raw mappings, never the process heap.
+/// This removes allocator reentrancy from argument collection only: the shared
+/// execve/execvp dispatch below retains its own policy and validation behavior.
+struct VariadicExecArgv {
+    stack: [*const c_char; 64],
+    mapping: *mut *const c_char,
+    mapping_len: usize,
+}
+
+impl VariadicExecArgv {
+    unsafe fn collect(
+        first: *const c_char,
+        args: &mut core::ffi::VaList<'_>,
+    ) -> Result<Self, c_int> {
+        // Count a va_copy before consuming the original list. Include the
+        // terminator in the capacity. Support an empty argv as a Linux
+        // extension without advancing past a named NULL: in that extension,
+        // execle(path, NULL, envp) places envp at the first variadic argument.
+        let mut slots = 1usize;
+        if !first.is_null() {
+            let mut cursor = args.clone();
+            loop {
+                // Linux bounds exec argument counts by INT_MAX. Check before
+                // incrementing even on targets where usize has the same width.
+                if slots >= c_int::MAX as usize {
+                    return Err(libc::E2BIG);
+                }
+                slots += 1;
+                // SAFETY: the caller supplies a NULL-terminated pointer list;
+                // cursor is an independent copy of that list's traversal state.
+                if unsafe { cursor.next_arg::<*const c_char>() }.is_null() {
+                    break;
+                }
+            }
+        }
+
+        let bytes = slots
+            .checked_mul(core::mem::size_of::<*const c_char>())
+            .filter(|bytes| *bytes <= isize::MAX as usize)
+            .ok_or(libc::E2BIG)?;
+        let mut argv = Self {
+            stack: [std::ptr::null(); 64],
+            mapping: std::ptr::null_mut(),
+            mapping_len: 0,
+        };
+        if slots > argv.stack.len() {
+            // SAFETY: a private anonymous mapping owns `bytes` writable bytes,
+            // with alignment sufficient for the pointer array. Raw syscalls do
+            // not enter malloc or the membrane's allocation bookkeeping.
+            let mapping = unsafe {
+                syscall::sys_mmap(
+                    std::ptr::null_mut(),
+                    bytes,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    -1,
+                    0,
+                )?
+            };
+            // A mapping at address zero cannot be used as a Rust pointer array
+            // or a non-null C argv. Do not retain it even if the kernel permits it.
+            if mapping.is_null() {
+                // SAFETY: this is the mapping just returned by the kernel.
+                let _ = unsafe { syscall::sys_munmap(mapping, bytes) };
+                return Err(libc::ENOMEM);
+            }
+            argv.mapping = mapping.cast();
+            argv.mapping_len = bytes;
+        }
+
+        let output = if argv.mapping.is_null() {
+            argv.stack.as_mut_ptr()
+        } else {
+            argv.mapping
+        };
+        // SAFETY: output owns at least `slots` pointer elements. The copied
+        // traversal established their count, including exactly one final NULL.
+        // With a named NULL, slots is one and the variadic list is untouched.
+        unsafe {
+            output.write(first);
+            for index in 1..slots {
+                output.add(index).write(args.next_arg::<*const c_char>());
+            }
+        }
+        Ok(argv)
+    }
+
+    fn as_ptr(&self) -> *const *const c_char {
+        if self.mapping.is_null() {
+            self.stack.as_ptr()
+        } else {
+            self.mapping
+        }
+    }
+}
+
+impl Drop for VariadicExecArgv {
+    fn drop(&mut self) {
+        if !self.mapping.is_null() {
+            // SAFETY: this object uniquely owns the mapping until exec succeeds
+            // (and replaces the process) or returns. The raw syscall reports an
+            // error as a Result, so cleanup cannot overwrite exec's errno.
+            let _ = unsafe { syscall::sys_munmap(self.mapping.cast(), self.mapping_len) };
+        }
+    }
+}
+
 /// POSIX `execl` — execute path with variadic args, inheriting environ.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn execl(path: *const c_char, arg: *const c_char, mut args: ...) -> c_int {
-    let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
-    argv.push(arg);
-    loop {
-        let next = unsafe { args.next_arg::<*const c_char>() };
-        argv.push(next);
-        if next.is_null() {
-            break;
+    // SAFETY: the caller supplies the variadic NULL-terminated argument list.
+    let argv = match unsafe { VariadicExecArgv::collect(arg, &mut args) } {
+        Ok(argv) => argv,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
         }
-    }
+    };
     unsafe { crate::process_abi::execve(path, argv.as_ptr(), environ as *const *const c_char) }
 }
 
 /// POSIX `execlp` — execute file (PATH search) with variadic args, inheriting environ.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, mut args: ...) -> c_int {
-    let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
-    argv.push(arg);
-    loop {
-        let next = unsafe { args.next_arg::<*const c_char>() };
-        argv.push(next);
-        if next.is_null() {
-            break;
+    // SAFETY: the caller supplies the variadic NULL-terminated argument list.
+    let argv = match unsafe { VariadicExecArgv::collect(arg, &mut args) } {
+        Ok(argv) => argv,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
         }
-    }
+    };
     unsafe { crate::process_abi::execvp(file, argv.as_ptr()) }
 }
 
@@ -17375,15 +17481,14 @@ pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, mut arg
 /// The envp pointer follows the NULL sentinel of the arg list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, mut args: ...) -> c_int {
-    let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
-    argv.push(arg);
-    loop {
-        let next = unsafe { args.next_arg::<*const c_char>() };
-        argv.push(next);
-        if next.is_null() {
-            break;
+    // SAFETY: the caller supplies a NULL-terminated list followed by envp.
+    let argv = match unsafe { VariadicExecArgv::collect(arg, &mut args) } {
+        Ok(argv) => argv,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
         }
-    }
+    };
     // The next variadic argument after NULL is the envp pointer.
     let envp = unsafe { args.next_arg::<*const *const c_char>() };
     unsafe { crate::process_abi::execve(path, argv.as_ptr(), envp) }

@@ -93,7 +93,97 @@ static void error_check(const char *name, enum entry e, const char *file, const 
     char output[64]; snprintf(output, sizeof output, "error=%d\n", wanted);
     check(name, e, file, path, args, 0, 111, output);
 }
-int main(void) {
+
+/* Exercise the real C variadic boundary, including the register/stack spill and
+ * both sides of the small argument-buffer boundary. Re-executing this fixture
+ * lets the kernel and a new process inspect the complete argument/environment
+ * vectors; no test-side replacement of execve can hide a marshalling error. */
+typedef int (*list_exec_fn)(const char *, const char *, ...);
+#define LIST_ARGS_14 "00", "01", "02", "03", "04", "05", "06", "07", \
+                     "08", "09", "10", "11", "12", "13"
+#define LIST_ARGS_16 LIST_ARGS_14, "14", "15"
+#define LIST_ARGS_64 LIST_ARGS_16, LIST_ARGS_16, LIST_ARGS_16, LIST_ARGS_16
+#define LIST_ARGS_256 LIST_ARGS_64, LIST_ARGS_64, LIST_ARGS_64, LIST_ARGS_64
+#define LIST_ARGS_1024 LIST_ARGS_256, LIST_ARGS_256, LIST_ARGS_256, LIST_ARGS_256
+
+static int call_list_exec(list_exec_fn function, const char *file, unsigned count,
+                          char *const envp[]) {
+    char *poison_env[] = {"FRANKENLIBC_LIST_CHILD=poison", "FRANKENLIBC_LIST_COUNT=0", NULL};
+    /* The extra values after envp are legal unused variadic arguments. They make
+     * an execle implementation that skips the named NULL forward a distinct
+     * wrong environment deterministically instead of depending on stack junk. */
+#define CALL_LIST(...) function(file, __VA_ARGS__, (char *)NULL, envp, \
+                               (char *)NULL, poison_env)
+    switch (count) {
+    case 0: return function(file, (char *)NULL, envp, (char *)NULL, poison_env);
+    case 1: return CALL_LIST("variadic-zero");
+    case 4: return CALL_LIST("variadic-zero", "00", "01", "02");
+    case 5: return CALL_LIST("variadic-zero", "00", "01", "02", "03");
+    case 6: return CALL_LIST("variadic-zero", "00", "01", "02", "03", "04");
+    case 63: return CALL_LIST("variadic-zero", LIST_ARGS_16, LIST_ARGS_16,
+                             LIST_ARGS_16, LIST_ARGS_14);
+    case 64: return CALL_LIST("variadic-zero", LIST_ARGS_16, LIST_ARGS_16,
+                             LIST_ARGS_16, LIST_ARGS_14, "14");
+    case 65: return CALL_LIST("variadic-zero", LIST_ARGS_64);
+    case 1025: return CALL_LIST("variadic-zero", LIST_ARGS_1024);
+    default: errno = EINVAL; return -1;
+    }
+#undef CALL_LIST
+}
+
+static int list_exec_child(int argc, char **argv, const char *kind) {
+    const char *count_text = getenv("FRANKENLIBC_LIST_COUNT");
+    if (!count_text) return 125;
+    unsigned count = (unsigned)strtoul(count_text, NULL, 10);
+    /* Linux supplies one empty argv[0] when exec receives an empty vector. */
+    if (!count) {
+        if (argc != 1 || !argv[0] || argv[0][0]) return 125;
+    } else {
+        if ((unsigned)argc != count || strcmp(argv[0], "variadic-zero")) return 125;
+        for (unsigned i = 1; i < count; ++i) {
+            char expected[3]; snprintf(expected, sizeof expected, "%02u", (i - 1) % 16);
+            if (!argv[i] || strcmp(argv[i], expected)) return 125;
+        }
+    }
+    if (argv[argc] != NULL) return 125;
+    if (!strcmp(kind, "inherited")) return 42;
+    if (!strcmp(kind, "explicit")) return 43;
+    return 126;
+}
+
+static void check_list_exec(unsigned entry, unsigned count, const char *file,
+                            int wanted_errno) {
+    static const char *names[] = {"execl", "execlp", "execle"};
+    list_exec_fn functions[] = {execl, execlp, execle};
+    fflush(NULL);
+    pid_t pid = fork(); if (pid < 0) die("fork list exec");
+    if (!pid) {
+        alarm(10);
+        char count_text[16], explicit_count[64];
+        snprintf(count_text, sizeof count_text, "%u", count);
+        snprintf(explicit_count, sizeof explicit_count, "FRANKENLIBC_LIST_COUNT=%u", count);
+        if (setenv("FRANKENLIBC_LIST_CHILD", "inherited", 1) ||
+            setenv("FRANKENLIBC_LIST_COUNT", count_text, 1)) _exit(124);
+        char *envp[] = {"FRANKENLIBC_LIST_CHILD=explicit", explicit_count, NULL};
+        /* Both stack and mmap failure-return paths must preserve exec's errno. */
+        errno = EINTR;
+        int rc = call_list_exec(functions[entry], file, count, envp);
+        int error = errno;
+        _exit(wanted_errno && rc == -1 && error == wanted_errno ? 44 : 127);
+    }
+    int status;
+    while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) die("waitpid list exec"); }
+    int expected = wanted_errno ? 44 : entry == 2 ? 43 : 42;
+    int okay = WIFEXITED(status) && WEXITSTATUS(status) == expected;
+    if (okay) ++passed; else ++failed;
+    printf("%s %s/variadic-%u-%s\n", okay ? "PASS" : "FAIL", names[entry],
+           count, wanted_errno ? "error" : "exec");
+    if (!okay) fprintf(stderr, "  status=%d expected=%d errno=%d\n", status, expected, wanted_errno);
+}
+
+int main(int argc, char **argv) {
+    const char *list_child = getenv("FRANKENLIBC_LIST_CHILD");
+    if (list_child) return list_exec_child(argc, argv, list_child);
     alarm(120);
     strcpy(root, "/tmp/frankenlibc-exec-XXXXXX"); if (!mkdtemp(root)) die("mkdtemp");
     join(first, root, "first"); join(second, root, "second");
@@ -149,6 +239,25 @@ int main(void) {
     int busy = open(plain, O_WRONLY); if (busy < 0) die("busy fixture");
     error_check("ETXTBSY-no-shell", VP, "plain", first, args, ETXTBSY);
     close(busy);
+    const unsigned list_counts[] = {0, 1, 4, 5, 6, 63, 64, 65, 1025};
+    char missing[PATH_MAX]; join(missing, first, "missing-variadic-exec");
+    for (unsigned e = 0; e < 3; ++e) {
+        for (unsigned i = 0; i < sizeof list_counts / sizeof list_counts[0]; ++i) {
+            /* Named-NULL execle is an explicit FrankenLibC extension: the host
+             * glibc consumes another variadic terminator before envp. Its
+             * environment contract is tested in process_abi_test.rs, separately
+             * from these host-differential cases. */
+            if (e == 2 && list_counts[i] == 0) continue;
+            check_list_exec(e, list_counts[i], "/proc/self/exe", 0);
+        }
+        check_list_exec(e, 0, missing, ENOENT);
+        check_list_exec(e, 5, missing, ENOENT);
+        check_list_exec(e, 1025, missing, ENOENT);
+        if (e != 1) {
+            check_list_exec(e, 5, plain, ENOEXEC);
+            check_list_exec(e, 1025, plain, ENOEXEC);
+        }
+    }
     const char *names[] = {"plain", "denied", "stops", "shebang", "many"};
     for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) { char p[PATH_MAX]; join(p, first, names[i]); unlink(p); }
     const char *other[] = {"denied", "stops"};

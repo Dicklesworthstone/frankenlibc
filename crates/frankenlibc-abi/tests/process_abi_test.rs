@@ -1007,6 +1007,82 @@ fn execve_runs_true() {
 }
 
 #[test]
+fn execle_named_null_preserves_explicit_environment() {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let explicit = [
+        c"FRANKENLIBC_EXECLE_NAMED_NULL=kept".as_ptr(),
+        std::ptr::null(),
+    ];
+    let empty = [std::ptr::null::<c_char>()];
+    let poison = [
+        c"FRANKENLIBC_EXECLE_NAMED_NULL=wrong".as_ptr(),
+        std::ptr::null(),
+    ];
+
+    // Empty argv is a Linux extension, not a glibc differential contract.
+    // In this form the named argument itself terminates argv, so envp is the
+    // first variadic argument. Padding catches the old over-read deterministically.
+    for (envp, expected) in [
+        (explicit.as_ptr(), "FRANKENLIBC_EXECLE_NAMED_NULL=kept\n"),
+        (empty.as_ptr(), ""),
+        (std::ptr::null::<*const c_char>(), ""),
+    ] {
+        let mut pipefd = [-1; 2];
+        assert_eq!(
+            unsafe { libc::pipe2(pipefd.as_mut_ptr(), libc::O_CLOEXEC) },
+            0
+        );
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork for execle named-NULL regression");
+        if pid == 0 {
+            // SAFETY: the child owns these descriptors; successful dup2 keeps
+            // stdout open across exec while the original pipe is CLOEXEC.
+            unsafe {
+                libc::alarm(10);
+                libc::close(pipefd[0]);
+                if libc::dup2(pipefd[1], libc::STDOUT_FILENO) < 0 {
+                    libc::_exit(126);
+                }
+                libc::close(pipefd[1]);
+                frankenlibc_abi::unistd_abi::execle(
+                    c"/usr/bin/env".as_ptr(),
+                    std::ptr::null::<c_char>(),
+                    envp,
+                    std::ptr::null::<c_char>(),
+                    poison.as_ptr(),
+                );
+                libc::_exit(127);
+            }
+        }
+        unsafe { libc::close(pipefd[1]) };
+        // SAFETY: the parent transfers its sole ownership of the read end.
+        let mut output = unsafe { std::fs::File::from_raw_fd(pipefd[0]) };
+        let mut text = String::new();
+        output.read_to_string(&mut text).unwrap();
+        let mut status = 0;
+        loop {
+            let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if waited == pid {
+                break;
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EINTR)
+            );
+        }
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        assert_eq!(
+            text, expected,
+            "execle must preserve the exact explicit envp"
+        );
+    }
+}
+
+#[test]
 fn execve_null_pathname_returns_efault() {
     let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { execve(std::ptr::null(), std::ptr::null(), std::ptr::null()) };

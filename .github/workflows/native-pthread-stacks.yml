@@ -14,6 +14,9 @@ on:
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
+      - 'crates/frankenlibc-abi/tests/process_abi_test.rs'
+      - 'tests/c_abi/exec_search_contract.c'
+      - 'scripts/check_exec_search_contract.sh'
       - 'crates/frankenlibc-abi/src/owned_unwind_abi.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
       - 'tests/conformance/fixtures/unwind/minimal_throw_catch.cpp'
@@ -182,6 +185,25 @@ jobs:
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/signal-waits/build.log
+      - name: Preserve variadic exec arguments and failure cleanup
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXEC_CONTRACT_BUILD_DIR="$PWD/artifacts/signal-waits/exec" \
+            bash scripts/check_exec_search_contract.sh "$PWD/target/release/libfrankenlibc_abi.so"
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test --release -p frankenlibc-abi "${args[@]}" \
+              --test process_abi_test execle_named_null_preserves_explicit_environment \
+              -- --exact --nocapture --test-threads=1 \
+              2>&1 | tee "artifacts/signal-waits/exec/named-null-$mode.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+              "artifacts/signal-waits/exec/named-null-$mode.log"
+          done
       - name: Verify public native TLS destructors and recovery after loader errors
         if: always()
         shell: bash
