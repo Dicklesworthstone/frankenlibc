@@ -2127,9 +2127,37 @@ fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     None
 }
 
+/// Pure-native check for whether `thread` is the calling thread's identity.
+///
+/// Unlike [`native_pthread_self`], this never delegates to host `pthread_self`:
+/// callers that also consult `HOST_THREAD_TID_REGISTRY` via
+/// [`resolve_thread_tid`] still recover hosted worker handles even after owned
+/// TLS teardown without pulling host `pthread_self` into pure-native entrypoints.
+fn matches_current_thread_pure_native(thread: libc::pthread_t, self_tid: i32) -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        return thread == handle as usize as libc::pthread_t;
+    }
+    if let Some(cached) = cached_pthread_self_fast() {
+        return thread == cached;
+    }
+    if self_tid > 0 {
+        if let Some(handle_ptr) = core_handle_for_tid(self_tid) {
+            return thread == handle_ptr as usize as libc::pthread_t;
+        }
+        if self_tid == raw_syscall::sys_getpid() {
+            let main_name = MAIN_THREAD_FL_NAME.load(Ordering::Acquire);
+            if main_name != 0 {
+                return thread == main_name as libc::pthread_t;
+            }
+        }
+        return thread == self_tid as libc::pthread_t;
+    }
+    false
+}
+
 pub(crate) fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     let self_tid = core_self_tid();
-    if self_tid > 0 && thread == native_pthread_self() {
+    if self_tid > 0 && matches_current_thread_pure_native(thread, self_tid) {
         return Some(self_tid);
     }
 
@@ -9471,12 +9499,13 @@ pub unsafe extern "C" fn pthread_getattr_np(
     // pthread_create) and for the calling thread when no registry knows it.
     // Another thread's stack cannot be found from here without its stack
     // pointer.
-    let calling = thread == native_pthread_self();
-    let probe_tid = if calling {
-        core_self_tid()
+    let self_tid = core_self_tid();
+    let probe_tid = if self_tid > 0 && matches_current_thread_pure_native(thread, self_tid) {
+        self_tid
     } else {
         resolve_thread_tid(thread).unwrap_or(-1)
     };
+    let calling = probe_tid > 0 && probe_tid == self_tid;
     // SAFETY: getpid has no preconditions.
     let main_thread = probe_tid == raw_syscall::sys_getpid();
     if probe_tid > 0
@@ -10017,13 +10046,16 @@ pub unsafe extern "C" fn pthread_setname_np(
     if len > 15 {
         return libc::ERANGE;
     }
-    if _thread != native_pthread_self() {
+    let self_tid = core_self_tid();
+    if !(self_tid > 0 && matches_current_thread_pure_native(_thread, self_tid)) {
         let Some(tid) = resolve_thread_tid(_thread) else {
             return libc::ESRCH;
         };
-        // SAFETY: scan_c_string observed `len` readable bytes before the terminator.
-        let name_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
-        return set_other_thread_name_via_procfs(tid, name_bytes);
+        if tid != self_tid {
+            // SAFETY: scan_c_string observed `len` readable bytes before the terminator.
+            let name_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
+            return set_other_thread_name_via_procfs(tid, name_bytes);
+        }
     }
     // SAFETY: prctl(PR_SET_NAME) sets the calling thread's name.
     match raw_syscall::sys_prctl(PR_SET_NAME, name as usize, 0, 0, 0) {
@@ -10044,11 +10076,14 @@ pub unsafe extern "C" fn pthread_getname_np(
     if len < 16 {
         return libc::ERANGE;
     }
-    if _thread != native_pthread_self() {
+    let self_tid = core_self_tid();
+    if !(self_tid > 0 && matches_current_thread_pure_native(_thread, self_tid)) {
         let Some(tid) = resolve_thread_tid(_thread) else {
             return libc::ESRCH;
         };
-        return get_other_thread_name_via_procfs(tid, name, len);
+        if tid != self_tid {
+            return get_other_thread_name_via_procfs(tid, name, len);
+        }
     }
     // SAFETY: prctl(PR_GET_NAME) reads the calling thread's name into a buffer.
     match raw_syscall::sys_prctl(PR_GET_NAME, name as usize, 0, 0, 0) {
