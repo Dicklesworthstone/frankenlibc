@@ -4123,6 +4123,42 @@ pub(crate) fn stream_wide_codec(stream: *mut c_void) -> crate::locale_abi::Multi
     stream_wide_read_context(stream).0
 }
 
+/// Transliteration is selected when a wide character is physically converted,
+/// using the current LC_CTYPE even though the FILE's external codec is fixed.
+/// Native unbuffered streams convert at the write. Buffered streams still hold
+/// external bytes, so their existing substitution remains until they can defer
+/// wide conversion to flush time without losing seek or partial-write state.
+pub(crate) fn unbuffered_wide_transliteration_locale(stream: *mut c_void) -> Option<bool> {
+    let unbuffered = if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        matches!(unsafe { &*pointer }.buf_mode(), BufMode::None)
+    } else {
+        let cell = stream_cell(canonical_stream_id(stream))?;
+        let state = cell.lock();
+        !state.is_mem_backed() && matches!(state.buf_mode(), BufMode::None)
+    };
+    unbuffered.then(|| {
+        matches!(
+            crate::locale_abi::active_charset(),
+            crate::locale_abi::Charset::Utf8
+        )
+    })
+}
+
+/// Admit a wide character whose unbuffered conversion produces no bytes.
+/// The ordinary core write path still rejects read-only FILEs and records
+/// write direction; its empty _IONBF flush span requires no descriptor I/O.
+/// Use the stream guard so a rejected write also publishes the FILE error bit.
+pub(crate) fn admit_empty_wide_output(stream: *mut c_void) -> bool {
+    let allowed = stream_cell(canonical_stream_id(stream))
+        .is_some_and(|cell| cell.lock().buffer_write(&[]).is_some());
+    if !allowed {
+        // SAFETY: only the calling thread's errno is changed.
+        unsafe { set_abi_errno(errno::EBADF) };
+    }
+    allowed
+}
+
 /// Restore external bytes consumed by one wide read, including characters
 /// straddling an fd refill and streams without an ordinary byte buffer.
 pub(crate) fn restore_wide_read(

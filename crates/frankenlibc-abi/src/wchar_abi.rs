@@ -7150,6 +7150,49 @@ pub(crate) unsafe fn fputwc_for_caller(
     unsafe { fputwc_unlocked_for_caller(wc, stream, caller) }
 }
 
+/// Encode one wide output character without allocating or splitting an
+/// external character across staging buffers. The destination codec belongs
+/// to the FILE; only its transliteration table follows the conversion-time
+/// locale. Preflight a replacement before publishing any of its characters,
+/// so an unavailable ASCII mapping can fall back to `?` atomically.
+fn emit_stdio_wchar(
+    stream: *mut c_void,
+    codec: crate::locale_abi::MultibyteCodec,
+    wc: u32,
+    mut emit: impl FnMut(&[u8]) -> bool,
+) -> bool {
+    let mut encoded = [0u8; 6];
+    if let Some(length) = codec.encode(wc, &mut encoded) {
+        return emit(&encoded[..length]);
+    }
+    let mut replacement =
+        match super::stdio_abi::unbuffered_wide_transliteration_locale(stream) {
+            Some(utf8) => frankenlibc_core::iconv::transliteration(wc, utf8),
+            None => b"?",
+        };
+    if replacement.is_empty() {
+        return super::stdio_abi::admit_empty_wide_output(stream);
+    }
+    if !replacement
+        .iter()
+        .all(|&byte| codec.encode(u32::from(byte), &mut encoded).is_some())
+    {
+        replacement = b"?";
+    }
+    for &byte in replacement {
+        let Some(length) = codec.encode(u32::from(byte), &mut encoded) else {
+            // SAFETY: only this thread's errno cell is changed; no output has
+            // been emitted when the preflight selected an unavailable fallback.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return false;
+        };
+        if !emit(&encoded[..length]) {
+            return false;
+        }
+    }
+    true
+}
+
 pub(crate) unsafe fn fputwc_unlocked_for_caller(
     wc: u32,
     stream: *mut c_void,
@@ -7177,27 +7220,20 @@ pub(crate) unsafe fn fputwc_unlocked_for_caller(
     let codec = super::stdio_abi::stream_wide_codec(stream);
 
     super::stdio_abi::with_wide_io_active(|| {
-        let mut bytes = [0u8; 6];
-        // Preserve wide-stdio's existing replacement policy, including the
-        // replacement character's encoding in non-ASCII single-byte locales.
-        let encoded = codec
-            .encode(wc, &mut bytes)
-            .or_else(|| codec.encode(u32::from(b'?'), &mut bytes));
-        let Some(encoded_len) = encoded else {
-            // SAFETY: thread-local errno update if even replacement is unavailable.
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            return WEOF_VALUE;
-        };
-
-        for &byte in &bytes[..encoded_len] {
-            // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            if unsafe { super::stdio_abi::fputc_unlocked_for_caller(byte as c_int, stream, caller) }
-                == libc::EOF
-            {
-                return WEOF_VALUE;
+        let written = emit_stdio_wchar(stream, codec, wc, |encoded| {
+            for &byte in encoded {
+                // SAFETY: delegated to stdio with the live wide stream and
+                // original public caller for cancellation admission.
+                if unsafe {
+                    super::stdio_abi::fputc_unlocked_for_caller(byte as c_int, stream, caller)
+                } == libc::EOF
+                {
+                    return false;
+                }
             }
-        }
-        wc
+            true
+        });
+        if written { wc } else { WEOF_VALUE }
     })
 }
 
@@ -7417,15 +7453,10 @@ pub(crate) unsafe fn fputws_unlocked_for_caller(
     unsafe { fputws_impl(ws, stream, caller) }
 }
 
-/// Fast path: bulk SIMD `wcstombs` conversion of the whole (buffer-fitting, all-encodable)
-/// wide string + ONE `fwrite`, matching glibc's single bulk conversion (fl was 9-212x on the
-/// per-char `fputwc` loop). A single unencodable wchar (`wcstombs` -> None) or a string longer
-/// than the stack buffer falls to the per-char loop, which does glibc's '?' substitution and
-/// handles arbitrary length. Byte-identical: `wchar_core::wcstombs` is proven isomorphic to
-/// per-char `wctomb` (conformance_diff_wcstombs_simd), so the fast path emits the same bytes;
-/// the slow path is the original loop. NOTE: an earlier bulk-WRITE-only variant (still per-char
-/// wctomb) REGRESSED 2.6-3.4x — the win requires bulk CONVERT (this SIMD wcstombs), not bulk
-/// write. See NEGATIVE_EVIDENCE.md 2026-07-02.
+/// Bulk-convert an entirely representable, buffer-fitting wide string before
+/// one `fwrite`. An unencodable character or a longer string uses the shared
+/// per-character output path, including locale-sensitive transliteration on
+/// unbuffered streams. Both paths retain the FILE's external codec.
 #[inline]
 unsafe fn fputws_impl(
     ws: *const libc::wchar_t,
@@ -7799,43 +7830,51 @@ unsafe fn write_wprintf_rendered(
         // Keep staging bounded, including for arbitrarily long renderings,
         // and retain complete external characters at every chunk boundary.
         let mut chunk = [0u8; 1024];
+        let mut used = 0;
         let mut offset = 0;
         while offset < rendered.len() {
-            let mut used = 0;
-            while used < chunk.len() && offset < rendered.len() {
-                let wchar_core::Utf8Step::Char { wc, len } =
-                    wchar_core::utf8_decode_step(&rendered[offset..])
-                else {
-                    unsafe { set_abi_errno(libc::EILSEQ) };
-                    return -1;
-                };
-                // Match fputwc's replacement policy in this same codec;
-                // '?' itself is not necessarily byte 0x3f (for example EBCDIC).
-                let mut encoded = [0u8; 4];
-                let Some(encoded_len) = codec
-                    .encode(wc, &mut encoded)
-                    .or_else(|| codec.encode(u32::from(b'?'), &mut encoded))
-                else {
-                    unsafe { set_abi_errno(libc::EILSEQ) };
-                    return -1;
-                };
-                if encoded_len > chunk.len() - used {
-                    break;
+            let wchar_core::Utf8Step::Char { wc, len } =
+                wchar_core::utf8_decode_step(&rendered[offset..])
+            else {
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return -1;
+            };
+            if !emit_stdio_wchar(stream, codec, wc, |encoded| {
+                if encoded.len() > chunk.len() - used {
+                    // SAFETY: only complete external characters are staged;
+                    // preserve the first failed write's errno and do not retry.
+                    if unsafe {
+                        super::stdio_abi::fwrite_for_caller(
+                            chunk.as_ptr().cast(),
+                            1,
+                            used,
+                            stream,
+                            caller,
+                        )
+                    } != used
+                    {
+                        return false;
+                    }
+                    used = 0;
                 }
-                chunk[used..used + encoded_len].copy_from_slice(&encoded[..encoded_len]);
-                used += encoded_len;
-                // NUL is an ordinary output character with a one-byte
-                // transport step; never treat it as a string terminator here.
-                offset += len;
-            }
-            // SAFETY: chunk[..used] contains only complete encoded characters
-            // and stays live outside the narrow write's cancellation window.
-            if unsafe {
-                super::stdio_abi::fwrite_for_caller(chunk.as_ptr().cast(), 1, used, stream, caller)
-            } != used
-            {
+                chunk[used..used + encoded.len()].copy_from_slice(encoded);
+                used += encoded.len();
+                true
+            }) {
                 return -1;
             }
+            // NUL is an ordinary output character with a one-byte transport
+            // step; a zero-byte transliteration also consumes its wide unit.
+            offset += len;
+        }
+        // SAFETY: chunk[..used] contains complete encoded characters and stays
+        // live outside the narrow write's cancellation window.
+        if used != 0
+            && unsafe {
+                super::stdio_abi::fwrite_for_caller(chunk.as_ptr().cast(), 1, used, stream, caller)
+            } != used
+        {
+            return -1;
         }
         wide_count
     })

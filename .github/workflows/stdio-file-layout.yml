@@ -28,6 +28,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_shadow_lines.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_wide_stdio_write.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_eof.rs'
       - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
@@ -39,6 +40,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-core/src/stdio/**'
+      - 'crates/frankenlibc-core/src/iconv/**'
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/mntent/**'
       - 'tests/integration/fixture_stdio.c'
@@ -113,6 +115,24 @@ jobs:
               "locale_scanning::$regression" -- --exact --test-threads=1 --nocapture \
               2>&1 | tee "$log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"
+          done
+      - name: Preserve unbuffered wide conversion and transliteration
+        if: always()
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-regressions
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          for mode in strict hardened; do
+            log="artifacts/stdio-regressions/wide-output-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_wide_stdio_write -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "$log"
           done
       - uses: actions/upload-artifact@v4
         if: always()

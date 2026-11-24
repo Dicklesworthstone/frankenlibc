@@ -49102,22 +49102,34 @@ impl IconvDescriptor {
     }
 }
 
+/// ASCII transliteration in the built-in C or C.UTF-8 locale.
+///
+/// Both iconv and native wide stdio use these captured tables. The caller
+/// must encode the returned ASCII characters through its destination codec;
+/// the bytes are not external output in encodings such as EBCDIC. An empty
+/// replacement is significant and consumes the original character without
+/// producing output. Unknown and invalid wide values use the default `?`.
+#[must_use]
+pub fn transliteration(wc: u32, utf8_locale: bool) -> &'static [u8] {
+    let utf8_entry = if utf8_locale {
+        translit_c_utf8::C_UTF8_TRANSLIT_PACKED.lookup(wc)
+    } else {
+        None
+    };
+    utf8_entry
+        .or_else(|| translit_c::C_TRANSLIT_PACKED.lookup(wc))
+        .unwrap_or(b"?")
+}
+
 /// Write `ch`'s transliteration (or the default `?`) in `cd`'s
 /// target encoding. The replacement is ASCII, so it is converted through a
 /// copy of `cd` whose source is ASCII; the target-side state (pending BOM,
 /// shift state) carries over, the source side is restored.
 fn translit_into(cd: &mut IconvDescriptor, ch: char, out: &mut [u8]) -> TranslitOutcome {
-    let cp = ch as u32;
-    let utf8_entry = if cd.translit_utf8_locale {
-        translit_c_utf8::C_UTF8_TRANSLIT_PACKED.lookup(cp)
-    } else {
-        None
-    };
-    let candidates: [&[u8]; 2] =
-        match utf8_entry.or_else(|| translit_c::C_TRANSLIT_PACKED.lookup(cp)) {
-            Some(replacement) => [replacement, b"?"],
-            None => [b"?", b"?"],
-        };
+    let candidates: [&[u8]; 2] = [
+        transliteration(ch as u32, cd.translit_utf8_locale),
+        b"?",
+    ];
     for replacement in candidates {
         if replacement.is_empty() {
             return TranslitOutcome::Written(0);
