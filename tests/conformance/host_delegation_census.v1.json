@@ -1430,8 +1430,8 @@
       "text": "let resolved = unsafe { host_dlsym(handle, symbol) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:6929",
-      "line": 6929,
+      "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:6931",
+      "line": 6931,
       "module": "wchar_abi",
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
       "text": "let Some(address) = crate::host_resolve::resolve_host_symbol_cached(slot, symbol) else {"
@@ -2424,7 +2424,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 125,
-    "source_tree_sha256": "bf6ca7579386176395aa0b28dfca8c28c856c2f466f1aa5ca764c4c7461f7b51",
+    "source_tree_sha256": "d2fcbd21f2580f5c95f701a721fd4a90f7068ceff8eada57b9cd8bd7950d7682",
     "version": 24
   },
   "module_census": [
@@ -18355,7 +18355,7 @@
         "ynf64x": 5,
         "ynl": 5
       },
-      "resolved_call_edge_count": 22160,
+      "resolved_call_edge_count": 22162,
       "summary": {
         "exported_function_count": 4615,
         "exported_symbol_with_host_dependency_count": 1699,
@@ -19412,11 +19412,11 @@
         },
         {
           "delegation_kind": "cached_host_errno_symbol",
-          "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:6934",
+          "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:6936",
           "expression": "let Some(errno_location) = crate::host_resolve::host_errno_location_raw() else {",
-          "function_id": "wchar_abi::try_host_wide_io@6911",
+          "function_id": "wchar_abi::try_host_wide_io@6913",
           "host_symbol": "__errno_location",
-          "line": 6934,
+          "line": 6936,
           "path": "crates/frankenlibc-abi/src/wchar_abi.rs"
         }
       ],
@@ -20297,7 +20297,7 @@
         }
       },
       "reachable_terminal_counts_by_symbol": {},
-      "resolved_call_edge_count": 21598,
+      "resolved_call_edge_count": 21600,
       "summary": {
         "exported_function_count": 4616,
         "exported_symbol_with_host_dependency_count": 0,
@@ -20850,7 +20850,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "bdb1ed39b61bbb6e7a606fe7710e3dad115b7fcf103ee8f3b1626b923794efdb"
+      "sha256": "af6d12901e74b74438baf1d47311bb59324a5cdb9a22a90158ef237db7698fad"
     }
   ],
   "summary": {

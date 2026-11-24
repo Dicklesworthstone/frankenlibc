@@ -2641,3 +2641,284 @@ fn swprintf_reused_format_buffer_does_not_leak_between_calls() {
         "the reused format buffer must not carry a tail from the previous call"
     );
 }
+
+struct GuardedPages {
+    base: *mut u8,
+    total_len: usize,
+    page_size: usize,
+}
+
+impl GuardedPages {
+    fn new(readable_pages: usize) -> Self {
+        // SAFETY: sysconf(_SC_PAGESIZE) is always safe to call.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        assert!(page_size >= 4096 && page_size.is_power_of_two());
+        let total_len = (readable_pages + 1) * page_size;
+        // SAFETY: anonymous private mapping with no fixed address.
+        let base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                total_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        assert_ne!(base, libc::MAP_FAILED, "mmap failed");
+        // SAFETY: last page is inside the freshly mapped region.
+        let rc = unsafe {
+            libc::mprotect(
+                base.cast::<u8>().add(readable_pages * page_size).cast(),
+                page_size,
+                libc::PROT_NONE,
+            )
+        };
+        assert_eq!(rc, 0, "mprotect(PROT_NONE) failed");
+        Self {
+            base: base.cast::<u8>(),
+            total_len,
+            page_size,
+        }
+    }
+
+    fn guard_edge(&self) -> *mut u8 {
+        // SAFETY: points to the start of the final PROT_NONE guard page.
+        unsafe { self.base.add(self.total_len - self.page_size) }
+    }
+}
+
+impl Drop for GuardedPages {
+    fn drop(&mut self) {
+        // SAFETY: `base` and `total_len` came directly from `mmap`.
+        unsafe {
+            libc::munmap(self.base.cast(), self.total_len);
+        }
+    }
+}
+
+#[test]
+fn mbsnrtowcs_stops_before_prot_none_guard_page() {
+    let _utf8 = utf8_locale();
+    let pages = GuardedPages::new(1);
+    let edge = pages.guard_edge();
+
+    // "hi\0" sitting immediately before the PROT_NONE page with nms >> 3.
+    unsafe {
+        let src_start = edge.sub(3);
+        std::ptr::copy_nonoverlapping(b"hi\0".as_ptr(), src_start, 3);
+
+        let mut src_ptr = src_start.cast::<c_char>().cast_const();
+        let mut dst = [0 as libc::wchar_t; 16];
+        let n = mbsnrtowcs(
+            dst.as_mut_ptr(),
+            &mut src_ptr,
+            100,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(n, 2);
+        assert!(src_ptr.is_null());
+        assert_eq!(dst[0], b'h' as libc::wchar_t);
+        assert_eq!(dst[1], b'i' as libc::wchar_t);
+        assert_eq!(dst[2], 0);
+
+        let mut count_src = src_start.cast::<c_char>().cast_const();
+        let counted = mbsnrtowcs(
+            std::ptr::null_mut(),
+            &mut count_src,
+            100,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(counted, 2);
+        assert_eq!(count_src, src_start.cast::<c_char>().cast_const());
+
+        // Exact-fit write without NUL ("hi" at edge - 2, len = 2, nms = 100).
+        let exact_start = edge.sub(2);
+        std::ptr::copy_nonoverlapping(b"hi".as_ptr(), exact_start, 2);
+        let mut exact_src = exact_start.cast::<c_char>().cast_const();
+        let mut exact_dst = [0 as libc::wchar_t; 2];
+        let exact_n = mbsnrtowcs(
+            exact_dst.as_mut_ptr(),
+            &mut exact_src,
+            100,
+            exact_dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(exact_n, 2);
+        assert_eq!(exact_src, edge.cast::<c_char>().cast_const());
+        assert_eq!(exact_dst, [b'h' as libc::wchar_t, b'i' as libc::wchar_t]);
+    }
+
+    // Two readable pages + guard page: 2-byte UTF-8 sequence ("é") straddling
+    // the boundary between page 0 and page 1, ending right before page 2 guard.
+    let two_pages = GuardedPages::new(2);
+    unsafe {
+        let mid = two_pages.base.add(two_pages.page_size);
+        let straddle_start = mid.sub(2); // 'A', 0xC3 | 0xA9, 'Z', 0
+        std::ptr::copy_nonoverlapping([b'A', 0xC3, 0xA9, b'Z', 0].as_ptr(), straddle_start, 5);
+
+        let mut src_ptr = straddle_start.cast::<c_char>().cast_const();
+        let mut dst = [0 as libc::wchar_t; 8];
+        let n = mbsnrtowcs(
+            dst.as_mut_ptr(),
+            &mut src_ptr,
+            100,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(n, 3);
+        assert!(src_ptr.is_null());
+        assert_eq!(dst[0], b'A' as libc::wchar_t);
+        assert_eq!(dst[1], 'é' as libc::wchar_t);
+        assert_eq!(dst[2], b'Z' as libc::wchar_t);
+        assert_eq!(dst[3], 0);
+
+        let mut count_src = straddle_start.cast::<c_char>().cast_const();
+        let counted = mbsnrtowcs(
+            std::ptr::null_mut(),
+            &mut count_src,
+            100,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(counted, 3);
+        assert_eq!(count_src, straddle_start.cast::<c_char>().cast_const());
+    }
+}
+
+#[test]
+fn wcsnrtombs_stops_before_prot_none_guard_page() {
+    let _utf8 = utf8_locale();
+    let pages = GuardedPages::new(1);
+    let edge = pages.guard_edge();
+
+    // L"hi\0" (12 bytes) sitting immediately before the PROT_NONE page with nwc >> 3.
+    unsafe {
+        let src_start = edge
+            .sub(3 * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(
+            [b'h' as libc::wchar_t, b'i' as libc::wchar_t, 0].as_ptr(),
+            src_start,
+            3,
+        );
+
+        let mut src_ptr = src_start.cast_const();
+        let mut dst = [0 as c_char; 32];
+        let n = wcsnrtombs(
+            dst.as_mut_ptr(),
+            &mut src_ptr,
+            100,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(n, 2);
+        assert!(src_ptr.is_null());
+        assert_eq!(dst[0] as u8, b'h');
+        assert_eq!(dst[1] as u8, b'i');
+        assert_eq!(dst[2] as u8, 0);
+
+        let mut count_src = src_start.cast_const();
+        let counted = wcsnrtombs(
+            std::ptr::null_mut(),
+            &mut count_src,
+            100,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(counted, 2);
+        assert_eq!(count_src, src_start.cast_const());
+
+        // Exact-fit write without NUL (L"hi" at edge - 8, len = 2, nwc = 100).
+        let exact_start = edge
+            .sub(2 * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(
+            [b'h' as libc::wchar_t, b'i' as libc::wchar_t].as_ptr(),
+            exact_start,
+            2,
+        );
+        let mut exact_src = exact_start.cast_const();
+        let mut exact_dst = [0 as c_char; 2];
+        let exact_n = wcsnrtombs(
+            exact_dst.as_mut_ptr(),
+            &mut exact_src,
+            100,
+            exact_dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(exact_n, 2);
+        assert_eq!(exact_src, edge.cast::<libc::wchar_t>().cast_const());
+        assert_eq!(exact_dst[0] as u8, b'h');
+        assert_eq!(exact_dst[1] as u8, b'i');
+
+        // Count-only mode stops at an unrepresentable surrogate before the guard page.
+        let bad_start = edge
+            .sub(2 * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(
+            [b'A' as libc::wchar_t, 0xD800 as libc::wchar_t].as_ptr(),
+            bad_start,
+            2,
+        );
+        let mut bad_src = bad_start.cast_const();
+        set_errno(0);
+        let bad_n = wcsnrtombs(
+            std::ptr::null_mut(),
+            &mut bad_src,
+            100,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(bad_n, usize::MAX);
+        assert_eq!(errno_value(), libc::EILSEQ);
+        assert_eq!(bad_src, bad_start.cast_const());
+    }
+
+    // Multi-page wide string ending right before a PROT_NONE guard page.
+    let two_pages = GuardedPages::new(2);
+    unsafe {
+        let elem_count = (two_pages.page_size / std::mem::size_of::<libc::wchar_t>()) + 16;
+        let src_start = two_pages
+            .guard_edge()
+            .sub((elem_count + 1) * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        for i in 0..elem_count {
+            *src_start.add(i) = if i == elem_count - 1 {
+                'é' as libc::wchar_t
+            } else {
+                b'x' as libc::wchar_t
+            };
+        }
+        *src_start.add(elem_count) = 0;
+
+        let expected_bytes = (elem_count - 1) + 2;
+        let mut count_src = src_start.cast_const();
+        let counted = wcsnrtombs(
+            std::ptr::null_mut(),
+            &mut count_src,
+            elem_count + 500,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(counted, expected_bytes);
+        assert_eq!(count_src, src_start.cast_const());
+
+        let mut dst = vec![0 as c_char; expected_bytes + 8];
+        let mut write_src = src_start.cast_const();
+        let written = wcsnrtombs(
+            dst.as_mut_ptr(),
+            &mut write_src,
+            elem_count + 500,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(written, expected_bytes);
+        assert!(write_src.is_null());
+        assert_eq!(dst[expected_bytes - 2] as u8, 0xC3);
+        assert_eq!(dst[expected_bytes - 1] as u8, 0xA9);
+        assert_eq!(dst[expected_bytes] as u8, 0);
+    }
+}

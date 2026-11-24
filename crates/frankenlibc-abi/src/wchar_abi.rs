@@ -206,9 +206,11 @@ pub(crate) fn fwide_orientation(stream: *mut c_void) -> Option<c_int> {
 /// - `terminated` indicates whether a NUL wide-char was observed.
 unsafe fn scan_w_string(ptr: *const u32, bound: Option<usize>) -> (usize, bool) {
     match bound {
+        Some(0) => (0, false),
         Some(limit) => {
-            // Bounded SIMD NUL scan (reads only within `limit`). Returns NUL index or limit.
-            let r = unsafe { wide_strlen_bounded(ptr, limit) };
+            // Page-safe bounded SIMD NUL scan: stops at the first NUL or `limit`
+            // without reading across a trailing PROT_NONE guard page.
+            let r = unsafe { wide_nul_or_bound(ptr, limit) };
             (r, r < limit)
         }
         None => {
@@ -10140,17 +10142,18 @@ unsafe fn mbsnrtowcs_convert(
         // codepoint, and the run stops at the first NUL / multibyte lead so every
         // terminator / multibyte / error case stays in the scalar step below.
         if state_initial {
-            // A byte limit large enough that the window would exceed `isize::MAX`
-            // is not a real request — no C string is that long — but handing it to
-            // `from_raw_parts` anyway aborts the process on Rust's UB check
-            // ("slice::from_raw_parts requires ... the total size of the slice not
-            // to exceed isize::MAX"), which is what happened to this converter's
-            // sibling in golden_wchar_nrt_simd (bd-7ilguh). Clamp the WINDOW, not
-            // the logical `nms` limit, so the scalar step below still honours it.
-            let window_bytes = remaining.min(isize::MAX as usize);
-            // SAFETY: `s` points to at least `window_bytes` readable bytes — the
-            // same window `mbrtowc` is given below, capped so the slice is
-            // constructible.
+            // Clamp the SIMD/mbtowc lookahead window to the remainder of `s`'s
+            // current 4 KiB page (as well as `remaining`). POSIX guarantees
+            // `mbsnrtowcs` stops at the first NUL or EILSEQ without reading
+            // beyond it; constructing a slice spanning `remaining` bytes when
+            // `nms` exceeds the string's length lets SIMD loads cross into a
+            // trailing PROT_NONE guard page (and also handles `nms > isize::MAX`
+            // without a separate clamp since `page_rem <= 4096`).
+            let page_rem = WIDE_SCAN_PAGE - ((s as usize) & (WIDE_SCAN_PAGE - 1));
+            let window_bytes = remaining.min(page_rem);
+            // SAFETY: `s` points to at least 1 readable byte in its mapped page
+            // (`consumed < nms`), so `window_bytes <= page_rem` stays strictly
+            // inside that mapped page and never crosses a trailing guard page.
             let src_window = unsafe { std::slice::from_raw_parts(s as *const u8, window_bytes) };
             // (chars consumed, bytes consumed) — equal for the ASCII-only write
             // path, distinct for the count path which also fast-forwards contiguous
@@ -10159,8 +10162,7 @@ unsafe fn mbsnrtowcs_convert(
                 // Count mode: SIMD-count the leading clean run (ASCII + contiguous
                 // 2/3/4-byte) within the nms window; the scalar `mbrtowc` below
                 // resolves NUL / MB_INCOMPLETE / EILSEQ and any sequence straddling
-                // the nms boundary — was ASCII-only bulk + a scalar `mbrtowc` per
-                // multibyte char (contiguous non-Latin runs lost ~2-3x to glibc).
+                // the nms or page boundary.
                 codec::mbs_decoded_len_prefix(src_window)
             } else {
                 // SAFETY: `dst` has >= `len` wchar_t slots and `written < len` here.
@@ -10170,8 +10172,7 @@ unsafe fn mbsnrtowcs_convert(
                 // Write mode: SIMD-widen the leading clean run (ASCII + contiguous
                 // 2/3/4-byte) within the nms window straight into `dst`; the scalar
                 // `mbrtowc` below resolves NUL / MB_INCOMPLETE / EILSEQ / dst-full
-                // and any sequence straddling the nms boundary — was ASCII-only,
-                // leaving contiguous non-Latin runs scalar (~3-5x LOSS vs glibc).
+                // and any sequence straddling the nms or page boundary.
                 // `chars` != `bytes` for multibyte, so advance the two cursors
                 // independently below.
                 codec::mbs_decode_prefix(dst_window, src_window)
@@ -10183,21 +10184,19 @@ unsafe fn mbsnrtowcs_convert(
                 continue;
             }
             // The SIMD prefix made no progress ⇒ an isolated multibyte char / NUL /
-            // an nms-boundary sequence. Fast-path the common complete-char case
-            // through the inlinable core `mbtowc` instead of the exported extern "C"
-            // `mbrtowc` (a PLT call that never inlines + re-runs the null/ASCII
-            // guards) — this is the interleaved-text ("café") hot path, where the
-            // scalar step is hit once per lone accent. NUL, an nms-truncated
-            // incomplete sequence, and EILSEQ all fall through to the `mbrtowc`
-            // scalar step below for their exact contract. Byte-identical: `mbtowc`'s
-            // complete-char result shares `utf8_decode_step` with `mbrtowc`; the
-            // window is capped at `remaining` so `used <= remaining` (mirrors the
-            // `r <= remaining` arm); a NUL byte (b0 == 0) is excluded so `wc != 0`;
-            // and the state stays initial after a complete char.
+            // an nms- or page-boundary sequence. Fast-path the common complete-char
+            // case through the inlinable core `mbtowc` instead of the exported
+            // extern "C" `mbrtowc` (a PLT call that never inlines + re-runs the
+            // null/ASCII guards) — this is the interleaved-text ("café") hot path,
+            // where the scalar step is hit once per lone accent. NUL, an
+            // nms-truncated or page-straddling sequence, and EILSEQ all fall
+            // through to `mbrtowc` below (which reads byte-by-byte through
+            // `read_bounded_window`) for their exact contract.
             let b0 = unsafe { *(s as *const u8) };
             if b0 != 0 {
-                // SAFETY: caller guarantees `s` points to at least `remaining` bytes.
-                let win = unsafe { std::slice::from_raw_parts(s as *const u8, remaining.min(6)) };
+                // SAFETY: `window_bytes <= page_rem` stays inside `s`'s mapped page.
+                let win =
+                    unsafe { std::slice::from_raw_parts(s as *const u8, window_bytes.min(6)) };
                 if let Some((wc, used)) = codec::mbtowc(win) {
                     if !dst.is_null() {
                         // SAFETY: the loop guard guarantees `written < len` in write mode.
@@ -10294,29 +10293,41 @@ pub unsafe extern "C" fn wcsnrtombs(
     // This is the same lever wcstombs/wcsrtombs count mode already ship. POSIX
     // leaves `*src` untouched when dst is NULL, so we return without updating it.
     if dst.is_null() {
-        let (count_len, terminated) = unsafe { scan_w_string(s as *const u32, Some(max_wchars)) };
-        // SAFETY: `count_len <= max_wchars` readable wide chars — the same window
-        // the scalar loop below reads (its first iteration forms an identical
-        // `remaining_wc == max_wchars` slice, and it stops at this NUL).
-        let window = unsafe { std::slice::from_raw_parts(s as *const u32, count_len) };
-        // Bulk-count the leading ASCII run (each 0x01..=0x7F wchar is exactly one
-        // byte, so the run length IS its byte count) with the cheap single-pass
-        // `wcs_ascii_prefix_len`, then SIMD length-sum only the multibyte
-        // remainder. This keeps the flagship pure-ASCII count a single scan
-        // (`wcs_encoded_len`'s 6 per-window threshold popcounts are ~10x that scan
-        // — routing all-ASCII through it regressed the 18x ASCII win to ~1.7x);
-        // byte-identical since `a` equals the prefix's exact byte total.
-        let a = codec::wcs_ascii_prefix_len(window);
-        let counted = match codec::wcs_encoded_len(&window[a..]) {
-            Some(bytes) => a + bytes,
-            None => {
-                // Unrepresentable wchar (surrogate / out-of-range): EILSEQ, exactly
-                // as the scalar `wcrtomb` step reports. `wcrtomb` sets errno itself;
-                // set it here since `wcs_encoded_len` does not.
-                unsafe { set_abi_errno(libc::EILSEQ) };
-                return usize::MAX;
+        let mut cur = s as *const u32;
+        let mut counted = 0usize;
+        let mut scanned = 0usize;
+        let mut terminated = false;
+        while scanned < max_wchars {
+            let remaining_wc = max_wchars - scanned;
+            let page_rem_wc = wide_elems_to_page_end(cur);
+            // Process at most one mapped page at a time so a NUL terminator or
+            // an unrepresentable wchar (EILSEQ) right before a PROT_NONE guard
+            // page stops before touching the next page.
+            let chunk_limit = remaining_wc.min(page_rem_wc.max(1));
+            let (count_len, chunk_term) = unsafe { scan_w_string(cur, Some(chunk_limit)) };
+            // SAFETY: `count_len <= chunk_limit` readable wide chars before NUL.
+            let window = unsafe { std::slice::from_raw_parts(cur, count_len) };
+            // Bulk-count the leading ASCII run (each 0x01..=0x7F wchar is
+            // exactly one byte) with the cheap single-pass `wcs_ascii_prefix_len`,
+            // then sum only the multibyte remainder.
+            let a = codec::wcs_ascii_prefix_len(window);
+            match codec::wcs_encoded_len(&window[a..]) {
+                Some(bytes) => counted += a + bytes,
+                None => {
+                    // Unrepresentable wchar (surrogate / out-of-range): EILSEQ,
+                    // exactly as the scalar `wcrtomb` step reports.
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return usize::MAX;
+                }
             }
-        };
+            if chunk_term {
+                terminated = true;
+                break;
+            }
+            scanned += count_len;
+            // SAFETY: `count_len == chunk_limit <= remaining_wc` non-NUL elements were scanned.
+            cur = unsafe { cur.add(count_len) };
+        }
         if !terminated && source_bound.is_some_and(|bound| bound < nwc) {
             // Consumed the whole known source without reaching a NUL and the source
             // is shorter than nwc → the tracked-source-underrun EILSEQ (bd-2g7oyh),
@@ -10327,65 +10338,46 @@ pub unsafe extern "C" fn wcsnrtombs(
         return counted;
     }
 
-    while wchars_consumed < max_wchars {
+    // Stop as soon as the destination is full (`written == len`) BEFORE reading
+    // the next source wchar: both NUL and non-NUL break at `written >= len`,
+    // and reading `*s` past an exact-fit slice would fault if a PROT_NONE guard
+    // page sits immediately after the converted elements.
+    while wchars_consumed < max_wchars && written < len {
         // SIMD-narrow the leading ASCII wide-char run (each 0x01..=0x7F wchar
-        // encodes to exactly one byte), bounded by the source wchar window and
-        // the destination byte capacity. wcrtomb is stateless per wchar for
-        // UTF-8, so this is valid regardless of `ps`. It stops at the first NUL /
-        // non-ASCII / dest-full, leaving those for the scalar step — so output is
-        // byte-for-byte identical (an ASCII wchar narrows 1:1 to the same byte)
-        // and the bd-2g7oyh.186 dest-full / EILSEQ-on-truncation logic is intact.
+        // encodes to exactly one byte), bounded by the source wchar window,
+        // the current 4 KiB page, and the destination byte capacity.
         let remaining_wc = max_wchars - wchars_consumed;
-        // Same clamp as the byte-window converter above, and for the same reason:
-        // `nwc` can be `(size_t)-1` (which is what a caller passes after an error
-        // return it did not check), and a slice of that many `u32`s is both
-        // unconstructible and unsatisfiable, so the UB check aborts the process
-        // instead of the call returning an error. Clamp the WINDOW, not the logical
-        // limit, so the scalar step below still honours `nwc`.
-        let window_wc = remaining_wc.min(isize::MAX as usize / std::mem::size_of::<u32>());
-        // SAFETY: `s` points to at least `window_wc` readable wide chars, capped so
-        // the slice is constructible.
-        let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, window_wc) };
-        // Count mode (dst == NULL) returned above via the SIMD `wcs_encoded_len`
-        // fast path, so `dst` is non-null here — this is the write path.
-        // SAFETY: `dst` has >= `len` bytes; `written <= len`.
-        let dst_window =
-            unsafe { std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written) };
-        // Encode the leading run of whole clean windows (ASCII + 2/3/4-byte,
-        // gated) via the shared SIMD lever `wcstombs`/`wcsrtombs` use, so
-        // contiguous multibyte runs vectorise, not just the ASCII prefix.
-        // `chars` (wide chars consumed) and `bytes` (output bytes written)
-        // differ for multibyte; the helper only emits whole validated windows
-        // bounded by the source window and `len - written`, so it stays
-        // byte-for-byte identical to the scalar `wcrtomb` loop.
-        let (chars, bytes) = codec::wcs_simd_prefix(dst_window, src_window);
-        if chars > 0 {
-            written += bytes; // one byte per ASCII wchar; 2/3/4 for multibyte
-            wchars_consumed += chars;
-            s = unsafe { s.add(chars) };
-            continue;
+        let page_rem_wc = wide_elems_to_page_end(s as *const u32);
+        let window_wc = remaining_wc.min(page_rem_wc);
+        if window_wc > 0 {
+            // SAFETY: `s` points to at least 1 readable wide char in its mapped
+            // page, so `window_wc <= page_rem_wc` stays strictly inside that
+            // mapped page (and `<= 1024 <= isize::MAX / 4`).
+            let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, window_wc) };
+            // SAFETY: `dst` is non-null (`dst.is_null()` returned above) and
+            // `written < len` by the loop guard.
+            let dst_window = unsafe {
+                std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written)
+            };
+            // Encode the leading run of whole clean windows via the shared SIMD
+            // lever `wcstombs`/`wcsrtombs` use.
+            let (chars, bytes) = codec::wcs_simd_prefix(dst_window, src_window);
+            if chars > 0 {
+                written += bytes; // one byte per ASCII wchar; 2/3/4 for multibyte
+                wchars_consumed += chars;
+                s = unsafe { s.add(chars) };
+                continue;
+            }
         }
 
         let wc = unsafe { *s };
         if wc == 0 {
-            if !dst.is_null() {
-                if written < len {
-                    unsafe { *dst.add(written) = 0 };
-                } else {
-                    break;
-                }
-            }
+            // SAFETY: `dst` is non-null and `written < len` by the loop guard.
+            unsafe { *dst.add(written) = 0 };
             unsafe { *src = std::ptr::null() };
             return written;
         }
 
-        // When the destination is already full, stop BEFORE encoding the next
-        // wide char: glibc reports the len-limit (count + *src at this char)
-        // rather than an EILSEQ from a subsequent un-encodable wchar (e.g. a
-        // surrogate) that would never have been written. (bd-2g7oyh.186)
-        if !dst.is_null() && written >= len {
-            break;
-        }
         // Always encode into the scratch buffer first, then copy only what fits.
         // (The previous `written + 4 <= len` direct-write assumed a 4-byte max
         // and could overflow `dst` by up to 2 bytes for a 5/6-byte UTF-8 form —
@@ -10407,14 +10399,13 @@ pub unsafe extern "C" fn wcsnrtombs(
                 return usize::MAX;
             }
         };
-        if !dst.is_null() {
-            if written + ret > len {
-                break; // the whole character does not fit — never split it
-            }
-            // SAFETY: bounds checked above; copying `ret` bytes within `dst[..len]`.
-            unsafe {
-                std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst.add(written), ret);
-            }
+        if written + ret > len {
+            break; // the whole character does not fit — never split it
+        }
+        // SAFETY: `dst` is non-null (`dst.is_null()` returned above) and
+        // `written + ret <= len` was verified above.
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst.add(written), ret);
         }
         written += ret;
         wchars_consumed += 1;
