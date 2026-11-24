@@ -45,6 +45,7 @@ on:
       - 'crates/frankenlibc-abi/tests/pthread_host_thread_handoff_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_cancel_wait_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_cond_clock_test.rs'
       - 'crates/frankenlibc-abi/tests/signal_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/time_abi_test.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
@@ -506,6 +507,22 @@ jobs:
             fi
           done
           exit "$failed"
+      - name: Preserve recursive mutex exclusion through condition waits
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/runtime-startup
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo test -p frankenlibc-abi "${args[@]}" \
+            --test dlfcn_native_cond_clock_test \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/runtime-startup/recursive-conditions.log
+          grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' \
+            artifacts/runtime-startup/recursive-conditions.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

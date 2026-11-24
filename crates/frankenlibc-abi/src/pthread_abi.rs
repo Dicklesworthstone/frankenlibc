@@ -5411,7 +5411,6 @@ struct CondWaitGuard {
     word: *const u32,
     mutex: *mut libc::pthread_mutex_t,
     mtype: c_int,
-    saved_count: u32,
     /// `condvar_wait_prepare` succeeded, so the mutex was released.
     prepared: bool,
     /// Only an ordinary wait return may consume its selected condition signal.
@@ -5431,19 +5430,11 @@ impl Drop for CondWaitGuard {
             // SAFETY: pairs the successful prepare on the same pointers.
             unsafe { core_condvar_wait_finish(self.cond, self.word) };
         }
-        if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || self.mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE
+        if self.mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE
+            && let Some(owner_ptr) = mutex_owner_ptr(self.mutex)
         {
-            if let Some(owner_ptr) = mutex_owner_ptr(self.mutex) {
-                let owner = unsafe { &*owner_ptr };
-                owner.store(core_cached_tid(), Ordering::Release);
-            }
-            if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
-                && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
-            {
-                let count = unsafe { &*count_ptr };
-                // Restore the lock count we had before waiting.
-                count.store(self.saved_count, Ordering::Release);
-            }
+            let owner = unsafe { &*owner_ptr };
+            owner.store(core_cached_tid(), Ordering::Release);
         }
     }
 }
@@ -5530,28 +5521,29 @@ fn cond_futex_wait(
     }
 }
 
-/// Re-takes a pshared/robust/PI mutex after a condvar wait, including when
-/// the wait is abandoned by a cancellation unwind.
+/// Re-takes one level of a recursive/pshared/robust/PI mutex after a
+/// condvar wait, including when cancellation abandons the wait.
 struct ExtCondWaitGuard<'a> {
     cv: &'a CondvarData,
     mutex: *mut libc::pthread_mutex_t,
-    saved_count: u32,
+    track_association: bool,
     armed: bool,
 }
 
 impl ExtCondWaitGuard<'_> {
-    /// Deregister and re-take the mutex; returns the lock result.
-    fn finish(&mut self) -> c_int {
+    fn unregister(&mut self) {
         self.armed = false;
-        self.cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
-        let raw_type = read_mutex_type_word(self.mutex);
-        let rc = unsafe { ext_mutex_lock(self.mutex, raw_type, None, false) };
-        if (rc == 0 || rc == libc::EOWNERDEAD)
-            && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
-        {
-            unsafe { &*count_ptr }.store(self.saved_count.max(1), Ordering::Release);
+        let previous = self.cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+        if self.track_association && previous == 1 {
+            self.cv.assoc_mutex.store(0, Ordering::Release);
         }
-        rc
+    }
+
+    /// Deregister and re-take exactly the level released before waiting.
+    fn finish(&mut self) -> c_int {
+        self.unregister();
+        let raw_type = read_mutex_type_word(self.mutex);
+        unsafe { ext_mutex_lock(self.mutex, raw_type, None, false) }
     }
 }
 
@@ -5564,10 +5556,10 @@ impl Drop for ExtCondWaitGuard<'_> {
     }
 }
 
-/// Condvar wait whose mutex is process-shared, robust or PI: its lock word is
-/// not the private 0/1/2 word that core's prepare/finish release and re-take,
-/// so the mutex is released and re-acquired through the extended paths
-/// (EOWNERDEAD from the re-acquire is returned to the caller, as in glibc).
+/// Condvar wait through the mutex's full unlock/lock protocol. A recursive
+/// mutex releases one level; if another level remains, the waiter retains
+/// ownership throughout the wait. Process-shared, robust and PI mutexes also
+/// need their full protocol (including EOWNERDEAD from reacquisition).
 /// Always inlined: it reaches the cond_futex_wait cancellation point.
 #[inline(always)]
 unsafe fn cond_wait_extended_mutex(
@@ -5590,21 +5582,36 @@ unsafe fn cond_wait_extended_mutex(
     }
     // SAFETY: validated by the caller.
     let cv = unsafe { &*cond_ptr };
+    // Ordinary recursive mutexes retain the core wait's association check.
+    // Preserve the existing extended paths: process-shared objects can occupy
+    // different virtual addresses in each process, so pointer identity is not
+    // a valid shared association. Register before unlocking in every path.
+    let track_association = raw_type & MUTEX_EXTENDED_FLAGS == 0;
+    if track_association {
+        match cv.assoc_mutex.compare_exchange(
+            0,
+            mutex as usize,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {}
+            Err(existing) if existing == mutex as usize => {}
+            Err(_) => return libc::EINVAL,
+        }
+    }
     let expected_seq = cv.seq.load(Ordering::Acquire);
     cv.nwaiters.fetch_add(1, Ordering::AcqRel);
-    // A recursive mutex is released completely for the wait.
-    let saved_count = m.count.swap(1, Ordering::AcqRel);
     let mut guard = ExtCondWaitGuard {
         cv,
         mutex,
-        saved_count,
+        track_association,
         armed: true,
     };
+    // Do not replace the recursion count: the unlock must leave all deeper
+    // levels, owner metadata and any robust recovery obligation intact.
     let unlock_rc = unsafe { ext_mutex_unlock(mutex, raw_type) };
     if unlock_rc != 0 {
-        guard.armed = false;
-        cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
-        m.count.store(saved_count, Ordering::Release);
+        guard.unregister();
         return unlock_rc;
     }
     let rc = cond_futex_wait(cv, expected_seq, abstime, clock);
@@ -5631,7 +5638,9 @@ unsafe fn cond_wait_common(
         return libc::EINVAL;
     };
     let raw_type = read_mutex_type_word(mutex);
-    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0
+        || raw_type & MUTEX_TYPE_MASK == PTHREAD_MUTEX_RECURSIVE_TYPE
+    {
         return unsafe { cond_wait_extended_mutex(cond_ptr, mutex, raw_type, abstime, clock) };
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
@@ -5644,12 +5653,9 @@ unsafe fn cond_wait_common(
     }
 
     let mtype = read_mutex_type(mutex);
-    let mut saved_count = 0;
-    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
-        // Verify the calling thread actually owns the mutex before clearing
-        // owner/count state. Without this check, a thread that incorrectly
-        // calls cond_wait without holding the mutex would clobber the real
-        // owner's bookkeeping and silently steal the mutex on wake. (bd-cie59)
+    if mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
+        // Verify ownership before clearing it; an invalid cond_wait must not
+        // steal the real owner's bookkeeping. (bd-cie59)
         let self_tid = core_cached_tid();
         if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
             let owner = unsafe { &*owner_ptr };
@@ -5657,12 +5663,6 @@ unsafe fn cond_wait_common(
                 return libc::EPERM;
             }
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
-        }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
-            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
-        {
-            let count = unsafe { &*count_ptr };
-            saved_count = count.swap(0, Ordering::Release);
         }
     }
 
@@ -5672,7 +5672,6 @@ unsafe fn cond_wait_common(
         word: word_u32,
         mutex,
         mtype,
-        saved_count,
         prepared: false,
         completed: false,
     };

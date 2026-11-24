@@ -17,6 +17,12 @@ const SOURCE: &str = r#"
 #include <errno.h>
 #include <time.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#ifndef SYS_futex_waitv
+#define SYS_futex_waitv 449
+#endif
 #define CHECK(c) do {if(!(c)) return __LINE__;} while(0)
 
 static int setup(pthread_cond_t *c,pthread_mutex_t *m,int clock,int robust) {
@@ -157,6 +163,230 @@ int explicit_clock_cancellation_reacquires_mutex(void) {
     }
     return 0;
 }
+
+/* Recursive waits release one level, including timeout and cancellation.
+   Observe the kernel wait before testing exclusion: a readiness flag alone
+   could let the contender run before the condition wait actually releases. */
+struct recursive_state {
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
+    _Atomic int tid;
+    _Atomic int finished;
+    _Atomic int release;
+    _Atomic int cleaned;
+    _Atomic int failure;
+    int depth;
+    int api;
+    int action;
+    int wait_result;
+};
+static int (*recursive_thread_probe)(void);
+static int recursive_expected_native;
+void recursive_set_thread_probe(int (*probe)(void), int expected) {
+    recursive_thread_probe=probe;
+    recursive_expected_native=expected;
+}
+void *recursive_provider(int which) {
+    switch(which) {
+    case 0: return (void *)pthread_cond_wait;
+    case 1: return (void *)pthread_cond_timedwait;
+    case 2: return (void *)pthread_cond_clockwait;
+    case 3: return (void *)pthread_mutex_lock;
+    case 4: return (void *)pthread_mutex_unlock;
+    case 5: return (void *)pthread_create;
+    case 6: return (void *)pthread_cancel;
+    default: return 0;
+    }
+}
+static void recursive_fail(struct recursive_state *s,int line) {
+    int empty=0;
+    atomic_compare_exchange_strong(&s->failure,&empty,line);
+}
+static int recursive_deadline(int clock,long milliseconds,struct timespec *until) {
+    CHECK(clock_gettime(clock,until)==0);
+    until->tv_sec+=milliseconds/1000;
+    until->tv_nsec+=(milliseconds%1000)*1000000;
+    if(until->tv_nsec>=1000000000) {
+        until->tv_nsec-=1000000000;
+        ++until->tv_sec;
+    }
+    return 0;
+}
+static void recursive_cleanup(void *argument) {
+    struct recursive_state *s=argument;
+    for(int i=0;i<s->depth;++i) {
+        if(pthread_mutex_unlock(&s->mutex)!=0) recursive_fail(s,__LINE__);
+    }
+    if(pthread_mutex_unlock(&s->mutex)!=EPERM) recursive_fail(s,__LINE__);
+    atomic_fetch_add(&s->cleaned,1);
+}
+static void *recursive_waiter(void *argument) {
+    struct recursive_state *s=argument;
+    if(!recursive_thread_probe ||
+       recursive_thread_probe()!=recursive_expected_native) {
+        recursive_fail(s,__LINE__);
+        atomic_store(&s->finished,1);
+        return (void *)1;
+    }
+    int acquired=0;
+    while(acquired<s->depth) {
+        if(pthread_mutex_lock(&s->mutex)!=0) {
+            recursive_fail(s,__LINE__);
+            while(acquired-->0) pthread_mutex_unlock(&s->mutex);
+            atomic_store(&s->finished,1);
+            return (void *)1;
+        }
+        ++acquired;
+    }
+    int clock=s->api==3 ? CLOCK_MONOTONIC : CLOCK_REALTIME;
+    struct timespec until={0,0};
+    if(s->action!=1 && recursive_deadline(clock,10000,&until)) {
+        recursive_fail(s,__LINE__);
+        recursive_cleanup(s);
+        atomic_store(&s->finished,1);
+        return (void *)1;
+    }
+    pthread_cleanup_push(recursive_cleanup,s);
+    atomic_store(&s->tid,gettid());
+    do {
+        switch(s->api) {
+        case 0: s->wait_result=pthread_cond_wait(&s->cond,&s->mutex);break;
+        case 1: s->wait_result=pthread_cond_timedwait(&s->cond,&s->mutex,&until);break;
+        default:
+            s->wait_result=pthread_cond_clockwait(&s->cond,&s->mutex,clock,&until);
+            break;
+        }
+    } while(s->wait_result==0 && !atomic_load(&s->release));
+    if(s->action==2 || s->wait_result!=(s->action==1 ? ETIMEDOUT : 0))
+        recursive_fail(s,__LINE__);
+    pthread_cleanup_pop(1);
+    atomic_store(&s->finished,1);
+    return 0;
+}
+static int recursive_number(const char **cursor,uintptr_t *value) {
+    const char *p=*cursor;
+    while(*p==' ' || *p=='\t') ++p;
+    unsigned base=10;
+    if(p[0]=='0' && p[1]=='x') {base=16;p+=2;}
+    uintptr_t number=0;
+    int digits=0;
+    for(;;++p) {
+        unsigned digit;
+        if(*p>='0' && *p<='9') digit=(unsigned)(*p-'0');
+        else if(*p>='a' && *p<='f') digit=(unsigned)(*p-'a'+10);
+        else if(*p>='A' && *p<='F') digit=(unsigned)(*p-'A'+10);
+        else break;
+        if(digit>=base) break;
+        number=number*base+digit;
+        ++digits;
+    }
+    *cursor=p;
+    *value=number;
+    return digits!=0;
+}
+static int recursive_parked(struct recursive_state *s) {
+    struct timespec deadline,now;
+    if(recursive_deadline(CLOCK_MONOTONIC,3000,&deadline)) return 0;
+    do {
+        if(atomic_load(&s->finished) || atomic_load(&s->failure)) return 0;
+        int tid=atomic_load(&s->tid);
+        if(tid>0) {
+            char path[64]="/proc/self/task/";
+            char digits[16];unsigned count=0,at=sizeof("/proc/self/task/")-1;
+            unsigned number=(unsigned)tid;
+            do {digits[count++]=(char)('0'+number%10);number/=10;} while(number);
+            while(count) path[at++]=digits[--count];
+            const char suffix[]="/syscall";
+            for(unsigned i=0;i<sizeof(suffix);++i) path[at++]=suffix[i];
+            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            if(fd>=0) {
+                char buffer[512];
+                ssize_t n=read(fd,buffer,sizeof(buffer)-1);
+                close(fd);
+                if(n>0) {
+                    buffer[n]=0;
+                    const char *cursor=buffer;uintptr_t nr,address,argument;
+                    if(recursive_number(&cursor,&nr) &&
+                       recursive_number(&cursor,&address) &&
+                       recursive_number(&cursor,&argument)) {
+                        uintptr_t first=(uintptr_t)&s->cond;
+                        uintptr_t limit=first+sizeof(s->cond);
+                        if(nr==SYS_futex && address>=first && address<=limit-4)
+                            return 1;
+                        /* The native cancellation adapter waits on two words.
+                           This worker calls no other waitv operation. */
+                        if(nr==SYS_futex_waitv && argument==2) return 1;
+                    }
+                }
+            }
+        }
+        if(clock_gettime(CLOCK_MONOTONIC,&now)) return 0;
+    } while(now.tv_sec<deadline.tv_sec ||
+            (now.tv_sec==deadline.tv_sec && now.tv_nsec<deadline.tv_nsec));
+    return 0;
+}
+static int recursive_case(int kind,int depth,int api,int action) {
+    struct recursive_state s;
+    atomic_init(&s.tid,0);atomic_init(&s.finished,0);
+    atomic_init(&s.release,0);atomic_init(&s.cleaned,0);atomic_init(&s.failure,0);
+    s.depth=depth;s.api=api;s.action=action;s.wait_result=-1;
+    pthread_mutexattr_t attr;
+    CHECK(pthread_mutexattr_init(&attr)==0);
+    CHECK(pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE)==0);
+    if(kind==1) CHECK(pthread_mutexattr_setpshared(&attr,PTHREAD_PROCESS_SHARED)==0);
+    if(kind==2 || kind==4) CHECK(pthread_mutexattr_setrobust(&attr,PTHREAD_MUTEX_ROBUST)==0);
+    if(kind==3 || kind==4) CHECK(pthread_mutexattr_setprotocol(&attr,PTHREAD_PRIO_INHERIT)==0);
+    CHECK(pthread_mutex_init(&s.mutex,&attr)==0);
+    CHECK(pthread_mutexattr_destroy(&attr)==0);
+    CHECK(pthread_cond_init(&s.cond,0)==0);
+    pthread_t thread;
+    CHECK(pthread_create(&thread,0,recursive_waiter,&s)==0);
+    int parked=1,contender=0,contender_unlock=0,complete=0;
+    if(action!=1) {
+        parked=recursive_parked(&s);
+        struct timespec until;
+        if(recursive_deadline(CLOCK_REALTIME,depth==1 ? 1000 : 20,&until)) {
+            contender=-1;
+        } else {
+            contender=pthread_mutex_timedlock(&s.mutex,&until);
+            if(contender==0) contender_unlock=pthread_mutex_unlock(&s.mutex);
+        }
+        if(action==2) complete=pthread_cancel(thread);
+        else {
+            atomic_store(&s.release,1);
+            complete=pthread_cond_signal(&s.cond);
+        }
+    }
+    /* Join before reporting a failed property so no worker outlives its DSO. */
+    void *result=0;
+    CHECK(pthread_join(thread,&result)==0);
+    int failure=atomic_load(&s.failure);
+    int cleaned=atomic_load(&s.cleaned);
+    int final_lock=pthread_mutex_trylock(&s.mutex);
+    int final_unlock=final_lock==0 ? pthread_mutex_unlock(&s.mutex) : -1;
+    int cond_destroy=pthread_cond_destroy(&s.cond);
+    int mutex_destroy=pthread_mutex_destroy(&s.mutex);
+    if(failure) return failure;
+    CHECK(parked && complete==0 && contender_unlock==0);
+    if(action!=1) CHECK(contender==(depth==1 ? 0 : ETIMEDOUT));
+    CHECK(result==(action==2 ? PTHREAD_CANCELED : 0));
+    CHECK(cleaned==1 && final_lock==0 && final_unlock==0);
+    CHECK(cond_destroy==0 && mutex_destroy==0);
+    return 0;
+}
+static int recursive_matrix(int action) {
+    for(int kind=0;kind<5;++kind)
+        for(int depth=1;depth<=3;++depth)
+            for(int api=action==1 ? 1 : 0;api<4;++api) {
+                int rc=recursive_case(kind,depth,api,action);
+                if(rc) return rc;
+            }
+    return 0;
+}
+int recursive_signal_preserves_exclusion(void) {return recursive_matrix(0);}
+int recursive_timeouts_preserve_depth(void) {return recursive_matrix(1);}
+int recursive_cancellation_preserves_depth(void) {return recursive_matrix(2);}
+
 void *clock_wait_pointer(const char *version) {
     if(!version) return (void *)pthread_cond_clockwait;
     return dlvsym(RTLD_DEFAULT,"pthread_cond_clockwait",version);
@@ -345,4 +575,144 @@ fn native_clock_provider_versions_are_exact() {
             assert!(unsafe { pointer(version.as_ptr()) }.is_null());
         }
     });
+}
+
+
+extern "C" fn recursive_native_thread_probe() -> c_int {
+    c_int::from(frankenlibc_core::pthread::thread::current_thread_handle().is_some())
+}
+
+fn recursive_protocol(native: bool, native_threads: bool, name: &CStr) {
+    struct RestoreThreading(bool);
+    impl Drop for RestoreThreading {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _threading = native_threads
+        .then(|| RestoreThreading(pthread_abi::pthread_threading_swap_force_native_for_tests()));
+    for got in [false, true] {
+        let lib = Library::new(native, got);
+        // SAFETY: these are the exact signatures of the compiled probes.
+        let set_probe: unsafe extern "C" fn(extern "C" fn() -> c_int, c_int) =
+            unsafe { std::mem::transmute(lib.symbol(c"recursive_set_thread_probe")) };
+        let provider: unsafe extern "C" fn(c_int) -> *mut c_void =
+            unsafe { std::mem::transmute(lib.symbol(c"recursive_provider")) };
+        unsafe { set_probe(recursive_native_thread_probe, c_int::from(native_threads)) };
+        for (index, (symbol, candidate)) in [
+            (c"pthread_cond_wait", pthread_abi::pthread_cond_wait as *const ()),
+            (
+                c"pthread_cond_timedwait",
+                pthread_abi::pthread_cond_timedwait as *const (),
+            ),
+            (
+                c"pthread_cond_clockwait",
+                pthread_abi::pthread_cond_clockwait as *const (),
+            ),
+            (c"pthread_mutex_lock", pthread_abi::pthread_mutex_lock as *const ()),
+            (
+                c"pthread_mutex_unlock",
+                pthread_abi::pthread_mutex_unlock as *const (),
+            ),
+            (c"pthread_create", pthread_abi::pthread_create as *const ()),
+            (c"pthread_cancel", pthread_abi::pthread_cancel as *const ()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let expected = if native {
+                candidate.cast_mut().cast()
+            } else {
+                // SAFETY: the independent GNU resolver rejects the candidate.
+                unsafe { dlsym_oracle::host_addr(symbol, candidate) }
+            };
+            assert_eq!(
+                unsafe { provider(index as c_int) },
+                expected,
+                "recursive protocol provider {symbol:?}"
+            );
+        }
+        // SAFETY: the protocol joins every worker before returning int(void).
+        let run: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(lib.symbol(name)) };
+        assert_eq!(
+            unsafe { run() },
+            0,
+            "recursive C assertion line in {name:?}, GOT={got}, native threads={native_threads}"
+        );
+    }
+}
+
+fn recursive_isolated(test: &str, protocol: &CStr) {
+    const CHILD: &str = "FL_CONDCLOCK_RECURSIVE_CHILD";
+    const THREADS: &str = "FL_CONDCLOCK_RECURSIVE_THREADS";
+    if let Ok(provider) = std::env::var(CHILD) {
+        let native = provider == "native";
+        let native_threads = std::env::var(THREADS).unwrap() == "native";
+        assert!(native || !native_threads);
+        recursive_protocol(native, native_threads, protocol);
+        return;
+    }
+    for (provider, mode, threads) in [
+        ("host", "strict", "host"),
+        ("native", "strict", "host"),
+        ("native", "hardened", "host"),
+        ("native", "strict", "native"),
+        ("native", "hardened", "native"),
+    ] {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(CHILD, provider)
+            .env(THREADS, threads)
+            .env("FRANKENLIBC_MODE", mode)
+            .env("FRANKENLIBC_THREAD_NATIVE", "0")
+            .env_remove("LD_PRELOAD")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut timed_out = false;
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                timed_out = true;
+                child.kill().unwrap();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            !timed_out
+                && output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+            "{test}/{provider}/{mode}/{threads}: timeout={timed_out} status={}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}
+
+#[test]
+fn native_recursive_condition_wait_retains_deeper_locks() {
+    recursive_isolated(
+        "native_recursive_condition_wait_retains_deeper_locks",
+        c"recursive_signal_preserves_exclusion",
+    );
+}
+
+#[test]
+fn native_recursive_condition_timeout_restores_lock_depth() {
+    recursive_isolated(
+        "native_recursive_condition_timeout_restores_lock_depth",
+        c"recursive_timeouts_preserve_depth",
+    );
+}
+
+#[test]
+fn native_recursive_condition_cancellation_restores_lock_depth() {
+    recursive_isolated(
+        "native_recursive_condition_cancellation_restores_lock_depth",
+        c"recursive_cancellation_preserves_depth",
+    );
 }
