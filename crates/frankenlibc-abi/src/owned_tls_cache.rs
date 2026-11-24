@@ -108,27 +108,46 @@ impl<T> OwnedTlsSlot<T> {
     }
 }
 
+struct OwnedTlsMapping {
+    base: *mut u8,
+    len: usize,
+}
+
+impl Drop for OwnedTlsMapping {
+    fn drop(&mut self) {
+        // SAFETY: this guard exclusively owns a detached slot's original mapping.
+        // Payload destruction completes before the guard runs, including unwind.
+        let _ = unsafe { syscall::sys_munmap(self.base, self.len) };
+    }
+}
+
 unsafe extern "C" fn destroy_slot<T>(raw: *mut core::ffi::c_void) {
     // SAFETY: the core key registry clears the value before invoking its
     // matching destructor, transferring this thread's unique slot to us.
+    unsafe { reclaim_slot::<T>(raw) };
+}
+
+unsafe fn reclaim_slot<T>(raw: *mut core::ffi::c_void) {
+    // SAFETY: the caller withdrew this thread's slot from its private key.
     let slot = unsafe { &*raw.cast::<OwnedTlsSlot<T>>() };
     if slot.accessed.get() {
         // Explicit key teardown may be called from inside a cache callback.
         // Retain the slot for another destructor round instead of invalidating
-        // the live mutable borrow. Ordinary exit unwinds all access guards first.
+        // the live borrow. Ordinary exit unwinds all access guards first.
         // SAFETY: this is the same live slot owned by this private key.
         let _ = unsafe { tls::internal_tls_setspecific(slot.key, raw as u64) };
         return;
     }
-    let mapping = slot.mapping;
-    let mapping_len = slot.mapping_len;
+    let _mapping = OwnedTlsMapping {
+        base: slot.mapping,
+        len: slot.mapping_len,
+    };
     if slot.initialized.replace(false) {
         // SAFETY: initialization completed and the slot is no longer borrowed.
         // No cache lock spans Drop; a destructor may populate a fresh key value.
+        // The old mapping stays live until Drop finishes or unwinds.
         unsafe { std::ptr::drop_in_place((*slot.value.get()).as_mut_ptr()) };
     }
-    // SAFETY: this is the original owned mapping, after dropping its payload.
-    let _ = unsafe { syscall::sys_munmap(mapping, mapping_len) };
 }
 
 pub(crate) struct OwnedTlsForkGuard<T: 'static> {
@@ -193,7 +212,12 @@ where
         if slot.accessed.get() || !slot.initialized.get() {
             return None;
         }
-        // SAFETY: initialized and not mutably borrowed on this thread.
+        // The callback can reenter this cache or request key teardown. Keep
+        // its shared reference protected just like a mutable access: neither
+        // path may overwrite or reclaim the payload until the callback returns.
+        slot.accessed.set(true);
+        let _access = AccessOwnerGuard(&slot.accessed);
+        // SAFETY: initialized, and the guard excludes mutation and reclamation.
         Some(f(unsafe { (*slot.value.get()).assume_init_ref() }))
     }
 
@@ -282,11 +306,12 @@ where
         f(unsafe { (*slot.value.get()).assume_init_mut() })
     }
 
-    /// Drop this thread's key slot so the next `with` runs `init` again.
+    /// Withdraw and destroy this thread's unborrowed key slot.
     ///
-    /// The payload lives in this thread's private key, not a process-wide
-    /// vector. Another thread's slot is reclaimed by that thread's key
-    /// destructor; this cannot reach it.
+    /// The next `with` initializes a fresh slot, including reentry from the
+    /// retiring payload's destructor. Such a replacement remains published.
+    /// Another thread's slot is reclaimed by its own key destructor; this
+    /// cannot reach it.
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn release_tid(&'static self, tid: i32) {
         if tid <= 0 || tid != syscall::sys_gettid() {
@@ -296,7 +321,8 @@ where
         if key == 0 {
             return;
         }
-        let raw = tls::internal_tls_getspecific(InternalTlsKey { id: key }) as *mut OwnedTlsSlot<T>;
+        let key = InternalTlsKey { id: key };
+        let raw = tls::internal_tls_getspecific(key) as *mut OwnedTlsSlot<T>;
         if raw.is_null() {
             return;
         }
@@ -305,10 +331,15 @@ where
         if slot.accessed.get() {
             return;
         }
-        if slot.initialized.replace(false) {
-            // SAFETY: initialization completed and no callback is borrowing it.
-            unsafe { std::ptr::drop_in_place((*slot.value.get()).as_mut_ptr()) };
+        // Clear publication before Drop can reenter. Reinitializing inside the
+        // retiring payload would alias its live Drop(&mut self) reference.
+        // SAFETY: this cache owns the private key and this thread's slot.
+        if unsafe { tls::internal_tls_setspecific(key, 0) } != 0 {
+            return;
         }
+        // SAFETY: successful withdrawal transfers this unborrowed slot to us.
+        // Use the Rust helper so explicit release preserves destructor unwind.
+        unsafe { reclaim_slot::<T>(raw.cast()) };
     }
 
     /// Fork keeps only the calling thread. There is no shared slot table to lock.
@@ -389,7 +420,61 @@ mod tests {
     }
 
     #[test]
-    fn release_tid_recycles_slot_without_growing_vec() {
+    fn peek_holds_the_access_owner_until_its_callback_returns() {
+        let _cleanup = ThreadTlsCleanup;
+        static CACHE: OwnedTlsCache<usize> = OwnedTlsCache::new(|| 17);
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        CACHE.with(|value| *value = 71);
+        assert_eq!(
+            CACHE.try_peek(|value| {
+                assert!(CACHE.is_accessed_by_current_thread());
+                assert!(CACHE.try_peek(|_| ()).is_none());
+                CACHE.release_tid(tid);
+                let reentry = std::panic::catch_unwind(|| CACHE.with(|inner| *inner = 99));
+                assert!(reentry.is_err());
+                assert!(CACHE.is_accessed_by_current_thread());
+                *value
+            }),
+            Some(71)
+        );
+        assert!(!CACHE.is_accessed_by_current_thread());
+        CACHE.with(|value| assert_eq!(*value, 71));
+    }
+
+    #[test]
+    fn peek_unwind_releases_the_access_owner() {
+        let _cleanup = ThreadTlsCleanup;
+        static CACHE: OwnedTlsCache<usize> = OwnedTlsCache::new(|| 17);
+        CACHE.with(|value| *value = 71);
+        let result = std::panic::catch_unwind(|| {
+            CACHE.try_peek(|_| panic!("owned-cache observer unwind"));
+        });
+        assert!(result.is_err());
+        assert!(!CACHE.is_accessed_by_current_thread());
+        CACHE.with(|value| *value += 1);
+        assert_eq!(CACHE.try_peek(|value| *value), Some(72));
+    }
+
+    #[test]
+    fn peek_does_not_initialize_missing_or_released_state() {
+        let _cleanup = ThreadTlsCleanup;
+        static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+        static CACHE: OwnedTlsCache<usize> =
+            OwnedTlsCache::new(|| INITIALIZATIONS.fetch_add(1, Ordering::SeqCst) + 1);
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        assert_eq!(CACHE.try_peek(|value| *value), None);
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 0);
+        CACHE.with(|value| assert_eq!(*value, 1));
+        assert_eq!(CACHE.try_peek(|value| *value), Some(1));
+        CACHE.release_tid(tid);
+        assert_eq!(CACHE.try_peek(|value| *value), None);
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 1);
+        CACHE.with(|value| assert_eq!(*value, 2));
+    }
+
+    #[test]
+    fn release_tid_reinitializes_the_cache() {
+        let _cleanup = ThreadTlsCleanup;
         static CACHE: OwnedTlsCache<usize> = OwnedTlsCache::new(|| 99);
         let tid = frankenlibc_core::syscall::sys_gettid();
         CACHE.with(|v| *v = 123);
@@ -398,6 +483,80 @@ mod tests {
         let mut fork_guard = CACHE.lock_for_fork();
         fork_guard.adopt_and_unlock_in_fork_child();
         CACHE.with(|v| assert_eq!(*v, 99));
+    }
+
+    #[test]
+    fn release_detaches_the_slot_before_a_destructor_repopulates_the_cache() {
+        let _cleanup = ThreadTlsCleanup;
+        static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct State {
+            generation: usize,
+            value: usize,
+        }
+        impl Drop for State {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+                if self.generation != 1 {
+                    return;
+                }
+                let key = frankenlibc_core::pthread::tls::InternalTlsKey {
+                    id: CACHE.key.load(Ordering::Acquire),
+                };
+                // Check the publication boundary before attempting reentry:
+                // overwriting a still-published payload during Drop is invalid.
+                assert_eq!(
+                    frankenlibc_core::pthread::tls::internal_tls_getspecific(key),
+                    0
+                );
+                let retiring_address = self as *mut Self as usize;
+                CACHE.with(|replacement| {
+                    assert_ne!(replacement as *mut State as usize, retiring_address);
+                    assert_eq!(replacement.generation, 2);
+                    replacement.value = 71;
+                });
+                assert_eq!(self.generation, 1);
+                assert_eq!(self.value, 17);
+            }
+        }
+        static CACHE: OwnedTlsCache<State> = OwnedTlsCache::new(|| State {
+            generation: INITIALIZATIONS.fetch_add(1, Ordering::SeqCst) + 1,
+            value: 17,
+        });
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        CACHE.with(|state| assert_eq!(state.generation, 1));
+        CACHE.release_tid(tid);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 1);
+        assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 2);
+        CACHE.with(|state| {
+            assert_eq!(state.generation, 2);
+            assert_eq!(state.value, 71);
+        });
+        CACHE.release_tid(tid);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 2);
+        assert_eq!(CACHE.try_peek(|_| ()), None);
+    }
+
+    #[test]
+    fn release_unwind_leaves_the_cache_ready_for_reinitialization() {
+        let _cleanup = ThreadTlsCleanup;
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct State(usize);
+        impl Drop for State {
+            fn drop(&mut self) {
+                if DROPS.fetch_add(1, Ordering::SeqCst) == 0 {
+                    panic!("owned-cache release unwind");
+                }
+            }
+        }
+        static CACHE: OwnedTlsCache<State> = OwnedTlsCache::new(|| State(17));
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        CACHE.with(|state| state.0 = 71);
+        assert!(std::panic::catch_unwind(|| CACHE.release_tid(tid)).is_err());
+        assert_eq!(CACHE.try_peek(|_| ()), None);
+        CACHE.with(|state| assert_eq!(state.0, 17));
+        CACHE.release_tid(tid);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -580,16 +739,32 @@ mod tests {
             // Native clones still inherit hardware TLS. This callback uses
             // only the owned slot, raw syscalls, and atomics, never host malloc.
             CACHE.with(|state| state.0 += 4);
-            7usize as *mut core::ffi::c_void
+            let value = CACHE
+                .try_peek(|state| {
+                    // A missing guard is reported before attempting release,
+                    // so the regression never dereferences retired storage.
+                    if !CACHE.is_accessed_by_current_thread() {
+                        return 0;
+                    }
+                    CACHE.release_tid(frankenlibc_core::syscall::sys_gettid());
+                    state.0
+                })
+                .unwrap_or(0);
+            value as *mut core::ffi::c_void
         }
         CACHE.with(|state| state.0 = 55);
-        // SAFETY: valid C entry point, no borrowed argument, joined below.
-        let handle =
-            unsafe { frankenlibc_core::pthread::create_thread(worker as *const () as usize, 0, 0) }
-                .expect("create native thread");
-        // SAFETY: the successful create returned this live, joinable handle.
-        let joined = unsafe { frankenlibc_core::pthread::join_thread(handle) };
-        assert_eq!(joined, Ok(7));
+        let joined = CACHE.try_peek(|creator| {
+            // SAFETY: valid C entry point, no borrowed argument, joined below.
+            let handle = unsafe {
+                frankenlibc_core::pthread::create_thread(worker as *const () as usize, 0, 0)
+            }
+            .expect("create native thread");
+            // SAFETY: the successful create returned this live, joinable handle.
+            let result = unsafe { frankenlibc_core::pthread::join_thread(handle) };
+            assert_eq!(creator.0, 55);
+            result
+        });
+        assert_eq!(joined, Some(Ok(7)));
         assert_eq!(DROPS.load(Ordering::SeqCst), 1);
         CACHE.with(|state| assert_eq!(state.0, 55));
     }
