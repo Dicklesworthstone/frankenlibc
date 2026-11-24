@@ -173,7 +173,7 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
               --test conformance_diff_fopencookie -- --test-threads=1 --nocapture \
               2>&1 | tee "$log"
-            grep -Eq '^test result: ok\. 12 passed; 0 failed; 0 ignored;' "$log"
+            grep -Eq '^test result: ok\. 16 passed; 0 failed; 0 ignored;' "$log"
             log="artifacts/cookie-callbacks/input-sync-$mode.log"
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
               --test conformance_diff_stdio_eof input_ -- --test-threads=1 --nocapture \

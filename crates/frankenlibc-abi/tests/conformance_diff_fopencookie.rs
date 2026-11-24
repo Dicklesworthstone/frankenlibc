@@ -51,6 +51,8 @@ mod g {
         pub fn fread_unlocked(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fflush(f: *mut c_void) -> c_int;
+        pub fn fflush_unlocked(f: *mut c_void) -> c_int;
+        pub fn fscanf(f: *mut c_void, format: *const c_char, ...) -> c_int;
         pub fn setvbuf(f: *mut c_void, buf: *mut c_char, mode: c_int, size: usize) -> c_int;
         pub fn fclose(f: *mut c_void) -> c_int;
         pub fn ferror(f: *mut c_void) -> c_int;
@@ -71,6 +73,462 @@ use frankenlibc_abi::stdio_abi as fl;
 /// each call so "errno was left alone" is a positive observation rather than
 /// the absence of one.
 const SENTINEL_ERRNO: c_int = 0x5EED;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InputSeekResult {
+    Success,
+    Error(c_int),
+    SilentFailure,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CookieInput {
+    SameByte,
+    DifferentByte,
+    ScanLookahead,
+    Consumed,
+    Eof,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CookieInputOperation {
+    Flush,
+    FlushUnlocked,
+    ReplaceBuffer,
+    Unbuffer,
+    KeepBuffer,
+    Seek,
+}
+
+struct InputSyncCookie {
+    native: bool,
+    position: usize,
+    reads: usize,
+    seeks: Vec<(i64, c_int)>,
+    seek_result: InputSeekResult,
+}
+
+unsafe extern "C-unwind" fn input_sync_cookie_read(
+    cookie: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> isize {
+    // A legal short read keeps the backend's position identical in both
+    // providers without requiring their read-ahead strategies to be identical.
+    // SAFETY: the observer owns this cookie and destination through the call.
+    let state = unsafe { &mut *cookie.cast::<InputSyncCookie>() };
+    state.reads += 1;
+    if capacity == 0 || state.position == b"12 abc".len() {
+        return 0;
+    }
+    unsafe { *buffer = b"12 abc"[state.position] as c_char };
+    state.position += 1;
+    1
+}
+
+unsafe extern "C-unwind" fn input_sync_cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: the selected provider supplies live cookie and offset storage.
+    let (state, offset) = unsafe { (&mut *cookie.cast::<InputSyncCookie>(), &mut *offset) };
+    state.seeks.push((*offset, whence));
+    match state.seek_result {
+        InputSeekResult::Success => {
+            assert_eq!(whence, libc::SEEK_CUR);
+            let position = state.position as i64 + *offset;
+            assert!((0..=b"12 abc".len() as i64).contains(&position));
+            state.position = position as usize;
+            *offset = position;
+            0
+        }
+        InputSeekResult::Error(error) => {
+            // SAFETY: only the selected provider's current-thread errno changes.
+            unsafe { *reentrant_errno_slot(state.native) = error };
+            -1
+        }
+        InputSeekResult::SilentFailure => -1,
+        InputSeekResult::Missing => unreachable!("a missing hook cannot be invoked"),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct CookieInputObservation {
+    result: c_int,
+    errno: c_int,
+    error: bool,
+    eof: bool,
+    backend_position: usize,
+    seeks: Vec<(i64, c_int)>,
+    next: c_int,
+    next_called_read: bool,
+}
+
+fn observe_cookie_input_sync(
+    native: bool,
+    mode: c_int,
+    input: CookieInput,
+    operation: CookieInputOperation,
+    seek_result: InputSeekResult,
+    incoming_errno: c_int,
+) -> CookieInputObservation {
+    assert_ne!(fl::fopencookie as *const (), g::fopencookie as *const ());
+    let mut state = InputSyncCookie {
+        native,
+        position: 0,
+        reads: 0,
+        seeks: Vec::new(),
+        seek_result,
+    };
+    let hooks = CookieIoFuncs {
+        read: Some(input_sync_cookie_read),
+        write: None,
+        seek: if seek_result == InputSeekResult::Missing {
+            None
+        } else {
+            Some(input_sync_cookie_seek)
+        },
+        close: None,
+    };
+    let open = if native { fl::fopencookie } else { g::fopencookie };
+    let configure = if native { fl::setvbuf } else { g::setvbuf };
+    let read = if native { fl::fgetc } else { g::fgetc };
+    let push = if native { fl::ungetc } else { g::ungetc };
+    let close = if native { fl::fclose } else { g::fclose };
+    let error = if native { fl::ferror } else { g::ferror };
+    let eof = if native { fl::feof } else { g::feof };
+    let mut initial_buffer = [0u8; 8];
+    let mut replacement_buffer = [0u8; 16];
+    // SAFETY: callback state, format/output slots, and both caller buffers stay
+    // live through fclose; each FILE is used and closed through its provider.
+    unsafe {
+        let stream = open((&raw mut state).cast(), c"r".as_ptr(), hooks);
+        assert!(!stream.is_null());
+        assert_eq!(
+            configure(
+                stream,
+                initial_buffer.as_mut_ptr().cast(),
+                mode,
+                initial_buffer.len()
+            ),
+            0
+        );
+        match input {
+            CookieInput::SameByte | CookieInput::DifferentByte => {
+                assert_eq!(read(stream), b'1' as c_int);
+                let byte = if matches!(input, CookieInput::SameByte) {
+                    b'1'
+                } else {
+                    b'Z'
+                };
+                assert_eq!(push(byte as c_int, stream), byte as c_int);
+            }
+            CookieInput::ScanLookahead => {
+                let mut value: c_int = 0;
+                let count = if native {
+                    fl::fscanf(stream, c"%d".as_ptr(), &raw mut value)
+                } else {
+                    g::fscanf(stream, c"%d".as_ptr(), &raw mut value)
+                };
+                assert_eq!((count, value), (1, 12));
+            }
+            CookieInput::Consumed => assert_eq!(read(stream), b'1' as c_int),
+            CookieInput::Eof => {
+                for &byte in b"12 abc" {
+                    assert_eq!(read(stream), byte as c_int);
+                }
+                assert_eq!(read(stream), libc::EOF);
+            }
+        }
+        *reentrant_errno_slot(native) = incoming_errno;
+        let result = match operation {
+            CookieInputOperation::Flush => {
+                if native {
+                    fl::fflush(stream)
+                } else {
+                    g::fflush(stream)
+                }
+            }
+            CookieInputOperation::FlushUnlocked => {
+                if native {
+                    fl::fflush_unlocked(stream)
+                } else {
+                    g::fflush_unlocked(stream)
+                }
+            }
+            CookieInputOperation::ReplaceBuffer => configure(
+                stream,
+                replacement_buffer.as_mut_ptr().cast(),
+                libc::_IOFBF,
+                replacement_buffer.len(),
+            ),
+            CookieInputOperation::Unbuffer => {
+                configure(stream, std::ptr::null_mut(), libc::_IONBF, 0)
+            }
+            CookieInputOperation::KeepBuffer => {
+                configure(stream, std::ptr::null_mut(), libc::_IOLBF, 0)
+            }
+            CookieInputOperation::Seek => {
+                if native {
+                    fl::fseeko(stream, 0, libc::SEEK_CUR)
+                } else {
+                    g::fseeko(stream, 0, libc::SEEK_CUR)
+                }
+            }
+        };
+        let returned_errno = *reentrant_errno_slot(native);
+        let error = error(stream) != 0;
+        let eof = eof(stream) != 0;
+        let backend_position = state.position;
+        let seeks = std::mem::take(&mut state.seeks);
+        let reads = state.reads;
+        let next = read(stream);
+        let next_called_read = state.reads != reads;
+        assert_eq!(close(stream), 0);
+        CookieInputObservation {
+            result,
+            errno: returned_errno,
+            error,
+            eof,
+            backend_position,
+            seeks,
+            next,
+            next_called_read,
+        }
+    }
+}
+
+fn cookie_input_seek_cases() -> [(InputSeekResult, c_int, c_int, c_int); 9] {
+    [
+        (InputSeekResult::Success, SENTINEL_ERRNO, 0, SENTINEL_ERRNO),
+        (
+            InputSeekResult::Error(libc::EIO),
+            SENTINEL_ERRNO,
+            -1,
+            libc::EIO,
+        ),
+        (
+            InputSeekResult::Error(libc::ESPIPE),
+            SENTINEL_ERRNO,
+            0,
+            libc::ESPIPE,
+        ),
+        (
+            InputSeekResult::SilentFailure,
+            SENTINEL_ERRNO,
+            -1,
+            SENTINEL_ERRNO,
+        ),
+        (InputSeekResult::SilentFailure, 0, -1, 0),
+        (InputSeekResult::SilentFailure, libc::ESPIPE, 0, libc::ESPIPE),
+        (
+            InputSeekResult::Missing,
+            SENTINEL_ERRNO,
+            -1,
+            SENTINEL_ERRNO,
+        ),
+        (InputSeekResult::Missing, 0, -1, 0),
+        (InputSeekResult::Missing, libc::ESPIPE, 0, libc::ESPIPE),
+    ]
+}
+
+#[test]
+fn cookie_input_flush_synchronizes_pushback_and_scan_lookahead() {
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for operation in [
+            CookieInputOperation::Flush,
+            CookieInputOperation::FlushUnlocked,
+        ] {
+            for (input, pushed, before, target, original) in [
+                (CookieInput::SameByte, b'1', 1, 0, b'1'),
+                (CookieInput::DifferentByte, b'Z', 1, 0, b'1'),
+                (CookieInput::ScanLookahead, b' ', 3, 2, b' '),
+            ] {
+                for (seek_result, incoming, result, errno) in cookie_input_seek_cases() {
+                    let host = observe_cookie_input_sync(
+                        false, mode, input, operation, seek_result, incoming,
+                    );
+                    let synchronized = seek_result == InputSeekResult::Success;
+                    assert_eq!(
+                        host,
+                        CookieInputObservation {
+                            result,
+                            errno,
+                            error: false,
+                            eof: false,
+                            backend_position: if synchronized { target } else { before },
+                            seeks: if seek_result == InputSeekResult::Missing {
+                                vec![]
+                            } else {
+                                vec![(-1, libc::SEEK_CUR)]
+                            },
+                            next: (if synchronized { original } else { pushed }) as c_int,
+                            next_called_read: synchronized,
+                        }
+                    );
+                    assert_eq!(
+                        observe_cookie_input_sync(
+                            true, mode, input, operation, seek_result, incoming
+                        ),
+                        host,
+                        "{mode}/{operation:?}/{input:?}/{seek_result:?}/{incoming}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cookie_input_rebuffer_synchronizes_or_preserves_existing_bytes() {
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for operation in [
+            CookieInputOperation::ReplaceBuffer,
+            CookieInputOperation::Unbuffer,
+        ] {
+            for (input, pushed, before, target, after_discard) in [
+                (CookieInput::SameByte, b'1', 1, 0, b'2'),
+                (CookieInput::ScanLookahead, b' ', 3, 2, b'a'),
+            ] {
+                for (seek_result, incoming, result, errno) in cookie_input_seek_cases() {
+                    let host = observe_cookie_input_sync(
+                        false, mode, input, operation, seek_result, incoming,
+                    );
+                    let synchronized = seek_result == InputSeekResult::Success;
+                    assert_eq!(
+                        host,
+                        CookieInputObservation {
+                            result,
+                            errno,
+                            error: false,
+                            eof: false,
+                            backend_position: if synchronized { target } else { before },
+                            seeks: if seek_result == InputSeekResult::Missing {
+                                vec![]
+                            } else {
+                                vec![(-1, libc::SEEK_CUR)]
+                            },
+                            next: (if result == 0 && !synchronized {
+                                after_discard
+                            } else {
+                                pushed
+                            }) as c_int,
+                            next_called_read: result == 0,
+                        }
+                    );
+                    assert_eq!(
+                        observe_cookie_input_sync(
+                            true, mode, input, operation, seek_result, incoming
+                        ),
+                        host,
+                        "{mode}/{operation:?}/{input:?}/{seek_result:?}/{incoming}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cookie_input_flush_skips_clean_input_and_retains_eof() {
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for operation in [
+            CookieInputOperation::Flush,
+            CookieInputOperation::FlushUnlocked,
+            CookieInputOperation::ReplaceBuffer,
+            CookieInputOperation::Unbuffer,
+            CookieInputOperation::KeepBuffer,
+        ] {
+            for (input, backend_position, next, eof, next_called_read) in [
+                (CookieInput::Consumed, 1, b'2' as c_int, false, true),
+                (CookieInput::Eof, 6, libc::EOF, true, false),
+            ] {
+                for (seek_result, incoming, _, _) in cookie_input_seek_cases() {
+                    let host = observe_cookie_input_sync(
+                        false, mode, input, operation, seek_result, incoming,
+                    );
+                    assert_eq!(
+                        host,
+                        CookieInputObservation {
+                            result: 0,
+                            errno: incoming,
+                            error: false,
+                            eof,
+                            backend_position,
+                            seeks: vec![],
+                            next,
+                            next_called_read,
+                        }
+                    );
+                    assert_eq!(
+                        observe_cookie_input_sync(
+                            true, mode, input, operation, seek_result, incoming
+                        ),
+                        host,
+                        "{mode}/{operation:?}/{input:?}/{seek_result:?}/{incoming}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cookie_input_seek_preserves_unsupplied_errno_and_failed_input() {
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for (input, before, target, retained, original, eof) in [
+            (CookieInput::SameByte, 1, 0, b'1' as c_int, b'1' as c_int, false),
+            (
+                CookieInput::DifferentByte,
+                1,
+                0,
+                b'Z' as c_int,
+                b'1' as c_int,
+                false,
+            ),
+            (
+                CookieInput::ScanLookahead,
+                3,
+                2,
+                b' ' as c_int,
+                b' ' as c_int,
+                false,
+            ),
+            (CookieInput::Eof, 6, 6, libc::EOF, libc::EOF, true),
+        ] {
+            for (seek_result, incoming, _, errno) in cookie_input_seek_cases() {
+                let operation = CookieInputOperation::Seek;
+                let host =
+                    observe_cookie_input_sync(false, mode, input, operation, seek_result, incoming);
+                let succeeded = seek_result == InputSeekResult::Success;
+                assert_eq!(
+                    host,
+                    CookieInputObservation {
+                        result: if succeeded { 0 } else { -1 },
+                        errno,
+                        error: false,
+                        eof: eof && !succeeded,
+                        backend_position: if succeeded { target } else { before },
+                        seeks: if seek_result == InputSeekResult::Missing {
+                            vec![]
+                        } else {
+                            vec![(target as i64 - before as i64, libc::SEEK_CUR)]
+                        },
+                        next: if succeeded { original } else { retained },
+                        next_called_read: succeeded,
+                    }
+                );
+                assert_eq!(
+                    observe_cookie_input_sync(true, mode, input, operation, seek_result, incoming),
+                    host,
+                    "{mode}/{operation:?}/{input:?}/{seek_result:?}/{incoming}"
+                );
+            }
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 struct CookieLineObservation {
@@ -1200,7 +1658,25 @@ fn reentrant_cookie_transcript(native: bool, phase: &str) -> String {
             let error_number = *reentrant_errno_slot(native);
             results.push((result, error_number, error(stream) != 0));
         };
-        if phase == "read" {
+        if phase.starts_with("input-") {
+            assert_eq!(read(stream), b'R' as c_int);
+            let push = if native { fl::ungetc } else { g::ungetc };
+            assert_eq!(push(b'R' as c_int, stream), b'R' as c_int);
+            let result = match phase {
+                "input-flush" => flush(stream),
+                "input-flush-unlocked" => {
+                    if native {
+                        fl::fflush_unlocked(stream)
+                    } else {
+                        g::fflush_unlocked(stream)
+                    }
+                }
+                "input-rebuffer" => configure(stream, std::ptr::null_mut(), libc::_IONBF, 0),
+                _ => panic!("unknown input callback phase"),
+            };
+            record(result as isize);
+            assert_eq!(read(stream), b'R' as c_int);
+        } else if phase == "read" {
             assert_eq!(read(state.stream), b'R' as c_int);
         } else {
             let written = write(c"abc".as_ptr().cast(), 1, 3, stream);
@@ -1320,6 +1796,9 @@ fn cookie_callbacks_can_query_and_clear_their_stream() {
         "read",
         "global",
         "rebuffer",
+        "input-flush",
+        "input-flush-unlocked",
+        "input-rebuffer",
         "write-short",
         "write-fail",
         "flush-short",

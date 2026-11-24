@@ -6129,8 +6129,8 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             return libc::EOF;
         };
         let mut s = cell.lock();
-        let flushed = unsafe { flush_cookie_stream(id, &mut s) };
-        flush_fixed_mem_input(id, &mut s);
+        let flushed = unsafe { flush_cookie_stream(id, &mut s) }
+            && unsafe { flush_cookie_input(id, &mut s) };
         let adverse = !flushed;
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
         return if adverse { libc::EOF } else { 0 };
@@ -8828,8 +8828,7 @@ pub unsafe extern "C-unwind" fn setvbuf(
                 let synced = keep || {
                     if is_cookie_stream(id) {
                         let flushed = unsafe { flush_cookie_stream(id, &mut s) };
-                        flush_fixed_mem_input(id, &mut s);
-                        flushed
+                        flushed && unsafe { flush_cookie_input(id, &mut s) }
                     } else {
                         let flushed = unsafe { flush_stream(&mut s) };
                         flushed && flush_input_position(&mut s)
@@ -20643,7 +20642,47 @@ fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
     }
 }
 
+/// Return generic-cookie input to its backend before flushing or replacing
+/// the buffer. Unlike fseek, a successful input flush retains EOF, and ESPIPE
+/// leaves unread bytes available while allowing the flush to succeed.
+unsafe fn flush_cookie_input(id: usize, stream: &mut StreamGuard<'_>) -> bool {
+    if fixed_mem_cookie(id).is_some() {
+        flush_fixed_mem_input(id, stream);
+        return true;
+    }
+    let unread = stream.readable_buffered();
+    if unread == 0 {
+        return true;
+    }
+    let Ok(unread) = i64::try_from(unread) else {
+        // SAFETY: only the calling thread's errno slot is modified.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return false;
+    };
+    let mut position = -unread;
+    // The backend may reenter status operations or unwind. Keep the public
+    // FILE lock, but release the private stream lock before application code.
+    let result = stream.with_callback(|| unsafe {
+        cookie_stream_seek(id, &mut position, libc::SEEK_CUR)
+    });
+    if result != 0 {
+        // A missing hook or a callback that leaves errno alone must retain the
+        // incoming value. Failure alone neither consumes input nor sets ferror.
+        // SAFETY: the errno accessor returns the calling thread's live slot.
+        return unsafe { *crate::errno_abi::__errno_location() } == errno::ESPIPE;
+    }
+    let eof = stream.is_eof();
+    let _ = stream.prepare_seek();
+    stream.set_offset(position);
+    if eof {
+        stream.set_eof();
+    }
+    true
+}
+
 /// Seek a cookie-backed stream.
+/// GNU missing seek hooks fail without changing errno, just like callbacks
+/// that return -1 without supplying an error. The caller interprets that result.
 pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_int) -> c_int {
     if let Some(slot) = dynamic_static_slot_for_id(id) {
         let aux = lock_static_slot_aux(slot);
@@ -20655,7 +20694,6 @@ pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_i
                 drop(aux);
                 return unsafe { seek_fn(cookie, offset, whence) };
             }
-            unsafe { set_abi_errno(errno::ESPIPE) };
             return -1;
         }
         unsafe { set_abi_errno(errno::EBADF) };
@@ -20670,7 +20708,6 @@ pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_i
             drop(guard);
             return unsafe { seek_fn(cookie, offset, whence) };
         }
-        unsafe { set_abi_errno(errno::ESPIPE) };
         return -1;
     }
     unsafe { set_abi_errno(errno::EBADF) };
