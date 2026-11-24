@@ -4795,6 +4795,33 @@ unsafe fn read_c_string_bytes_with_nul(ptr: *const c_char) -> Option<Vec<u8>> {
 /// # Safety
 ///
 /// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn memcpy_htm_forced(
+    dst: *mut c_void,
+    src: *const c_void,
+    n: usize,
+) -> *mut c_void {
+    if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
+        if n < 128 {
+            unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        } else {
+            unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
+    }
+    dst
+}
+
+#[inline(never)]
+unsafe extern "C" fn raw_overlap_copy_returning_dst(
+    dst: *mut c_void,
+    src: *const c_void,
+    n: usize,
+) -> *mut c_void {
+    unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+    dst
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     if n == 0 {
@@ -4817,47 +4844,28 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     // fall-through is the recursion-prone full membrane); in strict mode it was a redundant
     // ~3-5ns of TLS-context reads (allocator-reentry + validation-depth + bootstrap-phase).
     if runtime_policy::strict_passthrough_active() {
-        // HTM only carries meaning under a forced test mode: real RTM is absent on most
-        // deployed CPUs (all AMD, most Intel), so attempting a transaction in `Real` mode
-        // cost ~10ns/call to detect-unsupported-and-fall-back on EVERY memcpy <= 256B, and
-        // a plain (disjoint) memcpy has no atomicity contract for HTM to provide anyway.
-        // Mirror the raw-passthrough branch: try HTM only under a forced test mode, else
-        // copy directly. `raw_overlap_copy` handles ALL sizes (overlapping small-n / AVX2
-        // vmovdqu loop / rep movsb) and is byte-identical to a memcpy for disjoint regions —
-        // it supersedes `raw_dispatch_memcpy_bytes`, whose `select_string_simd_dispatch`
-        // returned SCALAR (lane 1 → slow volatile byte loop) for every n < 32.
-        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
-            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
-        {
-            // LEAF SUB-128 PATH. `raw_overlap_copy` is a real out-of-line `call`, and for a
-            // small copy the call convention cost more than the copy: keeping dst/src/n live
-            // across it forced three callee-saved pushes and `sub $0x30,%rsp`, six moves
-            // shuffling them into `%rbx`/`%r14`/`%r15` and back, plus `call`/`ret`. Taking
-            // n < 128 inline here leaves everything in argument registers, so the deployed
-            // strict path becomes a frameless leaf. Sizes >= 128 still go out of line, where
-            // the AVX/`rep movsb` kernels dwarf the call.
-            //
-            // Placed AFTER the forced-mode test on purpose: under a forced HTM test mode a
-            // small `memcpy` must still take the transactional path, so this must not
-            // short-circuit ahead of it.
-            if n < 128 {
-                unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), n) };
-            } else {
-                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
-            }
+        if crate::htm_fast_path::htm_forced_mode_active_for_tests() {
+            return unsafe { memcpy_htm_forced(dst, src, n) };
         }
-        return dst;
+        if n < 128 {
+            unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            return dst;
+        }
+        return unsafe { raw_overlap_copy_returning_dst(dst, src, n) };
     }
 
-    // Out-of-line tail, kept `#[inline(never)]` (without `#[cold]`) so `memcpy` stays a
-    // frameless leaf on the strict path and a frameless tail-jump in hardened mode while
-    // `memcpy_validating` is compiled as a hot function with full inlining of guard,
-    // TLS/PCC, and bloom helpers.
+    // Out-of-line tail, kept `#[inline(never)]` (`extern "C"` for sibling tail-jump) so
+    // `memcpy` stays a 0-push frameless leaf on the strict path and a frameless tail-jump
+    // in hardened mode while `memcpy_validating` compiles hot with full guard/PCC inlining.
     unsafe { memcpy_validating(dst, src, n) }
 }
 
 #[inline(never)]
-unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+unsafe extern "C" fn memcpy_validating(
+    dst: *mut c_void,
+    src: *const c_void,
+    n: usize,
+) -> *mut c_void {
     let Some(membrane_guard) = enter_string_membrane_guard() else {
         if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
@@ -5035,6 +5043,16 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
 /// # Safety
 ///
 /// Caller must ensure `src` and `dst` are valid for `n` bytes.
+#[inline(never)]
+unsafe extern "C" fn raw_memmove_bytes_returning_dst(
+    dst: *mut c_void,
+    src: *const c_void,
+    n: usize,
+) -> *mut c_void {
+    unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+    dst
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     if n == 0 {
@@ -5047,21 +5065,20 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // `decide()` Allow with no clamp/heal, so `copy_len == n` and the result is
     // exactly the raw overlap-safe move (byte-identical to the full path below).
-    // Skip the membrane guard + decide + stage-trace + observe machinery, mirroring
-    // the sibling `memcpy` strict fast path. Hardened mode falls through. Checked
-    // before `string_raw_passthrough_active()`: the strict path is membrane-free/pure
-    // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only
-    // needed in hardened mode — see the memcpy strict-path note.
+    // Sibling tail-call keeps `memmove` 0-push frameless.
     if runtime_policy::strict_passthrough_active() {
-        unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
-        return dst;
+        return unsafe { raw_memmove_bytes_returning_dst(dst, src, n) };
     }
 
     unsafe { memmove_validating(dst, src, n) }
 }
 
 #[inline(never)]
-unsafe fn memmove_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+unsafe extern "C" fn memmove_validating(
+    dst: *mut c_void,
+    src: *const c_void,
+    n: usize,
+) -> *mut c_void {
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memmove semantics.
         unsafe {
@@ -5199,6 +5216,16 @@ unsafe fn memmove_validating(dst: *mut c_void, src: *const c_void, n: usize) -> 
 /// # Safety
 ///
 /// Caller must ensure `dst` is valid for `n` bytes.
+#[inline(never)]
+unsafe extern "C" fn raw_memset_bytes_returning_dst(
+    dst: *mut c_void,
+    c: c_int,
+    n: usize,
+) -> *mut c_void {
+    unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
+    dst
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_void {
     if n == 0 {
@@ -5209,19 +5236,18 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
     }
 
     // Strict-mode fast path (the DEFAULT deployed mode): in strict passthrough the
-    // StringMemory membrane is a no-op — `decide()` forces Allow (StringMemory is on the
-    // strict fast-list) and no clamp/heal occurs, so the membrane's only output is a raw
-    // memset. Skip the whole membrane (known_remaining + check_ordering + decide + record +
-    // observe), exactly as the inet_strict family already does. Hardened mode
-    // (`strict_passthrough_active() == false`) falls through to the full validating path.
-    // Checked before `string_raw_passthrough_active()`: the strict path is membrane-free/pure
-    // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only needed
-    // in hardened mode — see the memcpy strict-path note.
+    // StringMemory membrane is a no-op — sibling tail-call keeps `memset` 0-push
+    // frameless instead of spilling 6 callee-saved regs + 200B stack for the
+    // hardened validating tail.
     if runtime_policy::strict_passthrough_active() {
-        unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
-        return dst;
+        return unsafe { raw_memset_bytes_returning_dst(dst, c, n) };
     }
 
+    unsafe { memset_validating(dst, c, n) }
+}
+
+#[inline(never)]
+unsafe extern "C" fn memset_validating(dst: *mut c_void, c: c_int, n: usize) -> *mut c_void {
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memset semantics.
         unsafe {
@@ -5637,10 +5663,7 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             // Subtract from `MEMCHR_PAGE` so `n = usize::MAX` never wraps around.
             let page_rem = MEMCHR_PAGE - (p as usize & (MEMCHR_PAGE - 1));
             if n > page_rem {
-                return match unsafe { memchr_page_bounded(p, needle, n) } {
-                    Some(idx) => (p as *mut u8).wrapping_add(idx).cast(),
-                    None => std::ptr::null_mut(),
-                };
+                return unsafe { memchr_page_bounded_ptr(s, c, n) };
             }
             let mut i = 0usize;
             unsafe {
@@ -5673,27 +5696,38 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             }
             return std::ptr::null_mut();
         }
-        // One-page range (the common case): no later page to protect.
-        // Overflow-safe subtraction avoids `(s & 4095) + usize::MAX` wraparound!
-        let page_rem = MEMCHR_PAGE - (s as usize & (MEMCHR_PAGE - 1));
-        let found = if n <= page_rem {
-            // SAFETY: memchr's contract: `n` readable bytes at `s` (`n <= 4096`).
-            unsafe { core_memchr(s.cast::<u8>(), needle, n) }
-        } else {
-            unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
-        };
-        return match found {
-            Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
-            None => std::ptr::null_mut(),
-        };
+        return unsafe { memchr_long_strict(s, c, n) };
     }
 
-    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
-    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` — the same six callee-saved
-    // registers and 136-byte frame `memrchr` had, rented by the strict fast path
-    // above on every call for registers it never touches. Measured there: a flat
-    // 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    // Cold tail in its own frame: sibling `extern "C"` tail-call keeps `memchr`
+    // 0-push frameless on the strict fast path.
     unsafe { memchr_validating(s, c, n) }
+}
+
+#[inline(never)]
+unsafe extern "C" fn memchr_page_bounded_ptr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    match unsafe { memchr_page_bounded(s.cast::<u8>(), c as u8, n) } {
+        Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[inline(never)]
+unsafe extern "C" fn memchr_long_strict(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    let needle = c as u8;
+    // One-page range (the common case): no later page to protect.
+    // Overflow-safe subtraction avoids `(s & 4095) + usize::MAX` wraparound!
+    let page_rem = MEMCHR_PAGE - (s as usize & (MEMCHR_PAGE - 1));
+    let found = if n <= page_rem {
+        // SAFETY: memchr's contract: `n` readable bytes at `s` (`n <= 4096`).
+        unsafe { core_memchr(s.cast::<u8>(), needle, n) }
+    } else {
+        unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
+    };
+    match found {
+        Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
+        None => std::ptr::null_mut(),
+    }
 }
 
 const MEMCHR_PAGE: usize = 4096;
@@ -5858,8 +5892,9 @@ unsafe fn memccpy_page_bounded(dst: *mut u8, src: *const u8, c: u8, n: usize) ->
     }
 }
 
+#[cold]
 #[inline(never)]
-unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+unsafe extern "C" fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     if n == 0 || s.is_null() {
         if s.is_null() {
             let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);

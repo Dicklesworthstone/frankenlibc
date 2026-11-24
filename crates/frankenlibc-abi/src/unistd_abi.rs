@@ -5907,8 +5907,12 @@ unsafe fn vdso_getrandom_draw(buf: *mut c_void, buflen: usize, flags: c_uint) ->
 /// no-op for that family. Avoid constructing that discarded decision on the
 /// successful path, while retaining the output-capacity clamp, vDSO routing,
 /// syscall fallback, errno, and adverse-result telemetry.
-#[inline(always)]
-unsafe fn strict_getrandom_passthrough(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
+#[inline(never)]
+unsafe extern "C" fn strict_getrandom_passthrough(
+    buf: *mut c_void,
+    buflen: usize,
+    flags: c_uint,
+) -> isize {
     let effective_buflen = tracked_void_output_capacity(buf, buflen);
     let n = unsafe { vdso_getrandom_draw(buf, effective_buflen, flags) };
     if n >= 0 {
@@ -5920,6 +5924,37 @@ unsafe fn strict_getrandom_passthrough(buf: *mut c_void, buflen: usize, flags: c
         Err(e) => {
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::IoFd, ValidationProfile::Fast, 8, true);
+            -1
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn getrandom_validating(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, buf as usize, buflen, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    let effective_buflen = tracked_void_output_capacity(buf, buflen);
+    let n = unsafe { vdso_getrandom_draw(buf, effective_buflen, flags) };
+    if n >= 0 {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return n;
+    }
+
+    match unsafe { syscall::sys_getrandom(buf as *mut u8, effective_buflen, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
             -1
         }
     }
@@ -5940,48 +5975,7 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
         return unsafe { strict_getrandom_passthrough(buf, buflen, flags) };
     }
 
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, buf as usize, buflen, false, true, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        unsafe { set_abi_errno(errno::EPERM) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
-        return -1;
-    }
-
-    let effective_buflen = tracked_void_output_capacity(buf, buflen);
-
-    // FAST PATH: draw from `__vdso_getrandom` instead of issuing a syscall.
-    //
-    // This is the whole of the campaign's worst measured ratio. getrandom was
-    // 91.58-92.17x slower than glibc, replicated on two binaries, and syscall
-    // counting showed why: glibc 2.42 issues 3 getrandom syscalls whether called
-    // 100 times or 10,000 because it draws from this vDSO, while fl issued 103
-    // and 10,003 — one per call. The ratio collapsed from 92x at zero bytes to
-    // 3.0x at 256 because the fixed syscall cost is everything at small sizes and
-    // amortises at large ones.
-    //
-    // Anything unexpected falls through to the syscall below, which is the path
-    // fl shipped before this: an absent symbol on a pre-6.11 kernel, an exhausted
-    // state pool, a failed mapping, or any negative return from the vDSO itself.
-    // The fallback is what makes the fast path safe to add — it cannot change an
-    // outcome, only skip a syscall.
-    let n = unsafe { vdso_getrandom_draw(buf, effective_buflen, flags) };
-    if n >= 0 {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        return n;
-    }
-
-    match unsafe { syscall::sys_getrandom(buf as *mut u8, effective_buflen, flags) } {
-        Ok(n) => {
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-            n
-        }
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-            -1
-        }
-    }
+    unsafe { getrandom_validating(buf, buflen, flags) }
 }
 
 // BURNED DOWN (bd-xh08pf). `unistd_abi` is `#[cfg(not(test))] pub mod` in
