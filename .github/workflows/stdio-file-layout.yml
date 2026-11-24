@@ -116,7 +116,7 @@ jobs:
               2>&1 | tee "$log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"
           done
-      - name: Preserve unbuffered wide conversion and transliteration
+      - name: Preserve wide conversion, transliteration, and character pushback
         if: always()
         env:
           CACHE: ${{ matrix.cache }}
@@ -127,12 +127,16 @@ jobs:
           if [[ "$CACHE" == owned ]]; then
             features+=(--features owned-tls-cache)
           fi
+          cargo test -p frankenlibc-core "${features[@]}" --lib wide_backup \
+            -- --test-threads=1 --nocapture 2>&1 | tee artifacts/stdio-regressions/wide-backup-core.log
+          grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' \
+            artifacts/stdio-regressions/wide-backup-core.log
           for mode in strict hardened; do
             log="artifacts/stdio-regressions/wide-output-$mode.log"
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
               --test conformance_diff_wide_stdio_write -- --test-threads=1 --nocapture \
               2>&1 | tee "$log"
-            grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "$log"
+            grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' "$log"
           done
       - uses: actions/upload-artifact@v4
         if: always()

@@ -7187,6 +7187,9 @@ pub(crate) unsafe fn fgetwc_unlocked_for_caller(stream: *mut c_void, caller: usi
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
+    if let Some(value) = super::stdio_abi::read_wide_pushback(stream) {
+        return value;
+    }
     let (codec, at_eof) = super::stdio_abi::stream_wide_read_context(stream);
     if at_eof {
         return WEOF_VALUE;
@@ -7263,11 +7266,10 @@ fn emit_stdio_wchar(
     if let Some(length) = codec.encode(wc, &mut encoded) {
         return emit(&encoded[..length]);
     }
-    let mut replacement =
-        match super::stdio_abi::unbuffered_wide_transliteration_locale(stream) {
-            Some(utf8) => frankenlibc_core::iconv::transliteration(wc, utf8),
-            None => b"?",
-        };
+    let mut replacement = match super::stdio_abi::unbuffered_wide_transliteration_locale(stream) {
+        Some(utf8) => frankenlibc_core::iconv::transliteration(wc, utf8),
+        None => b"?",
+    };
     if replacement.is_empty() {
         return super::stdio_abi::admit_empty_wide_output(stream);
     }
@@ -7353,28 +7355,15 @@ pub(crate) unsafe fn ungetwc_without_lock(wc: u32, stream: *mut c_void) -> u32 {
     if stream.is_null() || wc == WEOF_VALUE || !super::stdio_abi::orient_stream_ungetwc(stream) {
         return WEOF_VALUE;
     }
-    let codec = super::stdio_abi::stream_wide_codec(stream);
-
-    super::stdio_abi::with_wide_io_active(|| {
-        let mut bytes = [0u8; 6];
-        let Some(encoded_len) = codec.encode(wc, &mut bytes) else {
-            // SAFETY: thread-local errno update.
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            return WEOF_VALUE;
-        };
-
-        if super::stdio_abi::restore_wide_read(stream, &bytes[..encoded_len], false, false) {
-            return wc;
+    match super::stdio_abi::push_wide_character(stream, wc) {
+        Ok(()) => wc,
+        Err(error) => {
+            // SAFETY: update only the current thread's errno after a failed
+            // push. Successful pushback neither converts wc nor changes errno.
+            unsafe { set_abi_errno(error) };
+            WEOF_VALUE
         }
-        for &byte in bytes[..encoded_len].iter().rev() {
-            // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            if unsafe { super::stdio_abi::ungetc_without_lock(byte as c_int, stream) } == libc::EOF
-            {
-                return WEOF_VALUE;
-            }
-        }
-        wc
-    })
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

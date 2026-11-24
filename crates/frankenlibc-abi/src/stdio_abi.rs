@@ -4159,6 +4159,47 @@ pub(crate) fn admit_empty_wide_output(stream: *mut c_void) -> bool {
     allowed
 }
 
+/// Return a complete wide backup value before decoding the external stream.
+/// The same cache ownership proof as fgetwc protects the fast path; a locked
+/// cell handles multithreaded access and non-cached native streams.
+#[inline]
+pub(crate) fn read_wide_pushback(stream: *mut c_void) -> Option<u32> {
+    if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        let value = unsafe { &mut *pointer }.read_wide_pushback();
+        if value.is_some() {
+            mirror_raw_cached(stream, pointer);
+        }
+        return value;
+    }
+    let cell = stream_cell(canonical_stream_id(stream))?;
+    let value = cell.lock().read_wide_pushback();
+    value
+}
+
+/// Store wchar_t itself, without requiring an external encoding. A failed
+/// overflow-stack allocation leaves the previous backup and status intact.
+pub(crate) fn push_wide_character(stream: *mut c_void, value: u32) -> Result<(), c_int> {
+    if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        let pushed = unsafe { &mut *pointer }.ungetwc(value);
+        if pushed {
+            mirror_raw_cached(stream, pointer);
+            return Ok(());
+        }
+        return Err(errno::ENOMEM);
+    }
+    let id = canonical_stream_id(stream);
+    let cell = stream_cell(id).ok_or(errno::EBADF)?;
+    let mut state = cell.lock();
+    sync_and_unregister_fast_fixed_mem_read(id, &mut state);
+    if state.ungetwc(value) {
+        Ok(())
+    } else {
+        Err(errno::ENOMEM)
+    }
+}
+
 /// Restore external bytes consumed by one wide read, including characters
 /// straddling an fd refill and streams without an ordinary byte buffer.
 pub(crate) fn restore_wide_read(
@@ -4809,7 +4850,10 @@ unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bo
 /// contracts. EOF stays set after successful synchronization.
 fn sync_input_position(stream: &mut StdioStream) -> Result<(), c_int> {
     let fd = stream.fd();
-    if fd < 0 || stream.is_mem_backed() || stream.readable_buffered() == 0 {
+    if fd < 0
+        || stream.is_mem_backed()
+        || (stream.unread_bytes_for_position() == 0 && !stream.has_wide_pushback())
+    {
         return Ok(());
     }
     // Back up over the unread bytes relative to where the descriptor is, as
@@ -4818,7 +4862,7 @@ fn sync_input_position(stream: &mut StdioStream) -> Result<(), c_int> {
     // from the descriptor's real position — stdin inherited at offset N
     // starts at 0 — so close_stdin left a shared fd mid-line (gnulib
     // test-yesno).
-    let unread = stream.readable_buffered() as i64;
+    let unread = i64::try_from(stream.unread_bytes_for_position()).map_err(|_| errno::EOVERFLOW)?;
     let pos = raw_syscall::sys_lseek(fd, -unread, libc::SEEK_CUR)?;
     let eof = stream.is_eof();
     let _ = stream.prepare_seek();
@@ -5975,8 +6019,8 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
     {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            let ok = unsafe { flush_stream_for_caller(&mut s, caller) }
-                && flush_input_position(&mut s);
+            let ok =
+                unsafe { flush_stream_for_caller(&mut s, caller) } && flush_input_position(&mut s);
             return if ok { 0 } else { libc::EOF };
         }
     }
@@ -6052,8 +6096,8 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             return libc::EOF;
         };
         let mut s = cell.lock();
-        let flushed = unsafe { flush_cookie_stream(id, &mut s) }
-            && unsafe { flush_cookie_input(id, &mut s) };
+        let flushed =
+            unsafe { flush_cookie_stream(id, &mut s) } && unsafe { flush_cookie_input(id, &mut s) };
         let adverse = !flushed;
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
         return if adverse { libc::EOF } else { 0 };
@@ -6707,6 +6751,11 @@ unsafe fn read_cached_ascii_line_wide_inner(
 ) -> Option<(usize, bool)> {
     // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
     let s = unsafe { &mut *p };
+    // A pushed wchar_t precedes the byte buffer even when it is not encodable
+    // in the stream's locale. Let fgetwc return it before attempting a refill.
+    if s.has_wide_pushback() {
+        return None;
+    }
     // An EOF indication forbids a fresh refill, including when another writer
     // has appended a complete line since the previous read reached EOF.
     if s.is_eof() {
@@ -8094,7 +8143,7 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
                 // bytes returned to stdio's input buffer (ungetc/scanf).
                 // SEEK_CUR is relative to the logical stream position,
                 // not to the callback's last read position.
-                let unread = i64::try_from(s.readable_buffered()).ok();
+                let unread = i64::try_from(s.unread_bytes_for_position()).ok();
                 let Some(target) = unread.and_then(|n| offset.checked_sub(n)) else {
                     unsafe { set_abi_errno(errno::EOVERFLOW) };
                     return -1;
@@ -8248,7 +8297,7 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
             let s = cell.lock();
             (
                 s.pending_flush().len(),
-                s.readable_buffered(),
+                s.unread_bytes_for_position(),
                 s.is_appending(),
             )
         };
@@ -20578,8 +20627,8 @@ unsafe fn flush_cookie_input(id: usize, stream: &mut StreamGuard<'_>) -> bool {
         flush_fixed_mem_input(id, stream);
         return true;
     }
-    let unread = stream.readable_buffered();
-    if unread == 0 {
+    let unread = stream.unread_bytes_for_position();
+    if unread == 0 && !stream.has_wide_pushback() {
         return true;
     }
     let Ok(unread) = i64::try_from(unread) else {
@@ -20590,9 +20639,8 @@ unsafe fn flush_cookie_input(id: usize, stream: &mut StreamGuard<'_>) -> bool {
     let mut position = -unread;
     // The backend may reenter status operations or unwind. Keep the public
     // FILE lock, but release the private stream lock before application code.
-    let result = stream.with_callback(|| unsafe {
-        cookie_stream_seek(id, &mut position, libc::SEEK_CUR)
-    });
+    let result =
+        stream.with_callback(|| unsafe { cookie_stream_seek(id, &mut position, libc::SEEK_CUR) });
     if result != 0 {
         // A missing hook or a callback that leaves errno alone must retain the
         // incoming value. Failure alone neither consumes input nor sets ferror.

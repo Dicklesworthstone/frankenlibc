@@ -600,6 +600,47 @@ pub enum ReadUntil {
     Eof,
 }
 
+/// Wide input backup is independent of the external byte encoding. Keep one
+/// character inline so the guaranteed first pushback never needs allocation;
+/// further successful pushes are returned in last-in-first-out order.
+#[derive(Debug, Default)]
+struct WidePushback {
+    first: Option<(u32, u8)>,
+    rest: Vec<(u32, u8)>,
+    /// External-byte position adjustment for representable characters only.
+    bytes: usize,
+}
+
+impl WidePushback {
+    fn push(&mut self, value: u32, width: u8) -> bool {
+        let Some(bytes) = self.bytes.checked_add(usize::from(width)) else {
+            return false;
+        };
+        if let Some(previous) = self.first {
+            if self.rest.try_reserve(1).is_err() {
+                return false;
+            }
+            self.rest.push(previous);
+        }
+        self.first = Some((value, width));
+        self.bytes = bytes;
+        true
+    }
+
+    fn pop(&mut self) -> Option<(u32, u8)> {
+        let entry = self.first.take()?;
+        self.first = self.rest.pop();
+        self.bytes -= usize::from(entry.1);
+        Some(entry)
+    }
+
+    fn clear(&mut self) {
+        self.first = None;
+        self.rest.clear();
+        self.bytes = 0;
+    }
+}
+
 /// POSIX FILE stream.
 ///
 /// Holds the file descriptor, buffer, and stream state. This type lives
@@ -623,6 +664,8 @@ pub struct StdioStream {
     ungetc_byte: Option<u8>,
     /// Overflow pushback and bytes returned by scanner or wide-read rollback.
     read_pushback: VecDeque<u8>,
+    /// Complete wchar_t values pushed by ungetwc, before any external bytes.
+    wide_pushback: WidePushback,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
     /// Bytes accepted into the modelled `BUFSIZ` stdio buffer since the last
@@ -675,6 +718,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            wide_pushback: WidePushback::default(),
             c_handle: 0,
             mem_backing: None,
             mem_pending_write: 0,
@@ -693,6 +737,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            wide_pushback: WidePushback::default(),
             c_handle: 0,
             mem_backing: None,
             mem_pending_write: 0,
@@ -714,6 +759,7 @@ impl StdioStream {
         self.offset = offset;
         self.ungetc_byte = None;
         self.read_pushback.clear();
+        self.wide_pushback.clear();
         self.mem_backing = None;
         self.mem_pending_write = 0;
         self.mem_pending_overflow = 0;
@@ -738,6 +784,7 @@ impl StdioStream {
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            wide_pushback: WidePushback::default(),
             c_handle: 0,
             mem_backing: Some(MemBacking::Fixed {
                 data,
@@ -771,6 +818,7 @@ impl StdioStream {
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            wide_pushback: WidePushback::default(),
             c_handle: 0,
             mem_backing: Some(MemBacking::Fixed {
                 data: Vec::new(),
@@ -838,6 +886,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            wide_pushback: WidePushback::default(),
             c_handle: 0,
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
@@ -872,6 +921,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            wide_pushback: WidePushback::default(),
             c_handle: 0,
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
@@ -961,11 +1011,12 @@ impl StdioStream {
     /// the discarded read-ahead.
     pub fn purge(&mut self) {
         let pending = self.buffer.pending_write_data().len() as i64;
-        let unread = self.readable_buffered() as i64;
+        let unread = self.unread_bytes_for_position() as i64;
         self.offset = self.offset - pending + unread;
         self.buffer.reset();
         self.ungetc_byte = None;
         self.read_pushback.clear();
+        self.wide_pushback.clear();
     }
 
     /// Whether the caller owns synchronization of ordinary stream operations.
@@ -1427,6 +1478,54 @@ impl StdioStream {
         self.ungetc_byte.is_some() as usize + self.read_pushback.len() + self.buffer.readable()
     }
 
+    /// Bytes by which the backend cursor leads the logical input position.
+    /// Wide backup may contain values that cannot be externally encoded. Those
+    /// values have no invented byte width, and are still returned verbatim.
+    /// This is position bookkeeping, not a count of bytes available to fread.
+    pub fn unread_bytes_for_position(&self) -> usize {
+        self.readable_buffered()
+            .saturating_add(self.wide_pushback.bytes)
+    }
+
+    /// Whether a wide read must consume a complete pushed-back character
+    /// before touching any external bytes, including ASCII fast paths.
+    pub fn has_wide_pushback(&self) -> bool {
+        self.wide_pushback.first.is_some()
+    }
+
+    /// Push a wchar_t without converting it into the FILE's external encoding.
+    /// The bound codec is used only to retain byte-position accounting for
+    /// representable characters. The position while backup is pending is
+    /// unspecified; draining all backup restores the pre-push position.
+    /// WEOF and allocation failures leave input and status unchanged.
+    pub fn ungetwc(&mut self, value: u32) -> bool {
+        if value == u32::MAX {
+            return false;
+        }
+        let mut encoded = [0; 6];
+        let width = self
+            .wide_codec
+            .and_then(|codec| codec.encode(value, &mut encoded))
+            .unwrap_or(0) as u8;
+        if !self.wide_pushback.push(value, width) {
+            return false;
+        }
+        self.offset = self.offset.saturating_sub(i64::from(width));
+        self.flags.io_started = true;
+        self.flags.eof = false;
+        true
+    }
+
+    /// Read one complete pushed-back wide value without decoding, descriptor
+    /// I/O or allocation. Sticky errors remain set, as for ordinary input.
+    pub fn read_wide_pushback(&mut self) -> Option<u32> {
+        let (value, width) = self.wide_pushback.pop()?;
+        self.offset = self.offset.saturating_add(i64::from(width));
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+        Some(value)
+    }
+
     /// Stage externally-fetched bytes so subsequent reads see them first.
     ///
     /// Used by scanf-family entrypoints after they bulk-read from a
@@ -1698,6 +1797,9 @@ impl StdioStream {
     /// `None` without advancing the stream so the caller can use the normal
     /// `fgetwc` decoder.
     pub fn read_ascii_line_into_wide(&mut self, dst: &mut [u32]) -> Option<(usize, ReadUntil)> {
+        if self.has_wide_pushback() {
+            return None;
+        }
         if dst.is_empty() {
             return Some((0, ReadUntil::NeedRefill));
         }
@@ -1809,6 +1911,7 @@ impl StdioStream {
         let pending = self.buffer.pending_write_data().to_vec();
         self.ungetc_byte = None;
         self.read_pushback.clear();
+        self.wide_pushback.clear();
         self.buffer.reset();
         self.flags.eof = false;
         self.buffer.mark_flushed();
@@ -2069,6 +2172,7 @@ impl StdioStream {
             if let Some(new_pos) = backing.seek(offset, whence) {
                 self.ungetc_byte = None;
                 self.read_pushback.clear();
+                self.wide_pushback.clear();
                 self.flags.eof = false;
                 self.offset = new_pos;
                 new_pos
@@ -2137,6 +2241,113 @@ mod tests {
             "a failed seek preserves pushback"
         );
         assert_eq!(stream.offset(), 6);
+    }
+
+    #[test]
+    fn wide_backup_preserves_values_order_position_and_sticky_errors() {
+        for codec in [
+            crate::iconv::MultibyteCodec::Ascii,
+            crate::iconv::MultibyteCodec::Utf8,
+        ] {
+            let mut stream = StdioStream::new(7, parse_mode(b"r").unwrap());
+            stream.set_orientation(1);
+            stream.bind_wide_codec(codec);
+            stream.fill_read_buffer(b"AB");
+            assert_eq!(stream.buffered_read(1), b"A");
+            stream.set_eof();
+            stream.set_error();
+            let position = stream.offset();
+
+            let values = [0x41, 0x20ac, 0xd800, 0x8000_0000, 0, 0x7fff_ffff];
+            for (index, value) in values.into_iter().enumerate() {
+                assert!(stream.ungetwc(value));
+                assert!(!stream.is_eof());
+                assert!(stream.is_error());
+                if index == 0 {
+                    assert_eq!(
+                        stream.wide_pushback.rest.capacity(),
+                        0,
+                        "one guaranteed pushback uses inline storage"
+                    );
+                }
+            }
+            let pending_position = stream.offset();
+            assert!(!stream.ungetwc(u32::MAX));
+            assert_eq!(stream.offset(), pending_position);
+            for value in values.into_iter().rev() {
+                assert_eq!(stream.read_wide_pushback(), Some(value));
+                assert!(stream.is_error());
+            }
+            assert_eq!(stream.read_wide_pushback(), None);
+            assert_eq!(stream.offset(), position);
+            assert_eq!(stream.buffered_read(1), b"B");
+            assert_eq!(stream.offset(), 2);
+        }
+    }
+
+    #[test]
+    fn wide_backup_precedes_ascii_fast_reads_and_byte_rollback() {
+        let mut stream = StdioStream::new(7, parse_mode(b"r").unwrap());
+        stream.set_orientation(1);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Ascii);
+        stream.fill_read_buffer(b"AB\n");
+        assert_eq!(stream.buffered_read(1), b"A");
+        stream.unread_bytes(b"A", false);
+        assert!(stream.ungetwc(0x20ac));
+        let mut line = [0; 3];
+        assert!(stream.read_ascii_line_into_wide(&mut line).is_none());
+        assert_eq!(stream.offset(), 0);
+        assert_eq!(stream.read_wide_pushback(), Some(0x20ac));
+        assert_eq!(stream.buffered_read(1), b"A");
+        assert_eq!(
+            stream.read_ascii_line_into_wide(&mut line),
+            Some((2, ReadUntil::Found))
+        );
+        assert_eq!(&line[..2], &[u32::from(b'B'), u32::from(b'\n')]);
+    }
+
+    #[test]
+    fn wide_backup_is_discarded_by_purge_seek_and_stream_reuse() {
+        let mut stream = StdioStream::new(7, parse_mode(b"r").unwrap());
+        stream.set_orientation(1);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Ascii);
+        stream.fill_read_buffer(b"ABC");
+        assert_eq!(stream.buffered_read(1), b"A");
+        assert!(stream.ungetwc(u32::from(b'A')));
+        assert!(stream.ungetwc(0xd800));
+        stream.purge();
+        assert!(!stream.has_wide_pushback());
+        assert_eq!(stream.offset(), 3);
+        assert!(stream.buffered_read(1).is_empty());
+
+        assert!(stream.ungetwc(0x8000_0000));
+        let _ = stream.prepare_seek();
+        stream.set_offset(8);
+        assert_eq!(stream.read_wide_pushback(), None);
+        assert_eq!(stream.offset(), 8);
+
+        assert!(stream.ungetwc(0x20ac));
+        stream.reset_for_fmemopen(parse_mode(b"r").unwrap(), 4, 99);
+        assert!(!stream.has_wide_pushback());
+        assert_eq!(stream.offset(), 4);
+        assert_eq!(stream.unread_bytes_for_position(), 0);
+    }
+
+    #[test]
+    fn failed_memory_seek_retains_wide_backup() {
+        let mut stream = StdioStream::new_mem_fixed(b"AB".to_vec(), 2, parse_mode(b"r").unwrap());
+        stream.set_orientation(1);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Ascii);
+        assert_eq!(stream.mem_read(1), b"A");
+        assert!(stream.ungetwc(0x20ac));
+        assert_eq!(stream.mem_seek(-1, 0), -1);
+        assert_eq!(stream.read_wide_pushback(), Some(0x20ac));
+        assert_eq!(stream.offset(), 1);
+        assert_eq!(stream.mem_read(1), b"B");
+        assert!(stream.ungetwc(0xd800));
+        assert_eq!(stream.mem_seek(0, 0), 0);
+        assert_eq!(stream.read_wide_pushback(), None);
+        assert_eq!(stream.mem_read(1), b"A");
     }
 
     #[test]
