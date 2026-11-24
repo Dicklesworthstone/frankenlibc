@@ -250,3 +250,65 @@ fn refusal_state_does_not_leak_to_the_next_search_candidate() {
         ]
     );
 }
+
+#[test]
+fn scoped_nameservers_keep_their_interfaces_across_failover_and_reverse_queries() {
+    use frankenlibc_core::dns_transport::{raw, reverse_with};
+    use std::net::SocketAddr;
+
+    let config = ResolverConfig::parse_with_interfaces(
+        b"nameserver fe80::53%lan0\nnameserver fe80::53%7\nnameserver 192.0.2.53\noptions attempts:1\n",
+        |zone| u32::from(zone == b"lan0") * 13,
+    );
+    let expected: [SocketAddr; 3] = [
+        "[fe80::53%13]:53".parse().unwrap(),
+        "[fe80::53%7]:53".parse().unwrap(),
+        "192.0.2.53:53".parse().unwrap(),
+    ];
+    assert_eq!(raw::Config::from(&config).nameservers, expected);
+    let mut forward = Vec::new();
+    resolve_with(
+        b"test.",
+        true,
+        false,
+        &config,
+        |owner, kind, server, _, _, _| {
+            forward.push(server);
+            if server == expected[2] {
+                Ok(positive(owner, kind))
+            } else {
+                Err(refused())
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(forward, expected);
+    let mut reverse = Vec::new();
+    let _ = reverse_with(
+        "192.0.2.42".parse().unwrap(),
+        &config,
+        |_, _, server, _, _, _| {
+            reverse.push(server);
+            Err(refused())
+        },
+    );
+    assert_eq!(reverse, expected);
+}
+
+#[test]
+fn resolver_keeps_unknown_ipv6_zones_unscoped_but_rejects_zoned_ipv4() {
+    use std::net::SocketAddr;
+    let config = ResolverConfig::parse_with_interfaces(
+        b"nameserver 192.0.2.99%3\nnameserver fe80::1%missing\nnameserver 2001:db8::1%lan0\nnameserver ff02::1%lan0\n",
+        |zone| u32::from(zone == b"lan0") * 13,
+    );
+    let actual: Vec<_> = (0..config.nameservers.len())
+        .map(|i| config.nameserver_endpoint(i))
+        .collect();
+    let expected: [SocketAddr; 3] = [
+        "[fe80::1]:53".parse().unwrap(),
+        "[2001:db8::1]:53".parse().unwrap(),
+        "[ff02::1%13]:53".parse().unwrap(),
+    ];
+    assert_eq!(actual, expected);
+}

@@ -215,7 +215,7 @@ fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2], bool) {
     let content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
     let localdomain = crate::stdlib_abi::secure_var_os("LOCALDOMAIN");
     let options = crate::stdlib_abi::secure_var_os("RES_OPTIONS");
-    let mut config = ResolverConfig::parse(&content);
+    let mut config = crate::resolv_abi::parse_resolver_config(&content);
     config.apply_overrides(
         localdomain.as_ref().map(|value| value.as_bytes()),
         options.as_ref().map(|value| value.as_bytes()),
@@ -361,20 +361,22 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
         ipv6: Vec::new(),
         published_search: [0; MAXDNSRCH + 1],
     };
-    for (index, address) in config.nameservers.iter().take(MAXNS).enumerate() {
+    for index in 0..config.nameservers.len().min(MAXNS) {
         next.nscount += 1;
-        match address {
-            IpAddr::V4(ip) => {
+        match config.nameserver_endpoint(index) {
+            SocketAddr::V4(endpoint) => {
                 next.nsaddr_list[index].sin_family = libc::AF_INET as _;
-                next.nsaddr_list[index].sin_port = 53u16.to_be();
-                next.nsaddr_list[index].sin_addr.s_addr = u32::from_ne_bytes(ip.octets());
+                next.nsaddr_list[index].sin_port = endpoint.port().to_be();
+                next.nsaddr_list[index].sin_addr.s_addr =
+                    u32::from_ne_bytes(endpoint.ip().octets());
             }
-            IpAddr::V6(ip) => {
+            SocketAddr::V6(endpoint) => {
                 // SAFETY: sockaddr_in6 consists entirely of zero-valid fields.
                 let mut address: Box<libc::sockaddr_in6> = Box::new(unsafe { std::mem::zeroed() });
                 address.sin6_family = libc::AF_INET6 as _;
-                address.sin6_port = 53u16.to_be();
-                address.sin6_addr.s6_addr = ip.octets();
+                address.sin6_port = endpoint.port().to_be();
+                address.sin6_addr.s6_addr = endpoint.ip().octets();
+                address.sin6_scope_id = endpoint.scope_id();
                 extension.nsaddrs[index] = &mut *address;
                 extension.nscount6 += 1;
                 owned.ipv6.push((index, address));
