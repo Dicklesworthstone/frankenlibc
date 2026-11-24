@@ -1199,6 +1199,26 @@ pub unsafe extern "C" fn _Unwind_SetIP(ctx: *mut UnwindContext, new_value: Unwin
     unsafe { (*ctx).ip = new_value };
 }
 
+/// Crate-internal owned `.eh_frame` registration entrypoints used by
+/// `dlfcn_unwind` whenever `standalone` or `owned-unwind-stub` is enabled,
+/// avoiding undefined external references or interposable PLT calls to
+/// host `libgcc_s`.
+#[cfg_attr(
+    not(any(feature = "standalone", feature = "owned-unwind-stub")),
+    allow(dead_code)
+)]
+pub(crate) unsafe fn register_owned_frame(fde: *mut c_void) {
+    register_frame(fde as usize, 0);
+}
+
+#[cfg_attr(
+    not(any(feature = "standalone", feature = "owned-unwind-stub")),
+    allow(dead_code)
+)]
+pub(crate) unsafe fn deregister_owned_frame(fde: *mut c_void) {
+    deregister_frame(fde as usize);
+}
+
 #[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
 #[cfg_attr(feature = "owned-unwind-stub", unsafe(no_mangle))]
 pub unsafe extern "C" fn __register_frame(fde: *mut c_void) {

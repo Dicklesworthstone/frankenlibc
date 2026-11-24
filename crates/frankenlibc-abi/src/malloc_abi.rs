@@ -3535,11 +3535,16 @@ const BUMP_MMAP_HEADER_WORDS: usize = 4;
 const BUMP_MMAP_HEADER_SIZE: usize = std::mem::size_of::<usize>() * BUMP_MMAP_HEADER_WORDS;
 const BUMP_MMAP_MAGIC: usize = 0x4652_414E_4B4D_4D50;
 
-// This fixed table bounds the overflow path at 4,096 simultaneously live
-// mappings. It is deliberately a live-set bound, not a one-allocation-per-thread
-// claim: one thread may retain many overflow allocations. Historical churn
-// cannot consume capacity after those mappings are freed and tombstoned.
-const BUMP_MMAP_RECORD_SLOTS: usize = ALLOCATOR_REENTRY_SLOT_COUNT;
+// Demand-paged fixed table bounding the overflow/native-fallback path at
+// 131,072 simultaneously live mappings (4 MiB virtual, 0 bytes RSS until
+// granules are promoted; fits inside `DemandSlab<1>` just like
+// `FALLBACK_TABLE_SLAB`). Because native clone workers (`ce6e0cd3d`) route
+// fresh membrane/arena allocations through `bump_alloc_overflow`, this capacity
+// must comfortably exceed hardened mode's multi-thousand-entry quarantine
+// window (previously 4,096 slots overflowed in `probe_mt_calloc` hardened
+// native=1 with `ENOMEM` / `handle_alloc_error`). Historical churn cannot
+// consume capacity after mappings are freed and tombstoned.
+const BUMP_MMAP_RECORD_SLOTS: usize = 131_072;
 const BUMP_MMAP_RECORD_MASK: usize = BUMP_MMAP_RECORD_SLOTS - 1;
 const BUMP_MMAP_RECORD_EMPTY: usize = 0;
 const BUMP_MMAP_RECORD_BUSY: usize = 1;
@@ -9252,14 +9257,6 @@ unsafe fn free_membrane_path(
 // calloc
 // ---------------------------------------------------------------------------
 
-/// POSIX `calloc` -- allocates memory for an array of `nmemb` elements of `size`
-/// bytes each, and initializes all bytes to zero.
-///
-/// Returns null if the multiplication overflows or allocation fails.
-///
-/// # Safety
-///
-/// Caller must eventually `free` the returned pointer exactly once.
 /// Zeroes a recycled 16-byte-aligned segment slot of `req` requested bytes
 /// (`1 <= req <= MAX_SMALL_SIZE`, where the backing slot capacity is a multiple
 /// of 16 `>= req`). Uses baseline SSE2 16-byte aligned stores for `req <= 256`
@@ -9271,14 +9268,18 @@ unsafe fn zero_recycled_segment_slot(user_base: usize, req: usize) {
     #[cfg(target_arch = "x86_64")]
     {
         debug_assert!(req <= 256);
-        use core::arch::x86_64::{__m128i, _mm_setzero_si128, _mm_store_si128};
+        use core::arch::x86_64::{__m128i, _mm_setzero_si128};
         let z = unsafe { _mm_setzero_si128() };
         let p = user_base as *mut __m128i;
         let vecs = (req + 15) >> 4;
         let mut i = 0usize;
         while i < vecs {
             // SAFETY: `user_base` is 16-byte aligned and `vecs * 16 <= bin_size(class_index)`.
-            unsafe { _mm_store_si128(p.add(i), z) };
+            // Use `write_volatile` so LLVM emits plain baseline SSE2 `movaps`
+            // stores and cannot fold the loop into `call *memset@GOT` (which
+            // both self-interposes and forces 7 callee-saved pushes into
+            // `calloc`'s entry prologue).
+            unsafe { core::ptr::write_volatile(p.add(i), z) };
             i += 1;
         }
     }
@@ -9313,6 +9314,14 @@ unsafe extern "C" fn finish_calloc_large_zero(
     }
 }
 
+/// POSIX `calloc` -- allocates memory for an array of `nmemb` elements of `size`
+/// bytes each, and initializes all bytes to zero.
+///
+/// Returns null if the multiplication overflows or allocation fails.
+///
+/// # Safety
+///
+/// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let hot_state = STRICT_HOT_MODE_STATE.load(Ordering::Relaxed);

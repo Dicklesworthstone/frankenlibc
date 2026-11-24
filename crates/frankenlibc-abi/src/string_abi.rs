@@ -4790,11 +4790,6 @@ unsafe fn read_c_string_bytes_with_nul(ptr: *const c_char) -> Option<Vec<u8>> {
 // memcpy
 // ---------------------------------------------------------------------------
 
-/// POSIX `memcpy` -- copies `n` bytes from `src` to `dst`.
-///
-/// # Safety
-///
-/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
 #[cold]
 #[inline(never)]
 unsafe extern "C" fn memcpy_htm_forced(
@@ -4809,7 +4804,7 @@ unsafe extern "C" fn memcpy_htm_forced(
             unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
     }
-    dst
+    core::hint::black_box(dst)
 }
 
 #[inline(never)]
@@ -4824,6 +4819,11 @@ unsafe extern "C" fn raw_overlap_copy_returning_dst(
     core::hint::black_box(dst)
 }
 
+/// POSIX `memcpy` -- copies `n` bytes from `src` to `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     if n == 0 {
@@ -5040,11 +5040,6 @@ unsafe extern "C" fn memcpy_validating(
 // memmove
 // ---------------------------------------------------------------------------
 
-/// POSIX `memmove` -- copies `n` bytes from `src` to `dst`, handling overlap.
-///
-/// # Safety
-///
-/// Caller must ensure `src` and `dst` are valid for `n` bytes.
 #[inline(never)]
 unsafe extern "C" fn raw_memmove_bytes_returning_dst(
     dst: *mut c_void,
@@ -5056,6 +5051,11 @@ unsafe extern "C" fn raw_memmove_bytes_returning_dst(
     core::hint::black_box(dst)
 }
 
+/// POSIX `memmove` -- copies `n` bytes from `src` to `dst`, handling overlap.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     if n == 0 {
@@ -5214,11 +5214,6 @@ unsafe extern "C" fn memmove_validating(
 // memset
 // ---------------------------------------------------------------------------
 
-/// POSIX `memset` -- fills `n` bytes of `dst` with byte value `c`.
-///
-/// # Safety
-///
-/// Caller must ensure `dst` is valid for `n` bytes.
 #[inline(never)]
 unsafe extern "C" fn raw_memset_bytes_returning_dst(
     dst: *mut c_void,
@@ -5230,6 +5225,11 @@ unsafe extern "C" fn raw_memset_bytes_returning_dst(
     core::hint::black_box(dst)
 }
 
+/// POSIX `memset` -- fills `n` bytes of `dst` with byte value `c`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_void {
     if n == 0 {
@@ -8354,13 +8354,6 @@ pub unsafe extern "C" fn __strchrnul(s: *const c_char, c: c_int) -> *mut c_char 
 // strrchr
 // ---------------------------------------------------------------------------
 
-/// POSIX `strrchr` -- locates the last occurrence of `c` in the string `s`.
-///
-/// Returns pointer to the last occurrence, or null if not found.
-///
-/// # Safety
-///
-/// Caller must ensure `s` is a valid null-terminated string.
 #[inline(never)]
 unsafe extern "C" fn strrchr_strict(s: *const c_char, c: c_int) -> *mut c_char {
     // NOTE: a strlen+memrchr routing (glibc's two-pass shape, reusing fl's fast memrchr)
@@ -8375,6 +8368,13 @@ unsafe extern "C" fn strrchr_strict(s: *const c_char, c: c_int) -> *mut c_char {
     }
 }
 
+/// POSIX `strrchr` -- locates the last occurrence of `c` in the string `s`.
+///
+/// Returns pointer to the last occurrence, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     // Strict-mode fast path (DEFAULT deployed): sibling tail-call keeps `strrchr`
@@ -10873,14 +10873,6 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
 // strcasestr
 // ---------------------------------------------------------------------------
 
-/// GNU `strcasestr` -- case-insensitive version of strstr.
-///
-/// Returns pointer to the first case-insensitive occurrence of `needle`
-/// in `haystack`, or null if not found.
-///
-/// # Safety
-///
-/// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
 #[inline(never)]
 unsafe extern "C" fn strcasestr_strict(
     haystack: *const c_char,
@@ -10914,6 +10906,14 @@ unsafe extern "C" fn strcasestr_strict(
     }
 }
 
+/// GNU `strcasestr` -- case-insensitive version of strstr.
+///
+/// Returns pointer to the first case-insensitive occurrence of `needle`
+/// in `haystack`, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
     // Strict-mode fast path (DEFAULT deployed): sibling tail-call keeps `strcasestr`
@@ -11177,14 +11177,6 @@ pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usi
 // memccpy
 // ---------------------------------------------------------------------------
 
-/// POSIX `memccpy` -- copies bytes from `src` to `dst` until byte `c` is found
-/// or `n` bytes are copied.
-///
-/// Returns a pointer to the byte after `c` in `dst`, or null if `c` was not found.
-///
-/// # Safety
-///
-/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
 #[inline(never)]
 unsafe extern "C" fn memccpy_strict(
     dst: *mut c_void,
@@ -11195,6 +11187,14 @@ unsafe extern "C" fn memccpy_strict(
     unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, n) }
 }
 
+/// POSIX `memccpy` -- copies bytes from `src` to `dst` until byte `c` is found
+/// or `n` bytes are copied.
+///
+/// Returns a pointer to the byte after `c` in `dst`, or null if `c` was not found.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memccpy(
     dst: *mut c_void,

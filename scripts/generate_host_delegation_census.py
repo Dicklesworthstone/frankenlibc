@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 24
+DETECTOR_VERSION = 25
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -119,9 +119,18 @@ AVX2_DISPATCH_DECL_RE = re.compile(
 )
 RAW_LITERAL_RE = re.compile(r'resolve_host_symbol_raw\s*\(\s*"([^"]+)"')
 RAW_CALL_RE = re.compile(r"\bresolve_host_symbol_raw\s*\(")
-RAW_DYNAMIC_RE = re.compile(r"resolve_host_symbol_raw\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 CACHED_LITERAL_RE = re.compile(r'resolve_host_symbol_cached\s*\([^,]+,\s*"([^"]+)"')
 CACHED_CALL_RE = re.compile(r"\bresolve_host_symbol_cached\s*\(")
+USE_STMT_PREFIX_RE = re.compile(r"^(?:pub(?:\s*\([^)]*\))?\s+)?use\b")
+EXTERN_BLOCK_RE = re.compile(r'\b(?:unsafe\s+)?extern(?:\s+"[^"]+")?\s*\{')
+LINK_NAME_RE = re.compile(r'link_name\s*=\s*"([^"]+)"')
+GLOBAL_ASM_START_RE = re.compile(r"\b(?:(?:core|std)\s*::\s*arch\s*::\s*)?global_asm\s*!\s*([(\[{])")
+ASM_DEFINED_LABEL_RE = re.compile(r"(?m)^\s*([A-Za-z_.$][A-Za-z0-9_.$]*)\s*:")
+ASM_DEFINED_SET_RE = re.compile(r"(?m)^\s*\.(?:set|equ)\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*,")
+INCLUDE_STR_RE = re.compile(r'include_str!\s*\(\s*"([^"]+)"\s*\)')
+QUALIFIED_VALUE_REF_RE = re.compile(
+    r"(?<![\w.])((?:[A-Za-z_][A-Za-z0-9_]*::)+[A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()"
+)
 RESOLVED_THREAD_RE = re.compile(r"\bresolved_thread_([A-Za-z0-9_]+)_raw\s*\(")
 RESOLVER_VALUE_REF_RES = (
     ("resolve_host_symbol_raw", re.compile(r"(?<![\w.])resolve_host_symbol_raw\b(?!\s*\()")),
@@ -749,17 +758,23 @@ def cfg_target_end(mask: str, start: int) -> int | None:
     target = re.sub(r"^(?:pub(?:\([^)]*\))?\s+)", "", target, count=1)
     first_match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", target)
     first_word = first_match.group(1) if first_match else ""
-    if re.match(r"(?:unsafe\s+)?(?:async\s+)?(?:const\s+)?(?:extern\s+\"C(?:-unwind)?\"\s+)?fn\b", target):
+    if re.match(
+        r"(?:default\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+)?fn\b",
+        target,
+    ):
         first_word = "fn"
     semicolon_driven = first_word in {"const", "static", "type", "use", "let"}
     block_driven = first_word in {
         "fn", "struct", "enum", "union", "impl", "trait", "mod", "if", "match",
-        "while", "for", "loop", "unsafe",
+        "while", "for", "loop", "unsafe", "extern",
     }
-    paren = bracket = brace = 0
+    paren = bracket = brace = angle = 0
     idx = start
     first_top_brace: int | None = None
     while idx < len(mask):
+        if mask.startswith(("->", "=>", "<=", ">="), idx):
+            idx += 2
+            continue
         char = mask[idx]
         if char == "(":
             paren += 1
@@ -769,6 +784,10 @@ def cfg_target_end(mask: str, start: int) -> int | None:
             bracket += 1
         elif char == "]":
             bracket -= 1
+        elif char == "<" and paren == bracket == brace == 0:
+            angle += 1
+        elif char == ">" and angle > 0 and paren == bracket == brace == 0:
+            angle -= 1
         elif char == "{":
             if paren == 0 and bracket == 0 and brace == 0:
                 first_top_brace = idx
@@ -786,7 +805,13 @@ def cfg_target_end(mask: str, start: int) -> int | None:
             brace -= 1
         elif char == ";" and paren == bracket == brace == 0:
             return idx + 1
-        elif char == "," and paren == bracket == brace == 0 and first_top_brace is None:
+        elif (
+            char == ","
+            and paren == bracket == brace == angle == 0
+            and not block_driven
+            and not semicolon_driven
+            and first_top_brace is None
+        ):
             return idx + 1
         idx += 1
     return None
@@ -980,6 +1005,7 @@ class FunctionInfo:
     attr_text: str
     lines: list[tuple[int, str]] = field(default_factory=list)
     impl_type: str | None = None
+    body_start_offset: int | None = None
     _body_lines_cache: list[tuple[int, str, str]] | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -1741,6 +1767,7 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
         saw_parameter_list = False
         parameters_closed = False
         body_start_line = idx + 1
+        body_start_offset: int | None = None
         while end_idx < len(rows):
             current = rows[end_idx]
             masked_current = mask_rows[end_idx]
@@ -1818,6 +1845,9 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
                     seen_open = True
                     body_start_line = end_idx + 1
                     body_offset = offset
+                    body_start_offset = (
+                        match.start() + offset if end_idx == idx else offset
+                    )
                     break
                 offset += 1
             if declaration_only:
@@ -1841,6 +1871,7 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
             signature="\n".join(signature_lines),
             attr_text=attrs,
             impl_type=enclosing_impl(idx + 1),
+            body_start_offset=body_start_offset,
         )
         while end_idx < len(rows):
             current = rows[end_idx]
@@ -1877,8 +1908,12 @@ def function_body_lines(function: FunctionInfo) -> list[tuple[int, str, str]]:
             result.append((line_no, "", ""))
             continue
         if line_no == function.body_start_line:
-            opening_brace = masked_line.find("{")
-            if opening_brace < 0:
+            opening_brace = (
+                function.body_start_offset
+                if function.body_start_offset is not None
+                else masked_line.find("{")
+            )
+            if opening_brace < 0 or opening_brace >= len(masked_line):
                 result.append((line_no, "", ""))
             else:
                 result.append(
@@ -2324,8 +2359,43 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
         close_paren = matching_delimiter(sig_mask, open_paren, "(", ")")
         if close_paren is None:
             return set()
-        param_slice = sig_mask[open_paren:close_paren]
-        return set(PARAM_BINDING_RE.findall(param_slice))
+        inner = sig_mask[open_paren + 1 : close_paren - 1]
+        params: list[str] = []
+        chunk_start = 0
+        p_depth = b_depth = c_depth = a_depth = 0
+        i = 0
+        while i < len(inner):
+            if inner.startswith(("->", "=>"), i):
+                i += 2
+                continue
+            ch = inner[i]
+            if ch == "(":
+                p_depth += 1
+            elif ch == ")" and p_depth > 0:
+                p_depth -= 1
+            elif ch == "[":
+                b_depth += 1
+            elif ch == "]" and b_depth > 0:
+                b_depth -= 1
+            elif ch == "{":
+                c_depth += 1
+            elif ch == "}" and c_depth > 0:
+                c_depth -= 1
+            elif ch == "<" and p_depth == 0 and b_depth == 0 and c_depth == 0:
+                a_depth += 1
+            elif ch == ">" and a_depth > 0 and p_depth == 0 and b_depth == 0 and c_depth == 0:
+                a_depth -= 1
+            elif ch == "," and p_depth == b_depth == c_depth == a_depth == 0:
+                params.append(inner[chunk_start:i])
+                chunk_start = i + 1
+            i += 1
+        params.append(inner[chunk_start:])
+        bindings: set[str] = set()
+        for param in params:
+            matched = re.match(r"\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:", param)
+            if matched is not None and matched.group(1) != "_":
+                bindings.add(matched.group(1))
+        return bindings
 
     active_scopes = [extract_fn_param_bindings(function.signature)]
     scope_is_macro = [False]
@@ -2502,6 +2572,140 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
     return calls_by_line
 
 
+def _is_use_statement_prefix(line: str, pos: int) -> bool:
+    stmt = line[:pos].rsplit(";", 1)[-1].lstrip()
+    return USE_STMT_PREFIX_RE.match(stmt) is not None
+
+
+def _macro_rules_spans(mask: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    closing = {"(": ")", "[": "]", "{": "}"}
+    for m in re.finditer(r"\bmacro_rules\s*!\s*[A-Za-z_][A-Za-z0-9_]*\s*([({\[])", mask):
+        open_pos = m.start(1)
+        delim = m.group(1)
+        end_pos = matching_delimiter(mask, open_pos, delim, closing[delim])
+        if end_pos is not None:
+            spans.append((m.start(), end_pos))
+    return spans
+
+
+def _extract_rust_string_literals(src: str) -> list[str]:
+    """Extract raw and regular Rust string literal contents without splitting raw quotes."""
+    out: list[str] = []
+    idx = 0
+    n = len(src)
+    while idx < n:
+        raw_match = RAW_STRING_START_RE.match(src, idx)
+        if raw_match is not None:
+            closing = '"' + raw_match.group("hashes")
+            body_start = raw_match.end()
+            close_pos = src.find(closing, body_start)
+            if close_pos < 0:
+                break
+            out.append(src[body_start:close_pos])
+            idx = close_pos + len(closing)
+            continue
+        if src[idx] == '"':
+            end = idx + 1
+            escaped = False
+            chars: list[str] = []
+            while end < n:
+                ch = src[end]
+                end += 1
+                if escaped:
+                    if ch == "n":
+                        chars.append("\n")
+                    elif ch == "t":
+                        chars.append("\t")
+                    elif ch == "r":
+                        chars.append("\r")
+                    else:
+                        chars.append(ch)
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    break
+                else:
+                    chars.append(ch)
+            out.append("".join(chars))
+            idx = end
+            continue
+        idx += 1
+    return out
+
+
+def parse_extern_fn_decls(text: str) -> dict[str, str]:
+    """Return {rust_fn_name: link_symbol} for extern fn declarations."""
+    comment_free = rust_strip_comments_only(text)
+    mask = rust_code_mask(text)
+    macro_spans = _macro_rules_spans(mask)
+    result: dict[str, str] = {}
+    for block_match in EXTERN_BLOCK_RE.finditer(comment_free):
+        start = block_match.start()
+        if any(ms <= start < me for ms, me in macro_spans):
+            continue
+        brace_pos = block_match.end() - 1
+        if brace_pos >= len(mask) or mask[brace_pos] != "{":
+            continue
+        block_end = matching_delimiter(mask, brace_pos, "{", "}")
+        if block_end is None:
+            continue
+        body_raw = comment_free[brace_pos + 1 : block_end - 1]
+        body_mask = mask[brace_pos + 1 : block_end - 1]
+        block_attrs = attribute_spans(body_raw, body_mask)
+        for fn_match in FUNCTION_RE.finditer(body_mask):
+            fn_name = fn_match.group(1)
+            fn_start = fn_match.start()
+            # Walk backward past visibility/safe/unsafe qualifiers (including multi-line).
+            qual_match = re.search(
+                r"(?:(?:\bpub(?:\s*\([^)]*\))?|\bsafe\b|\bunsafe\b)\s+)*$",
+                body_mask[:fn_start],
+            )
+            cursor = qual_match.start() if qual_match is not None else fn_start
+            preceding: list[str] = []
+            for a_start, a_end in reversed(block_attrs):
+                if a_end > cursor:
+                    continue
+                if not only_trivia(body_mask, a_end, cursor):
+                    break
+                preceding.insert(0, body_raw[a_start:a_end])
+                cursor = a_start
+            attr_text = "\n".join(preceding)
+            link_match = LINK_NAME_RE.search(attr_text)
+            link_symbol = link_match.group(1) if link_match is not None else fn_name
+            result[fn_name] = link_symbol
+    return result
+
+
+def parse_global_asm_defined_symbols(path: Path, text: str) -> set[str]:
+    """Return symbol names actually defined by labels or .set/.equ in active global_asm!."""
+    comment_free = rust_strip_comments_only(text)
+    mask = rust_code_mask(text)
+    macro_spans = _macro_rules_spans(mask)
+    closing = {"(": ")", "[": "]", "{": "}"}
+    defined: set[str] = set()
+    for match in GLOBAL_ASM_START_RE.finditer(mask):
+        if any(ms <= match.start() < me for ms, me in macro_spans):
+            continue
+        open_pos = match.start(1)
+        delim = match.group(1)
+        close_pos = matching_delimiter(mask, open_pos, delim, closing[delim])
+        if close_pos is None:
+            continue
+        asm_src = comment_free[open_pos:close_pos]
+        for lit_body in _extract_rust_string_literals(asm_src):
+            defined.update(ASM_DEFINED_LABEL_RE.findall(lit_body))
+            defined.update(ASM_DEFINED_SET_RE.findall(lit_body))
+        for inc in INCLUDE_STR_RE.finditer(asm_src):
+            inc_path = path.parent / inc.group(1)
+            if inc_path.is_file():
+                inc_text = inc_path.read_text(encoding="utf-8")
+                defined.update(ASM_DEFINED_LABEL_RE.findall(inc_text))
+                defined.update(ASM_DEFINED_SET_RE.findall(inc_text))
+    return defined
+
+
 def detect_host_calls(
     function: FunctionInfo,
     root: Path,
@@ -2511,16 +2715,38 @@ def detect_host_calls(
     all_module_imports: dict[str, dict[str, str]] | None = None,
     known_modules: set[str] | None = None,
     module_aliases: dict[str, str | None] | None = None,
+    module_extern_fns: dict[str, str] | None = None,
+    all_extern_fns: dict[str, dict[str, str]] | None = None,
+    crate_defined_symbols: set[str] | None = None,
 ) -> list[HostCall]:
     calls: list[HostCall] = []
     path = rel(root, function.path)
     call_paths = scoped_call_paths(function)
-    for line_no, raw_line, line in function_body_lines(function):
+    defined_syms = crate_defined_symbols or set()
+    unbacked_local_externs = [
+        (ext_name, ext_link, re.compile(rf"(?<![\w.]){re.escape(ext_name)}\b(?!\s*\()"))
+        for ext_name, ext_link in (module_extern_fns or {}).items()
+        if ext_link not in defined_syms
+    ]
+    body_lines = function_body_lines(function)
+    for line_idx, (line_no, raw_line, line) in enumerate(body_lines):
         if not line.strip():
             continue
         expression = raw_line.strip()
+        lookahead_raw: str | None = None
+
+        def raw_window() -> str:
+            nonlocal lookahead_raw
+            if lookahead_raw is None:
+                lookahead_raw = "\n".join(
+                    row_raw for _, row_raw, _ in body_lines[line_idx : line_idx + 4]
+                )
+            return lookahead_raw
+
         for resolver in RAW_CALL_RE.finditer(line):
             literal = RAW_LITERAL_RE.match(raw_line, resolver.start())
+            if literal is None:
+                literal = RAW_LITERAL_RE.match(raw_window(), resolver.start())
             if literal is not None:
                 calls.append(
                     HostCall(
@@ -2534,8 +2760,23 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
+            else:
+                calls.append(
+                    HostCall(
+                        path=path,
+                        line=line_no,
+                        function=function.name,
+                        function_id=function.identity,
+                        delegation_kind="resolve_host_symbol_raw_dynamic",
+                        host_symbol="<dynamic>",
+                        expression=expression,
+                        evidence=f"{path}:{line_no}",
+                    )
+                )
         for resolver in CACHED_CALL_RE.finditer(line):
             literal = CACHED_LITERAL_RE.match(raw_line, resolver.start())
+            if literal is None:
+                literal = CACHED_LITERAL_RE.match(raw_window(), resolver.start())
             if literal is not None:
                 calls.append(
                     HostCall(
@@ -2549,19 +2790,19 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
-        if RAW_DYNAMIC_RE.search(line):
-            calls.append(
-                HostCall(
-                    path=path,
-                    line=line_no,
-                    function=function.name,
-                    function_id=function.identity,
-                    delegation_kind="resolve_host_symbol_raw_dynamic",
-                    host_symbol="<dynamic>",
-                    expression=expression,
-                    evidence=f"{path}:{line_no}",
+            else:
+                calls.append(
+                    HostCall(
+                        path=path,
+                        line=line_no,
+                        function=function.name,
+                        function_id=function.identity,
+                        delegation_kind="resolve_host_symbol_cached_dynamic",
+                        host_symbol="<dynamic>",
+                        expression=expression,
+                        evidence=f"{path}:{line_no}",
+                    )
                 )
-            )
         for thread_key in RESOLVED_THREAD_RE.findall(line):
             calls.append(
                 HostCall(
@@ -2594,6 +2835,22 @@ def detect_host_calls(
             for target_expression, shadowed in call_paths.get(line_no, []):
                 if shadowed or target_expression.lstrip(":").startswith("libc::"):
                     continue
+                if "::" not in target_expression and module_extern_fns:
+                    ext_link = module_extern_fns.get(target_expression)
+                    if ext_link is not None and ext_link not in defined_syms:
+                        calls.append(
+                            HostCall(
+                                path=path,
+                                line=line_no,
+                                function=function.name,
+                                function_id=function.identity,
+                                delegation_kind="extern_c_fn_call",
+                                host_symbol=ext_link,
+                                expression=expression,
+                                evidence=f"{path}:{line_no}",
+                            )
+                        )
+                        continue
                 imported_expression = resolve_import_target(
                     module_imports or {}, target_expression
                 )
@@ -2602,7 +2859,7 @@ def detect_host_calls(
                     and all_module_imports is not None
                     and known_modules is not None
                 ):
-                    _, expanded_parts = expand_qualified_imports(
+                    eff_mod, expanded_parts = expand_qualified_imports(
                         function.module,
                         target_expression.lstrip(":").split("::"),
                         known_modules,
@@ -2611,6 +2868,29 @@ def detect_host_calls(
                     )
                     if len(expanded_parts) >= 2 and expanded_parts[0] == "libc":
                         imported_expression = "::".join(expanded_parts)
+                    elif all_extern_fns and len(expanded_parts) >= 2:
+                        ext_mod, ext_local = qualified_target_module(
+                            eff_mod,
+                            expanded_parts,
+                            known_modules,
+                            module_aliases,
+                        )
+                        if ext_local and ext_mod is not None:
+                            ext_link = all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1])
+                            if ext_link is not None and ext_link not in defined_syms:
+                                calls.append(
+                                    HostCall(
+                                        path=path,
+                                        line=line_no,
+                                        function=function.name,
+                                        function_id=function.identity,
+                                        delegation_kind="extern_c_fn_call",
+                                        host_symbol=ext_link,
+                                        expression=expression,
+                                        evidence=f"{path}:{line_no}",
+                                    )
+                                )
+                                continue
                 if (
                     imported_expression is None
                     or not imported_expression.startswith("libc::")
@@ -2631,13 +2911,67 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
+            for ext_name, ext_link, ext_val_re in unbacked_local_externs:
+                if ext_name not in line:
+                    continue
+                for hit in ext_val_re.finditer(line):
+                    if _is_use_statement_prefix(line, hit.start()):
+                        continue
+                    before = line[: hit.start()].rstrip()
+                    if before.endswith(("::", "fn")):
+                        continue
+                    calls.append(
+                        HostCall(
+                            path=path,
+                            line=line_no,
+                            function=function.name,
+                            function_id=function.identity,
+                            delegation_kind="extern_c_fn_value_ref",
+                            host_symbol=ext_link,
+                            expression=expression,
+                            evidence=f"{path}:{line_no}",
+                        )
+                    )
+                    break
+            if all_extern_fns and "::" in line and known_modules is not None:
+                for qhit in QUALIFIED_VALUE_REF_RE.finditer(line):
+                    if _is_use_statement_prefix(line, qhit.start()):
+                        continue
+                    eff_mod, expanded_parts = expand_qualified_imports(
+                        function.module,
+                        qhit.group(1).lstrip(":").split("::"),
+                        known_modules,
+                        module_aliases,
+                        all_module_imports,
+                    )
+                    if len(expanded_parts) >= 2:
+                        ext_mod, ext_local = qualified_target_module(
+                            eff_mod,
+                            expanded_parts,
+                            known_modules,
+                            module_aliases,
+                        )
+                        if ext_local and ext_mod is not None:
+                            ext_link = all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1])
+                            if ext_link is not None and ext_link not in defined_syms:
+                                calls.append(
+                                    HostCall(
+                                        path=path,
+                                        line=line_no,
+                                        function=function.name,
+                                        function_id=function.identity,
+                                        delegation_kind="extern_c_fn_value_ref",
+                                        host_symbol=ext_link,
+                                        expression=expression,
+                                        evidence=f"{path}:{line_no}",
+                                    )
+                                )
         for resolver_name, val_ref_re in RESOLVER_VALUE_REF_RES:
             if function.name == resolver_name or resolver_name not in line:
                 continue
             for val_ref in val_ref_re.finditer(line):
                 # Ignore `use ...::resolve_host_symbol_*` imports; flag actual value bindings/refs.
-                prefix_before = line[: val_ref.start()].lstrip()
-                if prefix_before.startswith(("use ", "pub use ")):
+                if _is_use_statement_prefix(line, val_ref.start()):
                     continue
                 calls.append(
                     HostCall(
@@ -2655,8 +2989,7 @@ def detect_host_calls(
             if function.name == needle or needle not in line:
                 continue
             for hit in needle_re.finditer(line):
-                prefix_before = line[: hit.start()].lstrip()
-                if prefix_before.startswith(("use ", "pub use ")):
+                if _is_use_statement_prefix(line, hit.start()):
                     continue
                 calls.append(
                     HostCall(
@@ -2865,6 +3198,7 @@ def resolve_function_calls(
     enum_constructors: set[tuple[str, str, str]] | None = None,
     generated_associated_leaves: set[tuple[str, str, str]] | None = None,
     conservative_nonlocal_unknown: bool = False,
+    extern_fns_by_module: dict[str, dict[str, str]] | None = None,
 ) -> tuple[list[FunctionCall], list[UnknownCall]]:
     resolved: list[FunctionCall] = []
     unknown: list[UnknownCall] = []
@@ -2975,6 +3309,10 @@ def resolve_function_calls(
                         else []
                     )
                     if claims_local and not candidates:
+                        if imported_module is not None and imported_name in (
+                            extern_fns_by_module or {}
+                        ).get(imported_module, {}):
+                            continue
                         reason = "unresolved_imported_target"
                 else:
                     candidates = functions_by_module_and_name.get(
@@ -3022,10 +3360,12 @@ def resolve_function_calls(
                 local_types = (declared_types_by_module or {}).get(
                     effective_caller, set()
                 )
+                is_type_assoc = False
                 if len(effective_parts) == 2 and (
                     local_type in local_types or local_type == "Self"
                 ):
                     target_module, claims_local = effective_caller, True
+                    is_type_assoc = True
                 else:
                     target_module, claims_local = qualified_target_module(
                         effective_caller,
@@ -3034,8 +3374,7 @@ def resolve_function_calls(
                         module_aliases,
                     )
                     if (
-                        claims_local
-                        and target_module is None
+                        target_module is None
                         and len(effective_parts) >= 3
                     ):
                         type_module, type_claims_local = qualified_target_module(
@@ -3053,6 +3392,8 @@ def resolve_function_calls(
                             )
                         ):
                             target_module = type_module
+                            claims_local = True
+                            is_type_assoc = True
                 if not claims_local:
                     if (
                         raw_claims_local
@@ -3065,16 +3406,11 @@ def resolve_function_calls(
                     else:
                         continue
                 else:
-                    candidates = (
-                        module_item_candidates(target_module, target_name)
-                        if target_module is not None
-                        else []
-                    )
                     target_types = (declared_types_by_module or {}).get(
                         target_module or "", set()
                     )
                     if (
-                        not candidates
+                        is_type_assoc
                         and target_module is not None
                         and (local_type in target_types or local_type == "Self")
                     ):
@@ -3100,7 +3436,44 @@ def resolve_function_calls(
                                 (target_module, target_name), []
                             )
                         )
+                    else:
+                        candidates = (
+                            module_item_candidates(target_module, target_name)
+                            if target_module is not None
+                            else []
+                        )
+                        if (
+                            not candidates
+                            and target_module is not None
+                            and (local_type in target_types or local_type == "Self")
+                        ):
+                            if local_type != "Self" and (
+                                target_module,
+                                local_type,
+                                target_name,
+                            ) in (enum_constructors or set()):
+                                continue
+                            if local_type != "Self" and (
+                                target_module,
+                                local_type,
+                                target_name,
+                            ) in (generated_associated_leaves or set()):
+                                continue
+                            typed_candidates = (
+                                call_items_by_module_type_and_name or {}
+                            ).get((target_module, local_type, target_name), [])
+                            candidates = (
+                                typed_candidates
+                                if typed_candidates
+                                else call_items_by_module_and_name.get(
+                                    (target_module, target_name), []
+                                )
+                            )
                     if not candidates:
+                        if target_module is not None and target_name in (
+                            extern_fns_by_module or {}
+                        ).get(target_module, {}):
+                            continue
                         nonlocal_candidates = functions_by_name.get(target_name, [])
                         if conservative_nonlocal_unknown:
                             candidates = nonlocal_candidates
@@ -3227,6 +3600,8 @@ def analyze_host_dependencies(
     enum_constructors: set[tuple[str, str, str]] | None = None,
     generated_associated_leaves: set[tuple[str, str, str]] | None = None,
     conservative_nonlocal_unknown: bool = False,
+    extern_fns_by_module: dict[str, dict[str, str]] | None = None,
+    crate_defined_symbols: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build either the legacy downgrade view or a full dependency view."""
 
@@ -3240,6 +3615,10 @@ def analyze_host_dependencies(
     known_modules = {function.module for function in functions}
     if module_imports:
         known_modules.update(module_imports.keys())
+    exported_symbol_set = {
+        function.exported_symbol for function in functions if function.is_exported_abi
+    }
+    effective_defined_symbols = exported_symbol_set | (crate_defined_symbols or set())
     direct_host_calls = {
         function.identity: detect_host_calls(
             function,
@@ -3249,6 +3628,9 @@ def analyze_host_dependencies(
             all_module_imports=module_imports,
             known_modules=known_modules,
             module_aliases=module_aliases,
+            module_extern_fns=(extern_fns_by_module or {}).get(function.module),
+            all_extern_fns=extern_fns_by_module,
+            crate_defined_symbols=effective_defined_symbols,
         )
         for function in functions
     }
@@ -3269,6 +3651,7 @@ def analyze_host_dependencies(
             enum_constructors=enum_constructors,
             generated_associated_leaves=generated_associated_leaves,
             conservative_nonlocal_unknown=conservative_nonlocal_unknown,
+            extern_fns_by_module=extern_fns_by_module,
         )
         call_edges[function.identity] = resolved
         direct_unknown_calls[function.identity] = unknown
@@ -3571,6 +3954,7 @@ def profile_source_view(
 def support_matrix_coverage(
     root: Path,
     exported_functions: list[FunctionInfo],
+    exported_data_symbols: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     matrix_path = root / "support_matrix.json"
     matrix_symbols: list[str] = []
@@ -3582,7 +3966,9 @@ def support_matrix_coverage(
             for row in rows
             if isinstance(row, dict) and isinstance(row.get("symbol"), str)
         ]
-    source_symbols = [function.exported_symbol for function in exported_functions]
+    source_symbols = [function.exported_symbol for function in exported_functions] + list(
+        exported_data_symbols
+    )
     source_set = set(source_symbols)
     matrix_set = set(matrix_symbols)
     duplicate_source_symbols = sorted(
@@ -3607,6 +3993,7 @@ def support_matrix_coverage(
         "support_matrix_row_count": len(matrix_symbols),
         "support_matrix_unique_symbol_count": len(matrix_set),
         "source_export_function_count": len(exported_functions),
+        "source_export_data_count": len(exported_data_symbols),
         "source_unique_export_symbol_count": len(source_set),
         "duplicate_source_symbols": duplicate_source_symbols,
         "duplicate_support_matrix_symbols": duplicate_matrix_symbols,
@@ -3646,6 +4033,19 @@ def build_profile_census(
         for path, text in filtered.items()
         for type_name, function_name in parse_generated_associated_leaves(text)
     }
+    extern_fns_by_module = {
+        path.stem: parse_extern_fn_decls(text) for path, text in filtered.items()
+    }
+    crate_defined_symbols = {
+        symbol
+        for path, text in filtered.items()
+        for symbol in parse_global_asm_defined_symbols(path, text)
+    }
+    exported_data_symbols = [
+        symbol
+        for path, text in filtered.items()
+        for symbol, _ in parse_data_exports(path, text)
+    ]
     analysis = analyze_host_dependencies(
         functions,
         root,
@@ -3658,8 +4058,12 @@ def build_profile_census(
         enum_constructors=enum_constructors,
         generated_associated_leaves=generated_associated_leaves,
         conservative_nonlocal_unknown=True,
+        extern_fns_by_module=extern_fns_by_module,
+        crate_defined_symbols=crate_defined_symbols,
     )
-    coverage = support_matrix_coverage(root, analysis["exported_functions"])
+    coverage = support_matrix_coverage(
+        root, analysis["exported_functions"], exported_data_symbols
+    )
     host_dependencies_by_symbol = {
         row["symbol"]: row["host_symbols"] for row in analysis["symbol_rows"]
     }
@@ -5241,6 +5645,237 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
         )
         == (None, True),
         "v24 self::child::helper() must not silently drop child into parent",
+    )
+
+    # Regression checks for v25 soundness fixes:
+    # (a) dynamic expression in resolve_host_symbol_raw(...) and dynamic resolve_host_symbol_cached(...),
+    # (b) unbacked extern "C" { fn ...; } calls flagged as host calls while global_asm!-defined symbols stay clean,
+    # (c) same-line `use foo::bar; let f = host_dlsym;` must not be masked by the leading `use`,
+    # (d) single-line const-generic `{}` return type must slice from exact body brace,
+    # (e) fn-pointer param name `cb: Option<fn(host_helper: i32)>` must not shadow `host_helper()`,
+    # (f) `#[cfg(feature = "standalone")] impl<A, B>` must not truncate at the generic comma.
+    v25_path = root / "crates/frankenlibc-abi/src/v25_soundness.rs"
+    v25_src = (
+        'std::arch::global_asm!(".globl own_asm_trampoline", "own_asm_trampoline:", "ret");\n'
+        'unsafe extern "C" {\n'
+        "    fn own_asm_trampoline();\n"
+        "    fn foreign_unwind_register(p: *mut u8);\n"
+        '    #[link_name = "__foreign_linked"]\n'
+        "    fn aliased_foreign();\n"
+        "}\n"
+        "fn host_helper() -> i32 { unsafe { libc::getuid() as i32 } }\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_raw_expr_dynamic(flag: bool) -> usize {\n'
+        '    resolve_host_symbol_raw(if flag { "a" } else { "b" }).unwrap_or(0)\n'
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_cached_dynamic(slot: &usize, sym: &str) -> usize {\n'
+        "    resolve_host_symbol_cached(slot, sym).unwrap_or(0)\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_foreign_extern_fn() {\n'
+        "    unsafe { foreign_unwind_register(core::ptr::null_mut()); }\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_aliased_foreign_extern_fn() {\n'
+        "    unsafe { aliased_foreign(); }\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_own_asm_trampoline() {\n'
+        "    unsafe { own_asm_trampoline(); }\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_same_line_use_then_host() -> usize {\n'
+        "    use core::mem; let _ = mem::size_of::<u8>(); let _ = host_dlsym;\n"
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_single_line_const_generic<const N: usize>() -> Arr<{ N + 1 }> { unsafe { libc::getuid(); } }\n'
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_fnptr_param_no_shadow(_cb: Option<fn(host_helper: i32)>) -> i32 {\n'
+        "    host_helper()\n"
+        "}\n"
+    )
+    v25_analysis = analyze_host_dependencies(
+        parse_functions(v25_path, v25_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+        extern_fns_by_module={"v25_soundness": parse_extern_fn_decls(v25_src)},
+        crate_defined_symbols=parse_global_asm_defined_symbols(v25_path, v25_src),
+    )
+    v25_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v25_analysis["symbol_rows"]
+    }
+    require(
+        v25_syms.get("exported_raw_expr_dynamic") == {"<dynamic>"}
+        and v25_syms.get("exported_cached_dynamic") == {"<dynamic>"}
+        and v25_syms.get("exported_foreign_extern_fn") == {"foreign_unwind_register"}
+        and v25_syms.get("exported_aliased_foreign_extern_fn") == {"__foreign_linked"}
+        and "exported_own_asm_trampoline" not in v25_syms
+        and v25_syms.get("exported_same_line_use_then_host") == {"dlsym"}
+        and v25_syms.get("exported_single_line_const_generic") == {"getuid"}
+        and v25_syms.get("exported_fnptr_param_no_shadow") == {"getuid"},
+        f"v25 soundness regression failed: {v25_syms}",
+    )
+    v25_cfg_filtered, v25_cfg_diags = apply_cfg_profile(
+        '#[cfg(not(feature = "standalone"))]\n'
+        "impl<A, B> Pair<A, B> {\n"
+        "    fn leak() { unsafe { libc::getuid(); } }\n"
+        "}\n",
+        v25_path,
+        root,
+        CFG_PROFILES[1],
+    )
+    require(
+        not v25_cfg_diags and "getuid" not in v25_cfg_filtered,
+        f"v25 cfg_target_end truncated impl<A, B> at generic comma: {v25_cfg_filtered!r}",
+    )
+    v25_sub_caller = root / "crates/frankenlibc-abi/src/v25_parent.rs"
+    v25_sub_child = root / "crates/frankenlibc-abi/src/v25_child_impl.rs"
+    v25_sub_caller_src = (
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_submod_assoc_call() {\n'
+        "    child::Frames::register();\n"
+        "}\n"
+    )
+    v25_sub_child_src = (
+        'unsafe extern "C" { fn __register_frame(p: *mut u8); }\n'
+        "pub struct Frames;\n"
+        "impl Frames {\n"
+        "    pub fn register() { unsafe { __register_frame(core::ptr::null_mut()); } }\n"
+        "}\n"
+    )
+    v25_sub_analysis = analyze_host_dependencies(
+        parse_functions(v25_sub_caller, v25_sub_caller_src)
+        + parse_functions(v25_sub_child, v25_sub_child_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+        module_aliases={"v25_parent::child": "v25_child_impl"},
+        declared_types_by_module={"v25_child_impl": {"Frames"}},
+        extern_fns_by_module={"v25_child_impl": parse_extern_fn_decls(v25_sub_child_src)},
+    )
+    v25_sub_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v25_sub_analysis["symbol_rows"]
+    }
+    require(
+        v25_sub_syms.get("exported_submod_assoc_call") == {"__register_frame"},
+        f"v25 submodule::Type::assoc_fn failed to trace extern C call: {v25_sub_syms}",
+    )
+    # Pass-2 adversarial checks for v25:
+    # (g) bare `.globl` without label/.set does NOT mark symbol crate-defined; macro_rules! does not poison;
+    #     global_asm!{} raw strings work,
+    # (h) `pub const unsafe fn` does not erase surviving functions after it; generic field `pair: Pair<A, B>,` does not truncate,
+    # (i) free `fn register()` does not shadow `child::Frames::register()`,
+    # (j) bare `extern {}`, Rust 2024 `pub safe fn` with `#[link_name]`, extern value refs, and multiline literal calls.
+    v25_p2_path = root / "crates/frankenlibc-abi/src/v25_pass2.rs"
+    v25_p2_src = (
+        'macro_rules! fake_asm { () => { core::arch::global_asm!("forged_sym:\nret"); }; }\n'
+        'core::arch::global_asm!(".globl ext_only_globl");\n'
+        'core::arch::global_asm!{ r#".section ".text"\nraw_defined:\nret"# }\n'
+        "unsafe extern {\n"
+        "    fn ext_only_globl();\n"
+        "    fn raw_defined();\n"
+        '    #[link_name = "__real_safe_host"]\n'
+        "    pub\n"
+        "    safe fn exp_safe_host();\n"
+        "    fn val_ref_host();\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_globl_only_not_defined() { unsafe { ext_only_globl(); } }\n'
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_raw_asm_defined() { unsafe { raw_defined(); } }\n'
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_safe_link_name() { exp_safe_host(); }\n'
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_extern_val_ref() -> usize { val_ref_host as *const () as usize }\n'
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_multiline_literal() -> usize {\n'
+        "    resolve_host_symbol_raw(\n"
+        '        "dlopen",\n'
+        "    ).unwrap_or(0)\n"
+        "}\n"
+    )
+    v25_p2_defined = parse_global_asm_defined_symbols(v25_p2_path, v25_p2_src)
+    require(
+        "raw_defined" in v25_p2_defined
+        and "ext_only_globl" not in v25_p2_defined
+        and "forged_sym" not in v25_p2_defined,
+        f"v25 pass-2 global_asm defined-symbol check failed: {v25_p2_defined}",
+    )
+    v25_p2_analysis = analyze_host_dependencies(
+        parse_functions(v25_p2_path, v25_p2_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+        extern_fns_by_module={"v25_pass2": parse_extern_fn_decls(v25_p2_src)},
+        crate_defined_symbols=v25_p2_defined,
+    )
+    v25_p2_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v25_p2_analysis["symbol_rows"]
+    }
+    require(
+        v25_p2_syms.get("exported_globl_only_not_defined") == {"ext_only_globl"}
+        and "exported_raw_asm_defined" not in v25_p2_syms
+        and v25_p2_syms.get("exported_safe_link_name") == {"__real_safe_host"}
+        and v25_p2_syms.get("exported_extern_val_ref") == {"val_ref_host"}
+        and v25_p2_syms.get("exported_multiline_literal") == {"dlopen"},
+        f"v25 pass-2 extern/multiline checks failed: {v25_p2_syms}",
+    )
+    v25_p2_cfg, v25_p2_cfg_diags = apply_cfg_profile(
+        '#[cfg(not(feature = "standalone"))]\n'
+        "pub const unsafe fn removed_const_unsafe() {}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn surviving_after_const_unsafe() { unsafe { libc::getuid(); } }\n'
+        "struct Holder {\n"
+        '    #[cfg(not(feature = "standalone"))]\n'
+        "    pair: Pair<u32, u64>,\n"
+        "    kept: i32,\n"
+        "}\n",
+        v25_p2_path,
+        root,
+        CFG_PROFILES[1],
+    )
+    require(
+        not v25_p2_cfg_diags
+        and "surviving_after_const_unsafe" in v25_p2_cfg
+        and "u64" not in v25_p2_cfg
+        and "kept: i32" in v25_p2_cfg,
+        f"v25 pass-2 const unsafe fn / generic field cfg check failed: {v25_p2_cfg!r}",
+    )
+    v25_shadow_child_src = (
+        'unsafe extern "C" { fn __register_frame(p: *mut u8); }\n'
+        "pub fn register() {}\n"
+        "pub struct Frames;\n"
+        "impl Frames {\n"
+        "    pub fn register() { unsafe { __register_frame(core::ptr::null_mut()); } }\n"
+        "}\n"
+    )
+    v25_shadow_analysis = analyze_host_dependencies(
+        parse_functions(v25_sub_caller, v25_sub_caller_src)
+        + parse_functions(v25_sub_child, v25_shadow_child_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+        module_aliases={"v25_parent::child": "v25_child_impl"},
+        declared_types_by_module={"v25_child_impl": {"Frames"}},
+        extern_fns_by_module={"v25_child_impl": parse_extern_fn_decls(v25_shadow_child_src)},
+    )
+    v25_shadow_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v25_shadow_analysis["symbol_rows"]
+    }
+    require(
+        v25_shadow_syms.get("exported_submod_assoc_call") == {"__register_frame"},
+        f"v25 pass-2 free fn shadowed Type::assoc_fn: {v25_shadow_syms}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

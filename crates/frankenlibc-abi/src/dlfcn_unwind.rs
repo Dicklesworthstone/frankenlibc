@@ -19,8 +19,10 @@ use frankenlibc_core::elf::{LoadedObject, ProgramType};
 
 use super::{Mapping, map_layout::IMAGE_PAGE_SIZE, raw_syscall};
 
-#[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
-use crate::owned_unwind_abi::{__deregister_frame, __register_frame};
+#[cfg(any(feature = "standalone", feature = "owned-unwind-stub"))]
+use crate::owned_unwind_abi::{
+    deregister_owned_frame as __deregister_frame, register_owned_frame as __register_frame,
+};
 
 #[cfg(not(any(feature = "standalone", feature = "owned-unwind-stub")))]
 #[repr(C)]
@@ -30,7 +32,7 @@ struct DwarfEhBases {
     func: *const c_void,
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[cfg(not(any(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe extern "C" {
     fn __register_frame(frame: *mut c_void);
     fn __deregister_frame(frame: *mut c_void);

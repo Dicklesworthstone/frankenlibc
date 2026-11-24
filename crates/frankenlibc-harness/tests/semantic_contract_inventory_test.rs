@@ -379,7 +379,22 @@ fn declared_surface_covers_both_census_profiles_without_semantic_promotion() -> 
         "interpose-release-linux-x86_64",
         "standalone-release-linux-x86_64",
     ] {
-        let actual = groups
+        let actual_all = groups
+            .iter()
+            .filter(|group| {
+                group["profiles"]
+                    .as_array()
+                    .is_some_and(|profiles| profiles.iter().any(|p| p == profile))
+            })
+            .map(|group| group["symbols"].as_array().map_or(0, Vec::len))
+            .sum::<usize>();
+        ensure(
+            census["profile_census"][profile]["coverage"]["source_unique_export_symbol_count"]
+                .as_u64()
+                == Some(u64::try_from(actual_all)?),
+            format!("{profile}: semantic source membership differs from the cfg-aware census"),
+        )?;
+        let actual_fns = groups
             .iter()
             .filter(|group| {
                 group["function_profiles"]
@@ -389,10 +404,11 @@ fn declared_surface_covers_both_census_profiles_without_semantic_promotion() -> 
             .map(|group| group["symbols"].as_array().map_or(0, Vec::len))
             .sum::<usize>();
         ensure(
-            census["profile_census"][profile]["coverage"]["source_unique_export_symbol_count"]
-                .as_u64()
-                == Some(u64::try_from(actual)?),
-            format!("{profile}: semantic source membership differs from the cfg-aware census"),
+            census["profile_census"][profile]["coverage"]["source_export_function_count"].as_u64()
+                == Some(u64::try_from(actual_fns)?),
+            format!(
+                "{profile}: semantic function source membership differs from the cfg-aware census"
+            ),
         )?;
     }
     ensure(

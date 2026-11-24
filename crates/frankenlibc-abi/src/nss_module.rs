@@ -572,7 +572,7 @@ impl Drop for NetgroupModuleCursor {
         // SAFETY: the matching end callback receives the same live state as
         // set/get. Cleanup must not overwrite the result's observable errno.
         unsafe {
-            let error = libc::__errno_location();
+            let error = crate::errno_abi::__errno_location();
             let saved = *error;
             (self.end)(&mut *self.state);
             *error = saved;
@@ -613,7 +613,7 @@ impl NetgroupModuleCursor {
         // setnetgrent has no errnop argument: preserve the caller's errno while
         // retaining any failure written by the module itself.
         let (status, error) = unsafe {
-            let error = libc::__errno_location();
+            let error = crate::errno_abi::__errno_location();
             let saved = *error;
             *error = 0;
             let status = set(group.as_ptr(), &mut *cursor.state);

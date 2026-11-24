@@ -2734,6 +2734,22 @@ fn mbsnrtowcs_stops_before_prot_none_guard_page() {
         assert_eq!(counted, 2);
         assert_eq!(count_src, src_start.cast::<c_char>().cast_const());
 
+        // Oversized `len = usize::MAX` must not trigger `from_raw_parts_mut` UB.
+        let mut big_src = src_start.cast::<c_char>().cast_const();
+        let mut big_dst = [0 as libc::wchar_t; 16];
+        let big_n = mbsnrtowcs(
+            big_dst.as_mut_ptr(),
+            &mut big_src,
+            100,
+            usize::MAX,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(big_n, 2);
+        assert!(big_src.is_null());
+        assert_eq!(big_dst[0], b'h' as libc::wchar_t);
+        assert_eq!(big_dst[1], b'i' as libc::wchar_t);
+        assert_eq!(big_dst[2], 0);
+
         // Exact-fit write without NUL ("hi" at edge - 2, len = 2, nms = 100).
         let exact_start = edge.sub(2);
         std::ptr::copy_nonoverlapping(b"hi".as_ptr(), exact_start, 2);
@@ -2830,6 +2846,22 @@ fn wcsnrtombs_stops_before_prot_none_guard_page() {
         );
         assert_eq!(counted, 2);
         assert_eq!(count_src, src_start.cast_const());
+
+        // Oversized `len = usize::MAX` must not trigger `from_raw_parts_mut` UB.
+        let mut big_src = src_start.cast_const();
+        let mut big_dst = [0 as c_char; 32];
+        let big_n = wcsnrtombs(
+            big_dst.as_mut_ptr(),
+            &mut big_src,
+            100,
+            usize::MAX,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(big_n, 2);
+        assert!(big_src.is_null());
+        assert_eq!(big_dst[0] as u8, b'h');
+        assert_eq!(big_dst[1] as u8, b'i');
+        assert_eq!(big_dst[2] as u8, 0);
 
         // Exact-fit write without NUL (L"hi" at edge - 8, len = 2, nwc = 100).
         let exact_start = edge
@@ -2951,6 +2983,20 @@ fn wcstod_wcstof_wcstold_stop_before_prot_none_guard_page() {
         let f = wcstof(dec_ptr, &mut end_f);
         assert_eq!(f, 3.5f32, "{label}: wcstof(L\"3.5x\")");
         assert_eq!(end_f, dec_ptr.add(3), "{label}: wcstof endptr");
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut end_ld: *mut libc::wchar_t = std::ptr::null_mut();
+            let mut ld_bytes = [0u8; 10];
+            wcstold_into(dec_ptr, &mut end_ld, ld_bytes.as_mut_ptr());
+            // 3.5L in x87 80-bit extended: exp=0x4000, sig=0xe000_0000_0000_0000.
+            assert_eq!(
+                ld_bytes,
+                [0, 0, 0, 0, 0, 0, 0, 0xe0, 0x00, 0x40],
+                "{label}: wcstold(L\"3.5x\")"
+            );
+            assert_eq!(end_ld, dec_ptr.add(3), "{label}: wcstold endptr");
+        }
 
         // Hex float stopping at 'z' before guard page.
         let hex = [

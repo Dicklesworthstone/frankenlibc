@@ -20,8 +20,9 @@ mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
   python3 "${GEN}" --output "${ARTIFACT}" --check
 )
 
-python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" <<'PY'
+python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" "${GEN}" <<'PY'
 import hashlib
+import importlib.util
 import json
 import pathlib
 import sys
@@ -30,6 +31,13 @@ root = pathlib.Path(sys.argv[1])
 artifact_path = pathlib.Path(sys.argv[2])
 report_path = pathlib.Path(sys.argv[3])
 log_path = pathlib.Path(sys.argv[4])
+gen_path = pathlib.Path(sys.argv[5])
+
+sys.dont_write_bytecode = True
+_spec = importlib.util.spec_from_file_location("host_delegation_census_gen", gen_path)
+_gen = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = _gen
+_spec.loader.exec_module(_gen)
 
 artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
 errors = []
@@ -38,7 +46,7 @@ if artifact.get("schema_version") != "host_delegation_census.v1":
     errors.append("schema_version_mismatch")
 if artifact.get("bead") != "bd-smp21.1":
     errors.append("bead_mismatch")
-if artifact.get("detector", {}).get("version") != 24:
+if artifact.get("detector", {}).get("version") != 25:
     errors.append("detector_version_mismatch")
 
 summary = artifact.get("summary", {})
@@ -98,6 +106,7 @@ for profile_name, profile in profiles.items():
     )
     if coverage.get("complete") != coverage_complete:
         errors.append(f"{profile_name}:coverage_completeness_mismatch")
+    comment_free_cache = {}
     for site in terminal_sites:
         rel_path = site.get("path")
         line = site.get("line")
@@ -108,7 +117,11 @@ for profile_name, profile in profiles.items():
         if not full_path.is_file():
             errors.append(f"{profile_name}:terminal_site_missing_file:{rel_path}")
             continue
-        text_lines = full_path.read_text(encoding="utf-8").splitlines()
+        if rel_path not in comment_free_cache:
+            comment_free_cache[rel_path] = _gen.rust_strip_comments_only(
+                full_path.read_text(encoding="utf-8")
+            ).splitlines()
+        text_lines = comment_free_cache[rel_path]
         if line > len(text_lines) or site.get("expression") not in text_lines[line - 1]:
             errors.append(f"{profile_name}:terminal_site_bad_line:{rel_path}:{line}")
 
@@ -127,7 +140,8 @@ for row in symbols:
         errors.append(f"symbol_callsite_count_mismatch:{symbol}")
     callsite_ids.update(ids)
 
-if len(callsite_ids) != len(callsites):
+actual_callsite_ids = {row.get("id") for row in callsites}
+if len(actual_callsite_ids) != len(callsites) or callsite_ids != actual_callsite_ids:
     errors.append("callsite_id_coverage_mismatch")
 
 for row in callsites:

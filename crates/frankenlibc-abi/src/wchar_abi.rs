@@ -10270,9 +10270,13 @@ unsafe fn mbsnrtowcs_convert(
                 // the nms or page boundary.
                 codec::mbs_decoded_len_prefix(src_window)
             } else {
-                // SAFETY: `dst` has >= `len` wchar_t slots and `written < len` here.
+                // SAFETY: `dst` has >= `len` wchar_t slots (`written < len`),
+                // and every input byte decodes to at most one wide char, so
+                // clamping to `window_bytes` (<= 4096) keeps `dst_window`
+                // strictly within `isize::MAX / 4` even when `len == usize::MAX`.
+                let dst_cap = (len - written).min(window_bytes);
                 let dst_window = unsafe {
-                    std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, len - written)
+                    std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, dst_cap)
                 };
                 // Write mode: SIMD-widen the leading clean run (ASCII + contiguous
                 // 2/3/4-byte) within the nms window straight into `dst`; the scalar
@@ -10459,11 +10463,13 @@ pub unsafe extern "C" fn wcsnrtombs(
             // page, so `window_wc <= page_rem_wc` stays strictly inside that
             // mapped page (and `<= 1024 <= isize::MAX / 4`).
             let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, window_wc) };
-            // SAFETY: `dst` is non-null (`dst.is_null()` returned above) and
-            // `written < len` by the loop guard.
-            let dst_window = unsafe {
-                std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written)
-            };
+            // SAFETY: `dst` is non-null (`dst.is_null()` returned above),
+            // `written < len`, and each wide char encodes to at most 6 UTF-8
+            // bytes (`MB_CUR_MAX`), so clamping to `window_wc * 6` (<= 6144)
+            // prevents `slice::from_raw_parts_mut` UB when `len == usize::MAX`.
+            let dst_cap = (len - written).min(window_wc.saturating_mul(6));
+            let dst_window =
+                unsafe { std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, dst_cap) };
             // Encode the leading run of whole clean windows via the shared SIMD
             // lever `wcstombs`/`wcsrtombs` use.
             let (chars, bytes) = codec::wcs_simd_prefix(dst_window, src_window);
@@ -10516,7 +10522,10 @@ pub unsafe extern "C" fn wcsnrtombs(
         wchars_consumed += 1;
         s = unsafe { s.add(1) };
     }
-    if source_bound.is_some_and(|bound| bound < nwc) && wchars_consumed == max_wchars {
+    if written < len
+        && source_bound.is_some_and(|bound| bound < nwc)
+        && wchars_consumed == max_wchars
+    {
         unsafe { set_abi_errno(libc::EILSEQ) };
         return usize::MAX;
     }
