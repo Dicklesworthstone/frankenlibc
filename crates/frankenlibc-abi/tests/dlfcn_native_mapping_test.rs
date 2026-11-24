@@ -689,12 +689,24 @@ fn mapping_nonzero_origins_preserve_relocations_tls_callbacks_and_unwind() {
                     })
                     .unwrap();
             }
-            for (origin, alignment, tlsdesc, relr, stripped) in [
+            let mut geometries = vec![
                 (0x11000, 4096, false, false, false),
-                (0x11000, 65536, true, true, false),
-                (0x1_0001_1000, 65536, false, true, true),
+                (0x10000, 65536, true, true, false),
+                (0x1_0001_0000, 65536, false, true, true),
                 (0x1_0001_1000, 4096, true, false, true),
-            ] {
+            ];
+            if api.native {
+                // GNU's loader can align the mapping start instead of the load
+                // bias for over-aligned images with a nonzero origin residue.
+                // Its shared controls above use aligned origins. Keep both
+                // residue cases as additional native requirements, with every
+                // alignment, TLS, lifecycle, and unwind assertion intact.
+                geometries.extend([
+                    (0x11000, 65536, true, true, false),
+                    (0x1_0001_1000, 65536, false, true, true),
+                ]);
+            }
+            for (origin, alignment, tlsdesc, relr, stripped) in geometries {
                 let fixture = Fixture::build(alignment, false, Some(origin), tlsdesc, relr);
                 if stripped {
                     let mut bytes = std::fs::read(&fixture.library).unwrap();

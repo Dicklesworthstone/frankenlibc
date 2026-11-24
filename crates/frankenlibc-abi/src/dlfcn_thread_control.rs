@@ -5,7 +5,7 @@
 //! the responsibility of those frontends; this does not claim to remove them.
 
 use crate::pthread_abi as pthread;
-#[cfg(not(debug_assertions))]
+#[cfg(any(target_arch = "x86_64", not(debug_assertions)))]
 use crate::setjmp_abi;
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
@@ -122,16 +122,17 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
 }
 
 fn cleanup_setjmp_address() -> *const () {
-    #[cfg(not(debug_assertions))]
+    #[cfg(any(target_arch = "x86_64", not(debug_assertions)))]
     {
+        // x86-64 has the matched naked capture/restore backend in every
+        // build. Release AArch64 retains its existing native capture.
         setjmp_abi::__sigsetjmp as *const ()
     }
-    #[cfg(debug_assertions)]
+    #[cfg(all(target_arch = "aarch64", debug_assertions))]
     {
-        // The debug rlib deliberately omits the naked owned setjmp exports.
-        // Its tests run on host threads. Use the actual returns-twice host
-        // entry, NOT setjmp_abi's ordinary debug Rust wrapper, whose frame
-        // would be gone when a C cleanup handler later restores the buffer.
+        // Preserve the ARM debug host capture contract. Its owned format
+        // uses a different pointer guard; extending that path requires a
+        // separately verified host/native cancellation boundary.
         unsafe extern "C" {
             #[link_name = "__sigsetjmp"]
             fn debug_sigsetjmp(

@@ -473,11 +473,12 @@ fn native_thread_control_exact_versions_and_provider_identity() {
                     let expected = if native {
                         expected.cast_mut().cast()
                     } else {
-                        // Debug builds deliberately omit the owned naked
-                        // __sigsetjmp, so that one provider IS the host entry.
-                        // Exclude the actual debug Rust frontend instead; all
-                        // other entries still exclude their owned definition.
-                        let owned = if cfg!(debug_assertions) && name.as_bytes() == b"__sigsetjmp" {
+                        // Exclude the owned naked capture on x86-64. ARM
+                        // debug retains its preexisting host capture, so
+                        // exclude the ordinary Rust phase-1 entry there.
+                        let owned = if cfg!(all(target_arch = "aarch64", debug_assertions))
+                            && name.as_bytes() == b"__sigsetjmp"
+                        {
                             frankenlibc_abi::setjmp_abi::sigsetjmp as *const ()
                         } else {
                             expected
@@ -510,11 +511,11 @@ fn native_thread_control_exact_versions_and_provider_identity() {
 }
 
 fn cleanup_setjmp_address() -> *const () {
-    #[cfg(not(debug_assertions))]
+    #[cfg(any(target_arch = "x86_64", not(debug_assertions)))]
     {
         frankenlibc_abi::setjmp_abi::__sigsetjmp as *const ()
     }
-    #[cfg(debug_assertions)]
+    #[cfg(all(target_arch = "aarch64", debug_assertions))]
     {
         unsafe extern "C" {
             #[link_name = "__sigsetjmp"]

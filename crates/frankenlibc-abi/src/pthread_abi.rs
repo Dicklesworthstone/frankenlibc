@@ -12678,7 +12678,17 @@ unsafe fn transfer_native_cleanup() -> ! {
             // its previous link's tag for the next cleanup after the longjmp.
             let previous = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD).read() };
             set_native_cleanup_head(previous);
-            unsafe { crate::setjmp_abi::longjmp(buf, 1) };
+            // The x86-64 cleanup macro captured a real machine context. Its
+            // debug public Rust longjmp entry is only a phase-1 metadata
+            // probe, so use the matched native restore backend instead.
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                crate::setjmp_abi::native_longjmp(buf, 1)
+            };
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                crate::setjmp_abi::longjmp(buf, 1)
+            };
         }
         unsafe { finish_native_thread_exit() };
     }
