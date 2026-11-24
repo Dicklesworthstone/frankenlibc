@@ -3017,13 +3017,14 @@ fn native_dns_query(
         .queries_attempted
         .fetch_add(1, AtomicOrdering::Relaxed);
 
-    let server = match crate::stdlib_abi::secure_var_os("FRANKENLIBC_DNS_PORT")
+    let mut server = server;
+    if let Some(port) = crate::stdlib_abi::secure_var_os("FRANKENLIBC_DNS_PORT")
         .and_then(|port| port.to_str()?.parse::<u16>().ok())
         .filter(|&port| port != 0)
     {
-        Some(port) => std::net::SocketAddr::new(server.ip(), port),
-        None => server,
-    };
+        // Retain configured/caller-selected IPv6 flow information and scope.
+        server.set_port(port);
+    }
 
     let result =
         frankenlibc_core::dns_transport::query(hostname, qtype_val, server, timeout, options);
@@ -3123,22 +3124,9 @@ pub(crate) fn parse_resolver_config(content: &[u8]) -> frankenlibc_core::resolv:
 
 /// Use the normal resolver configuration unless an explicit backend override
 /// is selected, following the hosts/services backend convention.
-fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
+pub(crate) fn resolver_config_contents() -> Vec<u8> {
     let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
-    let mut config = match std::fs::read(path) {
-        Ok(content) => parse_resolver_config(&content),
-        Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
-    };
-    // Address and reverse lookups honor the same process overrides as
-    // res_ninit, including an explicitly empty LOCALDOMAIN. Snapshot each
-    // value once so search order and transport options share one config.
-    let localdomain = crate::stdlib_abi::secure_var_os("LOCALDOMAIN");
-    let options = crate::stdlib_abi::secure_var_os("RES_OPTIONS");
-    config.apply_overrides(
-        localdomain.as_ref().map(|value| value.as_bytes()),
-        options.as_ref().map(|value| value.as_bytes()),
-    );
-    config
+    std::fs::read(path).unwrap_or_default()
 }
 
 /// Preserve the difference between a missing name and a temporary DNS failure.
@@ -3154,40 +3142,24 @@ fn native_dns_resolve(
 > {
     use frankenlibc_core::dns_transport::ResolveError;
 
-    // HOSTALIASES belongs to the DNS source, after any preceding NSS source.
-    // A replacement is queried directly, without suffixes or alias recursion.
-    let alias = if hostname.contains(&b'.') {
-        None
-    } else {
-        global_hostalias(hostname)
-    };
-    let mut config = native_dns_config();
-    if alias.is_some() {
-        config.search.clear();
-        config.ndots = 0;
-    }
-    let hostname = alias.as_deref().unwrap_or(hostname);
+    // Snapshot after preceding NSS sources have run. Public caller edits to
+    // _res govern both modern and legacy host APIs, including aliases/search.
+    let lookup = crate::resolv_state::global::host_lookup(Some(hostname)).map_err(|error| {
+        // SAFETY: errno belongs to the caller, as does its resolver state.
+        unsafe { set_abi_errno(error) };
+        libc::EAI_FAIL
+    })?;
+    let hostname = lookup.alias.as_deref().unwrap_or(hostname);
     let mut canonical_name = None;
     policy
         .resolve_dns_with(|want_v4, want_v6| {
-            let result = frankenlibc_core::dns_transport::resolve_with_canonical(
+            let result = frankenlibc_core::dns_transport::resolve_with_config(
                 hostname,
                 want_v4,
                 want_v6,
-                &config,
-                |name, kind, server, timeout, trust_ad, use_vc| {
-                    native_dns_query(
-                        name,
-                        kind,
-                        server,
-                        timeout,
-                        frankenlibc_core::dns_transport::QueryOptions {
-                            trust_ad,
-                            use_vc,
-                            no_aaaa: config.no_aaaa,
-                            edns0: config.edns0,
-                        },
-                    )
+                &lookup.config,
+                |name, kind, server, timeout, _, _| {
+                    native_dns_query(name, kind, server, timeout, lookup.options)
                 },
             )?;
             // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
@@ -3260,23 +3232,16 @@ fn reverse_hosts_lookup<T>(
 /// Resolve a files-only reverse miss through the validated native PTR engine.
 fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
     use frankenlibc_core::dns_transport::ResolveError;
-    let config = native_dns_config();
-    frankenlibc_core::dns_transport::reverse_with(
+    let lookup = crate::resolv_state::global::host_lookup(None).map_err(|error| {
+        // SAFETY: report malformed state in the calling thread.
+        unsafe { set_abi_errno(error) };
+        libc::EAI_FAIL
+    })?;
+    frankenlibc_core::dns_transport::reverse_with_config(
         address,
-        &config,
-        |name, kind, server, timeout, trust_ad, use_vc| {
-            native_dns_query(
-                name,
-                kind,
-                server,
-                timeout,
-                frankenlibc_core::dns_transport::QueryOptions {
-                    trust_ad,
-                    use_vc,
-                    no_aaaa: false,
-                    edns0: config.edns0,
-                },
-            )
+        &lookup.config.transport,
+        |name, kind, server, timeout, _, _| {
+            native_dns_query(name, kind, server, timeout, lookup.options)
         },
     )
     .map_err(|error| match error {

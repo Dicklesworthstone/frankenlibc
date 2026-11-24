@@ -26,6 +26,37 @@ pub unsafe fn init() -> c_int {
     unsafe { super::init_impl(crate::glibc_internal_abi::__res_state(), true) }
 }
 
+/// Host APIs share initialized thread state with the legacy resolver. Only
+/// initialization performed here retains automatic file/environment refresh.
+pub(crate) fn host_lookup(name: Option<&[u8]>) -> Result<super::HostLookup, c_int> {
+    // SAFETY: stable, aligned storage exclusively accessed by this thread.
+    let pointer = unsafe { crate::glibc_internal_abi::__res_state() };
+    let (initialized, caller_timing) = {
+        // SAFETY: copy public scalars before any initialization or I/O.
+        let state = unsafe { checked_state(pointer)? };
+        (
+            state.options & RES_INIT != 0,
+            state.retrans != 0 || state.retry != 0,
+        )
+    };
+    if initialized {
+        // SAFETY: refresh preserves all detected caller overrides.
+        unsafe { super::refresh_host_state(pointer)? };
+    } else {
+        // SAFETY: the existing global initializer handles this live state.
+        unsafe { current()? };
+        // Legacy initialization preserves caller timing selected before INIT.
+        // Such state already has an owner; a later file refresh must not
+        // silently replace those values with configuration defaults.
+        if !caller_timing {
+            // SAFETY: no user callback occurred after initialization.
+            unsafe { super::enable_host_refresh(pointer)? };
+        }
+    }
+    // SAFETY: all pointers/options are copied before any DNS exchange.
+    unsafe { super::host_lookup(pointer, name) }
+}
+
 unsafe fn query_state(
     name: *const c_char,
     answer: *mut c_void,

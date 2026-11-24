@@ -8,14 +8,14 @@
 pub mod global;
 
 use std::collections::BTreeMap;
-use std::ffi::{c_char, c_int, c_ulong, c_void};
+use std::ffi::{OsString, c_char, c_int, c_ulong, c_void};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::os::unix::ffi::OsStrExt;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use frankenlibc_core::dns_transport::{QueryError, raw};
+use frankenlibc_core::dns_transport::{LookupConfig, QueryError, QueryOptions, raw};
 use frankenlibc_core::resolv::config::ResolverConfig;
 use frankenlibc_core::resolv::dns::{DNS_HEADER_SIZE, encode_domain_name};
 use frankenlibc_core::resolv::dns_name::NS_MAXDNAME;
@@ -113,9 +113,202 @@ struct OwnedState {
     search: Vec<Box<[u8]>>,
     ipv6: Vec<(usize, Box<libc::sockaddr_in6>)>,
     published_search: [usize; MAXDNSRCH + 1],
+    source: ConfigSource,
+    /// Only ordinary host lookups enable automatic refresh. Explicit resolver
+    /// initialization and caller-created states remain authoritative.
+    host_refresh: Option<PublishedConfig>,
 }
 
 static OWNED: Mutex<BTreeMap<usize, OwnedState>> = Mutex::new(BTreeMap::new());
+
+#[derive(Clone, PartialEq, Eq)]
+struct ConfigSource {
+    content: Vec<u8>,
+    localdomain: Option<OsString>,
+    options: Option<OsString>,
+}
+
+impl ConfigSource {
+    fn read() -> Self {
+        Self {
+            content: crate::resolv_abi::resolver_config_contents(),
+            localdomain: crate::stdlib_abi::secure_var_os("LOCALDOMAIN"),
+            options: crate::stdlib_abi::secure_var_os("RES_OPTIONS"),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct Ipv6Config {
+    family: libc::sa_family_t,
+    port: u16,
+    flow: u32,
+    address: [u8; 16],
+    scope: u32,
+}
+
+impl From<&libc::sockaddr_in6> for Ipv6Config {
+    fn from(address: &libc::sockaddr_in6) -> Self {
+        Self {
+            family: address.sin6_family,
+            port: address.sin6_port,
+            flow: address.sin6_flowinfo,
+            address: address.sin6_addr.s6_addr,
+            scope: address.sin6_scope_id,
+        }
+    }
+}
+
+/// Values published by initialization, excluding counters and error slots.
+/// Pointer identity is checked before reading any pointee. Search comparisons
+/// use the original allocation's exact length, including its terminator.
+struct PublishedConfig {
+    retrans: c_int,
+    retry: c_int,
+    options: c_ulong,
+    nscount: c_int,
+    ndots_nsort: u32,
+    ipv4: [(libc::sa_family_t, u16, u32); MAXNS],
+    search_ptrs: [usize; MAXDNSRCH + 1],
+    search_values: Vec<Vec<u8>>,
+    ipv6_ptrs: [usize; MAXNS],
+    ipv6_values: Vec<(usize, Ipv6Config)>,
+}
+
+impl PublishedConfig {
+    fn capture(state: &State, owned: &OwnedState) -> Self {
+        Self {
+            retrans: state.retrans,
+            retry: state.retry,
+            options: state.options,
+            nscount: state.nscount,
+            ndots_nsort: state.ndots_nsort,
+            ipv4: state.nsaddr_list.map(|address| {
+                (
+                    address.sin_family,
+                    address.sin_port,
+                    address.sin_addr.s_addr,
+                )
+            }),
+            search_ptrs: state.dnsrch.map(|pointer| pointer as usize),
+            search_values: owned
+                .search
+                .iter()
+                .take(MAXDNSRCH)
+                .map(|name| name.to_vec())
+                .collect(),
+            // SAFETY: native initialization published the extension view.
+            ipv6_ptrs: unsafe { state.extension.ext }
+                .nsaddrs
+                .map(|pointer| pointer as usize),
+            ipv6_values: owned
+                .ipv6
+                .iter()
+                .map(|(index, address)| (*index, Ipv6Config::from(address.as_ref())))
+                .collect(),
+        }
+    }
+
+    /// The matching OwnedState must remain locked/alive during this call.
+    /// Its original buffers and the caller state own every matched pointer.
+    unsafe fn unchanged(&self, state: &State) -> bool {
+        // SAFETY: native initialization published this extension view.
+        let extension = unsafe { state.extension.ext };
+        if self.retrans != state.retrans
+            || self.retry != state.retry
+            || self.options != state.options
+            || self.nscount != state.nscount
+            || self.ndots_nsort != state.ndots_nsort
+            || self.ipv4
+                != state.nsaddr_list.map(|address| {
+                    (
+                        address.sin_family,
+                        address.sin_port,
+                        address.sin_addr.s_addr,
+                    )
+                })
+            || self.search_ptrs != state.dnsrch.map(|pointer| pointer as usize)
+            || self.ipv6_ptrs != extension.nsaddrs.map(|pointer| pointer as usize)
+        {
+            return false;
+        }
+        for (index, expected) in self.search_values.iter().enumerate() {
+            // SAFETY: identity matches an init-owned allocation or defdname
+            // span, and the registry/caller keep the exact original span live.
+            let actual = unsafe {
+                std::slice::from_raw_parts(state.dnsrch[index].cast::<u8>(), expected.len())
+            };
+            if actual != expected {
+                return false;
+            }
+        }
+        for (index, expected) in &self.ipv6_values {
+            // SAFETY: identity matches the still-live init-owned IPv6 box.
+            let actual = unsafe { &*extension.nsaddrs[*index] };
+            if &Ipv6Config::from(actual) != expected {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Preserve the former per-lookup configuration refresh only while no caller
+/// has taken control of the public state. The existing registry also owns this
+/// eligibility, so close/teardown/address reuse cannot inherit it.
+unsafe fn enable_host_refresh(pointer: *mut c_void) -> Result<(), c_int> {
+    // SAFETY: called immediately after native initialization of this state.
+    let state = unsafe { checked_state(pointer)? };
+    let mut registry = OWNED.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(owned) = registry.get_mut(&(pointer as usize)) {
+        owned.host_refresh = Some(PublishedConfig::capture(state, owned));
+    }
+    Ok(())
+}
+
+unsafe fn refresh_host_state(pointer: *mut c_void) -> Result<(), c_int> {
+    let eligible = OWNED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&(pointer as usize))
+        .is_some_and(|owned| owned.host_refresh.is_some());
+    if !eligible {
+        return Ok(());
+    }
+    // No caller-state borrow or registry lock crosses filesystem/environment I/O.
+    let source = ConfigSource::read();
+    let reload = {
+        // SAFETY: this thread exclusively owns the public state.
+        let state = unsafe { checked_state(pointer)? };
+        let mut registry = OWNED.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(owned) = registry.get_mut(&(pointer as usize)) else {
+            return Ok(());
+        };
+        let Some(published) = &owned.host_refresh else {
+            return Ok(());
+        };
+        // SAFETY: the lock keeps every original allocation alive. A changed
+        // pointer returns false before any caller-installed pointee is read.
+        if !unsafe { published.unchanged(state) } {
+            owned.host_refresh = None;
+            false
+        } else {
+            owned.source != source
+        }
+    };
+    if reload {
+        // Re-read inside init so the stored source always describes the exact
+        // parsed image even if another process changes the file again.
+        // SAFETY: only an unmodified state initialized by host lookup is reset.
+        if unsafe { init_impl(pointer, false) } != 0 {
+            // SAFETY: initialization published the caller's errno.
+            return Err(unsafe { *crate::errno_abi::__errno_location() });
+        }
+        // SAFETY: the newly published state is still unmodified.
+        unsafe { enable_host_refresh(pointer)? };
+    }
+    Ok(())
+}
 
 fn fits(address: usize, len: usize) -> bool {
     address != 0
@@ -211,11 +404,13 @@ fn random_id() -> Result<u16, c_int> {
     Ok(u16::from_ne_bytes(bytes))
 }
 
-fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2], bool) {
-    let content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
-    let localdomain = crate::stdlib_abi::secure_var_os("LOCALDOMAIN");
-    let options = crate::stdlib_abi::secure_var_os("RES_OPTIONS");
-    let mut config = crate::resolv_abi::parse_resolver_config(&content);
+fn initial_config(source: &ConfigSource) -> (ResolverConfig, c_ulong, [bool; 2], bool) {
+    let ConfigSource {
+        content,
+        localdomain,
+        options,
+    } = source;
+    let mut config = crate::resolv_abi::parse_resolver_config(content);
     config.apply_overrides(
         localdomain.as_ref().map(|value| value.as_bytes()),
         options.as_ref().map(|value| value.as_bytes()),
@@ -298,7 +493,8 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
         Ok(state) => state,
         Err(error) => return fail(error),
     };
-    let (config, extended_options, explicit_timing, explicit_no_aaaa) = initial_config();
+    let source = ConfigSource::read();
+    let (config, extended_options, explicit_timing, explicit_no_aaaa) = initial_config(&source);
     let id = if legacy_global || state.id == 0 {
         match random_id() {
             Ok(id) => id,
@@ -360,6 +556,8 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
         search: Vec::new(),
         ipv6: Vec::new(),
         published_search: [0; MAXDNSRCH + 1],
+        source,
+        host_refresh: None,
     };
     for index in 0..config.nameservers.len().min(MAXNS) {
         next.nscount += 1;
@@ -463,6 +661,55 @@ unsafe fn ensure_initialized(pointer: *mut c_void) -> Result<(), c_int> {
         return Err(unsafe { *crate::errno_abi::__errno_location() });
     }
     Ok(())
+}
+
+/// Owned configuration for one ordinary hostname or reverse lookup.
+pub(crate) struct HostLookup {
+    pub config: LookupConfig,
+    pub options: QueryOptions,
+    pub alias: Option<Vec<u8>>,
+}
+
+unsafe fn host_lookup(pointer: *mut c_void, name: Option<&[u8]>) -> Result<HostLookup, c_int> {
+    let (options, ndots) = {
+        // SAFETY: the global wrapper supplies this thread's live state.
+        let state = unsafe { checked_state(pointer)? };
+        (state.options, state.ndots() as u32)
+    };
+    // SAFETY: validate and copy complete endpoints before network I/O.
+    let transport = unsafe { transport_config(pointer)? };
+    let alias = name
+        .filter(|name| !name.contains(&b'.'))
+        .and_then(|name| crate::resolv_abi::hostalias_lookup(name, options));
+    let search = if name.is_some() && alias.is_none() && options & (RES_DEFNAMES | RES_DNSRCH) != 0
+    {
+        // SAFETY: copies bounded strings while the caller owns them. Reverse
+        // lookups and aliases never consult irrelevant search-list pointers.
+        unsafe { search_domains(pointer)? }
+    } else {
+        Vec::new()
+    };
+    let query_options = QueryOptions {
+        trust_ad: transport.trust_ad,
+        use_vc: transport.use_vc,
+        no_aaaa: transport.no_aaaa,
+        edns0: options & RES_USE_EDNS0 != 0,
+        recurse: options & RES_RECURSE != 0,
+        dnssec: options & RES_USE_DNSSEC != 0,
+        ignore_truncation: transport.ignore_truncation,
+    };
+    Ok(HostLookup {
+        config: LookupConfig {
+            transport,
+            search,
+            ndots: if alias.is_some() { 0 } else { ndots },
+            defnames: alias.is_none() && options & RES_DEFNAMES != 0,
+            dnsrch: alias.is_none() && options & RES_DNSRCH != 0,
+            no_tld_query: alias.is_none() && options & RES_NOTLDQUERY != 0,
+        },
+        options: query_options,
+        alias,
+    })
 }
 
 unsafe fn transport_config(pointer: *mut c_void) -> Result<raw::Config, c_int> {
@@ -992,13 +1239,14 @@ pub unsafe fn search(
             }
         }
     }
-    if !first_bare && (dots != 0 || options & RES_NOTLDQUERY == 0) {
+    if !first_bare && (dots != 0 || options & RES_NOTLDQUERY == 0 || candidates.is_empty()) {
         candidates.push((name.clone(), true));
     }
     let mut first_failure = None;
     let mut saved_nodata = false;
     let mut saved_servfail = false;
     let mut stop_search = false;
+    let mut root_searched = false;
     let mut last_reply = None;
     let mut last_failure = LookupFailure {
         host: HOST_NOT_FOUND,
@@ -1009,6 +1257,10 @@ pub unsafe fn search(
         if stop_search && !bare {
             continue;
         }
+        if bare && root_searched {
+            continue;
+        }
+        root_searched |= !bare && candidate == name;
         let result =
             unsafe { lookup(pointer, &candidate, class, kind, options, &config, capacity) };
         let failure = match result {

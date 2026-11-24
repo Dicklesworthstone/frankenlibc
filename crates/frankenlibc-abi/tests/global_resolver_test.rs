@@ -10,6 +10,9 @@ use std::net::{SocketAddr, UdpSocket};
 use std::thread;
 use std::time::Duration;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 struct Cleanup(*mut c_void);
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -226,4 +229,667 @@ fn global_tls_addresses_are_distinct_and_stable_across_threads() {
         .collect();
     assert_ne!(addresses[0], addresses[1]);
     assert!(!addresses.contains(&(unsafe { __res_state() } as usize)));
+}
+
+type Getaddrinfo = unsafe extern "C" fn(
+    *const libc::c_char,
+    *const libc::c_char,
+    *const libc::addrinfo,
+    *mut *mut libc::addrinfo,
+) -> libc::c_int;
+type Getnameinfo = unsafe extern "C" fn(
+    *const libc::sockaddr,
+    libc::socklen_t,
+    *mut libc::c_char,
+    libc::socklen_t,
+    *mut libc::c_char,
+    libc::socklen_t,
+    libc::c_int,
+) -> libc::c_int;
+
+#[derive(Clone, Copy)]
+struct HostApi {
+    state: unsafe extern "C" fn() -> *mut c_void,
+    init: unsafe extern "C" fn() -> libc::c_int,
+    close: unsafe extern "C" fn(*mut c_void),
+    select: unsafe extern "C" fn(*const libc::c_char, *const libc::c_char) -> libc::c_int,
+    lookup: Getaddrinfo,
+    free: unsafe extern "C" fn(*mut libc::addrinfo),
+    legacy: unsafe extern "C" fn(*const libc::c_char) -> *mut c_void,
+    reverse: Getnameinfo,
+}
+
+fn host_apis() -> [HostApi; 2] {
+    use frankenlibc_abi::{glibc_internal_abi as abi, resolv_abi as resolver};
+    let native = HostApi {
+        state: abi::__res_state,
+        init: abi::__res_init,
+        close: abi::__res_nclose,
+        select: abi::__nss_configure_lookup,
+        lookup: resolver::getaddrinfo,
+        free: resolver::freeaddrinfo,
+        legacy: resolver::gethostbyname,
+        reverse: resolver::getnameinfo,
+    };
+    // SAFETY: each function type matches its public C declaration, and the
+    // oracle helper rejects accidental binding to the candidate definition.
+    let host = unsafe {
+        HostApi {
+            state: dlsym_oracle::host_fn(c"__res_state", native.state as *const ()),
+            init: dlsym_oracle::host_fn(c"__res_init", native.init as *const ()),
+            close: dlsym_oracle::host_fn(c"__res_nclose", native.close as *const ()),
+            select: dlsym_oracle::host_fn(c"__nss_configure_lookup", native.select as *const ()),
+            lookup: dlsym_oracle::host_fn(c"getaddrinfo", native.lookup as *const ()),
+            free: dlsym_oracle::host_fn(c"freeaddrinfo", native.free as *const ()),
+            legacy: dlsym_oracle::host_fn(c"gethostbyname", native.legacy as *const ()),
+            reverse: dlsym_oracle::host_fn(c"getnameinfo", native.reverse as *const ()),
+        }
+    };
+    [native, host]
+}
+
+/// Process-local NSS/environment changes never race unrelated test threads.
+/// An unfixed candidate's fallback configuration is confined to loopback.
+fn host_lookup_child(test: &str) -> bool {
+    if std::env::var_os("FRANKENLIBC_GLOBAL_HOST_LOOKUP_CHILD").is_some() {
+        return false;
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env("FRANKENLIBC_GLOBAL_HOST_LOOKUP_CHILD", "1")
+        .env("FRANKENLIBC_RESOLV_CONF", "/dev/null")
+        .env("FRANKENLIBC_NSSWITCH_CONF", "/dev/null")
+        .env("FRANKENLIBC_HOSTS_PATH", "/dev/null")
+        .env_remove("FRANKENLIBC_DNS_PORT")
+        .env_remove("LOCALDOMAIN")
+        .env_remove("RES_OPTIONS")
+        .env_remove("HOSTALIASES")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "host lookup child timed out: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    true
+}
+
+struct ApiCleanup(*mut c_void, unsafe extern "C" fn(*mut c_void));
+impl Drop for ApiCleanup {
+    fn drop(&mut self) {
+        // SAFETY: the selected provider owns this thread's still-live state.
+        unsafe { (self.1)(self.0) };
+    }
+}
+
+fn configure_host(api: HostApi, endpoint: SocketAddr) -> ApiCleanup {
+    let SocketAddr::V4(endpoint) = endpoint else {
+        panic!("IPv4 endpoint")
+    };
+    // SAFETY: operate only on this provider's current thread state. Initialize
+    // its private extension before overriding documented public fields.
+    unsafe {
+        assert_eq!((api.select)(c"hosts".as_ptr(), c"dns".as_ptr()), 0);
+        assert_eq!((api.init)(), 0);
+        let pointer = (api.state)();
+        let state = &mut *pointer.cast::<State>();
+        state.options = RES_INIT | RES_RECURSE | RES_DEFNAMES | RES_DNSRCH;
+        state.retrans = 1;
+        state.retry = 1;
+        state.ndots_nsort = 1;
+        state.dnsrch.fill(std::ptr::null_mut());
+        state.nscount = 1;
+        state.nsaddr_list[0].sin_family = libc::AF_INET as _;
+        state.nsaddr_list[0].sin_port = endpoint.port().to_be();
+        state.nsaddr_list[0].sin_addr.s_addr = u32::from_ne_bytes(endpoint.ip().octets());
+        ApiCleanup(pointer, api.close)
+    }
+}
+
+fn hostname_ipv4(api: HostApi, name: &std::ffi::CStr) -> Result<[u8; 4], libc::c_int> {
+    // SAFETY: initialized hints/output, and a provider-matched deallocator.
+    unsafe {
+        let mut hints: libc::addrinfo = std::mem::zeroed();
+        hints.ai_family = libc::AF_INET;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        let mut result = std::ptr::null_mut();
+        let status = (api.lookup)(name.as_ptr(), c"80".as_ptr(), &hints, &mut result);
+        if status != 0 {
+            assert!(result.is_null());
+            return Err(status);
+        }
+        assert!(!result.is_null());
+        assert_eq!((*result).ai_family, libc::AF_INET);
+        let address = (*(*result).ai_addr.cast::<libc::sockaddr_in>())
+            .sin_addr
+            .s_addr;
+        (api.free)(result);
+        Ok(address.to_ne_bytes())
+    }
+}
+
+fn host_reply(query: &[u8], code: u8, marker: u8) -> Vec<u8> {
+    let message = DnsMessage::decode(query).unwrap();
+    let kind = message.questions[0].qtype;
+    let mut end = 12;
+    while query[end] != 0 {
+        end += usize::from(query[end]) + 1;
+    }
+    end += 5;
+    let mut response = query[..end].to_vec();
+    response[2] |= 0x80;
+    response[3] = 0x80 | code;
+    response[6..12].fill(0);
+    if code == 0 {
+        let data = match kind {
+            1 => vec![203, 0, 113, marker],
+            12 => frankenlibc_core::resolv::dns::encode_domain_name(b"reverse.caller.invalid")
+                .unwrap(),
+            _ => panic!("unexpected question type {kind}"),
+        };
+        response[7] = 1;
+        response.extend_from_slice(&[0xc0, 12]);
+        response.extend_from_slice(&kind.to_be_bytes());
+        response.extend_from_slice(&[0, 1, 0, 0, 0, 60]);
+        response.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        response.extend_from_slice(&data);
+    }
+    response
+}
+
+struct HostServer {
+    endpoint: SocketAddr,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: thread::JoinHandle<Vec<Vec<u8>>>,
+}
+
+impl HostServer {
+    fn new(reply: impl Fn(&[u8]) -> Vec<u8> + Send + 'static) -> Self {
+        let socket = udp();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let endpoint = socket.local_addr().unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
+        let worker = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            let mut seen = Vec::new();
+            while !stopped.load(std::sync::atomic::Ordering::Acquire)
+                && std::time::Instant::now() < deadline
+            {
+                let mut query = [0u8; 2048];
+                match socket.recv_from(&mut query) {
+                    Ok((n, peer)) => {
+                        seen.push(
+                            DnsMessage::decode(&query[..n]).unwrap().questions[0]
+                                .qname
+                                .clone(),
+                        );
+                        socket.send_to(&reply(&query[..n]), peer).unwrap();
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(error) => panic!("DNS fixture receive: {error}"),
+                }
+            }
+            seen
+        });
+        Self {
+            endpoint,
+            stop,
+            worker,
+        }
+    }
+
+    fn finish(self) -> Vec<Vec<u8>> {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        self.worker.join().unwrap()
+    }
+}
+
+#[test]
+fn global_host_lookup_observes_endpoint_changes_for_the_same_name() {
+    if host_lookup_child("global_host_lookup_observes_endpoint_changes_for_the_same_name") {
+        return;
+    }
+    for api in host_apis() {
+        let first = HostServer::new(|query| host_reply(query, 0, 11));
+        let cleanup = configure_host(api, first.endpoint);
+        assert_eq!(
+            hostname_ipv4(api, c"caller-state.invalid"),
+            Ok([203, 0, 113, 11])
+        );
+        let second = HostServer::new(|query| host_reply(query, 0, 22));
+        // SAFETY: mutate one already initialized state. No init/close/reset
+        // occurs between lookups, so stale per-host caching cannot hide this.
+        unsafe {
+            (*cleanup.0.cast::<State>()).nsaddr_list[0].sin_port = second.endpoint.port().to_be()
+        };
+        assert_eq!(
+            hostname_ipv4(api, c"caller-state.invalid"),
+            Ok([203, 0, 113, 22])
+        );
+        assert!(!first.finish().is_empty());
+        assert!(!second.finish().is_empty());
+    }
+}
+
+#[test]
+fn global_host_lookup_legacy_and_reverse_share_public_state() {
+    if host_lookup_child("global_host_lookup_legacy_and_reverse_share_public_state") {
+        return;
+    }
+    for api in host_apis() {
+        let server = HostServer::new(|query| host_reply(query, 0, 77));
+        let cleanup = configure_host(api, server.endpoint);
+        // SAFETY: constant suffix and provider-owned hostent stay live while read.
+        unsafe {
+            (*cleanup.0.cast::<State>()).dnsrch[0] = c"caller.invalid".as_ptr().cast_mut();
+            let entry = (api.legacy)(c"legacy-state".as_ptr()).cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!((*entry).h_addrtype, libc::AF_INET);
+            assert_eq!(
+                std::slice::from_raw_parts((*(*entry).h_addr_list).cast::<u8>(), 4),
+                [203, 0, 113, 77]
+            );
+            let address = libc::sockaddr_in {
+                sin_family: libc::AF_INET as _,
+                sin_port: 80u16.to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes([203, 0, 113, 77]),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut host = [0 as libc::c_char; 256];
+            let mut service = [0 as libc::c_char; 16];
+            assert_eq!(
+                (api.reverse)(
+                    (&address as *const libc::sockaddr_in).cast(),
+                    std::mem::size_of_val(&address) as _,
+                    host.as_mut_ptr(),
+                    host.len() as _,
+                    service.as_mut_ptr(),
+                    service.len() as _,
+                    libc::NI_NAMEREQD | libc::NI_NUMERICSERV,
+                ),
+                0
+            );
+            assert_eq!(
+                std::ffi::CStr::from_ptr(host.as_ptr()).to_bytes(),
+                b"reverse.caller.invalid"
+            );
+        }
+        assert_eq!(
+            server.finish(),
+            [
+                b"legacy-state.caller.invalid".to_vec(),
+                b"77.113.0.203.in-addr.arpa".to_vec()
+            ]
+        );
+    }
+}
+
+#[test]
+fn global_host_lookup_search_options_match_gnu_query_order() {
+    if host_lookup_child("global_host_lookup_search_options_match_gnu_query_order") {
+        return;
+    }
+    use frankenlibc_abi::resolv_state::RES_NOTLDQUERY;
+    type SearchCase<'a> = (libc::c_ulong, &'a [&'a std::ffi::CStr], &'a [&'a [u8]]);
+    let cases: &[SearchCase<'_>] = &[
+        (
+            RES_DEFNAMES | RES_DNSRCH,
+            &[c"first.invalid", c"second.invalid"],
+            &[b"host.first.invalid", b"host.second.invalid", b"host"],
+        ),
+        (
+            RES_DEFNAMES,
+            &[c"first.invalid", c"second.invalid"],
+            &[b"host.first.invalid", b"host"],
+        ),
+        (RES_DNSRCH, &[c"first.invalid"], &[b"host"]),
+        (RES_NOTLDQUERY, &[c"first.invalid"], &[b"host"]),
+        (
+            RES_DEFNAMES | RES_DNSRCH | RES_NOTLDQUERY,
+            &[c"first.invalid"],
+            &[b"host.first.invalid"],
+        ),
+        (RES_DEFNAMES | RES_DNSRCH | RES_NOTLDQUERY, &[], &[b"host"]),
+        (RES_DEFNAMES | RES_DNSRCH, &[c"."], &[b"host"]),
+        (
+            RES_DEFNAMES | RES_DNSRCH,
+            &[c"", c"next.invalid"],
+            &[b"host", b"host.next.invalid"],
+        ),
+        (
+            RES_DEFNAMES | RES_DNSRCH | RES_NOTLDQUERY,
+            &[c".", c"next.invalid"],
+            &[b"host", b"host.next.invalid"],
+        ),
+    ];
+    for api in host_apis() {
+        for &(options, domains, expected) in cases {
+            for code in [3, 2] {
+                let server = HostServer::new(move |query| host_reply(query, code, 0));
+                let cleanup = configure_host(api, server.endpoint);
+                // SAFETY: constants outlive the call; no state borrow crosses I/O.
+                unsafe {
+                    let state = &mut *cleanup.0.cast::<State>();
+                    state.options = RES_INIT | RES_RECURSE | options;
+                    for (slot, domain) in state.dnsrch.iter_mut().zip(domains) {
+                        *slot = domain.as_ptr().cast_mut();
+                    }
+                }
+                assert_eq!(
+                    hostname_ipv4(api, c"host"),
+                    Err(if code == 3 {
+                        libc::EAI_NONAME
+                    } else {
+                        libc::EAI_AGAIN
+                    })
+                );
+                let seen = server.finish();
+                assert_eq!(seen.iter().map(Vec::as_slice).collect::<Vec<_>>(), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn global_host_lookup_transport_and_dnssec_options_match_gnu() {
+    if host_lookup_child("global_host_lookup_transport_and_dnssec_options_match_gnu") {
+        return;
+    }
+    use frankenlibc_abi::resolv_state::{RES_USE_DNSSEC, RES_USEVC};
+    use std::io::{Read, Write};
+    for api in host_apis() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let udp_guard = UdpSocket::bind(endpoint).unwrap();
+        udp_guard.set_nonblocking(true).unwrap();
+        let cleanup = configure_host(api, endpoint);
+        // SAFETY: documented public options in this thread's initialized state.
+        unsafe {
+            (*cleanup.0.cast::<State>()).options =
+                RES_INIT | RES_USEVC | RES_USE_DNSSEC | RES_TRUSTAD
+        };
+        let worker = thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(4);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "USEVC never opened TCP"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("TCP fixture accept: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut length = [0; 2];
+            stream.read_exact(&mut length).unwrap();
+            let mut query = vec![0; u16::from_be_bytes(length) as usize];
+            stream.read_exact(&mut query).unwrap();
+            let message = DnsMessage::decode(&query).unwrap();
+            assert_eq!(message.header.flags & 0x0120, 0x0020, "RD clear and AD set");
+            assert_eq!(message.questions[0].qname, b"options.invalid");
+            assert_eq!(message.additionals.len(), 1);
+            assert_eq!(message.additionals[0].rtype, 41);
+            assert_eq!(message.additionals[0].ttl & 0x8000, 0x8000, "DNSSEC DO bit");
+            let reply = host_reply(&query, 0, 89);
+            stream
+                .write_all(&(reply.len() as u16).to_be_bytes())
+                .unwrap();
+            stream.write_all(&reply).unwrap();
+        });
+        assert_eq!(
+            hostname_ipv4(api, c"options.invalid"),
+            Ok([203, 0, 113, 89])
+        );
+        worker.join().unwrap();
+        assert_eq!(
+            udp_guard.recv(&mut [0; 512]).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+}
+
+#[test]
+fn global_host_lookup_ignores_tc_only_when_requested() {
+    if host_lookup_child("global_host_lookup_ignores_tc_only_when_requested") {
+        return;
+    }
+    use frankenlibc_abi::resolv_state::RES_IGNTC;
+    for api in host_apis() {
+        let server = HostServer::new(|query| {
+            let mut response = host_reply(query, 0, 91);
+            response[2] |= 0x02;
+            response
+        });
+        let tcp_guard = std::net::TcpListener::bind(server.endpoint).unwrap();
+        tcp_guard.set_nonblocking(true).unwrap();
+        let cleanup = configure_host(api, server.endpoint);
+        // SAFETY: the caller selects IGNORETC in its own initialized state.
+        unsafe { (*cleanup.0.cast::<State>()).options |= RES_IGNTC };
+        assert_eq!(
+            hostname_ipv4(api, c"complete-tc.invalid"),
+            Ok([203, 0, 113, 91])
+        );
+        assert!(!server.finish().is_empty());
+        assert_eq!(
+            tcp_guard.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+}
+
+#[test]
+fn global_host_lookup_keeps_concurrent_thread_endpoints_isolated() {
+    if host_lookup_child("global_host_lookup_keeps_concurrent_thread_endpoints_isolated") {
+        return;
+    }
+    for api in host_apis() {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let configure_lock = std::sync::Arc::new(std::sync::Mutex::new(()));
+        let workers: Vec<_> = [31, 47]
+            .into_iter()
+            .map(|marker| {
+                let barrier = barrier.clone();
+                let configure_lock = configure_lock.clone();
+                thread::spawn(move || {
+                    let server = HostServer::new(move |query| host_reply(query, 0, marker));
+                    // NSS backend selection is process-global. Serialize only that
+                    // setup; both ordinary lookups run concurrently after the barrier.
+                    let cleanup = {
+                        let _guard = configure_lock.lock().unwrap();
+                        configure_host(api, server.endpoint)
+                    };
+                    barrier.wait();
+                    for _ in 0..2 {
+                        assert_eq!(
+                            hostname_ipv4(api, c"thread-state.invalid"),
+                            Ok([203, 0, 113, marker])
+                        );
+                    }
+                    let pointer = cleanup.0 as usize;
+                    // A valid per-configuration cache may avoid the repeated query.
+                    assert!(!server.finish().is_empty());
+                    pointer
+                })
+            })
+            .collect();
+        let pointers: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_ne!(pointers[0], pointers[1]);
+    }
+}
+
+#[test]
+fn global_host_lookup_refreshes_files_and_environment_until_caller_override() {
+    if host_lookup_child("global_host_lookup_refreshes_files_and_environment_until_caller_override")
+    {
+        return;
+    }
+    let api = host_apis()[0];
+    let server = HostServer::new(|query| host_reply(query, 0, 63));
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-host-state-{}.conf",
+        std::process::id()
+    ));
+    let write_config = |domain: &str| {
+        std::fs::write(
+            &path,
+            format!("nameserver 127.0.0.1\nsearch {domain}\noptions timeout:1 attempts:1\n"),
+        )
+        .unwrap();
+    };
+    write_config("first.invalid");
+    // SAFETY: this test is an isolated child. Its DNS worker never reads these
+    // variables; no unrelated tests or resolver threads run in this process.
+    unsafe {
+        std::env::set_var("FRANKENLIBC_RESOLV_CONF", &path);
+        std::env::set_var("FRANKENLIBC_DNS_PORT", server.endpoint.port().to_string());
+        assert_eq!((api.select)(c"hosts".as_ptr(), c"dns".as_ptr()), 0);
+        let pointer = (api.state)();
+        (api.close)(pointer);
+        *pointer.cast::<State>() = State::zeroed();
+    }
+    let pointer = unsafe { (api.state)() };
+    let cleanup = ApiCleanup(pointer, api.close);
+    assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
+    assert_ne!(unsafe { (*pointer.cast::<State>()).options & RES_INIT }, 0);
+    write_config("second.invalid");
+    assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
+    unsafe {
+        std::env::set_var("LOCALDOMAIN", "environment.invalid");
+        std::env::set_var("RES_OPTIONS", "ndots:2");
+    }
+    assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
+    assert_eq!(unsafe { (*pointer.cast::<State>()).ndots_nsort & 15 }, 2);
+    assert_eq!(unsafe { (api.state)() }, pointer);
+
+    let caller_domain = std::ffi::CString::new("caller.invalid").unwrap();
+    unsafe {
+        (*pointer.cast::<State>()).dnsrch[0] = caller_domain.as_ptr().cast_mut();
+        (*pointer.cast::<State>()).dnsrch[1] = std::ptr::null_mut();
+        std::env::remove_var("LOCALDOMAIN");
+        std::env::remove_var("RES_OPTIONS");
+    }
+    write_config("must-not-replace-caller.invalid");
+    assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
+    assert_eq!(
+        unsafe { (*pointer.cast::<State>()).dnsrch[0] },
+        caller_domain.as_ptr().cast_mut()
+    );
+    drop(cleanup);
+    assert_eq!(
+        caller_domain.as_bytes(),
+        b"caller.invalid",
+        "close must not own the caller suffix"
+    );
+
+    // Pointee edits also transfer control even when dnsrch's pointer remains
+    // the original inline defdname address. Fresh initialization alone may
+    // restore automatic refresh after the previous state is closed.
+    write_config("original.invalid");
+    unsafe { *pointer.cast::<State>() = State::zeroed() };
+    let _cleanup = ApiCleanup(pointer, api.close);
+    assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
+    unsafe { *(*pointer.cast::<State>()).dnsrch[0] = b'x' as libc::c_char };
+    write_config("must-not-replace-pointee.invalid");
+    assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
+    assert_eq!(
+        server.finish(),
+        [
+            b"refresh.first.invalid".to_vec(),
+            b"refresh.second.invalid".to_vec(),
+            b"refresh.environment.invalid".to_vec(),
+            b"refresh.caller.invalid".to_vec(),
+            b"refresh.original.invalid".to_vec(),
+            b"refresh.xriginal.invalid".to_vec(),
+        ]
+    );
+}
+
+#[test]
+fn global_host_lookup_preserves_timing_selected_before_implicit_init() {
+    if host_lookup_child("global_host_lookup_preserves_timing_selected_before_implicit_init") {
+        return;
+    }
+    let api = host_apis()[0];
+    let server = HostServer::new(|query| host_reply(query, 0, 64));
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-host-preinit-{}.conf",
+        std::process::id()
+    ));
+    let write_config = |domain: &str| {
+        // No explicit timing: the legacy initializer must retain caller values.
+        std::fs::write(
+            &path,
+            format!("nameserver 127.0.0.1\nsearch {domain}\n"),
+        )
+        .unwrap();
+    };
+    write_config("first.invalid");
+    // SAFETY: isolated child; the DNS worker never reads these variables.
+    let pointer = unsafe {
+        std::env::set_var("FRANKENLIBC_RESOLV_CONF", &path);
+        std::env::set_var("FRANKENLIBC_DNS_PORT", server.endpoint.port().to_string());
+        assert_eq!((api.select)(c"hosts".as_ptr(), c"dns".as_ptr()), 0);
+        let pointer = (api.state)();
+        (api.close)(pointer);
+        let state = &mut *pointer.cast::<State>();
+        *state = State::zeroed();
+        state.retrans = 7;
+        state.retry = 3;
+        pointer
+    };
+    let _cleanup = ApiCleanup(pointer, api.close);
+    for domain in ["first.invalid", "replacement.invalid"] {
+        write_config(domain);
+        assert_eq!(hostname_ipv4(api, c"preinit"), Ok([203, 0, 113, 64]));
+        // SAFETY: current-thread state remains live and no I/O borrows it.
+        let timing = unsafe {
+            let state = &*pointer.cast::<State>();
+            assert_ne!(state.options & RES_INIT, 0);
+            (state.retrans, state.retry)
+        };
+        assert_eq!(timing, (7, 3));
+    }
+    let seen = server.finish();
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|owner| owner == b"preinit.first.invalid"));
 }

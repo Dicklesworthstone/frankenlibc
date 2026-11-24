@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use crate::resolv::config::ResolverConfig;
 use crate::resolv::dns::{
-    DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsHeader, DnsMessage, DnsRecord, DnsResolution,
-    build_search_names, qclass, qtype, rcode,
+    DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsHeader, DnsMessage, DnsRecord, DnsResolution, qclass,
+    qtype, rcode,
 };
 use crate::resolv::dns_name::{NS_MAXCDNAME, name_unpack};
 
@@ -30,12 +30,29 @@ static NEXT_SERVER: AtomicUsize = AtomicUsize::new(0);
 
 /// Wire and transport options for one hostname or reverse lookup. Keeping
 /// them together ensures alias followups retain the original configuration.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct QueryOptions {
     pub trust_ad: bool,
     pub use_vc: bool,
     pub no_aaaa: bool,
     pub edns0: bool,
+    pub recurse: bool,
+    pub dnssec: bool,
+    pub ignore_truncation: bool,
+}
+
+impl Default for QueryOptions {
+    fn default() -> Self {
+        Self {
+            trust_ad: false,
+            use_vc: false,
+            no_aaaa: false,
+            edns0: false,
+            recurse: true,
+            dnssec: false,
+            ignore_truncation: false,
+        }
+    }
 }
 
 impl From<&ResolverConfig> for QueryOptions {
@@ -45,7 +62,96 @@ impl From<&ResolverConfig> for QueryOptions {
             use_vc: config.use_vc,
             no_aaaa: config.no_aaaa,
             edns0: config.edns0,
+            ..Self::default()
         }
+    }
+}
+
+/// An owned hostname-lookup snapshot, independent of how configuration was
+/// obtained. Public resolver state can contain ports, scoped IPv6 endpoints,
+/// byte-oriented search strings and search flags that resolv.conf cannot
+/// represent. No caller state is borrowed while a lookup waits for the network.
+#[derive(Debug, Clone)]
+pub struct LookupConfig {
+    pub transport: raw::Config,
+    pub search: Vec<Vec<u8>>,
+    pub ndots: u32,
+    pub defnames: bool,
+    pub dnsrch: bool,
+    pub no_tld_query: bool,
+}
+
+impl From<&ResolverConfig> for LookupConfig {
+    fn from(config: &ResolverConfig) -> Self {
+        let mut transport = raw::Config::from(config);
+        // Preserve the hostname engine's existing minimum for file configs.
+        // Explicit snapshots can retain a finer-grained bounded deadline.
+        transport.timeout = Duration::from_secs(u64::from(config.timeout.max(1)));
+        Self {
+            transport,
+            search: config
+                .search
+                .iter()
+                .map(|name| name.as_bytes().to_vec())
+                .collect(),
+            ndots: config.ndots,
+            defnames: true,
+            dnsrch: true,
+            no_tld_query: false,
+        }
+    }
+}
+
+impl LookupConfig {
+    /// Track bare-name candidates explicitly: a root search suffix can have the
+    /// same spelling but different failure precedence. Escaped dots are data.
+    fn search_names(&self, hostname: &[u8]) -> Vec<(Vec<u8>, bool)> {
+        let mut escaped = false;
+        let mut dots = 0;
+        let mut absolute = false;
+        for &byte in hostname {
+            absolute = false;
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'.' {
+                dots += 1;
+                absolute = true;
+            }
+        }
+        if absolute {
+            return vec![(hostname.to_vec(), true)];
+        }
+        let first_bare = dots >= self.ndots;
+        let use_search = if dots == 0 {
+            self.defnames
+        } else {
+            self.dnsrch
+        };
+        let mut names = Vec::new();
+        if first_bare {
+            names.push((hostname.to_vec(), true));
+        }
+        if use_search {
+            for domain in &self.search {
+                let mut name = hostname.to_vec();
+                if !domain.is_empty() && domain != b"." {
+                    name.push(b'.');
+                    name.extend_from_slice(domain);
+                }
+                names.push((name, false));
+                if !self.dnsrch {
+                    break;
+                }
+            }
+        }
+        // NOTLDQUERY suppresses the bare fallback only after an actual search
+        // was possible. With no enabled suffixes GNU still queries the name.
+        if !first_bare && (dots != 0 || !self.no_tld_query || names.is_empty()) {
+            names.push((hostname.to_vec(), true));
+        }
+        names
     }
 }
 
@@ -222,7 +328,7 @@ pub fn exchange(
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or(QueryError::InvalidQuery)?;
-    exchange_until(server, query, deadline, use_vc)
+    exchange_until(server, query, deadline, use_vc, false)
 }
 
 fn exchange_until(
@@ -230,6 +336,7 @@ fn exchange_until(
     query: &[u8],
     deadline: Instant,
     use_vc: bool,
+    ignore_truncation: bool,
 ) -> Result<Vec<u8>, QueryError> {
     // Host lookup only constructs QUERY packets. The raw API also accepts
     // single-question NOTIFY/UPDATE packets, but never relaxes reply binding.
@@ -237,7 +344,7 @@ fn exchange_until(
     if header.flags & 0x7800 != 0 {
         return Err(QueryError::InvalidQuery);
     }
-    let reply = exchange_raw_until(server, query, deadline, use_vc, false)?;
+    let reply = exchange_raw_until(server, query, deadline, use_vc, ignore_truncation)?;
     // Preserve the existing address/PTR API's retry classification. Raw
     // callers need the packet and final transport, including a TCP RCODE.
     if reply.transport == raw::Transport::Udp {
@@ -521,10 +628,22 @@ pub fn query(
     query_with_exchange(hostname, record_type, timeout, options, |wire, deadline| {
         if options.no_aaaa && record_type == qtype::AAAA {
             let translated = raw::no_aaaa_query(wire).ok_or(QueryError::InvalidQuery)?;
-            let packet = exchange_until(server, &translated, deadline, options.use_vc)?;
+            let packet = exchange_until(
+                server,
+                &translated,
+                deadline,
+                options.use_vc,
+                options.ignore_truncation,
+            )?;
             raw::no_aaaa_reply(&translated, packet)
         } else {
-            exchange_until(server, wire, deadline, options.use_vc)
+            exchange_until(
+                server,
+                wire,
+                deadline,
+                options.use_vc,
+                options.ignore_truncation,
+            )
         }
     })
 }
@@ -549,6 +668,9 @@ where
     let mut message =
         DnsMessage::new_query_with_trust_ad(0, hostname, record_type, options.trust_ad)
             .ok_or(QueryError::InvalidQuery)?;
+    if !options.recurse {
+        message.header.flags &= !0x0100;
+    }
     let mut initial = [0; NS_MAXCDNAME];
     initial[..message.questions[0].qname.len()].copy_from_slice(&message.questions[0].qname);
     let mut visited = vec![initial];
@@ -558,7 +680,7 @@ where
         message.header.id = entropy::query_id(deadline)?;
         let mut wire = [0; DNS_MAX_UDP_SIZE];
         let mut length = message.encode(&mut wire).ok_or(QueryError::InvalidQuery)?;
-        if options.edns0 {
+        if options.edns0 || options.dnssec {
             // RFC 6891 section 6.1.2: root owner, TYPE=OPT, CLASS=payload,
             // extended RCODE/version/flags/RDLENGTH all zero. A maximum
             // length question plus this eleven-byte RR fits the 512-byte
@@ -568,11 +690,19 @@ where
                 .ok_or(QueryError::InvalidQuery)?;
             opt.copy_from_slice(&[0, 0, 41, 0, 0, 0, 0, 0, 0, 0, 0]);
             opt[3..5].copy_from_slice(&EDNS_UDP_PAYLOAD.to_be_bytes());
+            if options.dnssec {
+                opt[7..9].copy_from_slice(&0x8000u16.to_be_bytes());
+            }
             wire[10..12].copy_from_slice(&1u16.to_be_bytes());
             length += 11;
         }
         let sent = &wire[..length];
-        let packet = exchange(sent, deadline)?;
+        let mut packet = exchange(sent, deadline)?;
+        if options.ignore_truncation && packet.len() >= DNS_HEADER_SIZE {
+            // RES_IGNTC changes fallback policy, not structural validation.
+            // The answer parser still rejects incomplete RR/name spans.
+            packet[2] &= !0x02;
+        }
         match address_answer(sent, &packet, record_type, &mut visited, &mut ttl_limit)? {
             AddressAnswer::Complete(reply) => return Ok(reply),
             AddressAnswer::Follow(next) => {
@@ -624,12 +754,35 @@ pub fn resolve_with_canonical<F>(
     want_v4: bool,
     want_v6: bool,
     config: &ResolverConfig,
+    query: F,
+) -> Result<NameResolution, ResolveError>
+where
+    F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
+{
+    resolve_with_config(
+        hostname,
+        want_v4,
+        want_v6,
+        &LookupConfig::from(config),
+        query,
+    )
+}
+
+/// Resolve from an explicit immutable snapshot, including caller-selected
+/// nameserver ports and search policy, using the same validated DNS engine.
+pub fn resolve_with_config<F>(
+    hostname: &[u8],
+    want_v4: bool,
+    want_v6: bool,
+    config: &LookupConfig,
     mut query: F,
 ) -> Result<NameResolution, ResolveError>
 where
     F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
 {
-    if !want_v4 && !want_v6 {
+    let names = config.search_names(hostname);
+    let config = &config.transport;
+    if (!want_v4 && !want_v6) || names.is_empty() {
         return Err(ResolveError::NotFound);
     }
     if config.nameservers.is_empty() {
@@ -640,7 +793,7 @@ where
     } else {
         0
     };
-    let timeout = Duration::from_secs(u64::from(config.timeout.max(1)));
+    let timeout = config.timeout;
     // glibc's search semantics decide which failure is reported:
     // - an as-is name tried FIRST (enough dots) has the final say, whatever
     //   the search domains after it return;
@@ -654,19 +807,23 @@ where
     // Before this, a timeout on ANY name made the whole lookup TRY_AGAIN, so
     // a missing name whose search-suffixed form timed out was "try again"
     // where glibc says "not found" (bd-f7qzp8).
-    let names = build_search_names(hostname, &config.search, config.ndots);
-    let as_is_first = names
-        .first()
-        .is_some_and(|name| name.as_slice() == hostname);
+    let as_is_first = names.first().is_some_and(|(_, bare)| *bare);
     let mut first_outcome = None;
     let mut last_outcome = NameOutcome::NotFound;
     let mut saw_servfail = false;
     let mut search_stopped = false;
-    for (name_index, name) in names.into_iter().enumerate() {
-        let is_as_is = name.as_slice() == hostname;
+    let mut root_searched = false;
+    for (name_index, (name, is_as_is)) in names.into_iter().enumerate() {
         if search_stopped && !is_as_is {
             continue;
         }
+        if is_as_is && root_searched {
+            continue;
+        }
+        // A root suffix already queries the bare name. Record it only when
+        // reached: a timeout can skip a later root suffix but still permit the
+        // bare fallback. Do not send that same final query twice.
+        root_searched |= !is_as_is && name.as_slice() == hostname;
         let mut result = DnsResolution::default();
         let mut canonical_name = None;
         // GNU's combined address lookup asks only for A under no-aaaa. An
@@ -685,7 +842,7 @@ where
                 if refused_servers[server_index] {
                     continue;
                 }
-                let server = config.nameserver_endpoint(server_index);
+                let server = config.nameservers[server_index];
                 for (index, record_type) in [qtype::A, qtype::AAAA].into_iter().enumerate() {
                     if done[index] {
                         continue;
@@ -884,6 +1041,21 @@ fn ptr_hostname(wire: &[u8]) -> Option<Vec<u8>> {
 pub fn reverse_with<F>(
     address: IpAddr,
     config: &ResolverConfig,
+    query: F,
+) -> Result<Vec<u8>, ResolveError>
+where
+    F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
+{
+    let mut transport = raw::Config::from(config);
+    transport.timeout = Duration::from_secs(u64::from(config.timeout.max(1)));
+    reverse_with_config(address, &transport, query)
+}
+
+/// Reverse lookup using a complete caller-owned endpoint/options snapshot.
+/// Search strings are deliberately absent: PTR owners are always absolute.
+pub fn reverse_with_config<F>(
+    address: IpAddr,
+    config: &raw::Config,
     mut query: F,
 ) -> Result<Vec<u8>, ResolveError>
 where
@@ -898,11 +1070,11 @@ where
     } else {
         0
     };
-    let timeout = Duration::from_secs(u64::from(config.timeout.max(1)));
+    let timeout = config.timeout;
     let mut temporary = false;
     for _ in 0..config.attempts.max(1) {
         for offset in 0..config.nameservers.len() {
-            let server = config.nameserver_endpoint((start + offset) % config.nameservers.len());
+            let server = config.nameservers[(start + offset) % config.nameservers.len()];
             match query(
                 &name,
                 qtype::PTR,
@@ -1483,6 +1655,204 @@ mod tests {
         QueryReply {
             records: DnsMessage::decode(&answer(&query_wire())).unwrap().answers,
             rcode: 0,
+        }
+    }
+
+    #[test]
+    fn lookup_snapshot_preserves_scoped_endpoint_timing_and_retry_policy() {
+        let mut config = LookupConfig::from(&ResolverConfig::default());
+        let server = SocketAddr::V6(std::net::SocketAddrV6::new(
+            "fe80::53".parse().unwrap(),
+            5353,
+            7,
+            9,
+        ));
+        config.transport.nameservers = vec![server];
+        config.transport.timeout = Duration::from_millis(175);
+        config.transport.attempts = 2;
+        config.transport.trust_ad = true;
+        config.transport.use_vc = true;
+        let mut calls = 0;
+        let result = resolve_with_config(
+            b"example.test.",
+            true,
+            false,
+            &config,
+            |name, kind, endpoint, timeout, trust_ad, use_vc| {
+                assert_eq!(name, b"example.test.");
+                assert_eq!(kind, qtype::A);
+                assert_eq!(endpoint, server);
+                assert_eq!(timeout, Duration::from_millis(175));
+                assert!(trust_ad && use_vc);
+                calls += 1;
+                if calls == 1 {
+                    Err(QueryError::Io(io::Error::from(io::ErrorKind::TimedOut)))
+                } else {
+                    Ok(address_reply())
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result.addresses.ipv4, [Ipv4Addr::new(192, 0, 2, 7)]);
+
+        let mut calls = 0;
+        let result = reverse_with_config(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7)),
+            &config.transport,
+            |owner, kind, endpoint, timeout, trust_ad, use_vc| {
+                assert_eq!(owner, b"7.2.0.192.in-addr.arpa");
+                assert_eq!(kind, qtype::PTR);
+                assert_eq!(endpoint, server);
+                assert_eq!(timeout, Duration::from_millis(175));
+                assert!(trust_ad && use_vc);
+                calls += 1;
+                if calls == 1 {
+                    Err(QueryError::Io(io::Error::from(io::ErrorKind::TimedOut)))
+                } else {
+                    Ok(QueryReply {
+                        records: vec![DnsRecord {
+                            name: owner.to_vec(),
+                            rtype: qtype::PTR,
+                            rclass: 1,
+                            ttl: 60,
+                            rdata: name(b"reverse.test"),
+                        }],
+                        rcode: 0,
+                    })
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result, b"reverse.test");
+    }
+
+    #[test]
+    fn lookup_search_distinguishes_escaped_dots_and_visited_root_suffixes() {
+        let mut config = LookupConfig::from(&ResolverConfig {
+            attempts: 1,
+            ..ResolverConfig::default()
+        });
+        config.search = vec![b"suffix.test".to_vec()];
+        for hostname in [br"literal\.label".as_slice(), br"literal\."] {
+            let mut seen = Vec::new();
+            let result =
+                resolve_with_config(hostname, true, false, &config, |owner, _, _, _, _, _| {
+                    seen.push(owner.to_vec());
+                    Ok(QueryReply {
+                        records: vec![],
+                        rcode: rcode::NXDOMAIN,
+                    })
+                });
+            assert!(matches!(result, Err(ResolveError::NotFound)));
+            let mut searched = hostname.to_vec();
+            searched.extend_from_slice(b".suffix.test");
+            assert_eq!(seen, [searched, hostname.to_vec()]);
+        }
+        config.search = vec![b"first.test".to_vec(), b".".to_vec(), b"last.test".to_vec()];
+        for stop_before_root in [false, true] {
+            let mut seen = Vec::new();
+            let result =
+                resolve_with_config(b"host", true, false, &config, |owner, _, _, _, _, _| {
+                    seen.push(owner.to_vec());
+                    if stop_before_root && seen.len() == 1 {
+                        Err(QueryError::Io(io::Error::from(io::ErrorKind::TimedOut)))
+                    } else {
+                        Ok(QueryReply {
+                            records: vec![],
+                            rcode: rcode::NXDOMAIN,
+                        })
+                    }
+                });
+            assert!(matches!(result, Err(ResolveError::NotFound)));
+            assert_eq!(
+                seen,
+                if stop_before_root {
+                    vec![b"host.first.test".to_vec(), b"host".to_vec()]
+                } else {
+                    vec![
+                        b"host.first.test".to_vec(),
+                        b"host".to_vec(),
+                        b"host.last.test".to_vec(),
+                    ]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn caller_recursion_and_dnssec_options_survive_cname_followup() {
+        let mut calls = 0;
+        let reply = query_with_exchange(
+            b"example.test",
+            qtype::A,
+            Duration::from_secs(2),
+            QueryOptions {
+                recurse: false,
+                dnssec: true,
+                trust_ad: true,
+                ..QueryOptions::default()
+            },
+            |sent, _| {
+                let message = DnsMessage::decode(sent).unwrap();
+                assert_eq!(message.header.flags & 0x0120, 0x0020);
+                assert_eq!(message.additionals.len(), 1);
+                assert_eq!(message.additionals[0].rtype, 41);
+                assert_eq!(message.additionals[0].ttl, 0x8000);
+                calls += 1;
+                if calls == 1 {
+                    Ok(response_with_records(
+                        sent,
+                        &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(b"edge.test"))],
+                    ))
+                } else {
+                    assert_eq!(message.questions[0].qname, b"edge.test");
+                    Ok(response_with_records(
+                        sent,
+                        &[rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 7])],
+                    ))
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(
+            reply.records[0].as_ipv4(),
+            Some(Ipv4Addr::new(192, 0, 2, 7))
+        );
+    }
+
+    #[test]
+    fn ignore_truncation_still_requires_complete_resource_records() {
+        for ignore_truncation in [false, true] {
+            for incomplete in [false, true] {
+                let result = query_with_exchange(
+                    b"example.test",
+                    qtype::A,
+                    Duration::from_secs(2),
+                    QueryOptions {
+                        ignore_truncation,
+                        ..QueryOptions::default()
+                    },
+                    |sent, _| {
+                        let mut packet = answer(sent);
+                        packet[2] |= 0x02;
+                        if incomplete {
+                            packet.pop();
+                        }
+                        Ok(packet)
+                    },
+                );
+                if ignore_truncation && !incomplete {
+                    assert_eq!(
+                        result.unwrap().records[0].as_ipv4(),
+                        Some(Ipv4Addr::new(192, 0, 2, 7))
+                    );
+                } else {
+                    assert!(matches!(result, Err(QueryError::InvalidResponse)));
+                }
+            }
         }
     }
 

@@ -7,11 +7,14 @@ on:
       - '.github/workflows/native-global-resolver.yml'
       - 'crates/frankenlibc-abi/src/resolv_state.rs'
       - 'crates/frankenlibc-abi/src/resolv_state/**'
+      - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/tests/global_resolver_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-core/src/socket/mod.rs'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
       - 'scripts/integrate_global_resolver.py'
       - 'tests/conformance/global_resolver_abi.c'
       - 'tests/conformance/rresvport_abi.c'
@@ -51,8 +54,12 @@ jobs:
         run: |
           if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
           cp Cargo.lock artifacts/global-resolver/Cargo.lock
+          cargo test --locked -p frankenlibc-core --lib dns_transport::tests:: -- --nocapture 2>&1 | tee artifacts/global-resolver/transport.log
+          grep -Eq 'test result: ok\. 49 passed; 0 failed; 0 ignored;' artifacts/global-resolver/transport.log
           cargo test --locked -p frankenlibc-abi --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global.log
-          grep -Eq 'test result: ok\. 6 passed;' artifacts/global-resolver/global.log
+          grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global.log
+          cargo test --locked -p frankenlibc-abi --features owned-tls-cache --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global-owned-tls.log
+          grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global-owned-tls.log
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/state.log
           grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/state.log
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_edns_test -- --nocapture 2>&1 | tee artifacts/global-resolver/edns.log
