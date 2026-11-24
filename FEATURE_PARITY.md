@@ -3,7 +3,7 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-24, and it records the same base ABI source commit as `support_matrix.json` (`394d8517c`).
+The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-24, and it records the same base ABI source commit as `support_matrix.json` (`6e466f853`).
 Reality snapshot: total_exported=4119, implemented=2542, raw_syscall=408, wraps_host_libc=1169, glibc_call_through=0, stub=0.
 Counts below reflect recorded support matrix labels validated against live source and host-delegation census v24 (`status_invalid = 0`; unproven native wrapper bodies remain conservatively classified under `WrapsHostLibc` until fixture or promotion-proof evidence is attached). Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; these labels do not establish complete unsupported or implemented behavior.
 Regenerate deterministically with:
