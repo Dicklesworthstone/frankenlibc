@@ -2922,3 +2922,109 @@ fn wcsnrtombs_stops_before_prot_none_guard_page() {
         assert_eq!(dst[expected_bytes] as u8, 0);
     }
 }
+
+#[test]
+fn wcstod_wcstof_wcstold_stop_before_prot_none_guard_page() {
+    let pages = GuardedPages::new(1);
+    let edge = pages.guard_edge();
+
+    let run_cases = |label: &str| unsafe {
+        // Non-NUL-terminated float followed immediately by a stopping char ('x')
+        // right before the PROT_NONE guard page.
+        let dec = [
+            b'3' as libc::wchar_t,
+            b'.' as libc::wchar_t,
+            b'5' as libc::wchar_t,
+            b'x' as libc::wchar_t,
+        ];
+        let dec_ptr = edge
+            .sub(dec.len() * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(dec.as_ptr(), dec_ptr, dec.len());
+
+        let mut end: *mut libc::wchar_t = std::ptr::null_mut();
+        let d = wcstod(dec_ptr, &mut end);
+        assert_eq!(d, 3.5, "{label}: wcstod(L\"3.5x\")");
+        assert_eq!(end, dec_ptr.add(3), "{label}: wcstod endptr");
+
+        let mut end_f: *mut libc::wchar_t = std::ptr::null_mut();
+        let f = wcstof(dec_ptr, &mut end_f);
+        assert_eq!(f, 3.5f32, "{label}: wcstof(L\"3.5x\")");
+        assert_eq!(end_f, dec_ptr.add(3), "{label}: wcstof endptr");
+
+        // Hex float stopping at 'z' before guard page.
+        let hex = [
+            b'0' as libc::wchar_t,
+            b'x' as libc::wchar_t,
+            b'1' as libc::wchar_t,
+            b'.' as libc::wchar_t,
+            b'8' as libc::wchar_t,
+            b'p' as libc::wchar_t,
+            b'2' as libc::wchar_t,
+            b'z' as libc::wchar_t,
+        ];
+        let hex_ptr = edge
+            .sub(hex.len() * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(hex.as_ptr(), hex_ptr, hex.len());
+        let mut hex_end: *mut libc::wchar_t = std::ptr::null_mut();
+        assert_eq!(wcstod(hex_ptr, &mut hex_end), 6.0, "{label}: hex wcstod");
+        assert_eq!(hex_end, hex_ptr.add(7), "{label}: hex endptr");
+
+        // infx and nan(1) right before guard page (no trailing NUL).
+        let inf = [
+            b'i' as libc::wchar_t,
+            b'n' as libc::wchar_t,
+            b'f' as libc::wchar_t,
+            b'x' as libc::wchar_t,
+        ];
+        let inf_ptr = edge
+            .sub(inf.len() * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(inf.as_ptr(), inf_ptr, inf.len());
+        let mut inf_end: *mut libc::wchar_t = std::ptr::null_mut();
+        assert!(wcstod(inf_ptr, &mut inf_end).is_infinite(), "{label}: infx");
+        assert_eq!(inf_end, inf_ptr.add(3), "{label}: infx endptr");
+
+        let nan = [
+            b'n' as libc::wchar_t,
+            b'a' as libc::wchar_t,
+            b'n' as libc::wchar_t,
+            b'(' as libc::wchar_t,
+            b'1' as libc::wchar_t,
+            b')' as libc::wchar_t,
+        ];
+        let nan_ptr = edge
+            .sub(nan.len() * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(nan.as_ptr(), nan_ptr, nan.len());
+        let mut nan_end: *mut libc::wchar_t = std::ptr::null_mut();
+        assert!(wcstod(nan_ptr, &mut nan_end).is_nan(), "{label}: nan(1)");
+        assert_eq!(nan_end, nan_ptr.add(6), "{label}: nan(1) endptr");
+
+        // Leading vertical tab (0x0b) must be skipped as C whitespace.
+        let vtab = [
+            0x0b as libc::wchar_t,
+            b'2' as libc::wchar_t,
+            b'.' as libc::wchar_t,
+            b'5' as libc::wchar_t,
+            0,
+        ];
+        let vtab_ptr = edge
+            .sub(vtab.len() * std::mem::size_of::<libc::wchar_t>())
+            .cast::<libc::wchar_t>();
+        std::ptr::copy_nonoverlapping(vtab.as_ptr(), vtab_ptr, vtab.len());
+        let mut vtab_end: *mut libc::wchar_t = std::ptr::null_mut();
+        assert_eq!(wcstod(vtab_ptr, &mut vtab_end), 2.5, "{label}: vtab");
+        assert_eq!(vtab_end, vtab_ptr.add(4), "{label}: vtab endptr");
+    };
+
+    // Exercise both C locale and C.UTF-8 (non-C wide_is_c() branch).
+    {
+        let _lock = utf8_locale();
+        run_cases("C.UTF-8");
+        let c = std::ffi::CString::new("C").unwrap();
+        unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c.as_ptr()) };
+        run_cases("C");
+    }
+}

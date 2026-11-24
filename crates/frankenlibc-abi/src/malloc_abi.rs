@@ -9270,22 +9270,47 @@ unsafe fn zero_recycled_segment_slot(user_base: usize, req: usize) {
     debug_assert_eq!(user_base & 15, 0);
     #[cfg(target_arch = "x86_64")]
     {
-        if req <= 256 {
-            use core::arch::x86_64::{__m128i, _mm_setzero_si128, _mm_store_si128};
-            let z = unsafe { _mm_setzero_si128() };
-            let p = user_base as *mut __m128i;
-            let vecs = (req + 15) >> 4;
-            let mut i = 0usize;
-            while i < vecs {
-                // SAFETY: `user_base` is 16-byte aligned and `vecs * 16 <= bin_size(class_index)`.
-                unsafe { _mm_store_si128(p.add(i), z) };
-                i += 1;
-            }
-            return;
+        debug_assert!(req <= 256);
+        use core::arch::x86_64::{__m128i, _mm_setzero_si128, _mm_store_si128};
+        let z = unsafe { _mm_setzero_si128() };
+        let p = user_base as *mut __m128i;
+        let vecs = (req + 15) >> 4;
+        let mut i = 0usize;
+        while i < vecs {
+            // SAFETY: `user_base` is 16-byte aligned and `vecs * 16 <= bin_size(class_index)`.
+            unsafe { _mm_store_si128(p.add(i), z) };
+            i += 1;
         }
     }
-    // SAFETY: `user_base` owns at least `req` writable bytes.
-    unsafe { std::ptr::write_bytes(user_base as *mut u8, 0, req) };
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // SAFETY: `user_base` owns at least `req` writable bytes.
+        unsafe { std::ptr::write_bytes(user_base as *mut u8, 0, req) };
+    }
+}
+
+/// Out-of-line tail for recycled `calloc` slots larger than 256 bytes (`req > 256`),
+/// keeping the `std::ptr::write_bytes` call out of `calloc` so small `calloc` calls
+/// stay 0-push frameless like `malloc` instead of spilling 6 callee-saved registers.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+unsafe extern "C" fn finish_calloc_large_zero(
+    slot_ptr: *const AllocatorReentrySlot,
+    hot_mode: u8,
+    user_base: usize,
+    meta: *const SegmentSlotMeta,
+    req: usize,
+    class_index: usize,
+) -> *mut c_void {
+    // SAFETY: `user_base` owns at least `req` writable bytes; `slot_ptr` is
+    // `&'static AllocatorReentrySlot` holding `allocator_depth == 1`; `meta` is
+    // an immortal `&'static SegmentSlotMeta`.
+    unsafe {
+        std::ptr::write_bytes(user_base as *mut u8, 0, req);
+        (*meta).requested_size.store(req as u16, Ordering::Release);
+        bump_path_counter(&SEGMENT_PATH_ALLOCS);
+        record_strict_fast_alloc_stats_and_finish(&*slot_ptr, hot_mode, user_base, req, class_index)
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9312,6 +9337,12 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
             {
                 let (user_base, meta) = entry.decode(arena_base);
                 debug_assert!(req <= bin_size(class_index));
+                #[cfg(target_arch = "x86_64")]
+                if req > 256 {
+                    return unsafe {
+                        finish_calloc_large_zero(slot, hot_mode, user_base, meta, req, class_index)
+                    };
+                }
                 unsafe { zero_recycled_segment_slot(user_base, req) };
                 meta.requested_size.store(req as u16, Ordering::Release);
                 bump_path_counter(&SEGMENT_PATH_ALLOCS);

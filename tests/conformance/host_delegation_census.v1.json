@@ -1430,8 +1430,8 @@
       "text": "let resolved = unsafe { host_dlsym(handle, symbol) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:6931",
-      "line": 6931,
+      "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:7027",
+      "line": 7027,
       "module": "wchar_abi",
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
       "text": "let Some(address) = crate::host_resolve::resolve_host_symbol_cached(slot, symbol) else {"
@@ -1874,20 +1874,20 @@
     {
       "delegation_kind": "cached_host_allocator_symbol",
       "evidence": "crates/frankenlibc-abi/src/malloc_abi.rs:4280",
-      "exported_function_id": "malloc_abi::calloc@9292",
+      "exported_function_id": "malloc_abi::calloc@9317",
       "exported_symbol": "calloc",
       "expression": "} else if let Some(raw_host_calloc) = crate::host_resolve::host_calloc_raw() {",
       "helper_function": "native_libc_calloc_with_slot",
       "helper_function_id": "malloc_abi::native_libc_calloc_with_slot@4248",
       "host_symbol": "calloc",
-      "id": "malloc_abi:calloc:9292:001",
+      "id": "malloc_abi:calloc:9317:001",
       "line": 4280,
       "module": "malloc_abi",
       "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
       "reachability_hops": 2,
       "reachability_path": [
-        "malloc_abi::calloc@9292",
-        "malloc_abi::calloc_slow@9364",
+        "malloc_abi::calloc@9317",
+        "malloc_abi::calloc_slow@9395",
         "malloc_abi::native_libc_calloc_with_slot@4248"
       ]
     },
@@ -1934,19 +1934,19 @@
     {
       "delegation_kind": "cached_host_allocator_symbol",
       "evidence": "crates/frankenlibc-abi/src/malloc_abi.rs:4377",
-      "exported_function_id": "malloc_abi::realloc@9481",
+      "exported_function_id": "malloc_abi::realloc@9512",
       "exported_symbol": "realloc",
       "expression": "} else if let Some(raw_host_realloc) = crate::host_resolve::host_realloc_raw() {",
       "helper_function": "native_libc_realloc",
       "helper_function_id": "malloc_abi::native_libc_realloc@4306",
       "host_symbol": "realloc",
-      "id": "malloc_abi:realloc:9481:001",
+      "id": "malloc_abi:realloc:9512:001",
       "line": 4377,
       "module": "malloc_abi",
       "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
       "reachability_hops": 1,
       "reachability_path": [
-        "malloc_abi::realloc@9481",
+        "malloc_abi::realloc@9512",
         "malloc_abi::native_libc_realloc@4306"
       ]
     },
@@ -2424,7 +2424,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 125,
-    "source_tree_sha256": "86266ff3350158bd573a2c32c92c80753eb3f8b0a31d0c2ec7989cb5f9cd6b6f",
+    "source_tree_sha256": "35be90644e8480c2dde711921e20463c77cd2e53f9b56e62ef87ff669c7d1dbf",
     "version": 24
   },
   "module_census": [
@@ -3329,7 +3329,7 @@
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [],
-      "function_count": 10465,
+      "function_count": 10474,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>",
@@ -18355,7 +18355,7 @@
         "ynf64x": 5,
         "ynl": 5
       },
-      "resolved_call_edge_count": 22162,
+      "resolved_call_edge_count": 22171,
       "summary": {
         "exported_function_count": 4615,
         "exported_symbol_with_host_dependency_count": 1699,
@@ -19412,11 +19412,11 @@
         },
         {
           "delegation_kind": "cached_host_errno_symbol",
-          "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:6936",
+          "evidence": "crates/frankenlibc-abi/src/wchar_abi.rs:7032",
           "expression": "let Some(errno_location) = crate::host_resolve::host_errno_location_raw() else {",
-          "function_id": "wchar_abi::try_host_wide_io@6913",
+          "function_id": "wchar_abi::try_host_wide_io@7009",
           "host_symbol": "__errno_location",
-          "line": 6936,
+          "line": 7032,
           "path": "crates/frankenlibc-abi/src/wchar_abi.rs"
         }
       ],
@@ -20263,7 +20263,7 @@
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [],
-      "function_count": 10382,
+      "function_count": 10391,
       "host_dependencies_by_symbol": {},
       "profile": {
         "features": [
@@ -20297,7 +20297,7 @@
         }
       },
       "reachable_terminal_counts_by_symbol": {},
-      "resolved_call_edge_count": 21600,
+      "resolved_call_edge_count": 21609,
       "summary": {
         "exported_function_count": 4616,
         "exported_symbol_with_host_dependency_count": 0,
@@ -20618,7 +20618,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
-      "sha256": "2b19710d7c8c96e5599235e60cba1c77746c40281803d748b6a7ccc5b845e829"
+      "sha256": "006905364c8753ad0ebcbfa6263170ac79565d7a1431a481ade04086cbe61209"
     },
     {
       "path": "crates/frankenlibc-abi/src/math_abi.rs",
@@ -20822,7 +20822,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/string_abi.rs",
-      "sha256": "690bebdd1635462191000ad84ddc32d2223745284be1fe96b83173d0b277c03a"
+      "sha256": "924a49b685386edc112a8b7898303b9c981f45a87267453b35a1915b7d6d43c6"
     },
     {
       "path": "crates/frankenlibc-abi/src/termios_abi.rs",
@@ -20850,7 +20850,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "af6d12901e74b74438baf1d47311bb59324a5cdb9a22a90158ef237db7698fad"
+      "sha256": "b4b34fbf156bd1093970471cef3931ec63ee6753d67074aeec66c78f64870588"
     }
   ],
   "summary": {
@@ -21088,17 +21088,17 @@
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "malloc_abi:calloc:9292:001"
+        "malloc_abi:calloc:9317:001"
       ],
       "delegation_kinds": [
         "cached_host_allocator_symbol"
       ],
-      "function_id": "malloc_abi::calloc@9292",
+      "function_id": "malloc_abi::calloc@9317",
       "host_symbols": [
         "calloc"
       ],
       "module": "malloc_abi",
-      "source": "crates/frankenlibc-abi/src/malloc_abi.rs:9292",
+      "source": "crates/frankenlibc-abi/src/malloc_abi.rs:9317",
       "symbol": "calloc"
     },
     {
@@ -21136,17 +21136,17 @@
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "malloc_abi:realloc:9481:001"
+        "malloc_abi:realloc:9512:001"
       ],
       "delegation_kinds": [
         "cached_host_allocator_symbol"
       ],
-      "function_id": "malloc_abi::realloc@9481",
+      "function_id": "malloc_abi::realloc@9512",
       "host_symbols": [
         "realloc"
       ],
       "module": "malloc_abi",
-      "source": "crates/frankenlibc-abi/src/malloc_abi.rs:9481",
+      "source": "crates/frankenlibc-abi/src/malloc_abi.rs:9512",
       "symbol": "realloc"
     },
     {

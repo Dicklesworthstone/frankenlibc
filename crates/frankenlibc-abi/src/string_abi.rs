@@ -8361,26 +8361,34 @@ pub unsafe extern "C" fn __strchrnul(s: *const c_char, c: c_int) -> *mut c_char 
 /// # Safety
 ///
 /// Caller must ensure `s` is a valid null-terminated string.
+#[inline(never)]
+unsafe extern "C" fn strrchr_strict(s: *const c_char, c: c_int) -> *mut c_char {
+    // NOTE: a strlen+memrchr routing (glibc's two-pass shape, reusing fl's fast memrchr)
+    // was measured SLOWER here (2.3-3.8x vs this single-pass's 1.2-1.7x) — two full SIMD
+    // scans cost more than one heavier last-match pass. strrchr's residual loss is the
+    // portable-SIMD-vs-AVX2 kernel ceiling (asm-only). See NEGATIVE_EVIDENCE.md 2026-07-02.
+    let target = c as c_char;
+    let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
+    match last_idx {
+        Some(idx) => unsafe { s.add(idx) as *mut c_char },
+        None => std::ptr::null_mut(),
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
-    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full body
-    // — `scan_c_string_last_byte(s, target, None)` (bound is None in strict, so
-    // hit_limit is always false and the result is just the last-match mapping). Skips
-    // stage_context + decide + observe + stage-trace, mirroring `strchr`'s fast path
-    // (strrchr had been left on the full membrane path).
+    // Strict-mode fast path (DEFAULT deployed): sibling tail-call keeps `strrchr`
+    // 0-push frameless instead of renting the 6-push / 696B validating frame.
     if !s.is_null() && runtime_policy::strict_passthrough_active() {
-        // NOTE: a strlen+memrchr routing (glibc's two-pass shape, reusing fl's fast memrchr)
-        // was measured SLOWER here (2.3-3.8x vs this single-pass's 1.2-1.7x) — two full SIMD
-        // scans cost more than one heavier last-match pass. strrchr's residual loss is the
-        // portable-SIMD-vs-AVX2 kernel ceiling (asm-only). See NEGATIVE_EVIDENCE.md 2026-07-02.
-        let target = c as c_char;
-        let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
-        return match last_idx {
-            Some(idx) => unsafe { s.add(idx) as *mut c_char },
-            None => std::ptr::null_mut(),
-        };
+        return unsafe { strrchr_strict(s, c) };
     }
 
+    unsafe { strrchr_validating(s, c) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strrchr_validating(s: *const c_char, c: c_int) -> *mut c_char {
     if s.is_null() {
         let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
         record_string_stage_outcome(
@@ -10873,12 +10881,43 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
 /// # Safety
 ///
 /// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
+#[inline(never)]
+unsafe extern "C" fn strcasestr_strict(
+    haystack: *const c_char,
+    needle: *const c_char,
+) -> *mut c_char {
+    unsafe {
+        let hay_bound = known_remaining(haystack as usize);
+        let needle_bound = known_remaining(needle as usize);
+        let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+        // Untracked haystack + small needle: FUSED page-chunked case-insensitive
+        // search — no whole-haystack pre-scan (mirrors the strstr fused path). The
+        // core `strcasestr` matcher `strlen`s each window (no interior NUL before
+        // its end) and searches case-insensitively. Tracked buffers / large needles
+        // keep the bounded path (preserves the unterminated-tracked-buffer bound).
+        if hay_bound.is_none() && needle_terminated && (2..=256).contains(&needle_len) {
+            return strcasestr_fused_firstbyte(haystack, needle.cast::<u8>(), needle_len);
+        }
+        let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+        let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
+        let n_slice_len = if needle_terminated {
+            needle_len + 1
+        } else {
+            needle_len
+        };
+        let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
+        let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
+        match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
+            Some(idx) => haystack.add(idx) as *mut c_char,
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
-    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
-    // body's RETURN — scan haystack + needle (same ungated `known_remaining` bounds),
-    // then core case-insensitive `strcasestr` over the NUL-inclusive slices. Skips
-    // stage_context + decide + observe + stage-trace (mirrors the strstr fast path).
+    // Strict-mode fast path (DEFAULT deployed): sibling tail-call keeps `strcasestr`
+    // 0-push frameless instead of renting the 6-push / 152B validating frame.
     if runtime_policy::strict_passthrough_active() {
         if haystack.is_null() {
             return std::ptr::null_mut();
@@ -10886,34 +10925,18 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
         if needle.is_null() {
             return haystack as *mut c_char;
         }
-        return unsafe {
-            let hay_bound = known_remaining(haystack as usize);
-            let needle_bound = known_remaining(needle as usize);
-            let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
-            // Untracked haystack + small needle: FUSED page-chunked case-insensitive
-            // search — no whole-haystack pre-scan (mirrors the strstr fused path). The
-            // core `strcasestr` matcher `strlen`s each window (no interior NUL before
-            // its end) and searches case-insensitively. Tracked buffers / large needles
-            // keep the bounded path (preserves the unterminated-tracked-buffer bound).
-            if hay_bound.is_none() && needle_terminated && (2..=256).contains(&needle_len) {
-                return strcasestr_fused_firstbyte(haystack, needle.cast::<u8>(), needle_len);
-            }
-            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
-            let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
-            let n_slice_len = if needle_terminated {
-                needle_len + 1
-            } else {
-                needle_len
-            };
-            let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
-            let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
-            match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
-                Some(idx) => haystack.add(idx) as *mut c_char,
-                None => std::ptr::null_mut(),
-            }
-        };
+        return unsafe { strcasestr_strict(haystack, needle) };
     }
 
+    unsafe { strcasestr_validating(haystack, needle) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strcasestr_validating(
+    haystack: *const c_char,
+    needle: *const c_char,
+) -> *mut c_char {
     let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
         record_string_stage_outcome(
@@ -11162,6 +11185,16 @@ pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usi
 /// # Safety
 ///
 /// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
+#[inline(never)]
+unsafe extern "C" fn memccpy_strict(
+    dst: *mut c_void,
+    src: *const c_void,
+    c: c_int,
+    n: usize,
+) -> *mut c_void {
+    unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, n) }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memccpy(
     dst: *mut c_void,
@@ -11169,17 +11202,26 @@ pub unsafe extern "C" fn memccpy(
     c: c_int,
     n: usize,
 ) -> *mut c_void {
-    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
-    // (`copy_len == n`), byte-identical to the strict full body — core memccpy over
-    // `n` bytes, returning `dst+idx` past the copied `c` or null. Skips the membrane
-    // guard + decide + observe + stage-trace. Bounded-`n` op (fixed extent).
+    // Strict-mode fast path (DEFAULT deployed): sibling tail-call keeps `memccpy`
+    // 0-push frameless instead of renting the 6-push / 104B validating frame.
     if runtime_policy::strict_passthrough_active() {
         if n == 0 || dst.is_null() || src.is_null() {
             return std::ptr::null_mut();
         }
-        return unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, n) };
+        return unsafe { memccpy_strict(dst, src, c, n) };
     }
 
+    unsafe { memccpy_validating(dst, src, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn memccpy_validating(
+    dst: *mut c_void,
+    src: *const c_void,
+    c: c_int,
+    n: usize,
+) -> *mut c_void {
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if n == 0 || dst.is_null() || src.is_null() {
             return std::ptr::null_mut();

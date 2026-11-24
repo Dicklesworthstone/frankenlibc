@@ -1010,6 +1010,20 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
 // wcsncpy
 // ---------------------------------------------------------------------------
 
+#[inline(never)]
+unsafe extern "C" fn wide_fused_copy_n_returning_dst(
+    dst: *mut u32,
+    src: *const u32,
+    n: usize,
+) -> *mut u32 {
+    // Fused single-pass scan+copy+pad (128B tier) instead of the scan_w_string +
+    // wide_copy_n two-pass (two reads of the copied region; 8-lane copy for n<1024).
+    // Byte-identical; measured 1.12-1.43x (wcsncpy_fused_ab). See wide_fused_copy_n.
+    unsafe { wide_fused_copy_n(dst, src, n) };
+    // Prevent IPSCCP `returned` propagation so `wcsncpy` emits a 0-push `jmp`.
+    core::hint::black_box(dst)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
     if dst.is_null() || src.is_null() || n == 0 {
@@ -1018,16 +1032,18 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
 
     // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict
     // copy-then-NUL-pad body below — copy `min(strlen(src)+1, n)` wchars (through
-    // the terminator if it fits), zero-pad the remainder to `n`. Skips the ~640ns
-    // wide WRITE membrane full path (see wcscpy).
+    // the terminator if it fits), zero-pad the remainder to `n`. Sibling tail-call
+    // keeps `wcsncpy` 0-push frameless instead of renting the validating frame.
     if runtime_policy::strict_passthrough_active() {
-        // Fused single-pass scan+copy+pad (128B tier) instead of the scan_w_string +
-        // wide_copy_n two-pass (two reads of the copied region; 8-lane copy for n<1024).
-        // Byte-identical; measured 1.12-1.43x (wcsncpy_fused_ab). See wide_fused_copy_n.
-        unsafe { wide_fused_copy_n(dst, src, n) };
-        return dst;
+        return unsafe { wide_fused_copy_n_returning_dst(dst, src, n) };
     }
 
+    unsafe { wcsncpy_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn wcsncpy_validating(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -5121,53 +5137,202 @@ unsafe fn wide_numeric_token_len(nptr: *const u32, bound: usize) -> (usize, bool
     (i, true) // hit the bound without a terminator
 }
 
-/// Scan a bounded float prefix. After the token has started, ASCII whitespace proves the
-/// token boundary, so include one delimiter and stop instead of paying for the rest of a
-/// long buffer tail.
-unsafe fn scan_w_float_window(nptr: *const u32, limit: usize) -> (usize, bool) {
-    let mut len = 0usize;
-    let mut token_started = false;
-    while len < limit {
-        // SAFETY: caller promises a readable wide string; this bounded scanner reads at most
-        // `limit` wide chars before returning.
-        let wc = unsafe { *nptr.add(len) };
-        if wc == 0 {
-            return (len, true);
-        }
-        if wc > 0x7f {
-            return (len, false);
-        }
-        let b = wc as u8;
-        if !token_started {
-            token_started = !b.is_ascii_whitespace();
-        } else if b.is_ascii_whitespace() {
-            return (len + 1, false);
-        }
-        len += 1;
+/// Scan the body of a C/POSIX floating-point token starting AFTER leading
+/// whitespace, stopping at the exact first wide character that cannot legally
+/// extend the active grammar production (`inf[inity]`, `nan[(n-char-seq)]`,
+/// hex float, or decimal float).
+///
+/// Never reads past the first non-matching character, matching glibc's online
+/// `wcstod`/`wcstof`/`wcstold` lexer and preventing over-reads into a trailing
+/// `PROT_NONE` guard page (e.g. `L"3.5x"`).
+unsafe fn scan_w_float_body(ptr: *const u32, limit: usize, wide_radix: u32) -> (usize, bool) {
+    let mut i = 0usize;
+    macro_rules! peek {
+        () => {{
+            if i >= limit {
+                return (i, true);
+            }
+            // SAFETY: caller guarantees `ptr` is readable up to the first
+            // non-matching float token character (or `limit`).
+            unsafe { *ptr.add(i) }
+        }};
     }
-    (len, false)
+    // Optional sign.
+    let first = peek!();
+    if first == b'+' as u32 || first == b'-' as u32 {
+        i += 1;
+    }
+    let c = peek!();
+    if c == 0 {
+        return (i, false);
+    }
+    // `inf` / `infinity` (case-insensitive).
+    if c == b'i' as u32 || c == b'I' as u32 {
+        const INF: &[u8] = b"infinity";
+        let mut k = 0usize;
+        while k < INF.len() {
+            let ch = peek!();
+            if ch < 0x80 && (ch as u8).eq_ignore_ascii_case(&INF[k]) {
+                i += 1;
+                k += 1;
+            } else {
+                break;
+            }
+        }
+        return (i, false);
+    }
+    // `nan` / `nan([0-9A-Za-z_]*)` (case-insensitive).
+    if c == b'n' as u32 || c == b'N' as u32 {
+        const NAN: &[u8] = b"nan";
+        let mut k = 0usize;
+        while k < NAN.len() {
+            let ch = peek!();
+            if ch < 0x80 && (ch as u8).eq_ignore_ascii_case(&NAN[k]) {
+                i += 1;
+                k += 1;
+            } else {
+                return (i, false);
+            }
+        }
+        if peek!() == b'(' as u32 {
+            i += 1;
+            loop {
+                let ch = peek!();
+                if ch < 0x80 && ((ch as u8).is_ascii_alphanumeric() || ch == b'_' as u32) {
+                    i += 1;
+                } else {
+                    if ch == b')' as u32 {
+                        i += 1;
+                    }
+                    break;
+                }
+            }
+        }
+        return (i, false);
+    }
+    // Hex float: `0[xX]` followed by hex digits / radix / `[pP][+-]?digits`.
+    if c == b'0' as u32 {
+        i += 1;
+        let next = peek!();
+        if next == b'x' as u32 || next == b'X' as u32 {
+            i += 1;
+            let mut any_hex = false;
+            loop {
+                let ch = peek!();
+                if ch < 0x80 && (ch as u8).is_ascii_hexdigit() {
+                    any_hex = true;
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if peek!() == wide_radix {
+                i += 1;
+                loop {
+                    let ch = peek!();
+                    if ch < 0x80 && (ch as u8).is_ascii_hexdigit() {
+                        any_hex = true;
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            if any_hex {
+                let ep = peek!();
+                if ep == b'p' as u32 || ep == b'P' as u32 {
+                    i += 1;
+                    let sign = peek!();
+                    if sign == b'+' as u32 || sign == b'-' as u32 {
+                        i += 1;
+                    }
+                    loop {
+                        let ch = peek!();
+                        if ch < 0x80 && (ch as u8).is_ascii_digit() {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            return (i, false);
+        }
+    }
+    // Decimal float: `[0-9]* [radix [0-9]*] [[eE][+-]?[0-9]+]`.
+    let mut any_digit = c == b'0' as u32;
+    loop {
+        let ch = peek!();
+        if ch < 0x80 && (ch as u8).is_ascii_digit() {
+            any_digit = true;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if peek!() == wide_radix {
+        i += 1;
+        loop {
+            let ch = peek!();
+            if ch < 0x80 && (ch as u8).is_ascii_digit() {
+                any_digit = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    if any_digit {
+        let ee = peek!();
+        if ee == b'e' as u32 || ee == b'E' as u32 {
+            i += 1;
+            let sign = peek!();
+            if sign == b'+' as u32 || sign == b'-' as u32 {
+                i += 1;
+            }
+            loop {
+                let ch = peek!();
+                if ch < 0x80 && (ch as u8).is_ascii_digit() {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    (i, false)
 }
 
-/// Project the leading ASCII float prefix of `s` as NUL-terminated bytes, WITHOUT a per-call
-/// heap allocation for the common short-numeric case. ASCII whitespace after the token has
-/// started cannot extend a C float token, so it is left out of the projected parser input.
+/// Scan a bounded C-locale wide float token (leading C whitespace including
+/// `\v` `0x0b` + maximal float grammar body), returning `(len, hit_limit)`.
+unsafe fn scan_w_float_token(nptr: *const u32, limit: usize) -> (usize, bool) {
+    let mut leading = 0usize;
+    while leading < limit {
+        // SAFETY: caller guarantees `nptr` is readable through the token boundary.
+        let wc = unsafe { *nptr.add(leading) };
+        if matches!(wc, 0x09..=0x0d | 0x20) {
+            leading += 1;
+        } else {
+            break;
+        }
+    }
+    if leading == limit {
+        return (leading, true);
+    }
+    let (body_len, hit_limit) =
+        unsafe { scan_w_float_body(nptr.add(leading), limit - leading, b'.' as u32) };
+    (leading + body_len, hit_limit)
+}
+
+/// Project an ASCII wide slice `s` as NUL-terminated bytes, WITHOUT a per-call
+/// heap allocation for the common short-numeric case.
 /// `stack` and `heap` must outlive the returned slice.
 fn project_wide_ascii_into<'a>(
     s: &[u32],
     stack: &'a mut [u8; WIDE_ASCII_STACK],
     heap: &'a mut Vec<u8>,
 ) -> &'a [u8] {
-    let mut n = 0usize;
-    let mut token_started = false;
-    while n < s.len() && s[n] <= 0x7f {
-        let b = s[n] as u8;
-        if !token_started {
-            token_started = !b.is_ascii_whitespace();
-        } else if b.is_ascii_whitespace() {
-            break;
-        }
-        n += 1;
-    }
+    let n = s.len();
     if n < WIDE_ASCII_STACK {
         for i in 0..n {
             stack[i] = s[i] as u8;
@@ -5177,7 +5342,7 @@ fn project_wide_ascii_into<'a>(
     } else {
         heap.clear();
         heap.reserve(n + 1);
-        for &wc in &s[..n] {
+        for &wc in s {
             heap.push(wc as u8);
         }
         heap.push(0);
@@ -5185,67 +5350,13 @@ fn project_wide_ascii_into<'a>(
     }
 }
 
-fn ascii_eq_ignore_case(a: u8, b: u8) -> bool {
-    a.eq_ignore_ascii_case(&b)
-}
-
-fn starts_with_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.len() >= needle.len()
-        && haystack
-            .iter()
-            .zip(needle.iter())
-            .all(|(&a, &b)| ascii_eq_ignore_case(a, b))
-}
-
-fn float_stop_may_extend_at_bound(prefix: &[u8], consumed: usize) -> bool {
-    let consumed = consumed.min(prefix.len());
-    let mut token_start = 0usize;
-    while token_start < prefix.len() && prefix[token_start].is_ascii_whitespace() {
-        token_start += 1;
-    }
-    if token_start < prefix.len() && matches!(prefix[token_start], b'+' | b'-') {
-        token_start += 1;
-    }
-    if token_start >= prefix.len() {
-        return true;
-    }
-
-    let token = &prefix[token_start..];
-    let suffix = &prefix[consumed..];
-    if starts_with_ignore_case(token, b"inf")
-        && consumed >= token_start + 3
-        && suffix.len() < b"inity".len()
-        && starts_with_ignore_case(b"inity", suffix)
-    {
-        return true;
-    }
-    if starts_with_ignore_case(token, b"nan") && consumed == token_start + 3 {
-        return matches!(suffix.first(), Some(b'('))
-            && suffix[1..]
-                .iter()
-                .all(|b| b.is_ascii_alphanumeric() || *b == b'_');
-    }
-
-    if suffix.len() <= 2
-        && matches!(suffix.first(), Some(b'e' | b'E' | b'p' | b'P'))
-        && suffix.get(1).is_none_or(|b| matches!(*b, b'+' | b'-'))
-    {
-        return true;
-    }
-    consumed == token_start + 1
-        && prefix[token_start] == b'0'
-        && matches!(suffix, [b'x' | b'X'] | [b'x' | b'X', b'.'])
-}
-
-/// Shared body for the wide float parsers (`wcstod`/`wcstof`). Returns
+/// Shared body for the wide float parsers (`wcstod`/`wcstof`/`wcstold`). Returns
 /// `(value, consumed, is_erange)`; the caller writes `endptr`/`errno`.
 ///
-/// KEY: scans the wide string BOUNDED to `WIDE_FLOAT_SCAN`, not to the NUL. glibc's wcstod
-/// reads only the numeric prefix — O(number). fl's old `scan_w_string(None)` + full projection
-/// was O(whole buffer), so a short number followed by a long tail (or repeated parsing across a
-/// big buffer) was 16-125x slower than glibc (measured wcstod_longbuf_ab). A real number lives
-/// in the bounded window; only if it fills the entire all-ASCII window with no NUL (i.e. it may
-/// legitimately extend past the bound) do we re-scan unbounded for an exact value/endptr.
+/// KEY: scans only the grammar-bounded float token (`scan_w_float_token`), not
+/// to the string's NUL. This is both O(number) (avoiding O(buffer) scans) and
+/// guard-page safe (never reading past the first non-float character such as
+/// `'x'` in `L"3.5x"`).
 pub(crate) unsafe fn wide_parse_float<T: Copy>(
     nptr: *const libc::wchar_t,
     locale: NumericLocale,
@@ -5258,7 +5369,7 @@ pub(crate) unsafe fn wide_parse_float<T: Copy>(
         let bound = known_remaining(nptr as usize).map_or(usize::MAX, bytes_to_wchars);
         let mut leading = 0;
         while leading < bound {
-            // SAFETY: each read is before the string's NUL and inside a known
+            // SAFETY: each read is before the token boundary and inside a known
             // allocation when available. Only initial LC_CTYPE space is skipped.
             let wc = unsafe { *nptr.add(leading) as u32 };
             if wc == 0 || !locale.wide_is_space(wc) {
@@ -5273,36 +5384,35 @@ pub(crate) unsafe fn wide_parse_float<T: Copy>(
             .ok()
             .filter(u8::is_ascii)
             .unwrap_or(0xff);
-        let mut len = 0;
-        while leading + len < bound {
-            // SAFETY: same bounded, NUL-terminated input as above.
-            let wc = unsafe { *nptr.add(leading + len) as u32 };
-            let byte = if wc == locale.wide_radix {
-                radix
-            } else if wc < 0x80 {
-                let byte = wc as u8;
-                if !(byte.is_ascii_alphanumeric()
-                    || matches!(byte, b'+' | b'-' | b'.' | b'(' | b')' | b'_'))
-                {
-                    break;
-                }
-                byte
-            } else {
-                break;
-            };
-            if len < WIDE_ASCII_STACK {
-                ascii_stack[len] = byte;
-            } else {
-                if len == WIDE_ASCII_STACK {
-                    ascii_heap.extend_from_slice(&ascii_stack);
-                }
-                ascii_heap.push(byte);
-            }
-            len += 1;
-        }
+        let (len, _) = unsafe {
+            scan_w_float_body(
+                (nptr as *const u32).add(leading),
+                bound - leading,
+                locale.wide_radix,
+            )
+        };
         let projected = if len <= WIDE_ASCII_STACK {
+            for i in 0..len {
+                // SAFETY: `len` was scanned within `bound - leading`.
+                let wc = unsafe { *nptr.add(leading + i) as u32 };
+                ascii_stack[i] = if wc == locale.wide_radix {
+                    radix
+                } else {
+                    wc as u8
+                };
+            }
             &ascii_stack[..len]
         } else {
+            ascii_heap.reserve(len);
+            for i in 0..len {
+                // SAFETY: `len` was scanned within `bound - leading`.
+                let wc = unsafe { *nptr.add(leading + i) as u32 };
+                ascii_heap.push(if wc == locale.wide_radix {
+                    radix
+                } else {
+                    wc as u8
+                });
+            }
             &ascii_heap[..]
         };
         let token =
@@ -5315,36 +5425,22 @@ pub(crate) unsafe fn wide_parse_float<T: Copy>(
             erange,
         );
     }
-    // SAFETY: bounded scan; reads at most WIDE_FLOAT_SCAN wchars from a valid wide string.
-    let (len, term) = unsafe { scan_w_float_window(nptr as *const u32, WIDE_FLOAT_SCAN) };
-    // SAFETY: bounded by the measured length.
+    // SAFETY: grammar-bounded scan; reads at most WIDE_FLOAT_SCAN wchars and
+    // never reads past the first non-matching character.
+    let (mut len, hit_limit) = unsafe { scan_w_float_token(nptr as *const u32, WIDE_FLOAT_SCAN) };
+    if hit_limit {
+        // Long float (> WIDE_FLOAT_SCAN wchars): finish scanning the exact
+        // grammar token without ever crossing past the token boundary.
+        let (flen, _) = unsafe { scan_w_float_token(nptr as *const u32, usize::MAX) };
+        len = flen;
+    }
+    // SAFETY: bounded by the measured ASCII token length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
-    let ascii_len = projected.len() - 1; // minus the terminating NUL
-    let ascii_prefix = &projected[..ascii_len];
     let (value, consumed, exact) = parse(projected);
-    // Extend only when the number MIGHT be truncated by the bound: the whole bounded window
-    // was ASCII (projection reached `len`, not stopped early by a non-ASCII char), there was no
-    // NUL within the bound (buffer continues), and the first window does not prove the token
-    // boundary. Long ASCII tails after a short number stay on the bounded path.
-    let need_extend = !term
-        && ascii_len == len
-        && (consumed == 0
-            || consumed >= ascii_len
-            || float_stop_may_extend_at_bound(ascii_prefix, consumed));
-    let erange_short =
+    let erange =
         consumed > 0 && is_erange(value, &projected[..consumed.min(projected.len())], exact);
-    if need_extend {
-        // SAFETY: unbounded scan of the same valid wide string.
-        let (flen, _) = unsafe { scan_w_string(nptr as *const u32, None) };
-        // SAFETY: bounded by the measured full length.
-        let fslice = unsafe { std::slice::from_raw_parts(nptr as *const u32, flen) };
-        let fprojected = project_wide_ascii_into(fslice, &mut ascii_stack, &mut ascii_heap);
-        let (v, c, e) = parse(fprojected);
-        let erange = c > 0 && is_erange(v, &fprojected[..c.min(fprojected.len())], e);
-        return (v, c, erange);
-    }
-    (value, consumed, erange_short)
+    (value, consumed, erange)
 }
 
 /// Shared body for the wide integer parsers (`wcstol`/`wcstoul`). Returns the parser's
@@ -9648,26 +9744,35 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
 // wmemrchr  (GNU extension)
 // ---------------------------------------------------------------------------
 
+#[inline(never)]
+unsafe extern "C" fn wmemrchr_strict(s: *const u32, c: u32, n: usize) -> *mut u32 {
+    unsafe {
+        let slice = std::slice::from_raw_parts(s, n);
+        match frankenlibc_core::string::wide::wmemrchr(slice, c, n) {
+            Some(i) => s.add(i) as *mut u32,
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     if n == 0 || s.is_null() {
         return std::ptr::null_mut();
     }
 
-    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
-    // (`scan_len == n`), byte-identical to the strict body — reverse scan of `n`
-    // elements for the last `c`. Skips the decide + observe membrane tax, while
-    // reusing the core SIMD reverse scanner instead of a scalar ABI loop.
+    // Strict-mode fast path (DEFAULT deployed): sibling tail-call keeps
+    // `wmemrchr` 0-push frameless instead of renting the validating frame.
     if runtime_policy::strict_passthrough_active() {
-        return unsafe {
-            let slice = std::slice::from_raw_parts(s, n);
-            match frankenlibc_core::string::wide::wmemrchr(slice, c, n) {
-                Some(i) => s.add(i) as *mut u32,
-                None => std::ptr::null_mut(),
-            }
-        };
+        return unsafe { wmemrchr_strict(s, c, n) };
     }
 
+    unsafe { wmemrchr_validating(s, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn wmemrchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
