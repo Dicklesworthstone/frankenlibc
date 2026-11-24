@@ -5,8 +5,11 @@
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 
+#[path = "../src/util.rs"]
+mod util;
+
 #[allow(dead_code)]
-static OPERATIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static OPERATIONS: util::AbiReentrantMutex<(), true> = util::AbiReentrantMutex::new_kernel_tid(());
 
 #[allow(dead_code)]
 #[path = "../src/dlfcn_search.rs"]

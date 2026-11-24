@@ -22,7 +22,7 @@ use super::{Mapping, map_layout::IMAGE_PAGE_SIZE, raw_syscall};
 #[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
 use crate::owned_unwind_abi::{__deregister_frame, __register_frame};
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[cfg(not(any(feature = "standalone", feature = "owned-unwind-stub")))]
 #[repr(C)]
 struct DwarfEhBases {
     tbase: *const c_void,
@@ -34,6 +34,10 @@ struct DwarfEhBases {
 unsafe extern "C" {
     fn __register_frame(frame: *mut c_void);
     fn __deregister_frame(frame: *mut c_void);
+}
+
+#[cfg(not(any(feature = "standalone", feature = "owned-unwind-stub")))]
+unsafe extern "C" {
     fn _Unwind_Find_FDE(pc: *const c_void, bases: *mut DwarfEhBases) -> *const c_void;
 }
 
@@ -116,7 +120,7 @@ impl Frames {
         // `malloc@plt`/`free@plt` on the first forced unwind through this DSO;
         // if that unwind runs on a native clone sharing the creator's `%fs`,
         // host glibc `tcache` mutations race with the creator and abort.
-        #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+        #[cfg(not(any(feature = "standalone", feature = "owned-unwind-stub")))]
         if frankenlibc_core::pthread::thread::current_thread_handle().is_none()
             && !crate::malloc_abi::raw_shared_tls_clone_active()
         {
