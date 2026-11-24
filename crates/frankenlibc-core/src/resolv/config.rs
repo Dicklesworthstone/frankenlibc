@@ -14,7 +14,7 @@
 //!
 //! If no nameservers are specified, defaults to 127.0.0.1.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 // ---------------------------------------------------------------------------
 // Configuration Limits
@@ -51,6 +51,11 @@ pub const DEFAULT_NDOTS: u32 = 1;
 pub struct ResolverConfig {
     /// List of nameserver IP addresses (up to MAX_NAMESERVERS)
     pub nameservers: Vec<IpAddr>,
+    /// Nonzero IPv6 interface scopes, keyed by both slot and IP. The same
+    /// link-local address can identify different servers on different links.
+    /// Binding to the IP keeps ordinary edits to `nameservers` from applying
+    /// another server's interface to a replacement address.
+    pub nameserver_scopes: Vec<(usize, Ipv6Addr, u32)>,
     /// Local domain name
     pub domain: Option<String>,
     /// Search list for hostname lookup
@@ -88,6 +93,7 @@ impl Default for ResolverConfig {
     fn default() -> Self {
         Self {
             nameservers: vec!["127.0.0.1".parse().unwrap()],
+            nameserver_scopes: Vec::new(),
             domain: None,
             search: Vec::new(),
             ndots: DEFAULT_NDOTS,
@@ -107,6 +113,7 @@ impl ResolverConfig {
     pub fn empty() -> Self {
         Self {
             nameservers: Vec::new(),
+            nameserver_scopes: Vec::new(),
             domain: None,
             search: Vec::new(),
             ndots: DEFAULT_NDOTS,
@@ -122,10 +129,19 @@ impl ResolverConfig {
 
     /// Parse configuration from /etc/resolv.conf content.
     pub fn parse(content: &[u8]) -> Self {
+        Self::parse_with_interfaces(content, |_| 0)
+    }
+
+    /// Parse with the ABI's interface-name lookup. Without a lookup, numeric
+    /// scope IDs still work and unknown interface names retain scope zero.
+    pub fn parse_with_interfaces(
+        content: &[u8],
+        mut interface_index: impl FnMut(&[u8]) -> u32,
+    ) -> Self {
         let mut config = Self::empty();
 
         for line in content.split(|&b| b == b'\n') {
-            config.parse_line(line);
+            config.parse_line(line, &mut interface_index);
         }
 
         // Apply defaults if no nameservers were specified
@@ -174,7 +190,7 @@ impl ResolverConfig {
     }
 
     /// Parse a single line from resolv.conf.
-    fn parse_line(&mut self, line: &[u8]) {
+    fn parse_line(&mut self, line: &[u8], interface_index: &mut impl FnMut(&[u8]) -> u32) {
         // Skip empty lines and comments
         let line = trim_whitespace(line);
         if line.is_empty() || line.starts_with(b"#") || line.starts_with(b";") {
@@ -195,8 +211,14 @@ impl ResolverConfig {
             b"nameserver" => {
                 if self.nameservers.len() < MAX_NAMESERVERS
                     && let Some(addr) = parts.next()
-                    && let Ok(ip) = parse_ip_addr(addr)
+                    && let Some((ip, scope)) = parse_nameserver(addr, interface_index)
                 {
+                    if let IpAddr::V6(v6) = ip
+                        && scope != 0
+                    {
+                        self.nameserver_scopes
+                            .push((self.nameservers.len(), v6, scope));
+                    }
                     self.nameservers.push(ip);
                 }
             }
@@ -268,6 +290,20 @@ impl ResolverConfig {
         // Other options are silently ignored
     }
 
+    /// Address passed to the transport, including an IPv6 nameserver's interface.
+    pub fn nameserver_endpoint(&self, index: usize) -> SocketAddr {
+        let ip = self.nameservers[index];
+        if let IpAddr::V6(v6) = ip
+            && let Some(&(_, _, scope)) = self
+                .nameserver_scopes
+                .iter()
+                .find(|&&(i, addr, _)| i == index && addr == v6)
+        {
+            return SocketAddr::V6(SocketAddrV6::new(v6, DNS_PORT, 0, scope));
+        }
+        SocketAddr::new(ip, DNS_PORT)
+    }
+
     /// Get the total timeout for a single query (per nameserver).
     pub fn query_timeout(&self) -> core::time::Duration {
         core::time::Duration::from_secs(self.timeout as u64)
@@ -305,9 +341,35 @@ impl ResolverConfig {
 // ---------------------------------------------------------------------------
 
 /// Parse an IP address from bytes.
-fn parse_ip_addr(bytes: &[u8]) -> Result<IpAddr, ()> {
-    let s = core::str::from_utf8(bytes).map_err(|_| ())?;
-    s.parse().map_err(|_| ())
+fn parse_nameserver(
+    bytes: &[u8],
+    interface_index: &mut impl FnMut(&[u8]) -> u32,
+) -> Option<(IpAddr, u32)> {
+    let Some(separator) = bytes.iter().position(|&byte| byte == b'%') else {
+        return Some((core::str::from_utf8(bytes).ok()?.parse().ok()?, 0));
+    };
+    let ip: Ipv6Addr = core::str::from_utf8(&bytes[..separator])
+        .ok()?
+        .parse()
+        .ok()?;
+    let zone = &bytes[separator + 1..];
+    let octets = ip.octets();
+    let local =
+        ip.is_unicast_link_local() || (ip.is_multicast() && matches!(octets[1] & 15, 1 | 2));
+    let interface = if local && !zone.is_empty() {
+        interface_index(zone)
+    } else {
+        0
+    };
+    let scope = if interface != 0 {
+        interface
+    } else if zone.iter().all(u8::is_ascii_digit) {
+        parse_u32(zone).unwrap_or(0)
+    } else {
+        // res_ninit retains valid IPv6 literals with an unrecognized zone.
+        0
+    };
+    Some((IpAddr::V6(ip), scope))
 }
 
 /// Parse a u32 from bytes.
