@@ -30,7 +30,6 @@
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::syscall;
 
-use crate::rcu;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -105,24 +104,38 @@ pub struct TlsEntry {
 // Global key registry
 // ---------------------------------------------------------------------------
 
-/// A single slot in the global key registry.
-#[derive(Clone, Copy)]
+/// Ten low bits encode the slot. Retire a slot when its generation no longer
+/// fits in the key, so a long-lived thread's stale value can never match again.
+const LAST_KEY_GENERATION: u32 = u32::MAX >> 10;
+
+// Allocators create keys during bootstrap, so registry storage must already
+// exist. Permanently retaining a new snapshot per update exhausted memory in
+// processes that repeatedly created and deleted keys.
 struct KeySlot {
-    in_use: bool,
-    destructor: Option<unsafe extern "C" fn(*mut c_void)>,
-    /// Generation counter — incremented on create and delete to detect stale keys.
-    seq: u32,
+    /// Odd when allocated, even when free. Writers hold KeyRegistryWriteGuard.
+    generation: AtomicU32,
+    destructor: core::sync::atomic::AtomicPtr<()>,
 }
 
-struct KeyRegistry {
-    slots: [KeySlot; TLS_KEY_SLOTS],
+impl KeySlot {
+    const EMPTY: Self = Self {
+        generation: AtomicU32::new(0),
+        destructor: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+    };
+
+    /// Seeing the destructor store for a later key also observes the earlier
+    /// deletion, so the second generation check rejects the mixed snapshot.
+    fn snapshot(&self) -> Option<(u32, *mut ())> {
+        let generation = self.generation.load(Ordering::Acquire);
+        if generation & 1 == 0 {
+            return None;
+        }
+        let destructor = self.destructor.load(Ordering::Acquire);
+        (self.generation.load(Ordering::Acquire) == generation).then_some((generation, destructor))
+    }
 }
 
-/// RCU-protected key registry for lock-free reads on the hot path.
-/// Writers serialize via KEY_WRITE_OWNER and publish new versions atomically.
-/// Old versions are intentionally leaked (bounded: ~16KB per key lifecycle
-/// call, typically < 100 calls in a program's lifetime).
-static KEY_REGISTRY_RCU: rcu::RcuDomain<KeyRegistry> = rcu::RcuDomain::new();
+static KEY_SLOTS: [KeySlot; TLS_KEY_SLOTS] = [const { KeySlot::EMPTY }; TLS_KEY_SLOTS];
 
 /// PID/TID of the key-registry writer. A fork child may take ownership from a
 /// vanished parent writer instead of inheriting a permanently locked mutex.
@@ -1407,61 +1420,12 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Copy a registry into fresh anonymous storage without calling the allocator
-/// or an interposed string routine.
-///
-/// pthread_key_create must not call malloc: a program that brings its own
-/// allocator creates keys while initialising it (jemalloc's malloc_tsd_boot0,
-/// in rustc among others), and a heap allocation here re-entered that half-
-/// initialised allocator, which returned NULL, and fl's allocation-failure
-/// handler aborted the process ('memory allocation of 16384 bytes failed').
-/// glibc keeps its keys in static storage. Versions are never freed (the RCU
-/// update leaks the old one by design), so a private anonymous mapping per
-/// version costs nothing extra. Scalar volatile stores also prevent LLVM from
-/// turning a registry copy into memcpy while the writer lock is held: memcpy
-/// can initialize an internal owned cache, which needs another POSIX key.
-fn copy_registry(registry: Option<&KeyRegistry>) -> Result<*mut KeyRegistry, i32> {
-    use crate::mmap::{MAP_ANONYMOUS, MAP_PRIVATE, PROT_READ, PROT_WRITE};
-    // SAFETY: a fresh private anonymous mapping, owned by nobody else.
-    let mapped = unsafe {
-        syscall::sys_mmap(
-            core::ptr::null_mut(),
-            core::mem::size_of::<KeyRegistry>(),
-            PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS,
-            -1,
-            0,
-        )
-    };
-    // Page-aligned, so aligned for KeyRegistry. Allocation failure must not
-    // fall back into an allocator that might itself be creating a TLS key.
-    let new_ptr = mapped.map_err(|_| EAGAIN)?.cast::<KeyRegistry>();
-    for index in 0..TLS_KEY_SLOTS {
-        let (in_use, destructor, seq) = match registry {
-            Some(old) => {
-                let slot = &old.slots[index];
-                (slot.in_use, slot.destructor, slot.seq)
-            }
-            None => (false, None, 0),
-        };
-        // SAFETY: the mapping covers the complete array and is not published.
-        // Initialize fields individually; never read uninitialized padding.
-        unsafe {
-            let slot = core::ptr::addr_of_mut!((*new_ptr).slots[index]);
-            core::ptr::addr_of_mut!((*slot).in_use).write_volatile(in_use);
-            core::ptr::addr_of_mut!((*slot).destructor).write_volatile(destructor);
-            core::ptr::addr_of_mut!((*slot).seq).write_volatile(seq);
-        }
-    }
-    Ok(new_ptr)
-}
-
 /// Creates a thread-local storage key.
 ///
 /// Equivalent to C `pthread_key_create`. The optional `destructor` is called
 /// when a thread exits with a non-null value for this key.
 ///
-/// Returns 0 on success, `EAGAIN` if keys or registry storage are exhausted.
+/// Returns 0 on success, `EAGAIN` if the key space is exhausted.
 pub fn pthread_key_create(
     key: &mut PthreadKey,
     destructor: Option<unsafe extern "C" fn(*mut c_void)>,
@@ -1490,28 +1454,16 @@ fn create_key_in_domain(
     capacity: usize,
 ) -> i32 {
     let _write_guard = KeyRegistryWriteGuard::lock();
-    // SAFETY: published versions remain live permanently, and this guard
-    // serializes every writer. No large stack temporary or memcpy is needed.
-    let current = unsafe { KEY_REGISTRY_RCU.read() };
-
-    for i in offset..offset + capacity {
-        if current.is_none_or(|registry| !registry.slots[i].in_use) {
-            let new_ptr = match copy_registry(current) {
-                Ok(ptr) => ptr,
-                Err(error) => return error,
-            };
-            // SAFETY: this unpublished version is uniquely owned here.
-            let slot = unsafe { &mut (*new_ptr).slots[i] };
-            slot.in_use = true;
-            slot.destructor = destructor;
-            slot.seq = slot.seq.wrapping_add(1);
-            let id = (slot.seq << 10) | ((i - offset) as u32);
-
-            // Publish new version via RCU.
-            let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
-            *key = id;
-            // Old version is intentionally leaked. key_create is called O(1)
-            // times; each version is ~16KB. Avoids QSBR synchronize deadlocks.
+    for (index, slot) in KEY_SLOTS[offset..offset + capacity].iter().enumerate() {
+        let previous = slot.generation.load(Ordering::Relaxed);
+        if previous & 1 == 0 && previous < LAST_KEY_GENERATION {
+            let generation = previous + 1;
+            slot.destructor.store(
+                destructor.map_or(core::ptr::null_mut(), |callback| callback as *mut ()),
+                Ordering::Release,
+            );
+            slot.generation.store(generation, Ordering::Release);
+            *key = (generation << 10) | index as u32;
             return 0;
         }
     }
@@ -1531,26 +1483,13 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
         return EINVAL;
     }
     let _write_guard = KeyRegistryWriteGuard::lock();
-    // SAFETY: published versions remain live and writers are serialized.
-    let Some(current) = (unsafe { KEY_REGISTRY_RCU.read() }) else {
-        return EINVAL;
-    };
-    if !current.slots[id].in_use || current.slots[id].seq != expected_seq {
+    let slot = &KEY_SLOTS[id];
+    if expected_seq & 1 == 0 || slot.generation.load(Ordering::Relaxed) != expected_seq {
         return EINVAL;
     }
-    let new_ptr = match copy_registry(Some(current)) {
-        Ok(ptr) => ptr,
-        Err(error) => return error,
-    };
-    // SAFETY: this unpublished version is uniquely owned here.
-    let slot = unsafe { &mut (*new_ptr).slots[id] };
-    slot.in_use = false;
-    slot.destructor = None;
-    slot.seq = slot.seq.wrapping_add(1);
-
-    // Publish new version via RCU.
-    let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
-    // Old version intentionally leaked (same rationale as key_create).
+    // The next creation overwrites the callback before publishing a new odd
+    // generation. Leaving it untouched here keeps deletion a single store.
+    slot.generation.store(expected_seq + 1, Ordering::Release);
     0
 }
 
@@ -1609,26 +1548,10 @@ pub unsafe fn internal_tls_setspecific(key: InternalTlsKey, value: u64) -> i32 {
 }
 
 fn set_specific_entry(id: usize, expected_seq: u32, value: u64) -> i32 {
-    let tid = current_tid();
-
-    // Ensure RCU registration for lock-free reads.
-    let _ = rcu::rcu_register_thread(tid as u32);
-
-    // Validate key is active via RCU read (no mutex).
-    rcu::rcu_read_lock();
-    let in_use = unsafe {
-        match KEY_REGISTRY_RCU.read() {
-            Some(reg) => reg.slots[id].in_use && reg.slots[id].seq == expected_seq,
-            None => false,
-        }
-    };
-    rcu::rcu_read_unlock();
-    rcu::rcu_quiescent_state(tid as u32);
-
-    if !in_use {
+    if expected_seq & 1 == 0 || KEY_SLOTS[id].generation.load(Ordering::Acquire) != expected_seq {
         return EINVAL;
     }
-    write_tls_value(tid, id, expected_seq, value);
+    write_tls_value(current_tid(), id, expected_seq, value);
     0
 }
 
@@ -1645,12 +1568,7 @@ fn set_specific_entry(id: usize, expected_seq: u32, value: u64) -> i32 {
 /// **Allocation-free** — safe to call from clone-based threads.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
-    if !table_register(tid, values_ptr) {
-        return false;
-    }
-    // Register with RCU for lock-free KEY_REGISTRY reads.
-    let _ = rcu::rcu_register_thread(tid as u32);
-    true
+    table_register(tid, values_ptr)
 }
 
 static NATIVE_POST_TEARDOWN_HOOK: std::sync::OnceLock<fn(i32)> = std::sync::OnceLock::new();
@@ -1682,7 +1600,6 @@ pub(crate) fn run_native_post_handle_drop_hook(tid: i32) {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn discard_thread_tls_before_entry(tid: i32) {
     table_remove(tid);
-    let _ = rcu::rcu_unregister_thread(tid as u32);
 }
 
 /// Run the POSIX key destructors of the exiting thread `tid`: the hook for
@@ -1718,7 +1635,7 @@ pub(crate) fn teardown_native_thread_tls(tid: i32) {
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: usize, end: usize) {
+fn run_thread_key_destructor_rounds(_tid: i32, values_ptr: *mut TlsEntry, first: usize, end: usize) {
     // Native threads own the block in their ThreadHandle. Their inherited
     // hardware TLS can still belong to the creator, so neither access nor
     // reclaim fallback storage when this registered block exists.
@@ -1727,23 +1644,14 @@ fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: 
     let fallback_values_ptr = if registered {
         core::ptr::null_mut()
     } else {
-        fallback_table_lookup(tid)
+        fallback_table_lookup(_tid)
     };
-
-    // Ensure RCU registration for lock-free registry reads. Required for the
-    // registered-thread path; the fallback path also needs an RCU read lock to
-    // snapshot the key registry safely.
-    let _ = rcu::rcu_register_thread(tid as u32);
 
     for _iteration in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
         let mut called = false;
-        for index in first..end {
-            rcu::rcu_read_lock();
-            // SAFETY: the read section protects the immutable registry. Copy
-            // one slot so no registry reference escapes into a destructor.
-            let slot = unsafe { KEY_REGISTRY_RCU.read().map(|reg| reg.slots[index]) };
-            rcu::rcu_read_unlock();
-            let Some(slot) = slot.filter(|slot| slot.in_use) else {
+        for (offset, slot) in KEY_SLOTS[first..end].iter().enumerate() {
+            let index = first + offset;
+            let Some((generation, destructor)) = slot.snapshot() else {
                 continue;
             };
 
@@ -1751,7 +1659,7 @@ fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: 
                 // SAFETY: this thread exclusively owns its registered block,
                 // which remains live until all destructor rounds finish.
                 let entry = unsafe { &mut *values_ptr.add(index) };
-                if entry.seq == slot.seq {
+                if entry.seq == generation {
                     core::mem::replace(&mut entry.value, 0)
                 } else {
                     0
@@ -1761,7 +1669,7 @@ fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: 
                 {
                     FALLBACK_TLS_VALUES.with(|values| {
                         let entry = values.get(index);
-                        if entry.seq == slot.seq && entry.value != 0 {
+                        if entry.seq == generation && entry.value != 0 {
                             values.set(
                                 index,
                                 TlsEntry {
@@ -1783,7 +1691,7 @@ fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: 
                         // SAFETY: this unregistered thread owns the fallback
                         // block until it is removed below, after all callbacks.
                         let entry = unsafe { &mut *fallback_values_ptr.add(index) };
-                        if entry.seq == slot.seq {
+                        if entry.seq == generation {
                             core::mem::replace(&mut entry.value, 0)
                         } else {
                             0
@@ -1791,27 +1699,21 @@ fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: 
                     }
                 }
             };
-            if value != 0
-                && let Some(dtor) = slot.destructor
-            {
+            if value != 0 && !destructor.is_null() {
                 called = true;
-                // QSBR read_unlock is a no-op: explicitly leave the read
-                // period before running application code.
-                rcu::rcu_quiescent_state(tid as u32);
                 // SAFETY: the callback was registered for this generation,
                 // and the owning thread's value was cleared before the call.
                 // C and C-unwind share the machine ABI. A destructor entered
                 // after ordinary thread return can reach a cancellation point;
                 // do not introduce a nounwind boundary around application code.
-                // No RCU guard or reference to its value spans this call, and
+                // No registry guard or reference to its value spans this call, and
                 // clearing the value first prevents a resumed teardown from
                 // invoking the same destructor again.
                 let dtor: unsafe extern "C-unwind" fn(*mut c_void) =
-                    unsafe { core::mem::transmute(dtor) };
+                    unsafe { core::mem::transmute(destructor) };
                 unsafe { dtor(value as *mut c_void) };
             }
         }
-        rcu::rcu_quiescent_state(tid as u32);
         if !called {
             break;
         }
@@ -1888,7 +1790,6 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
         }
         retire_unregistered_cancellation(tid);
     }
-    let _ = rcu::rcu_unregister_thread(tid as u32);
 }
 
 // ---------------------------------------------------------------------------
@@ -1898,13 +1799,11 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
 /// Reset all TLS global state. For testing only.
 #[cfg(test)]
 pub(crate) fn reset_tls_state() {
-    // Reset RCU global state (epoch, reader slots, callbacks).
-    crate::rcu::reset_rcu_state();
-
-    // Publish a fresh empty registry. Readers may still retain the old
-    // immutable version, which is leaked like every production update.
-    let fresh = copy_registry(None).expect("test TLS registry mapping");
-    let _old = unsafe { KEY_REGISTRY_RCU.update(fresh) };
+    for slot in &KEY_SLOTS {
+        slot.generation.store(0, Ordering::Release);
+        slot.destructor
+            .store(core::ptr::null_mut(), Ordering::Release);
+    }
 
     // Clear the table.
     for i in 0..TLS_TABLE_SLOTS {
@@ -2731,27 +2630,71 @@ mod tests {
     }
 
     #[test]
+    fn key_reuse_needs_no_additional_address_space() {
+        let _g = lock_and_reset();
+        let child = syscall::sys_clone_fork(17).expect("fork");
+        if child == 0 {
+            syscall::sys_alarm(3);
+            // New mappings fail even when the parent has abundant memory.
+            // Existing data and stack remain accessible in this child.
+            let limit = [0u64; 2];
+            if unsafe {
+                syscall::sys_prlimit64(
+                    0,
+                    crate::resource::RLIMIT_AS as u32,
+                    limit.as_ptr().cast(),
+                    core::ptr::null_mut(),
+                )
+            }
+            .is_err()
+            {
+                syscall::sys_exit_group(1);
+            }
+            for _ in 0..4096 {
+                let mut key = PthreadKey::default();
+                if pthread_key_create(&mut key, None) != 0 || pthread_key_delete(key) != 0 {
+                    syscall::sys_exit_group(2);
+                }
+            }
+            syscall::sys_exit_group(0);
+        }
+        let mut status = -1;
+        // SAFETY: status is writable, no resource-usage output is requested.
+        assert_eq!(
+            unsafe { syscall::sys_wait4(child, &mut status, 0, core::ptr::null_mut()) },
+            Ok(child)
+        );
+        assert_eq!(status, 0);
+    }
+
+    #[test]
+    fn exhausted_generation_never_aliases_stale_values() {
+        let _g = lock_and_reset();
+        KEY_SLOTS[0]
+            .generation
+            .store(LAST_KEY_GENERATION - 1, Ordering::Release);
+        let last = create_key(None);
+        assert_eq!(last.id >> 10, LAST_KEY_GENERATION);
+        assert_eq!(pthread_setspecific(last, 0xbeef), 0);
+        assert_eq!(pthread_key_delete(last), 0);
+        let next = create_key(None);
+        assert_eq!(next.id & 1023, 1);
+        assert_eq!(pthread_setspecific(next, 0xcafe), 0);
+        assert_eq!(pthread_getspecific(next), 0xcafe);
+        assert_eq!(pthread_setspecific(last, 1), EINVAL);
+    }
+
+    #[test]
     fn generation_counter_increments_on_create_and_delete() {
         let _g = lock_and_reset();
         let k = create_key(None);
         let slot = (k.id & 1023) as usize; // Extract slot index from lower 10 bits
 
-        // Read initial seq via RCU.
-        let seq_after_create = unsafe {
-            KEY_REGISTRY_RCU
-                .read()
-                .map(|r| r.slots[slot].seq)
-                .unwrap_or(0)
-        };
+        let seq_after_create = KEY_SLOTS[slot].generation.load(Ordering::Acquire);
         assert!(seq_after_create >= 1, "seq should be >= 1 after create");
 
         assert_eq!(pthread_key_delete(k), 0);
-        let seq_after_delete = unsafe {
-            KEY_REGISTRY_RCU
-                .read()
-                .map(|r| r.slots[slot].seq)
-                .unwrap_or(0)
-        };
+        let seq_after_delete = KEY_SLOTS[slot].generation.load(Ordering::Acquire);
         assert_eq!(
             seq_after_delete,
             seq_after_create + 1,
