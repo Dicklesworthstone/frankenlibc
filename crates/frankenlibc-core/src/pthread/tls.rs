@@ -76,6 +76,7 @@ const fn is_tls_slot_claiming(stored: i32) -> bool {
 }
 
 const EAGAIN: i32 = 11;
+const ENOMEM: i32 = 12;
 const EINVAL: i32 = 22;
 
 /// Thread-local storage key.
@@ -326,16 +327,16 @@ impl FallbackTls {
         unsafe { (*spill.add(key_id - FALLBACK_INLINE_KEYS)).get() }
     }
 
-    fn set(&self, key_id: usize, entry: TlsEntry) {
+    fn set(&self, key_id: usize, entry: TlsEntry) -> i32 {
         if key_id < FALLBACK_INLINE_KEYS {
             self.inline[key_id].set(entry);
-            return;
+            return 0;
         }
         let mut spill = self.spill.get();
         if spill.is_null() {
             if entry.value == 0 {
                 // Clearing a never-set high key: nothing to store.
-                return;
+                return 0;
             }
             // Private runtime keys can be initialized by the allocator itself.
             // A Box would recurse before its owned cache slot is published.
@@ -351,16 +352,17 @@ impl FallbackTls {
                     -1,
                     0,
                 )
-                .unwrap_or_else(|_| std::process::abort())
+                .unwrap_or(core::ptr::null_mut())
                 .cast()
             };
             if spill.is_null() {
-                std::process::abort();
+                return ENOMEM;
             }
             self.spill.set(spill);
         }
         // SAFETY: as in `get`.
         unsafe { (*spill.add(key_id - FALLBACK_INLINE_KEYS)).set(entry) };
+        0
     }
 
     #[cfg(test)]
@@ -413,7 +415,7 @@ fn allocate_fallback_tls_block() -> *mut TlsEntry {
             -1,
             0,
         )
-        .unwrap_or_else(|_| std::process::abort())
+        .unwrap_or(core::ptr::null_mut())
         .cast()
     }
 }
@@ -475,13 +477,25 @@ fn fallback_table_lookup(tid: i32) -> *mut TlsEntry {
 }
 
 #[cfg(feature = "owned-tls-cache")]
+fn publish_fallback_block(index: usize, tid: i32) -> *mut TlsEntry {
+    let values = fallback_tls_block_for_slot(index);
+    if values.is_null() {
+        // Release our claim without breaking a concurrent probe chain.
+        FALLBACK_TLS_TIDS[index].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
+    } else {
+        FALLBACK_TLS_PTRS[index].store(values as usize, Ordering::Relaxed);
+        FALLBACK_TLS_TIDS[index].store(tid, Ordering::Release);
+    }
+    values
+}
+
+#[cfg(feature = "owned-tls-cache")]
 fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
     if tid <= 0 {
         return core::ptr::null_mut();
     }
     let self_claiming = tls_slot_claiming_for_tid(tid);
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
-    let mut owned_ptr: *mut TlsEntry = core::ptr::null_mut();
 
     'retry: for _ in 0..16 {
         let mut first_tombstone: Option<usize> = None;
@@ -490,19 +504,12 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
             let mut current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
             while is_tls_slot_claiming(current) {
                 if current == self_claiming {
-                    if !owned_ptr.is_null() {
-                        unsafe { drop_fallback_tls_block(owned_ptr) };
-                    }
                     return core::ptr::null_mut();
                 }
                 core::hint::spin_loop();
                 current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
             }
             if current == tid {
-                if !owned_ptr.is_null() {
-                    // SAFETY: owned_ptr was allocated in this call and never stored.
-                    unsafe { drop_fallback_tls_block(owned_ptr) };
-                }
                 return FALLBACK_TLS_PTRS[idx].load(Ordering::Acquire) as *mut TlsEntry;
             }
 
@@ -522,12 +529,7 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
                     .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
-                    if owned_ptr.is_null() {
-                        owned_ptr = fallback_tls_block_for_slot(target);
-                    }
-                    FALLBACK_TLS_PTRS[target].store(owned_ptr as usize, Ordering::Relaxed);
-                    FALLBACK_TLS_TIDS[target].store(tid, Ordering::Release);
-                    return owned_ptr;
+                    return publish_fallback_block(target, tid);
                 }
                 continue 'retry;
             }
@@ -543,22 +545,13 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
                 )
                 .is_ok()
             {
-                if owned_ptr.is_null() {
-                    owned_ptr = fallback_tls_block_for_slot(tomb_idx);
-                }
-                FALLBACK_TLS_PTRS[tomb_idx].store(owned_ptr as usize, Ordering::Relaxed);
-                FALLBACK_TLS_TIDS[tomb_idx].store(tid, Ordering::Release);
-                return owned_ptr;
+                return publish_fallback_block(tomb_idx, tid);
             }
             continue 'retry;
         }
         break;
     }
 
-    if !owned_ptr.is_null() {
-        // SAFETY: owned_ptr was allocated in this call and never stored.
-        unsafe { drop_fallback_tls_block(owned_ptr) };
-    }
     core::ptr::null_mut()
 }
 
@@ -1375,7 +1368,7 @@ fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
 
 /// Write a TLS value for the given TID and key index.
 /// Falls back to thread-local storage if the TID is not in the table.
-fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
+fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) -> i32 {
     let ptr = table_lookup(tid);
     if !ptr.is_null() {
         // SAFETY: ptr points to a valid `[TlsEntry; TLS_KEY_SLOTS]` owned by this
@@ -1385,6 +1378,7 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
             (*entry).seq = expected_seq;
             (*entry).value = value;
         };
+        0
     } else {
         // Unregistered thread: use thread-local fallback storage.
         #[cfg(not(feature = "owned-tls-cache"))]
@@ -1396,14 +1390,18 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
                         seq: expected_seq,
                         value,
                     },
-                );
-            });
+                )
+            })
         }
         #[cfg(feature = "owned-tls-cache")]
         {
-            let fallback_ptr = fallback_table_get_or_insert(tid);
+            let fallback_ptr = if value == 0 {
+                fallback_table_lookup(tid)
+            } else {
+                fallback_table_get_or_insert(tid)
+            };
             if fallback_ptr.is_null() {
-                return;
+                return if value == 0 { 0 } else { ENOMEM };
             }
             // SAFETY: fallback_ptr points to an owned fallback block for this
             // kernel TID. Only the owning thread writes its fallback values.
@@ -1412,6 +1410,7 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
                 (*entry).seq = expected_seq;
                 (*entry).value = value;
             }
+            0
         }
     }
 }
@@ -1511,7 +1510,7 @@ pub fn pthread_getspecific(key: PthreadKey) -> u64 {
 /// Sets the value associated with the TLS key for the calling thread.
 ///
 /// Equivalent to C `pthread_setspecific`. Returns 0 on success, `EINVAL`
-/// if the key is invalid or deleted.
+/// if the key is invalid or deleted, or `ENOMEM` if storage is unavailable.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
     let id = (key.id & 1023) as usize;
@@ -1551,8 +1550,7 @@ fn set_specific_entry(id: usize, expected_seq: u32, value: u64) -> i32 {
     if expected_seq & 1 == 0 || KEY_SLOTS[id].generation.load(Ordering::Acquire) != expected_seq {
         return EINVAL;
     }
-    write_tls_value(current_tid(), id, expected_seq, value);
-    0
+    write_tls_value(current_tid(), id, expected_seq, value)
 }
 
 // ---------------------------------------------------------------------------
@@ -1635,7 +1633,12 @@ pub(crate) fn teardown_native_thread_tls(tid: i32) {
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn run_thread_key_destructor_rounds(_tid: i32, values_ptr: *mut TlsEntry, first: usize, end: usize) {
+fn run_thread_key_destructor_rounds(
+    _tid: i32,
+    values_ptr: *mut TlsEntry,
+    first: usize,
+    end: usize,
+) {
     // Native threads own the block in their ThreadHandle. Their inherited
     // hardware TLS can still belong to the creator, so neither access nor
     // reclaim fallback storage when this registered block exists.
@@ -2665,6 +2668,71 @@ mod tests {
             Ok(child)
         );
         assert_eq!(status, 0);
+    }
+
+    #[test]
+    fn setspecific_storage_failure_is_retryable() {
+        let _g = lock_and_reset();
+        let mut key = PthreadKey::default();
+        // Exceed the compiler-TLS inline slots. Both storage profiles need
+        // a fresh mapping on the first non-null write in the child.
+        for _ in 0..8 {
+            assert_eq!(pthread_key_create(&mut key, None), 0);
+        }
+        let child = syscall::sys_clone_fork(17).expect("fork");
+        if child == 0 {
+            syscall::sys_alarm(10);
+            let mut original = [0u64; 2];
+            let resource = crate::resource::RLIMIT_AS as u32;
+            // SAFETY: these buffers have Linux's two-u64 rlimit64 layout.
+            let saved = unsafe {
+                syscall::sys_prlimit64(0, resource, core::ptr::null(), original.as_mut_ptr().cast())
+            };
+            if saved.is_err() {
+                syscall::sys_exit_group(1);
+            }
+            let restricted = [0, original[1]];
+            let set_limit = |limit: &[u64; 2]| unsafe {
+                syscall::sys_prlimit64(0, resource, limit.as_ptr().cast(), core::ptr::null_mut())
+            };
+            if set_limit(&restricted).is_err()
+                || pthread_setspecific(key, 0) != 0
+                || pthread_setspecific(key, 42) != ENOMEM
+                || pthread_getspecific(key) != 0
+            {
+                syscall::sys_exit_group(2);
+            }
+            if set_limit(&original).is_err()
+                || pthread_setspecific(key, 42) != 0
+                || pthread_getspecific(key) != 42
+            {
+                syscall::sys_exit_group(3);
+            }
+            syscall::sys_exit_group(0);
+        }
+        let mut status = -1;
+        // SAFETY: status is writable, no resource-usage output is requested.
+        assert_eq!(
+            unsafe { syscall::sys_wait4(child, &mut status, 0, core::ptr::null_mut()) },
+            Ok(child)
+        );
+        assert_eq!(status, 0);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn setspecific_reports_exhausted_fallback_table() {
+        let _g = lock_and_reset();
+        let key = create_key(None);
+        for (index, tid) in FALLBACK_TLS_TIDS.iter().enumerate() {
+            tid.store(i32::MAX - index as i32, Ordering::Release);
+        }
+        assert_eq!(pthread_setspecific(key, 0), 0);
+        assert_eq!(pthread_setspecific(key, 7), ENOMEM);
+        assert_eq!(pthread_getspecific(key), 0);
+        FALLBACK_TLS_TIDS[0].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
+        assert_eq!(pthread_setspecific(key, 7), 0);
+        assert_eq!(pthread_getspecific(key), 7);
     }
 
     #[test]
