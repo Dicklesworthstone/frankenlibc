@@ -358,8 +358,9 @@ static enum nss_status host_failure(enum nss_status status, int error,
   return status;
 }
 
-static enum nss_status fill_host(int family, int large, struct hostent *host,
-                                 char *buf, size_t len, int *errnop, int *h_errnop) {
+static enum nss_status fill_host_record(const char *name, int family, int large,
+                                        struct hostent *host, char *buf, size_t len,
+                                        int *errnop, int *h_errnop) {
   if (family != AF_INET && family != AF_INET6)
     return host_failure(NSS_STATUS_UNAVAIL, EAFNOSUPPORT, errnop, h_errnop);
   size_t addrlen = family == AF_INET ? 4 : 16;
@@ -371,7 +372,7 @@ static enum nss_status fill_host(int family, int large, struct hostent *host,
   char **aliases = (char **)(buf + pad);
   char **addresses = aliases + alias_count + 1;
   char *cur = (char *)(addresses + 3), *end = buf + len;
-  host->h_name = put(&cur, end, "fltest-host.example");
+  host->h_name = put(&cur, end, name);
   aliases[0] = put(&cur, end, "fltest-alias");
   aliases[1] = put(&cur, end, "fltest-short");
   if (large) {
@@ -394,6 +395,94 @@ static enum nss_status fill_host(int family, int large, struct hostent *host,
   *errnop = 0;
   *h_errnop = NETDB_SUCCESS;
   return NSS_STATUS_SUCCESS;
+}
+
+static enum nss_status fill_host(int family, int large, struct hostent *host,
+                                 char *buf, size_t len, int *errnop, int *h_errnop) {
+  return fill_host_record("fltest-host.example", family, large, host,
+                          buf, len, errnop, h_errnop);
+}
+
+/* Host enumeration must use the same configured module chain as keyed host
+ * lookups. Keep a separate cursor and return a large IPv6 record after IPv4. */
+static size_t host_enum_cursor;
+static int (*host_enum_reentry)(void);
+static int host_enum_callback_ran;
+
+void FN(set_host_enum_reentry)(int (*callback)(void)) {
+  host_enum_reentry = callback;
+}
+
+#ifndef NO_HOST_SET
+enum nss_status FN(sethostent)(int stayopen) {
+  (void)stayopen;
+  trace("sethostent", "");
+  host_enum_cursor = 0;
+  host_enum_callback_ran = 0;
+  return netdb_enum_status("FLTEST_HOST_ENUM", "set", &errno);
+}
+#endif
+
+#ifndef NO_HOST_END
+enum nss_status FN(endhostent)(void) {
+  trace("endhostent", "");
+  host_enum_cursor = 0;
+  return NSS_STATUS_SUCCESS;
+}
+#endif
+
+enum nss_status FN(gethostent_r)(struct hostent *out, char *buf, size_t len,
+                                int *errnop, int *h_errnop) {
+  trace("gethostent_r", "");
+  const char *scenario = getenv("FLTEST_HOST_ENUM");
+  if (scenario && !strcmp(STR(SERVICE), "fltest")) {
+    if (!strcmp(scenario, "get-nomem-internal") || !strcmp(scenario, "get-io-internal")) {
+      *errnop = !strcmp(scenario, "get-nomem-internal") ? ENOMEM : EIO;
+      *h_errnop = NETDB_INTERNAL;
+      return NSS_STATUS_TRYAGAIN;
+    }
+    if (!strcmp(scenario, "get-range-internal") && len < 4096) {
+      *errnop = ERANGE;
+      *h_errnop = NETDB_INTERNAL;
+      return NSS_STATUS_TRYAGAIN;
+    }
+    if (!strcmp(scenario, "get-range-again") && len < 4096) {
+      *errnop = ERANGE;
+      *h_errnop = TRY_AGAIN;
+      return NSS_STATUS_TRYAGAIN;
+    }
+  }
+  enum nss_status status = netdb_enum_status("FLTEST_HOST_ENUM", "get", errnop);
+  if (status != NSS_STATUS_SUCCESS) {
+    if (!scenario || strcmp(scenario, "get-quiet-again"))
+      *h_errnop = status == NSS_STATUS_TRYAGAIN ? TRY_AGAIN
+                 : status == NSS_STATUS_NOTFOUND ? HOST_NOT_FOUND : NO_RECOVERY;
+    return status;
+  }
+  if (host_enum_cursor >= 2) {
+    *h_errnop = HOST_NOT_FOUND;
+    return NSS_STATUS_NOTFOUND;
+  }
+  if (host_enum_reentry && !host_enum_callback_ran) {
+    host_enum_callback_ran = 1;
+    if (host_enum_reentry())
+      return host_failure(NSS_STATUS_UNAVAIL, EIO, errnop, h_errnop);
+  }
+  int large = host_enum_cursor != 0;
+  int saved_error = *errnop, saved_h_error = *h_errnop;
+  status = fill_host_record(large ? STR(SERVICE) "-host-large" : STR(SERVICE) "-host-small",
+                            large ? AF_INET6 : AF_INET, large,
+                            out, buf, len, errnop, h_errnop);
+  if (status == NSS_STATUS_TRYAGAIN && *errnop == ERANGE)
+    *h_errnop = NETDB_INTERNAL;
+  if (status == NSS_STATUS_SUCCESS) {
+    ++host_enum_cursor;
+    if (scenario && !strcmp(scenario, "get-success-quiet")) {
+      *errnop = saved_error;
+      *h_errnop = saved_h_error;
+    }
+  }
+  return status;
 }
 
 #if !defined(NO_HOST1) || !defined(NO_HOST2) || !defined(NO_HOST3)

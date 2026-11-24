@@ -119,6 +119,16 @@ impl Service {
         }
     }
 
+    /// Preserve a parsed hosts policy when using the shared enumeration
+    /// state machine. Keyed hosts lookup keeps its own merge semantics.
+    pub(crate) fn from_actions(name: &[u8], actions: [Action; 4], return_action: Action) -> Self {
+        Self {
+            name: name.to_vec(),
+            actions,
+            return_action,
+        }
+    }
+
     /// The service name as written (`files`, `sss`, `systemd`, ...).
     pub fn name(&self) -> &[u8] {
         &self.name

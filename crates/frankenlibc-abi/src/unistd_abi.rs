@@ -12137,7 +12137,7 @@ pub unsafe extern "C" fn _nss_files_endsgent() -> c_int {
 /// Close the native hosts cursor, including any record pending a buffer retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endhostent() -> c_int {
-    unsafe { endhostent() };
+    files_endhostent();
     NSS_STATUS_SUCCESS
 }
 
@@ -22488,9 +22488,8 @@ impl NetdbIteration {
     }
 
     fn sources(&mut self) -> std::sync::Arc<Vec<frankenlibc_core::nss::Service>> {
-        let database = self.database.database();
         self.sources
-            .get_or_insert_with(|| crate::nss_module::services(database))
+            .get_or_insert_with(|| self.database.sources())
             .clone()
     }
 
@@ -22510,6 +22509,7 @@ impl NetdbIteration {
             let error = match self.database {
                 crate::nss_module::NetdbDatabase::Services => files_setservent(),
                 crate::nss_module::NetdbDatabase::Protocols => files_setprotoent(),
+                crate::nss_module::NetdbDatabase::Hosts => files_sethostent(),
             };
             Some(match error {
                 0 => NSS_STATUS_SUCCESS,
@@ -22529,7 +22529,7 @@ impl NetdbIteration {
 
     fn rewind(&mut self, stayopen: c_int) {
         use frankenlibc_core::nss::Action;
-        let sources = crate::nss_module::services(self.database.database());
+        let sources = self.database.sources();
         self.sources = Some(sources.clone());
         self.source = 0;
         self.needs_set = false;
@@ -22569,13 +22569,14 @@ impl NetdbIteration {
         if self.sources.is_none() {
             return;
         }
-        let sources = crate::nss_module::services(self.database.database());
+        let sources = self.database.sources();
         let mut first = None;
         for (index, source) in sources.iter().enumerate() {
             let found = if source.name() == b"files" {
                 match self.database {
                     crate::nss_module::NetdbDatabase::Services => files_endservent(),
                     crate::nss_module::NetdbDatabase::Protocols => files_endprotoent(),
+                    crate::nss_module::NetdbDatabase::Hosts => files_endhostent(),
                 }
                 true
             } else {
@@ -22686,6 +22687,19 @@ impl NetdbIteration {
                 // SAFETY: this leased state and caller storage survive the
                 // callback; no mutable TLS borrow or policy lock is retained.
                 unsafe { module.next_r(output, buffer, capacity) }
+            } else if matches!(self.database, crate::nss_module::NetdbDatabase::Hosts) {
+                // SAFETY: host callers supply a checked hostent and writable
+                // buffer. The direct files provider preserves GNU's distinct
+                // errno/h_errno behavior and shares the native files cursor.
+                unsafe {
+                    _nss_files_gethostent_r(
+                        output,
+                        buffer,
+                        capacity,
+                        crate::errno_abi::__errno_location(),
+                        crate::resolv_abi::__h_errno_location(),
+                    )
+                }
             } else {
                 let saved_errno = current_abi_errno();
                 // The public files lane and direct provider share one cursor.
@@ -22701,6 +22715,7 @@ impl NetdbIteration {
                         // SAFETY: the caller supplies a complete protoent object.
                         unsafe { state.next_r(output, buffer, capacity, &mut result) }
                     }),
+                    crate::nss_module::NetdbDatabase::Hosts => unreachable!("hosts handled above"),
                 };
                 match outcome {
                     Ok(found) => {
@@ -22722,7 +22737,13 @@ impl NetdbIteration {
                 }
             };
             let action = Self::action(source, status);
-            if (status == NSS_STATUS_TRYAGAIN && current_abi_errno() == libc::ERANGE)
+            let buffer_retry = status == NSS_STATUS_TRYAGAIN
+                && current_abi_errno() == libc::ERANGE
+                && (!matches!(self.database, crate::nss_module::NetdbDatabase::Hosts)
+                    // SAFETY: the canonical resolver error cell is live for
+                    // this thread. Only NETDB_INTERNAL marks buffer retries.
+                    || unsafe { *crate::resolv_abi::__h_errno_location() } == NSS_NETDB_INTERNAL);
+            if buffer_retry
                 || action == Action::Return
                 || (status == NSS_STATUS_SUCCESS && action == Action::Merge)
                 || self.source + 1 == sources.len()
@@ -23526,7 +23547,10 @@ pub unsafe extern "C" fn getprotoent() -> *mut c_void {
 const HOSTS_READ_BUFFER_OVERHEAD: usize = 16 + 2 * core::mem::size_of::<*mut c_char>();
 
 struct HostIterState {
+    iteration: NetdbIteration,
+    busy: bool,
     reader: Option<std::io::BufReader<std::fs::File>>,
+    source_path: Option<std::path::PathBuf>,
     line_buf: Vec<u8>,
     // Keep a complete line until packing succeeds, so ERANGE cannot consume it.
     pending_line: bool,
@@ -23537,7 +23561,10 @@ struct HostIterState {
 impl HostIterState {
     const fn new() -> Self {
         Self {
+            iteration: NetdbIteration::new(crate::nss_module::NetdbDatabase::Hosts),
+            busy: false,
             reader: None,
+            source_path: None,
             line_buf: Vec::new(),
             pending_line: false,
             entry: libc::hostent {
@@ -23552,13 +23579,11 @@ impl HostIterState {
     }
 }
 
-// SAFETY: `HostIterState` is process-owned scratch state keyed by kernel
-// thread id under the owned-TLS experiment. Raw pointer arrays are rebuilt from
+// SAFETY: `HostIterState` is owned scratch state keyed by kernel
+// thread id. Raw pointer arrays are rebuilt from
 // the per-slot buffers before each returned `hostent` and never cross slots.
-#[cfg(feature = "owned-tls-cache")]
 unsafe impl Send for HostIterState {}
 
-#[cfg(feature = "owned-tls-cache")]
 static HOST_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostIterState> =
     crate::owned_tls_cache::OwnedTlsCache::new(HostIterState::new);
 
@@ -23579,6 +23604,9 @@ fn with_host_iter_state<R>(callback: impl FnOnce(&mut HostIterState) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return HOST_ITER_OWNED_TLS.with(callback);
+        }
         HOST_ITER.with(|slot| {
             slot.with_init(
                 || std::cell::UnsafeCell::new(HostIterState::new()),
@@ -23589,6 +23617,47 @@ fn with_host_iter_state<R>(callback: impl FnOnce(&mut HostIterState) -> R) -> R 
                 },
             )
         })
+    }
+}
+
+/// Foreign providers may reenter libc. Move traversal and answer storage out
+/// of the native thread's cell, keeping the independent files cursor available
+/// to direct provider calls without holding a mutable borrow across callbacks.
+struct HostIterationLease {
+    iteration: NetdbIteration,
+    buffer: Vec<u8>,
+}
+
+impl HostIterationLease {
+    fn acquire() -> Option<Self> {
+        with_host_iter_state(|state| {
+            if state.busy {
+                return None;
+            }
+            state.busy = true;
+            Some(Self {
+                iteration: std::mem::replace(
+                    &mut state.iteration,
+                    NetdbIteration::new(crate::nss_module::NetdbDatabase::Hosts),
+                ),
+                buffer: std::mem::take(&mut state.entry_buf),
+            })
+        })
+    }
+}
+
+impl Drop for HostIterationLease {
+    fn drop(&mut self) {
+        let iteration = std::mem::replace(
+            &mut self.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Hosts),
+        );
+        let buffer = std::mem::take(&mut self.buffer);
+        with_host_iter_state(|state| {
+            state.iteration = iteration;
+            state.entry_buf = buffer;
+            state.busy = false;
+        });
     }
 }
 
@@ -23638,10 +23707,18 @@ fn hosts_line_af_inet_addr(addr_str: &str) -> Option<([u8; 16], c_int, c_int)> {
 }
 
 fn host_iter_open(state: &mut HostIterState) -> Result<(), c_int> {
+    let path = crate::resolv_abi::hosts_backend_path();
+    if state.source_path.as_ref() != Some(&path) {
+        state.reader = None;
+        state.source_path = None;
+        state.line_buf.clear();
+        state.pending_line = false;
+    }
     if state.reader.is_none() {
-        let file = std::fs::File::open(crate::resolv_abi::hosts_backend_path())
+        let file = std::fs::File::open(&path)
             .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
         state.reader = Some(std::io::BufReader::new(file));
+        state.source_path = Some(path);
         state.pending_line = false;
     }
     Ok(())
@@ -23714,92 +23791,118 @@ unsafe fn host_iter_next_r(
     }
 }
 
-/// Grow the nonreentrant answer storage instead of silently dropping a long
-/// record or truncating its aliases. The returned typed hostent stays aligned.
-unsafe fn host_iter_next(state: &mut HostIterState) -> Result<*mut c_void, c_int> {
-    let mut buffer = std::mem::take(&mut state.entry_buf);
+/// Grow caller-independent storage while retaining the provider's pending
+/// record. No thread-storage borrow survives a foreign get callback.
+unsafe fn host_iter_next(lease: &mut HostIterationLease) -> Result<Option<libc::hostent>, c_int> {
     let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
-    let mut resolved = std::ptr::null_mut();
-    let outcome = loop {
-        if buffer.is_empty() {
-            if buffer.try_reserve(1024).is_err() {
-                break Err(libc::ENOMEM);
-            }
-            buffer.resize(1024, 0);
+    let mut capacity = lease.buffer.len().max(1024);
+    loop {
+        if capacity > lease.buffer.len() {
+            lease
+                .buffer
+                .try_reserve_exact(capacity - lease.buffer.len())
+                .map_err(|_| libc::ENOMEM)?;
+            lease.buffer.resize(capacity, 0);
         }
-        // SAFETY: entry is aligned local storage, and buffer remains live and
-        // uniquely owned until its allocation is returned to the state below.
-        let outcome = unsafe {
-            host_iter_next_r(
-                state,
+        // SAFETY: the typed output and leased scratch buffer remain live for
+        // the full callback; the source supplies every field on SUCCESS.
+        let status = unsafe {
+            lease.iteration.next_r(
                 entry.as_mut_ptr().cast(),
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-                &mut resolved,
+                lease.buffer.as_mut_ptr().cast(),
+                capacity,
             )
         };
-        if outcome != Err(libc::ERANGE) {
-            break outcome;
+        if status == NSS_STATUS_SUCCESS {
+            return Ok(Some(unsafe { entry.assume_init() }));
         }
-        let Some(next_len) = buffer.len().checked_mul(2) else {
-            break Err(libc::ENOMEM);
-        };
-        if buffer.try_reserve(next_len - buffer.len()).is_err() {
-            break Err(libc::ENOMEM);
+        // A temporary lookup failure is distinct from a small caller buffer.
+        // Retry only the provider's ERANGE/NETDB_INTERNAL buffer contract.
+        if status != NSS_STATUS_TRYAGAIN
+            || current_abi_errno() != libc::ERANGE
+            || unsafe { *crate::resolv_abi::__h_errno_location() } != NSS_NETDB_INTERNAL
+        {
+            return Ok(None);
         }
-        buffer.resize(next_len, 0);
-    };
-    state.entry_buf = buffer;
-    if outcome? {
-        // SAFETY: successful packing initializes all hostent fields; its
-        // pointers refer to the allocation now owned by state.entry_buf.
-        state.entry = unsafe { entry.assume_init() };
-        Ok((&raw mut state.entry).cast())
-    } else {
-        Ok(std::ptr::null_mut())
+        capacity = capacity
+            .checked_mul(2)
+            .filter(|&size| size <= isize::MAX as usize)
+            .ok_or(libc::ENOMEM)?;
     }
 }
 
 fn files_sethostent() -> c_int {
-    with_host_iter_state(|state| {
+    let saved_errno = current_abi_errno();
+    let error = with_host_iter_state(|state| {
         state.reader = None;
+        state.source_path = None;
         state.pending_line = false;
         state.line_buf.clear();
         host_iter_open(state).err().unwrap_or(0)
-    })
+    });
+    // SAFETY: native open/rewind preserves errno on success.
+    unsafe { set_abi_errno(if error == 0 { saved_errno } else { error }) };
+    error
 }
 
-/// `sethostent` — open /etc/hosts for iteration.
+/// `sethostent` — select and rewind the configured NSS hosts source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sethostent(_stayopen: c_int) {
-    let saved_errno = current_abi_errno();
-    let rc = files_sethostent();
-    unsafe { set_abi_errno(if rc == 0 { saved_errno } else { rc }) };
+pub unsafe extern "C" fn sethostent(stayopen: c_int) {
+    let Some(mut lease) = HostIterationLease::acquire() else {
+        // SAFETY: the nested operation must not borrow the live traversal.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.rewind(stayopen);
 }
 
-/// `endhostent` — close /etc/hosts iteration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endhostent() {
+fn files_endhostent() {
     let saved_errno = current_abi_errno();
     with_host_iter_state(|state| {
         state.reader = None;
+        state.source_path = None;
         state.pending_line = false;
         state.line_buf.clear();
     });
+    // SAFETY: closing files must not leak a destructor's internal errno.
     unsafe { set_abi_errno(saved_errno) };
 }
 
-/// `gethostent` — get next /etc/hosts entry.
+/// `endhostent` — close configured providers after public initialization.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endhostent() {
+    let Some(mut lease) = HostIterationLease::acquire() else {
+        // SAFETY: the nested operation must not borrow the live traversal.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.end();
+}
+
+/// `gethostent` — enumerate NSS hosts with growable per-thread result storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostent() -> *mut c_void {
-    let saved_errno = current_abi_errno();
-    match with_host_iter_state(|state| unsafe { host_iter_next(state) }) {
-        Ok(result) => {
-            unsafe { set_abi_errno(saved_errno) };
-            result
+    let Some(mut lease) = HostIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot alias an active answer buffer.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return std::ptr::null_mut();
+    };
+    // SAFETY: the lease owns the scratch buffer and provider traversal.
+    match unsafe { host_iter_next(&mut lease) } {
+        Ok(Some(entry)) => {
+            drop(lease);
+            with_host_iter_state(|state| {
+                state.entry = entry;
+                (&raw mut state.entry).cast()
+            })
         }
+        Ok(None) => std::ptr::null_mut(),
         Err(error) => {
-            unsafe { set_abi_errno(error) };
+            // SAFETY: these are the calling thread's canonical error cells.
+            unsafe {
+                set_abi_errno(error);
+                *crate::resolv_abi::__h_errno_location() = NSS_NETDB_INTERNAL;
+            }
             std::ptr::null_mut()
         }
     }
@@ -32876,8 +32979,8 @@ pub unsafe extern "C" fn _Fork() -> c_int {
 
 /// `gethostent_r` — reentrant sequential host entry read.
 ///
-/// Native implementation using thread-local /etc/hosts iterator.
-/// Fills hostent struct in caller-supplied buffers.
+/// Enumerate configured NSS sources into the exact caller buffer. GNU passes
+/// global h_errno to providers and leaves the explicit h_errnop untouched.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostent_r(
     result_buf: *mut c_void,
@@ -32886,7 +32989,6 @@ pub unsafe extern "C" fn gethostent_r(
     result: *mut *mut c_void,
     _h_errnop: *mut c_int,
 ) -> c_int {
-    let saved_errno = current_abi_errno();
     if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
         return libc::EINVAL;
     }
@@ -32898,20 +33000,29 @@ pub unsafe extern "C" fn gethostent_r(
         return libc::EINVAL;
     }
 
-    let outcome = with_host_iter_state(|state| {
-        // SAFETY: all output slots were validated above; the shared iterator
-        // keeps the current input record when the caller needs a larger buffer.
-        unsafe { host_iter_next_r(state, result_buf, buf, buflen, result) }
-    });
-    match outcome {
-        Ok(found) => {
-            unsafe { set_abi_errno(saved_errno) };
-            if found { 0 } else { libc::ENOENT }
+    let Some(mut lease) = HostIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot alias active traversal state.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return libc::EDEADLK;
+    };
+    let capacity = tracked_output_capacity(buf, buflen);
+    // SAFETY: the complete caller objects are validated and no mutable TLS
+    // borrow or configuration lock remains across foreign provider callbacks.
+    let status = unsafe { lease.iteration.next_r(result_buf, buf, capacity) };
+    if status == NSS_STATUS_SUCCESS {
+        // SAFETY: the provider filled the validated hostent object.
+        unsafe { *result = result_buf };
+        0
+    } else if status == NSS_STATUS_TRYAGAIN {
+        // GNU exposes the provider's errno for an internal host failure.
+        // Other temporary failures report EAGAIN without replacing errno.
+        if unsafe { *crate::resolv_abi::__h_errno_location() } == NSS_NETDB_INTERNAL {
+            current_abi_errno()
+        } else {
+            libc::EAGAIN
         }
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            error
-        }
+    } else {
+        libc::ENOENT
     }
 }
 

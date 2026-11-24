@@ -1054,19 +1054,21 @@ pub(crate) unsafe fn service_entry_r(
     unsafe { query.answer(out, buf, len) }
 }
 
-/// The two netdb databases share GNU's set/get/end source traversal, while
+/// These netdb databases share GNU's set/get/end source traversal, while
 /// keeping their entry layouts and callback signatures distinct.
 #[derive(Clone, Copy)]
 pub(crate) enum NetdbDatabase {
     Services,
     Protocols,
+    Hosts,
 }
 
 impl NetdbDatabase {
-    pub(crate) fn database(self) -> Database {
+    pub(crate) fn sources(self) -> Arc<Vec<Service>> {
         match self {
-            Self::Services => Database::Services,
-            Self::Protocols => Database::Protocols,
+            Self::Services => services(Database::Services),
+            Self::Protocols => services(Database::Protocols),
+            Self::Hosts => Arc::new(hosts_policy().enumeration_sources()),
         }
     }
 
@@ -1074,6 +1076,7 @@ impl NetdbDatabase {
         match self {
             Self::Services => ("setservent", "getservent_r", "endservent"),
             Self::Protocols => ("setprotoent", "getprotoent_r", "endprotoent"),
+            Self::Hosts => ("sethostent", "gethostent_r", "endhostent"),
         }
     }
 }
@@ -1109,6 +1112,25 @@ impl NetdbEnumeration {
                     let next: GetEntFn<libc::protoent> = core::mem::transmute(self.next);
                     next(output.cast(), buffer, capacity, error)
                 }
+                NetdbDatabase::Hosts => {
+                    type GetHostEntFn = unsafe extern "C" fn(
+                        *mut libc::hostent,
+                        *mut c_char,
+                        usize,
+                        *mut c_int,
+                        *mut c_int,
+                    ) -> c_int;
+                    let next: GetHostEntFn = core::mem::transmute(self.next);
+                    // GNU public enumeration supplies global h_errno to the
+                    // provider, leaving gethostent_r's explicit slot untouched.
+                    next(
+                        output.cast(),
+                        buffer,
+                        capacity,
+                        error,
+                        crate::resolv_abi::__h_errno_location(),
+                    )
+                }
             }
         }
     }
@@ -1128,7 +1150,7 @@ pub(crate) fn netdb_setent(
     stayopen: c_int,
 ) -> Option<c_int> {
     let address = module_function(service, database.functions().0)?;
-    // SAFETY: both NSS set callbacks accept one int and return an nss_status.
+    // SAFETY: these NSS set callbacks accept one int and return an nss_status.
     let function: SetEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function(stayopen) })
 }
@@ -1137,7 +1159,7 @@ pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_
     // GNU enumeration cleanup may visit a configured module before any get
     // callback has loaded it. Preserve absence separately from callback status.
     let address = module_function(service, database.functions().2)?;
-    // SAFETY: both NSS end callbacks take no arguments and return nss_status.
+    // SAFETY: these NSS end callbacks take no arguments and return nss_status.
     let function: EndEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function() })
 }

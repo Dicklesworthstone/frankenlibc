@@ -49,6 +49,7 @@ enum Action {
 struct Service {
     name: Vec<u8>,
     actions: [Action; 4],
+    return_action: Action,
 }
 
 impl Service {
@@ -61,6 +62,7 @@ impl Service {
                 Action::Continue,
                 Action::Continue,
             ],
+            return_action: Action::Return,
         }
     }
 
@@ -224,6 +226,11 @@ impl HostsPolicy {
                             service.actions[candidate as usize] = action;
                         }
                     }
+                    // NSS_STATUS_RETURN is distinct from all four ordinary
+                    // statuses, so only negated clauses select it.
+                    if negate {
+                        service.return_action = action;
+                    }
                     count += 1;
                 }
                 input.whitespace();
@@ -231,6 +238,27 @@ impl HostsPolicy {
             services.push(service);
         }
         Ok(Self { services })
+    }
+
+    /// Use the same immutable source selection for public host enumeration
+    /// and keyed lookup. Enumeration applies the shared NSS lifecycle rules;
+    /// it must not reread a different configuration or discard status actions.
+    pub fn enumeration_sources(&self) -> Vec<crate::nss::Service> {
+        let action = |value| match value {
+            Action::Return => crate::nss::Action::Return,
+            Action::Continue => crate::nss::Action::Continue,
+            Action::Merge => crate::nss::Action::Merge,
+        };
+        self.services
+            .iter()
+            .map(|service| {
+                crate::nss::Service::from_actions(
+                    &service.name,
+                    service.actions.map(action),
+                    action(service.return_action),
+                )
+            })
+            .collect()
     }
 
     pub fn lookup<T, E>(
@@ -340,6 +368,48 @@ mod tests {
         );
         let result: Result<(), LookupError<()>> = policy("").lookup(|_| panic!("no source"));
         assert_eq!(result, Err(LookupError::NoServices));
+    }
+
+    #[test]
+    fn enumeration_retains_sources_and_all_status_actions() {
+        use crate::nss::{Action as EnumerationAction, Status as EnumerationStatus};
+
+        let sources = policy("directory [!SUCCESS=continue NOTFOUND=return] files [SUCCESS=merge]")
+            .enumeration_sources();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].name(), b"directory");
+        assert_eq!(sources[1].name(), b"files");
+        assert_eq!(
+            sources[0].action(EnumerationStatus::Success),
+            EnumerationAction::Return
+        );
+        assert_eq!(
+            sources[0].action(EnumerationStatus::NotFound),
+            EnumerationAction::Return
+        );
+        assert_eq!(
+            sources[0].action(EnumerationStatus::Unavailable),
+            EnumerationAction::Continue
+        );
+        assert_eq!(
+            sources[0].action(EnumerationStatus::TryAgain),
+            EnumerationAction::Continue
+        );
+        assert_eq!(sources[0].return_action(), EnumerationAction::Continue);
+        assert_eq!(
+            sources[1].action(EnumerationStatus::Success),
+            EnumerationAction::Merge
+        );
+        assert_eq!(sources[1].return_action(), EnumerationAction::Return);
+        assert!(policy("").enumeration_sources().is_empty());
+        assert_eq!(
+            HostsPolicy::default()
+                .enumeration_sources()
+                .iter()
+                .map(|source| source.name())
+                .collect::<Vec<_>>(),
+            [b"files".as_slice(), b"dns".as_slice()]
+        );
     }
 
     #[test]

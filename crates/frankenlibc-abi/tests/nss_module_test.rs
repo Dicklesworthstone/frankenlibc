@@ -3786,3 +3786,625 @@ fn services_enumeration_callback_reentry() {
         run_child(child, &format!("service enumeration callback {mode}"));
     }
 }
+
+struct HostEnumerationApi {
+    set: unsafe extern "C" fn(c_int),
+    get: unsafe extern "C" fn() -> *mut c_void,
+    get_r: unsafe extern "C" fn(
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+        *mut c_int,
+    ) -> c_int,
+    end: unsafe extern "C" fn(),
+    error: unsafe extern "C" fn() -> *mut c_int,
+    host_error: unsafe extern "C" fn() -> *mut c_int,
+    files_set: unsafe extern "C" fn(c_int) -> c_int,
+    files_get:
+        unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut c_int, *mut c_int) -> c_int,
+    files_end: unsafe extern "C" fn() -> c_int,
+}
+
+fn host_enumeration_api(host: bool) -> HostEnumerationApi {
+    unsafe extern "C" {
+        #[link_name = "sethostent"]
+        fn host_set(stayopen: c_int);
+        #[link_name = "gethostent"]
+        fn host_get() -> *mut c_void;
+        #[link_name = "gethostent_r"]
+        fn host_get_r(
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            result: *mut *mut c_void,
+            host_error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "endhostent"]
+        fn host_end();
+        #[link_name = "__h_errno_location"]
+        fn host_error() -> *mut c_int;
+        #[link_name = "_nss_files_sethostent"]
+        fn host_files_set(stayopen: c_int) -> c_int;
+        #[link_name = "_nss_files_gethostent_r"]
+        fn host_files_get(
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            error: *mut c_int,
+            host_error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "_nss_files_endhostent"]
+        fn host_files_end() -> c_int;
+    }
+    use frankenlibc_abi::{errno_abi as e, resolv_abi as r, unistd_abi as u};
+    assert_ne!(host_get as *const (), u::gethostent as *const ());
+    assert_ne!(host_get_r as *const (), u::gethostent_r as *const ());
+    if host {
+        HostEnumerationApi {
+            set: host_set,
+            get: host_get,
+            get_r: host_get_r,
+            end: host_end,
+            error: libc::__errno_location,
+            host_error,
+            files_set: host_files_set,
+            files_get: host_files_get,
+            files_end: host_files_end,
+        }
+    } else {
+        HostEnumerationApi {
+            set: u::sethostent,
+            get: u::gethostent,
+            get_r: u::gethostent_r,
+            end: u::endhostent,
+            error: e::__errno_location,
+            host_error: r::__h_errno_location,
+            files_set: u::_nss_files_sethostent,
+            files_get: u::_nss_files_gethostent_r,
+            files_end: u::_nss_files_endhostent,
+        }
+    }
+}
+
+unsafe fn enumerated_host(
+    pointer: *mut c_void,
+    bounds: Option<(usize, usize)>,
+) -> Option<HostAnswer> {
+    if pointer.is_null() {
+        return None;
+    }
+    // SAFETY: the API published a complete hostent. Check every pointer-table
+    // slot, address and string before allowing the shared decoder to read it.
+    let entry = unsafe { &*pointer.cast::<libc::hostent>() };
+    if let Some((start, end)) = bounds {
+        let check = |pointer: *const c_char, length: Option<usize>| {
+            let address = pointer as usize;
+            assert!(
+                (start..end).contains(&address),
+                "host data escaped caller buffer"
+            );
+            if let Some(length) = length {
+                assert!(
+                    length <= end - address,
+                    "host address escaped caller buffer"
+                );
+            } else {
+                // SAFETY: only inspect the checked tail of the caller buffer.
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), end - address) };
+                assert!(bytes.contains(&0), "unterminated host string");
+            }
+        };
+        check(entry.h_name, None);
+        assert!(matches!(
+            (entry.h_addrtype, entry.h_length),
+            (libc::AF_INET, 4) | (libc::AF_INET6, 16)
+        ));
+        for (table, length) in [
+            (entry.h_aliases, None),
+            (entry.h_addr_list, Some(entry.h_length as usize)),
+        ] {
+            let mut terminated = false;
+            for index in 0..4096 {
+                let address = (table as usize)
+                    .checked_add(index * std::mem::size_of::<usize>())
+                    .unwrap();
+                assert!(
+                    address >= start
+                        && address <= end
+                        && std::mem::size_of::<usize>() <= end - address
+                );
+                assert_eq!(address % std::mem::align_of::<usize>(), 0);
+                // SAFETY: the aligned slot lies wholly inside the supplied buffer.
+                let pointer = unsafe { *(address as *const *mut c_char) };
+                if pointer.is_null() {
+                    terminated = true;
+                    break;
+                }
+                check(pointer, length);
+            }
+            assert!(terminated, "host pointer table was not terminated");
+        }
+    }
+    // SAFETY: successful non-reentrant output belongs to the API; caller-owned
+    // output was checked above, including every terminating pointer and byte.
+    unsafe { host_answer(pointer.cast()) }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct HostEnumerationResult {
+    status: c_int,
+    error: c_int,
+    host_error: c_int,
+    argument_host_error: c_int,
+    answer: Option<HostAnswer>,
+}
+
+fn host_enumeration_read(
+    api: &HostEnumerationApi,
+    capacity: Option<usize>,
+    offset: usize,
+) -> HostEnumerationResult {
+    // GNU enumeration updates the canonical h_errno but leaves the explicit
+    // gethostent_r h_errnop argument untouched. Record both independent slots.
+    unsafe {
+        *(api.error)() = 619;
+        *(api.host_error)() = 811;
+    }
+    let mut argument_host_error = 717;
+    let (status, error, host_error, answer) = if let Some(capacity) = capacity {
+        let mut storage = vec![0x5au8; 8192 + 16];
+        assert!(offset + capacity <= storage.len());
+        let buffer = unsafe { storage.as_mut_ptr().add(offset).cast::<c_char>() };
+        let mut output: libc::hostent = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::dangling_mut::<c_void>();
+        let status = unsafe {
+            (api.get_r)(
+                (&raw mut output).cast(),
+                buffer,
+                capacity,
+                &mut result,
+                &mut argument_host_error,
+            )
+        };
+        let (error, host_error) = unsafe { (*(api.error)(), *(api.host_error)()) };
+        assert!(
+            storage[..offset]
+                .iter()
+                .chain(&storage[offset + capacity..])
+                .all(|&byte| byte == 0x5a)
+        );
+        if !result.is_null() {
+            assert_eq!(status, 0);
+            assert_eq!(result, (&raw mut output).cast());
+        }
+        let answer =
+            unsafe { enumerated_host(result, Some((buffer as usize, buffer as usize + capacity))) };
+        (status, error, host_error, answer)
+    } else {
+        let result = unsafe { (api.get)() };
+        let (error, host_error) = unsafe { (*(api.error)(), *(api.host_error)()) };
+        (0, error, host_error, unsafe {
+            enumerated_host(result, None)
+        })
+    };
+    HostEnumerationResult {
+        status,
+        error,
+        host_error,
+        argument_host_error,
+        answer,
+    }
+}
+
+fn host_enumeration_transcript(api: &HostEnumerationApi) -> String {
+    let mut transcript = String::new();
+    unsafe { (api.end)() };
+    for capacity in [0, 1, 7] {
+        writeln!(
+            transcript,
+            "implicit {capacity} {:?}",
+            host_enumeration_read(api, Some(capacity), 1)
+        )
+        .unwrap();
+    }
+    for index in 0..6 {
+        let result = host_enumeration_read(api, Some(8192), index % 2);
+        let done = result.answer.is_none();
+        writeln!(transcript, "implicit record {index} {result:?}").unwrap();
+        if done {
+            break;
+        }
+    }
+    unsafe {
+        (api.end)();
+        (api.set)(1)
+    };
+    for index in 0..6 {
+        let result = host_enumeration_read(api, None, 0);
+        let done = result.answer.is_none();
+        writeln!(transcript, "owned record {index} {result:?}").unwrap();
+        if done {
+            break;
+        }
+    }
+    unsafe { (api.set)(0) };
+    writeln!(
+        transcript,
+        "short {:?}",
+        host_enumeration_read(api, Some(1), 0)
+    )
+    .unwrap();
+    writeln!(
+        transcript,
+        "retry {:?}",
+        host_enumeration_read(api, Some(8192), 1)
+    )
+    .unwrap();
+    unsafe {
+        (api.end)();
+        (api.set)(0)
+    };
+    writeln!(
+        transcript,
+        "early end {:?}",
+        host_enumeration_read(api, Some(8192), 0)
+    )
+    .unwrap();
+    unsafe {
+        (api.end)();
+        (api.end)()
+    };
+    writeln!(
+        transcript,
+        "after end {:?}",
+        host_enumeration_read(api, Some(8192), 1)
+    )
+    .unwrap();
+    unsafe { (api.end)() };
+    transcript
+}
+
+fn configure_host_enumeration(host: bool, sources: &CStr) {
+    unsafe extern "C" {
+        fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+    }
+    let configure = if host {
+        __nss_configure_lookup
+    } else {
+        frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup
+    };
+    assert_eq!(unsafe { configure(c"hosts".as_ptr(), sources.as_ptr()) }, 0);
+}
+
+fn host_enumeration_scratch(tag: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-host-enum-{tag}-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&path).unwrap();
+    path
+}
+
+#[test]
+fn hosts_enumeration_matches_glibc_module_policy() {
+    const TEST: &str = "hosts_enumeration_matches_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_HOST_PROVIDER").unwrap() == "host";
+        let sources = CString::new(std::env::var("FLTEST_HOST_SOURCES").unwrap()).unwrap();
+        configure_host_enumeration(host, &sources);
+        unsafe { libc::alarm(20) };
+        let transcript = host_enumeration_transcript(&host_enumeration_api(host));
+        unsafe { libc::alarm(0) };
+        println!("HOST_ENUM_BEGIN\n{transcript}HOST_ENUM_END");
+        return;
+    }
+    let dir = host_enumeration_scratch("policy");
+    build_modules(&dir);
+    let module = Command::new("cc")
+        .args([
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-DSERVICE=fltestgetonly",
+            "-DNO_HOST_SET",
+            "-DNO_HOST_END",
+        ])
+        .arg(repo_root().join("tests/integration/fixture_nss_module_lib.c"))
+        .arg("-o")
+        .arg(dir.join("libnss_fltestgetonly.so.2"))
+        .output()
+        .expect("build get-only hosts enumeration provider");
+    assert!(
+        module.status.success(),
+        "{}",
+        String::from_utf8_lossy(&module.stderr)
+    );
+    let cases = [
+        ("fltest", "normal"),
+        ("fltest fltestnoig", "normal"),
+        ("fltest [SUCCESS=continue] fltestnoig", "normal"),
+        ("fltest [SUCCESS=merge] fltestnoig", "normal"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "normal"),
+        ("fltest [NOTFOUND=return] fltestnoig", "normal"),
+        (
+            "fltest [SUCCESS=return NOTFOUND=return UNAVAIL=return TRYAGAIN=return] fltestnoig",
+            "normal",
+        ),
+        ("fltest [UNAVAIL=return] fltestnoig", "get-unavail"),
+        ("fltest [UNAVAIL=continue] fltestnoig", "get-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-again"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-quiet-again"),
+        ("fltest fltestnoig", "get-notfound"),
+        ("fltest [NOTFOUND=return] fltestnoig", "get-notfound"),
+        ("fltest fltestnoig", "get-return"),
+        ("fltest [!SUCCESS=continue] fltestnoig", "get-return"),
+        ("fltest fltestnoig", "set-unavail"),
+        ("fltest [UNAVAIL=return] fltestnoig", "set-unavail"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "set-again"),
+        ("fltest [NOTFOUND=return] fltestnoig", "set-notfound"),
+        ("fltest fltestnoig", "set-return"),
+        ("flmissing fltest", "normal"),
+        ("flmissing", "normal"),
+        ("flmissing [UNAVAIL=return] fltest", "normal"),
+        ("fltestgetonly", "normal"),
+        ("fltestgetonly fltest", "normal"),
+        ("fltestgetonly [UNAVAIL=return] fltest", "normal"),
+        ("fltest fltestgetonly fltestnoig", "normal"),
+        ("fltest flmissing [UNAVAIL=return] fltestnoig", "normal"),
+        (
+            "fltest [TRYAGAIN=continue] fltestnoig",
+            "get-range-internal",
+        ),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-range-again"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-range-again"),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-nomem-internal"),
+        (
+            "fltest [TRYAGAIN=continue] fltestnoig",
+            "get-nomem-internal",
+        ),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-io-internal"),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-io-internal"),
+        ("fltest", "get-success-quiet"),
+        ("files", "normal"),
+        ("fltest files", "normal"),
+    ];
+    let mut compared = 0;
+    for (index, (sources, scenario)) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("host-enum-{index}-{provider}-{mode}");
+            let mut child = host_module_child(TEST, &dir, "hosts: files\n", &label);
+            child
+                .env("FLTEST_HOST_PROVIDER", provider)
+                .env("FLTEST_HOST_SOURCES", sources)
+                .env("FLTEST_HOST_ENUM", scenario)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode)
+                .env_remove("FRANKENLIBC_HOSTS_PATH");
+            let output = run_child(child, &label);
+            let stdout = std::str::from_utf8(&output.stdout).unwrap();
+            let transcript = stdout
+                .split_once("HOST_ENUM_BEGIN\n")
+                .and_then(|(_, rest)| rest.split_once("HOST_ENUM_END"))
+                .map(|(text, _)| text)
+                .expect("executed hosts enumeration transcript")
+                .to_owned();
+            assert!(transcript.lines().count() >= 9);
+            let lifecycle = String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter(|line| line.contains(":sethostent(") || line.contains(":endhostent("))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if sources == "fltest" {
+                assert!(
+                    transcript.contains("192.0.2.41") && transcript.contains("2001:db8::41"),
+                    "both complete IPv4 and large IPv6 module records must be observed"
+                );
+                assert!(String::from_utf8_lossy(&output.stderr).contains("fltest:gethostent_r("));
+            }
+            if sources == "fltest fltestnoig" && scenario == "normal" {
+                assert!(
+                    lifecycle
+                        .iter()
+                        .filter(|line| line.contains("fltestnoig:endhostent("))
+                        .count()
+                        >= 4,
+                    "early and repeated cleanup must reach later configured modules"
+                );
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(
+                    &(transcript, lifecycle),
+                    expected,
+                    "{label}: {sources}, {scenario}"
+                );
+                compared += 1;
+            } else {
+                oracle = Some((transcript, lifecycle));
+            }
+        }
+    }
+    assert_eq!(compared, 78);
+    eprintln!("hosts enumeration: {compared} independent GNU/candidate process comparisons");
+}
+
+static HOST_ENUM_REENTRY_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+unsafe extern "C" fn host_enumeration_reentry() -> c_int {
+    use frankenlibc_abi::{errno_abi as e, resolv_abi as r, unistd_abi as u};
+    HOST_ENUM_REENTRY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut output: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buffer = [0 as c_char; 1024];
+    let mut result = std::ptr::null_mut();
+    let mut host_error = 717;
+    // SAFETY: the provider invokes this callback while its outer result is
+    // leased. Recursive enumeration must fail without entering a second borrow.
+    unsafe {
+        u::sethostent(0);
+        if *e::__errno_location() != libc::EDEADLK {
+            return 1;
+        }
+        if !u::gethostent().is_null() || *e::__errno_location() != libc::EDEADLK {
+            return 2;
+        }
+        if u::gethostent_r(
+            (&raw mut output).cast(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+            &mut host_error,
+        ) != libc::EDEADLK
+            || !result.is_null()
+        {
+            return 3;
+        }
+        u::endhostent();
+        if *e::__errno_location() != libc::EDEADLK {
+            return 4;
+        }
+        let keyed = r::gethostbyname(c"fltest-host".as_ptr()).cast::<libc::hostent>();
+        if keyed.is_null() || CStr::from_ptr((*keyed).h_name).to_bytes() != b"fltest-host.example" {
+            return 5;
+        }
+    }
+    0
+}
+
+#[test]
+fn hosts_enumeration_files_retry_provider_isolation_and_reentry() {
+    const TEST: &str = "hosts_enumeration_files_retry_provider_isolation_and_reentry";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        unsafe { libc::alarm(20) };
+        let api = host_enumeration_api(false);
+        configure_host_enumeration(false, c"fltest");
+        let mut entry: libc::hostent = unsafe { std::mem::zeroed() };
+        let mut storage = [0 as c_char; 8192];
+        let mut error = 619;
+        let mut host_error = 717;
+        unsafe {
+            (api.set)(0);
+            assert_eq!((api.files_set)(0), 1);
+            assert_eq!(
+                (api.files_get)(
+                    (&raw mut entry).cast(),
+                    storage.as_mut_ptr(),
+                    1,
+                    &mut error,
+                    &mut host_error
+                ),
+                -2
+            );
+            assert_eq!(error, libc::ERANGE);
+            assert_eq!(host_error, -1);
+            assert_eq!(
+                (api.files_get)(
+                    (&raw mut entry).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                    &mut host_error
+                ),
+                1
+            );
+            assert_eq!(host_answer(&entry).unwrap().name, b"files-first");
+        }
+        let first = host_enumeration_read(&api, None, 0).answer.unwrap();
+        assert_eq!(first.name, b"fltest-host-small");
+        unsafe { assert_eq!((api.files_end)(), 1) };
+        let second = host_enumeration_read(&api, None, 0).answer.unwrap();
+        assert_eq!(second.name, b"fltest-host-large");
+        assert_eq!(second.aliases[2], vec![b'a'; 3072]);
+        unsafe { (api.end)() };
+
+        configure_host_enumeration(false, c"files");
+        unsafe { (api.set)(0) };
+        let short = host_enumeration_read(&api, Some(1), 1);
+        assert_eq!(short.status, libc::ERANGE);
+        assert_eq!(short.host_error, -1);
+        assert_eq!(short.argument_host_error, 717);
+        unsafe {
+            assert_eq!(
+                (api.files_get)(
+                    (&raw mut entry).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                    &mut host_error
+                ),
+                1
+            );
+            assert_eq!(host_answer(&entry).unwrap().name, b"files-first");
+        }
+        assert_eq!(
+            host_enumeration_read(&api, Some(8192), 1)
+                .answer
+                .unwrap()
+                .name,
+            b"files-second"
+        );
+        unsafe { assert_eq!((api.files_end)(), 1) };
+        assert_eq!(
+            host_enumeration_read(&api, Some(8192), 0)
+                .answer
+                .unwrap()
+                .name,
+            b"files-first"
+        );
+        unsafe { (api.end)() };
+
+        configure_host_enumeration(false, c"fltest");
+        unsafe {
+            let handle = libc::dlopen(c"libnss_fltest.so.2".as_ptr(), libc::RTLD_NOW);
+            assert!(!handle.is_null());
+            let address = libc::dlsym(handle, c"_nss_fltest_set_host_enum_reentry".as_ptr());
+            assert!(!address.is_null());
+            let install: unsafe extern "C" fn(Option<unsafe extern "C" fn() -> c_int>) =
+                std::mem::transmute(address);
+            install(Some(host_enumeration_reentry));
+            (api.set)(0);
+            assert_eq!(
+                host_enumeration_read(&api, None, 0).answer.unwrap().name,
+                b"fltest-host-small"
+            );
+            assert_eq!(
+                host_enumeration_read(&api, None, 0).answer.unwrap().name,
+                b"fltest-host-large"
+            );
+            assert!(host_enumeration_read(&api, None, 0).answer.is_none());
+            assert_eq!(
+                HOST_ENUM_REENTRY_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+                1
+            );
+            (api.end)();
+            install(None);
+            libc::dlclose(handle);
+            libc::alarm(0);
+        }
+        return;
+    }
+    let dir = host_enumeration_scratch("files-reentry");
+    build_modules(&dir);
+    std::fs::write(
+        dir.join("hosts"),
+        "198.51.100.7 files-first first-alias\n198.51.100.8 files-second second-alias\n",
+    )
+    .unwrap();
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(TEST, &dir, "hosts: files\n", mode);
+        child
+            .env("FRANKENLIBC_MODE", mode)
+            .env_remove("FLTEST_HOST_ENUM");
+        run_child(
+            child,
+            &format!("host enumeration files and callback isolation {mode}"),
+        );
+    }
+}

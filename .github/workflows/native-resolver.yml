@@ -243,6 +243,24 @@ jobs:
             2>&1 | tee artifacts/services-enumeration/protocols.log
           grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
             artifacts/services-enumeration/protocols.log
+      - name: Compare hosts enumeration policy, retries, and ownership with GNU
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          # Each test runs independent GNU and candidate processes, including
+          # candidate strict and hardened modes.
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test hosts_enumeration_ \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/services-enumeration/hosts.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+            artifacts/services-enumeration/hosts.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
