@@ -1994,7 +1994,11 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
         return std::ptr::null();
     }
 
-    let value = langinfo_c_fast(item, active_charset());
+    let category = ((item as u32) >> 16) as c_int;
+    let charset = thread_category(category)
+        .map(resolved_charset)
+        .unwrap_or_else(|| category_charset(category));
+    let value = langinfo_c_fast(item, charset);
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
     value
 }
@@ -2068,6 +2072,14 @@ fn active_codeset_ptr() -> *const c_char {
     ACTIVE_CODESET_PTR.load(Ordering::Acquire)
 }
 
+#[inline(always)]
+fn category_codeset_ptr(category: c_int) -> *const c_char {
+    if let Some(resolved) = thread_category(category) {
+        return codeset_ptr(resolved_charset(resolved));
+    }
+    codeset_ptr(category_charset(category))
+}
+
 #[cold]
 #[inline(never)]
 extern "C" fn nl_langinfo_slow(item: libc::nl_item) -> *const c_char {
@@ -2092,13 +2104,14 @@ extern "C" fn nl_langinfo_slow(item: libc::nl_item) -> *const c_char {
             // SAFETY: offset is bounds-checked < 50.
             return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
         }
-        if let Some(p) = lc_time_ext_c(offset, active_codeset_ptr) {
+        if let Some(p) = lc_time_ext_c(offset, || category_codeset_ptr(locale_core::LC_TIME)) {
             return p;
         }
         if item == libc::CODESET {
             return active_codeset_ptr();
         }
-        return langinfo_non_time_non_codeset(item, active_codeset_ptr);
+        let category = ((item as u32) >> 16) as c_int;
+        return langinfo_non_time_non_codeset(item, || category_codeset_ptr(category));
     }
     nl_langinfo_with_policy(item)
 }
@@ -2127,12 +2140,13 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
             return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
         }
         if item as u32 & 0xffff != 0xffff {
-            if let Some(p) = lc_time_ext_c(offset, || ACTIVE_CODESET_PTR.load(Ordering::Acquire)) {
+            if let Some(p) = lc_time_ext_c(offset, || {
+                codeset_ptr(category_charset(locale_core::LC_TIME))
+            }) {
                 return p;
             }
-            return langinfo_non_time_non_codeset(item, || {
-                ACTIVE_CODESET_PTR.load(Ordering::Acquire)
-            });
+            let category = ((item as u32) >> 16) as c_int;
+            return langinfo_non_time_non_codeset(item, || codeset_ptr(category_charset(category)));
         }
     }
     nl_langinfo_slow(item)
@@ -3681,6 +3695,53 @@ mod tests {
         assert!(!result.is_null());
         let val = unsafe { CStr::from_ptr(result) };
         assert_eq!(val.to_bytes(), b"-");
+    }
+
+    #[test]
+    fn nl_langinfo_per_category_codeset_follows_each_category() {
+        // Thread-local locale with LC_CTYPE=C.UTF-8 and all other categories=C
+        // matches glibc: CODESET is UTF-8 while _NL_{TIME,NUMERIC,MESSAGES}_CODESET
+        // remain ANSI_X3.4-1968.
+        let c_base = unsafe { newlocale(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()) };
+        assert!(!c_base.is_null());
+        let mixed = unsafe { newlocale(libc::LC_CTYPE_MASK, c"C.UTF-8".as_ptr(), c_base) };
+        assert!(!mixed.is_null());
+        let prev = unsafe { uselocale(mixed) };
+        assert!(!prev.is_null());
+
+        let got_ctype = unsafe { CStr::from_ptr(nl_langinfo(libc::CODESET)) }.to_bytes();
+        let got_time = unsafe { CStr::from_ptr(nl_langinfo(0x0002_006e)) }.to_bytes();
+        let got_numeric = unsafe { CStr::from_ptr(nl_langinfo(0x0001_0005)) }.to_bytes();
+        let got_messages = unsafe { CStr::from_ptr(nl_langinfo(0x0005_0004)) }.to_bytes();
+
+        unsafe {
+            uselocale(prev);
+            freelocale(mixed);
+        }
+
+        assert_eq!(got_ctype, b"UTF-8");
+        assert_eq!(got_time, b"ANSI_X3.4-1968");
+        assert_eq!(got_numeric, b"ANSI_X3.4-1968");
+        assert_eq!(got_messages, b"ANSI_X3.4-1968");
+
+        // And the converse: LC_TIME=C.UTF-8 with LC_CTYPE=C.
+        let c_base2 = unsafe { newlocale(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()) };
+        assert!(!c_base2.is_null());
+        let time_utf8 = unsafe { newlocale(libc::LC_TIME_MASK, c"C.UTF-8".as_ptr(), c_base2) };
+        assert!(!time_utf8.is_null());
+        let prev2 = unsafe { uselocale(time_utf8) };
+        assert!(!prev2.is_null());
+
+        let got_ctype2 = unsafe { CStr::from_ptr(nl_langinfo(libc::CODESET)) }.to_bytes();
+        let got_time2 = unsafe { CStr::from_ptr(nl_langinfo(0x0002_006e)) }.to_bytes();
+
+        unsafe {
+            uselocale(prev2);
+            freelocale(time_utf8);
+        }
+
+        assert_eq!(got_ctype2, b"ANSI_X3.4-1968");
+        assert_eq!(got_time2, b"UTF-8");
     }
 
     #[test]
