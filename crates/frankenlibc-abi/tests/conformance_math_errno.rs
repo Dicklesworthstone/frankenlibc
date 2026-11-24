@@ -576,3 +576,82 @@ fn sinhf_coshf_directed_rounding_erange_matches_glibc() {
 
     assert_eq!(unsafe { fenv_abi::fesetround(saved) }, 0);
 }
+
+#[test]
+fn atan2_atan2f_underflow_erange_matches_glibc() {
+    use frankenlibc_abi::fenv_abi;
+
+    let saved = unsafe { fenv_abi::fegetround() };
+    let modes = [
+        ("FE_TONEAREST", 0x0000),
+        ("FE_DOWNWARD", 0x0400),
+        ("FE_UPWARD", 0x0800),
+        ("FE_TOWARDZERO", 0x0c00),
+    ];
+
+    for (mode_name, mode) in modes {
+        assert_eq!(unsafe { fenv_abi::fesetround(mode) }, 0, "{mode_name}");
+
+        // Underflow-to-zero sets ERANGE; non-zero subnormals and non-finite x do not.
+        for (label, y, x) in [
+            ("min_sub,1e308", f64::from_bits(1), 1e308_f64),
+            ("-min_sub,1e308", -f64::from_bits(1), 1e308_f64),
+            ("min_sub,2.0", f64::from_bits(1), 2.0_f64),
+            ("1e-200,1e200", 1e-200_f64, 1e200_f64),
+            ("min_norm,2.0", f64::MIN_POSITIVE, 2.0_f64),
+            ("min_sub,1.0", f64::from_bits(1), 1.0_f64),
+            ("1.0,inf", 1.0_f64, f64::INFINITY),
+            ("0.0,1.0", 0.0_f64, 1.0_f64),
+            ("-0.0,1.0", -0.0_f64, 1.0_f64),
+        ] {
+            clr();
+            let out = unsafe { fa::atan2(y, x) };
+            let expect = if out == 0.0 && y != 0.0 && x.is_finite() {
+                ERANGE
+            } else {
+                0
+            };
+            assert_eq!(
+                rd(),
+                expect,
+                "atan2({label}) {mode_name} -> {out:e} ({:#x})",
+                out.to_bits()
+            );
+            if mode == 0x0000 && matches!(label, "min_sub,1e308" | "-min_sub,1e308" | "min_sub,2.0" | "1e-200,1e200") {
+                assert_eq!(out, 0.0, "atan2({label}) must underflow to zero in FE_TONEAREST");
+                assert_eq!(rd(), ERANGE, "atan2({label}) must set ERANGE in FE_TONEAREST");
+            }
+        }
+
+        for (label, y, x) in [
+            ("min_sub,1e38", f32::from_bits(1), 1e38_f32),
+            ("-min_sub,1e38", -f32::from_bits(1), 1e38_f32),
+            ("1e-38,1e10", 1e-38_f32, 1e10_f32),
+            ("min_sub,2.0", f32::from_bits(1), 2.0_f32),
+            ("min_norm,2.0", f32::MIN_POSITIVE, 2.0_f32),
+            ("min_sub,1.0", f32::from_bits(1), 1.0_f32),
+            ("1.0,inf", 1.0_f32, f32::INFINITY),
+            ("0.0,1.0", 0.0_f32, 1.0_f32),
+        ] {
+            clr();
+            let out = unsafe { fa::atan2f(y, x) };
+            let expect = if out == 0.0 && y != 0.0 && x.is_finite() {
+                ERANGE
+            } else {
+                0
+            };
+            assert_eq!(
+                rd(),
+                expect,
+                "atan2f({label}) {mode_name} -> {out:e} ({:#x})",
+                out.to_bits()
+            );
+            if mode == 0x0000 && matches!(label, "min_sub,1e38" | "-min_sub,1e38" | "1e-38,1e10" | "min_sub,2.0") {
+                assert_eq!(out, 0.0, "atan2f({label}) must underflow to zero in FE_TONEAREST");
+                assert_eq!(rd(), ERANGE, "atan2f({label}) must set ERANGE in FE_TONEAREST");
+            }
+        }
+    }
+
+    assert_eq!(unsafe { fenv_abi::fesetround(saved) }, 0);
+}

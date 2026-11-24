@@ -802,7 +802,11 @@ pub unsafe extern "C" fn atan(x: f64) -> f64 {
 #[cold]
 #[inline(never)]
 extern "C" fn atan2_slow(y: f64, x: f64) -> f64 {
-    binary_entry(y, x, 6, frankenlibc_core::math::atan2)
+    let out = binary_entry(y, x, 6, frankenlibc_core::math::atan2);
+    if out == 0.0 && y != 0.0 && x.is_finite() {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -812,7 +816,18 @@ pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
         if y == 0.0 && x > 0.0 {
             return y;
         }
-        return frankenlibc_core::math::atan2(y, x);
+        // Underflow to ±0.0 (setting ERANGE) can only happen when x > 0 is finite
+        // and |y| / x can underflow. When x <= 0, x is non-finite, or y is normal
+        // with x_bits < |y|_bits + (1021 << 52), |atan2(y, x)| > 2 * f64::MIN_POSITIVE
+        // in all four rounding modes, so the leaf core call tail-calls directly.
+        let x_bits = x.to_bits();
+        let ay = y.to_bits() & 0x7fff_ffff_ffff_ffff;
+        if (x_bits as i64) <= 0
+            || x_bits >= 0x7ff0_0000_0000_0000
+            || (ay >= 0x0010_0000_0000_0000 && x_bits < ay + (1021u64 << 52))
+        {
+            return frankenlibc_core::math::atan2(y, x);
+        }
     }
     atan2_slow(y, x)
 }
@@ -2044,13 +2059,27 @@ pub unsafe extern "C" fn atanf(x: f32) -> f32 {
 #[cold]
 #[inline(never)]
 extern "C" fn atan2f_slow(y: f32, x: f32) -> f32 {
-    binary_entry_f32(y, x, 6, frankenlibc_core::math::atan2f)
+    let out = binary_entry_f32(y, x, 6, frankenlibc_core::math::atan2f);
+    if out == 0.0 && y != 0.0 && x.is_finite() {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
     if runtime_policy::math_membrane_fastpath_inline() {
-        return frankenlibc_core::math::atan2f(y, x);
+        if y == 0.0 && x > 0.0 {
+            return y;
+        }
+        let x_bits = x.to_bits();
+        let ay = y.to_bits() & 0x7fff_ffff;
+        if (x_bits as i32) <= 0
+            || x_bits >= 0x7f80_0000
+            || (ay >= 0x0080_0000 && x_bits < ay + (125u32 << 23))
+        {
+            return frankenlibc_core::math::atan2f(y, x);
+        }
     }
     atan2f_slow(y, x)
 }
