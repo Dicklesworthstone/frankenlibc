@@ -180,9 +180,10 @@ struct Mapping {
 }
 
 impl Mapping {
-    fn allocate(object: &LoadedObject, image_len: usize) -> Option<Self> {
+    fn allocate(object: &LoadedObject, image: &LoadImage) -> Option<Self> {
         let layout = map_layout::Reservation::new(
-            image_len,
+            image.memory.len(),
+            image.low_vaddr,
             object
                 .program_headers
                 .iter()
@@ -233,6 +234,24 @@ impl Mapping {
         }
         .ok()?;
         Some(mapping)
+    }
+
+    /// Convert an ELF virtual address to an offset in this owned mapping.
+    /// The mapping start and ELF load bias differ for nonzero-low images.
+    fn offset(&self, object: &LoadedObject, vaddr: u64) -> Option<usize> {
+        let address = usize::try_from(object.base.checked_add(vaddr)?).ok()?;
+        address.checked_sub(self.base)
+    }
+
+    fn range(
+        &self,
+        object: &LoadedObject,
+        vaddr: u64,
+        size: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        let start = self.offset(object, vaddr)?;
+        let end = start.checked_add(size)?;
+        (end <= self.len).then_some(start..end)
     }
 }
 
@@ -742,7 +761,7 @@ fn prepare_file(
     }
     let lifecycle = lifecycle::Layout::parse(&bytes, object_ref)?;
     let image = loader.materialize_load_image(&bytes, object_ref).ok()?;
-    if image.low_vaddr != 0 || image.memory.is_empty() {
+    if image.memory.is_empty() {
         return None;
     }
     // $ORIGIN follows the name used to load this object, not the symlink
@@ -1019,12 +1038,13 @@ fn map_object(
 ) -> Option<NativeDso> {
     let file = prepared.file.try_clone().ok()?;
     let len = prepared.image.memory.len();
-    let mapping = Mapping::allocate(&prepared.object, len)?;
+    let mapping = Mapping::allocate(&prepared.object, &prepared.image)?;
     let base = mapping.base as *mut u8;
     // SAFETY: the fresh mapping has exactly len writable bytes and is disjoint
     // from the immutable source Vec. The guard unmaps it on every error path.
     unsafe { core::slice::from_raw_parts_mut(base, len) }.copy_from_slice(&prepared.image.memory);
-    let mut object = ElfLoader::new(base as u64).parse(&prepared.bytes).ok()?;
+    let bias = (mapping.base as u64).checked_sub(prepared.image.low_vaddr)?;
+    let mut object = ElfLoader::new(bias).parse(&prepared.bytes).ok()?;
     let symbolic = binding::symbolic(&prepared.bytes, &object)?;
     let versions = versions::Table::parse(&prepared.bytes, &object)?;
     let tls_relocations = tls::take_relocations(&mut object);
@@ -1080,7 +1100,7 @@ fn protect_object(dso: &NativeDso, image: &LoadImage, apply_relro: bool) -> Opti
     }
     .ok()?;
     for segment in &image.segments {
-        let offset = usize::try_from(segment.map_addr).ok()?;
+        let offset = usize::try_from(segment.map_addr.checked_sub(image.low_vaddr)?).ok()?;
         let len = usize::try_from(segment.map_size).ok()?;
         if offset.checked_add(len)? > dso.mapping.len {
             return None;
@@ -1295,12 +1315,10 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         let memory = unsafe {
             core::slice::from_raw_parts_mut(dso.mapping.base as *mut u8, dso.mapping.len)
         };
-        let report = ElfLoader::new(dso.object.base).apply_relocations_with_policy(
-            &dso.object,
-            memory,
-            &resolver,
-            PltBindingPolicy::Eager,
-        );
+        let image_vaddr = (dso.mapping.base as u64).checked_sub(dso.object.base)?;
+        let report = ElfLoader::new(dso.object.base)
+            .with_image_vaddr(image_vaddr)
+            .apply_relocations_with_policy(&dso.object, memory, &resolver, PltBindingPolicy::Eager);
         if !report.events.iter().all(|event| {
             matches!(
                 event.result,

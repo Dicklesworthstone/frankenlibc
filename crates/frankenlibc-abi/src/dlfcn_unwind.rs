@@ -65,7 +65,7 @@ impl Frames {
         if headers.next().is_some() {
             return None;
         }
-        let header_offset = usize::try_from(header.p_vaddr).ok()?;
+        let header_offset = mapping.offset(object, header.p_vaddr)?;
         let header_len = usize::try_from(header.p_memsz).ok()?;
         let header_end = header_offset.checked_add(header_len)?;
         if header_len < 4 || header_end > readable_end(object, mapping, header_offset)? {
@@ -130,8 +130,8 @@ impl Frames {
                 .program_headers
                 .iter()
                 .find(|ph| ph.is_load() && ph.p_flags.is_executable() && ph.p_memsz != 0)
-                .and_then(|ph| usize::try_from(ph.p_vaddr).ok())
-                .and_then(|vaddr| mapping.base.checked_add(vaddr))
+                .and_then(|ph| object.base.checked_add(ph.p_vaddr))
+                .and_then(|address| usize::try_from(address).ok())
                 .unwrap_or(mapping.base);
             let mut bases = DwarfEhBases {
                 tbase: std::ptr::null(),
@@ -171,8 +171,8 @@ fn readable_end(object: &LoadedObject, mapping: &Mapping, offset: usize) -> Opti
         if !header.is_load() || header.p_memsz == 0 {
             continue;
         }
-        let first = usize::try_from(header.p_vaddr).ok()? & !mask;
-        let last = usize::try_from(header.p_vaddr.checked_add(header.p_memsz)?).ok()?;
+        let first = mapping.offset(object, header.p_vaddr)? & !mask;
+        let last = mapping.offset(object, header.p_vaddr.checked_add(header.p_memsz)?)?;
         let last = last.checked_add(mask)? & !mask;
         for boundary in [first, last] {
             if boundary > offset {
@@ -205,11 +205,12 @@ fn property_boundary(
         .iter()
         .filter(|header| header.p_type == ProgramType::GnuProperty)
         .filter(|header| {
-            usize::try_from(header.p_vaddr)
-                .is_ok_and(|start| offset < start && start <= limit)
+            mapping
+                .offset(object, header.p_vaddr)
+                .is_some_and(|start| offset < start && start <= limit)
         })
         .min_by_key(|header| header.p_vaddr)?;
-    let start = usize::try_from(header.p_vaddr).ok()?;
+    let start = mapping.offset(object, header.p_vaddr)?;
     let len = usize::try_from(header.p_memsz).ok()?;
     if header.p_filesz != header.p_memsz
         || len < 24
@@ -401,8 +402,8 @@ fn mapped_code_range(
     if range == 0 || last > mapping.len {
         return None;
     }
-    let first = u64::try_from(first).ok()?;
-    let last = u64::try_from(last).ok()?;
+    let first = (pc as u64).checked_sub(object.base)?;
+    let last = first.checked_add(range as u64)?;
     object
         .program_headers
         .iter()

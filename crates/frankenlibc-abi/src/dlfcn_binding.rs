@@ -322,18 +322,19 @@ pub(super) fn prepare(
                 )
                 .ok()?
             };
-            let offset = usize::try_from(relocation.r_offset).ok()?;
-            let end = offset.checked_add(width)?;
-            if end > dso.mapping.len
-                || !dso.object.program_headers.iter().any(|header| {
-                    header.is_load()
-                        && header.p_vaddr <= offset as u64
-                        && header
-                            .p_vaddr
-                            .checked_add(header.p_memsz)
-                            .is_some_and(|limit| end as u64 <= limit)
-                })
-            {
+            let offset = dso
+                .mapping
+                .range(&dso.object, relocation.r_offset, width)?
+                .start;
+            let end = relocation.r_offset.checked_add(width as u64)?;
+            if !dso.object.program_headers.iter().any(|header| {
+                header.is_load()
+                    && header.p_vaddr <= relocation.r_offset
+                    && header
+                        .p_vaddr
+                        .checked_add(header.p_memsz)
+                        .is_some_and(|limit| end <= limit)
+            }) {
                 return None;
             }
             plan.writes.push(Write {
