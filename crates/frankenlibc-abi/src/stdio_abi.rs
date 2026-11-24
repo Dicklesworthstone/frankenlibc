@@ -2664,7 +2664,7 @@ impl StreamRegistry {
                     ..Default::default()
                 };
                 new_stream_cell_with_handle(
-                    std_buffered_stream(libc::STDIN_FILENO, stdin_flags),
+                    buffered_fd_stream(libc::STDIN_FILENO, stdin_flags, Some(libc::SEEK_CUR)),
                     std_handle(libc::STDIN_FILENO),
                 )
             }
@@ -2674,7 +2674,7 @@ impl StreamRegistry {
                     ..Default::default()
                 };
                 new_stream_cell_with_handle(
-                    std_buffered_stream(libc::STDOUT_FILENO, stdout_flags),
+                    buffered_fd_stream(libc::STDOUT_FILENO, stdout_flags, Some(libc::SEEK_CUR)),
                     std_handle(libc::STDOUT_FILENO),
                 )
             }
@@ -5478,8 +5478,7 @@ unsafe fn fopen_with_mount_flags(
         }
     };
 
-    // Create stream via fdopen_native_impl_with_origin (freshly opened fd starts at offset 0).
-    let fp = fdopen_native_impl_with_origin(fd, &open_flags, true, wide_codec);
+    let fp = fdopen_native_impl(fd, &open_flags, new_file_seek(&open_flags), wide_codec);
     if fp.is_null() {
         let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         // Keep the allocation failure across descriptor cleanup and accounting.
@@ -5496,80 +5495,21 @@ unsafe fn fopen_with_mount_flags(
 ///
 /// Returns an opaque stream pointer. The fd remains owned by the caller on
 /// failure; this function never closes it.
-fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
-    // fdopen does not interpret GNU fopen's encoding suffix.
-    fdopen_native_impl_with_origin(fd, open_flags, false, None)
-}
-
-fn fdopen_native_impl_with_origin(
+fn fdopen_native_impl(
     fd: c_int,
     open_flags: &OpenFlags,
-    freshly_opened: bool,
+    initial_seek: Option<c_int>,
     wide_codec: Option<frankenlibc_core::iconv::MultibyteCodec>,
 ) -> *mut c_void {
-    const GLIBC_BUFSIZ: usize = 8192;
-    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    // SAFETY: `st` is a writable, correctly sized stat buffer.
-    let fstat_ok = fd >= 0 && unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_ok();
-    let (buf_mode, buf_size, seekable) = if fd == libc::STDERR_FILENO {
-        let seekable = fstat_ok && {
-            let file_type = unsafe { st.assume_init() }.st_mode & libc::S_IFMT;
-            !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK | libc::S_IFCHR)
-        };
-        (BufMode::None, 0, seekable)
-    } else if fstat_ok {
-        // SAFETY: fstat succeeded and filled the buffer.
-        let st = unsafe { st.assume_init() };
-        let file_type = st.st_mode & libc::S_IFMT;
-        let is_tty = file_type == libc::S_IFCHR && raw_isatty(fd);
-        let mode = if is_tty { BufMode::Line } else { BufMode::Full };
-        let size = match usize::try_from(st.st_blksize) {
-            Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
-            _ => GLIBC_BUFSIZ,
-        };
-        let seekable = !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK | libc::S_IFCHR);
-        (mode, size, seekable)
-    } else {
-        let mode = if raw_isatty(fd) {
-            BufMode::Line
-        } else {
-            BufMode::Full
-        };
-        (mode, GLIBC_BUFSIZ, false)
-    };
-
-    // Create StdioStream and set initial offset for append mode.
-    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    let mut stream = buffered_fd_stream(fd, *open_flags, initial_seek);
     if let Some(codec) = wide_codec {
         stream.bind_wide_codec(codec);
         stream.set_orientation(1);
     }
-    if !matches!(buf_mode, BufMode::None) {
-        stream.set_buffering(buf_mode, buf_size);
-    }
-    // Like glibc, only a write-only append stream ("a") starts at the end:
-    // "a+" reads from the beginning while its writes still land at the end.
-    if open_flags.append
-        && !open_flags.readable
-        && seekable
-        && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END)
-    {
-        stream.set_offset(end_off);
-    } else if !freshly_opened
-        && seekable
-        && let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
-    {
-        // Any other stream starts where the descriptor is: fdopen of an fd
-        // at offset 1 reads byte 1 and ftell reports 2 after one fgetc. The
-        // logical offset began at 0, so fclose/fflush synced the descriptor
-        // back to the wrong place (gnulib test-fclose; a shared fd re-read
-        // bytes already consumed).
-        stream.set_offset(cur);
-    }
 
     // The FILE * handed back is a glibc-layout handle (bd-rc0923-epic-eeuy4f.1):
     // callers and glibc's inline macros dereference it.
-    let Some((id, handle)) = alloc_stream_handle(fd, open_flags, buf_mode) else {
+    let Some((id, handle)) = alloc_stream_handle(fd, open_flags, stream.buf_mode()) else {
         unsafe { set_abi_errno(errno::ENOMEM) };
         return std::ptr::null_mut();
     };
@@ -5586,26 +5526,10 @@ fn fdopen_native_impl_with_origin(
     id as *mut c_void
 }
 
-/// glibc's buffering for a stream on `fd`: stderr unbuffered, a terminal
-/// line-buffered, anything else fully buffered. The standard streams used to
-/// be line-buffered unconditionally, so `printf` into a pipe or file issued a
-/// write(2) per line and interleaved with raw writes and stderr differently
-/// from glibc (which also duplicates unflushed output across fork).
-/// A buffered stream on `fd`, with the buffer size glibc would give it.
-///
-/// glibc sizes a stream's buffer when it first allocates it
-/// (`_IO_file_doallocate`): BUFSIZ (8192), or the fd's `st_blksize` when that is
-/// smaller -- 4096 for files, pipes and /dev/null, 1024 for /proc files
-/// (measured with __fbufsize on glibc 2.43). fl used 8192 for everything, so
-/// output was flushed at different points: stdout and stderr sharing a pipe
-/// interleaved differently (ImageMagick's `compare --help` put its error line
-/// in another place), and a crash lost up to twice as much buffered output.
-fn fd_stream(fd: c_int, open_flags: OpenFlags, buf_mode: BufMode) -> StdioStream {
-    let mut stream = StdioStream::with_mode(fd, open_flags, buf_mode);
-    if !matches!(buf_mode, BufMode::None) {
-        stream.set_buffering(buf_mode, glibc_stream_bufsize(fd));
-    }
-    stream
+// fopen and freopen in write-only append mode initially position at EOF.
+// All other newly opened files already have the correct kernel cursor.
+fn new_file_seek(flags: &OpenFlags) -> Option<c_int> {
+    (flags.append && !flags.readable).then_some(libc::SEEK_END)
 }
 
 fn glibc_stream_bufsize(fd: c_int) -> usize {
@@ -5623,7 +5547,14 @@ fn glibc_stream_bufsize(fd: c_int) -> usize {
     }
 }
 
-fn std_buffered_stream(fd: c_int, open_flags: OpenFlags) -> StdioStream {
+/// Ordinary streams use terminal line buffering or the descriptor's block
+/// size, even if the descriptor happens to be 2. Only the initial stderr
+/// object gets its special unbuffered policy in StreamRegistry.
+fn buffered_fd_stream(
+    fd: c_int,
+    open_flags: OpenFlags,
+    initial_seek: Option<c_int>,
+) -> StdioStream {
     const GLIBC_BUFSIZ: usize = 8192;
     let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
     // SAFETY: `st` is a writable, correctly sized stat buffer.
@@ -5638,7 +5569,7 @@ fn std_buffered_stream(fd: c_int, open_flags: OpenFlags) -> StdioStream {
             Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
             _ => GLIBC_BUFSIZ,
         };
-        let seekable = matches!(file_type, libc::S_IFREG | libc::S_IFBLK);
+        let seekable = !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK);
         (mode, size, seekable)
     } else {
         let mode = if raw_isatty(fd) {
@@ -5650,21 +5581,13 @@ fn std_buffered_stream(fd: c_int, open_flags: OpenFlags) -> StdioStream {
     };
     let mut stream = StdioStream::with_mode(fd, open_flags, buf_mode);
     stream.set_buffering(buf_mode, buf_size);
-    if seekable && let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR) {
-        stream.set_offset(cur);
+    if seekable
+        && let Some(whence) = initial_seek
+        && let Ok(position) = raw_syscall::sys_lseek(fd, 0, whence)
+    {
+        stream.set_offset(position);
     }
     stream
-}
-
-#[allow(dead_code)]
-fn std_stream_buf_mode(fd: c_int) -> BufMode {
-    if fd == libc::STDERR_FILENO {
-        BufMode::None
-    } else if raw_isatty(fd) {
-        BufMode::Line
-    } else {
-        BufMode::Full
-    }
 }
 
 /// Raw isatty check using TIOCGWINSZ ioctl syscall.
@@ -8802,7 +8725,7 @@ pub unsafe extern "C-unwind" fn setvbuf(
     // caller's size, which is what glibc does with it.
     //
     // That 4096 is not a constant: it is glibc's usual allocation size,
-    // BUFSIZ or the fd's smaller st_blksize (`fd_stream`), which is 4096 on
+    // BUFSIZ or the fd's smaller st_blksize (`buffered_fd_stream`), which is 4096 on
     // the files and pipes that measurement used and 1024 on /proc files.
     let id = canonical_stream_id(stream);
     if let Some(cell) = stream_cell(id) {
@@ -18360,18 +18283,19 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     }
     let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
-    let Some(mut open_flags) = parse_mode(mode_bytes) else {
+    // GNU fdopen only scans the first four modifiers for '+'. fopen's
+    // creation, encoding, close-on-exec and non-cancelling modifiers do not
+    // apply when associating an existing open file description.
+    let Some(mut open_flags) = parse_mode(&mode_bytes[..mode_bytes.len().min(1)]) else {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return std::ptr::null_mut();
     };
-    // GNU fdopen ignores `c`: it associates an existing descriptor and does
-    // not give its I/O the special fopen/open-stream cancellation policy.
-    open_flags.no_cancel = false;
+    if mode_bytes[1..].iter().take(4).any(|&byte| byte == b'+') {
+        open_flags.readable = true;
+        open_flags.writable = true;
+    }
 
-    // A positive descriptor can still be closed.  Validate it before creating
-    // a registry-owned stream so fdopen() preserves glibc's EBADF contract for
-    // invalid descriptors regardless of whether the mode requests CLOEXEC.
     let descriptor_flags = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFL, 0) } {
         Ok(flags) => flags,
         Err(e) => {
@@ -18392,8 +18316,8 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
     // fdopen does not reopen the descriptor. Append mode must therefore set
     // the kernel flag explicitly so every write appends atomically, even after
     // fseek. Preserve existing status flags such as O_NONBLOCK.
-    if open_flags.append
-        && descriptor_flags & libc::O_APPEND == 0
+    let add_append = open_flags.append && descriptor_flags & libc::O_APPEND == 0;
+    if add_append
         // SAFETY: F_GETFL validated fd; F_SETFL takes an integer flag argument,
         // and OR-ing O_APPEND preserves the descriptor's existing status flags.
         && let Err(e) = unsafe {
@@ -18409,22 +18333,14 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
-    if open_flags.cloexec {
-        let existing = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
-            Ok(flags) => flags,
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
-                return std::ptr::null_mut();
-            }
-        };
-        let _ = unsafe {
-            raw_syscall::sys_fcntl(fd, libc::F_SETFD, (existing | libc::FD_CLOEXEC) as usize)
-        };
-    }
-
-    // Create stream via fdopen_native_impl.
-    let fp = fdopen_native_impl(fd, &open_flags);
+    // An already-appending descriptor retains its position. Only enabling
+    // O_APPEND for a write-only append stream moves the shared cursor to EOF.
+    let whence = if add_append && !open_flags.readable {
+        libc::SEEK_END
+    } else {
+        libc::SEEK_CUR
+    };
+    let fp = fdopen_native_impl(fd, &open_flags, Some(whence), None);
     if fp.is_null() {
         let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
@@ -18736,7 +18652,7 @@ pub unsafe extern "C-unwind" fn freopen(
         fd = target_fd;
     }
 
-    let mut new_stream = fd_stream(fd, open_flags, std_stream_buf_mode(fd));
+    let mut new_stream = buffered_fd_stream(fd, open_flags, new_file_seek(&open_flags));
     if let Some(codec) = wide_codec {
         new_stream.bind_wide_codec(codec);
         new_stream.set_orientation(1);
@@ -19336,7 +19252,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
             writable: true,
             ..Default::default()
         };
-        let fp = fdopen_native_impl(fd2, &open_flags);
+        let fp = fdopen_native_impl(fd2, &open_flags, None, None);
         if fp.is_null() {
             let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
             let _ = raw_syscall::sys_close(fd2);
@@ -19353,7 +19269,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
         writable: true,
         ..Default::default()
     };
-    let fp = fdopen_native_impl(fd, &open_flags);
+    let fp = fdopen_native_impl(fd, &open_flags, None, None);
     if fp.is_null() {
         let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         let _ = raw_syscall::sys_close(fd);
