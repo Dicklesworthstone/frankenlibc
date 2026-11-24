@@ -64,7 +64,13 @@ static void check(const char *name, enum entry entry, const char *file,
         case SPAWNP: {
             pid_t child = -1;
             int rc = posix_spawnp(&child, file, NULL, NULL, args, environ);
-            if (!rc) { int status; while (waitpid(child, &status, 0) < 0 && errno == EINTR) {} _exit(123); }
+            if (!rc) {
+                int status;
+                while (waitpid(child, &status, 0) < 0) {
+                    if (errno != EINTR) _exit(123);
+                }
+                _exit(WIFEXITED(status) ? WEXITSTATUS(status) : 123);
+            }
             errno = rc; break;
         }
         }
@@ -233,6 +239,26 @@ int main(int argc, char **argv) {
     error_check("raw-execve-no-fallback", VE, plain, first, args, ENOEXEC);
     error_check("raw-execv-no-fallback", V, plain, first, args, ENOEXEC);
     error_check("spawnp-no-fallback", SPAWNP, "plain", first, args, ENOEXEC);
+    /* Search errors come from resolving the entire pathname. Even a long
+     * basename can encounter ENOTDIR or ENOENT in a preceding component. */
+    char long_name[NAME_MAX + 2];
+    memset(long_name, 'x', sizeof long_name - 1);
+    long_name[sizeof long_name - 1] = 0;
+    enum entry searching[] = {VP, VPE, LP, SPAWNP};
+    for (unsigned i = 0; i < sizeof searching / sizeof searching[0]; ++i) {
+        enum entry e = searching[i];
+        error_check("long-name-missing-parent", e, long_name, "/no-such-launch-dir", args, ENOENT);
+        error_check("long-name-nondirectory", e, long_name, "/dev/null", args, ENOTDIR);
+        error_check("long-name-existing-parent", e, long_name, first, args, ENAMETOOLONG);
+    }
+    /* The first candidate succeeds. Thousands of later empty components
+     * must neither change the executable nor inflate child argument storage. */
+    char large_path[65536];
+    size_t prefix = strlen(first);
+    memcpy(large_path, first, prefix);
+    memset(large_path + prefix, ':', sizeof large_path - prefix - 1);
+    large_path[sizeof large_path - 1] = 0;
+    check("large-PATH-first-match", SPAWNP, "shebang", large_path, args, 0, 47, "");
     check("unset-PATH-default", VP, "true", NULL, one, 0, 0, "");
     check("unset-PATH-custom-env", VPE, "true", NULL, one, 0, 0, "");
     error_check("last-PATH-error", VP, "missing", plain, args, ENOTDIR);

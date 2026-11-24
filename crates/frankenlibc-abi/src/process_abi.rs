@@ -19,60 +19,36 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
-/// Read a user-supplied C string pointer with a known-region bound so a
-/// non-NUL-terminated argument cannot walk arbitrary process memory through
-/// `CStr::from_ptr`. (REVIEW round 5: same defense class as bd-z4k96.)
-#[inline]
-unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
-    if ptr.is_null() {
-        return None;
-    }
-    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
-    if !terminated {
-        return None;
-    }
-    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
-    Some(bytes.to_vec())
-}
-
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
 
-unsafe fn path_bytes_from_env_vector(envp: *const *mut c_char) -> Vec<u8> {
-    // If a caller-supplied envp was provided, walk it directly: that array
-    // is owned by the caller, not by libc's mutable environ table, so
-    // ENVIRON_LOCK does not apply.
-    if !envp.is_null() {
-        return unsafe { walk_env_for_path(envp) };
-    }
-    // Walking the process-global `environ` requires ENVIRON_LOCK to avoid
-    // UAFing on a concurrent setenv realloc — same defense class as the
-    // native_getenv / clearenv fixes. (REVIEW round 4.)
-    crate::stdlib_abi::with_environ_locked(|envp| unsafe {
-        walk_env_for_path(envp as *const *mut c_char)
+/// Snapshot PATH under the same lock as setenv. A spawn child can scan this
+/// immutable copy after applying file actions without allocating or taking locks.
+fn process_search_path() -> Result<std::borrow::Cow<'static, [u8]>, c_int> {
+    crate::stdlib_abi::with_environ_locked(|mut envp| {
+        while !envp.is_null() {
+            // SAFETY: the lock keeps the NULL-terminated environment vector stable.
+            let entry = unsafe { *envp };
+            if entry.is_null() {
+                break;
+            }
+            let (len, terminated) =
+                unsafe { scan_c_string(entry, known_remaining(entry as usize)) };
+            if terminated {
+                let bytes = unsafe { std::slice::from_raw_parts(entry.cast::<u8>(), len) };
+                if let Some(value) = bytes.strip_prefix(b"PATH=") {
+                    let mut path = Vec::new();
+                    path.try_reserve_exact(value.len())
+                        .map_err(|_| libc::ENOMEM)?;
+                    path.extend_from_slice(value);
+                    return Ok(std::borrow::Cow::Owned(path));
+                }
+            }
+            envp = unsafe { envp.add(1) };
+        }
+        Ok(std::borrow::Cow::Borrowed(&b"/bin:/usr/bin"[..]))
     })
-}
-
-unsafe fn walk_env_for_path(mut envp: *const *mut c_char) -> Vec<u8> {
-    while !envp.is_null() {
-        // SAFETY: `envp` points to a NULL-terminated environment vector.
-        let entry = unsafe { *envp };
-        if entry.is_null() {
-            break;
-        }
-        // Caller-provided envp entries can be malformed. Bound scans for tracked
-        // allocations so an unterminated entry cannot bleed into adjacent memory.
-        if let Some(env_slice) = unsafe { read_bounded_cstr(entry) }
-            && let Some(path_value) = env_slice.strip_prefix(b"PATH=")
-        {
-            return path_value.to_vec();
-        }
-        // SAFETY: advancing within a NULL-terminated environment vector.
-        envp = unsafe { envp.add(1) };
-    }
-
-    b"/bin:/usr/bin".to_vec()
 }
 
 /// ENOEXEC fallback for the searching exec family, NOT execve or posix_spawnp.
@@ -148,61 +124,80 @@ unsafe fn execvpe_error(
     }
     // SAFETY: the bounded scan established this readable byte range.
     let file_bytes = unsafe { std::slice::from_raw_parts(file.cast::<u8>(), file_len) };
-    let attempt = |path: *const c_char| {
-        // SAFETY: all candidates are terminated and the caller's argument
-        // and environment vectors remain valid throughout the operation.
-        unsafe { raw_syscall::sys_execve(path.cast(), argv.cast(), envp.cast()) }
-            .err()
-            .unwrap_or(libc::EIO)
-    };
     if file_bytes.contains(&b'/') {
-        let error = attempt(file);
+        let error = unsafe { execve_error(file, argv, envp) };
         return if error == libc::ENOEXEC {
             unsafe { exec_through_shell(file, argv, envp) }
         } else {
             error
         };
     }
+    let path = match process_search_path() {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    unsafe { search_exec_path::<true>(file_bytes, &path, argv, envp) }
+}
 
-    // Bound per-candidate storage without allocating for every PATH entry.
-    // glibc's searching exec bounds bare names at Linux NAME_MAX (255).
-    // A pathname containing '/' is deliberately left to the kernel above.
-    const EXEC_NAME_MAX: usize = 255;
-    if file_len > EXEC_NAME_MAX {
-        return libc::ENAMETOOLONG;
-    }
-    let path = unsafe { path_bytes_from_env_vector(std::ptr::null()) };
-    let mut candidate = [0u8; libc::PATH_MAX as usize + EXEC_NAME_MAX + 1];
+#[inline]
+unsafe fn execve_error(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    unsafe { raw_syscall::sys_execve(file.cast(), argv.cast(), envp.cast()) }
+        .err()
+        .unwrap_or(libc::EIO)
+}
+
+/// Build one candidate at a time. The spawn instantiation uses only stack
+/// storage and raw execve, even when a candidate returns ENOEXEC.
+#[inline(never)]
+unsafe fn search_exec_path<const SHELL_FALLBACK: bool>(
+    file: &[u8],
+    path: &[u8],
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    const CAPACITY: usize = libc::PATH_MAX as usize;
+    // A shared-VM spawn child must not reenter an interposed memset/memcpy
+    // (or an allocator it calls). Only initialize the bytes sent to execve.
+    let mut candidate = std::mem::MaybeUninit::<[u8; CAPACITY]>::uninit();
+    let candidate_ptr = candidate.as_mut_ptr().cast::<u8>();
     let mut saw_eacces = false;
     let mut last_error = libc::ENOENT;
     for directory in path.split(|byte| *byte == b':') {
-        // Like glibc, skip an unrepresentably long search component rather
-        // than letting it hide a usable executable in a later component.
-        if directory.len() >= libc::PATH_MAX as usize {
+        if directory.len() >= CAPACITY {
             continue;
         }
-        let mut length = directory.len();
-        candidate[..length].copy_from_slice(directory);
-        if length != 0 {
-            candidate[length] = b'/';
-            length += 1;
+        let prefix = directory.len() + usize::from(!directory.is_empty());
+        if file.len() >= CAPACITY - prefix {
+            return libc::ENAMETOOLONG;
         }
-        // Empty PATH entries use the bare filename, not './file': the script
-        // sees the same $0 as glibc's fallback, including leading/trailing ':'.
-        candidate[length..length + file_len].copy_from_slice(file_bytes);
-        candidate[length + file_len] = 0;
-        let candidate_ptr = candidate.as_ptr().cast::<c_char>();
-        let error = attempt(candidate_ptr);
-        if error == libc::ENOEXEC {
-            // Do not continue PATH search if /bin/sh itself fails to exec.
+        // SAFETY: the capacity checks cover the directory, separator, file
+        // and NUL. Volatile byte stores keep the child path independent of
+        // the process's potentially interposed bulk-memory routines.
+        unsafe {
+            for (offset, &byte) in directory.iter().enumerate() {
+                candidate_ptr.add(offset).write_volatile(byte);
+            }
+            if !directory.is_empty() {
+                candidate_ptr.add(directory.len()).write(b'/');
+            }
+            for (offset, &byte) in file.iter().enumerate() {
+                candidate_ptr.add(prefix + offset).write_volatile(byte);
+            }
+            candidate_ptr.add(prefix + file.len()).write(0);
+        }
+        let candidate_ptr = candidate_ptr.cast::<c_char>();
+        let error = unsafe { execve_error(candidate_ptr, argv, envp) };
+        if SHELL_FALLBACK && error == libc::ENOEXEC {
             return unsafe { exec_through_shell(candidate_ptr, argv, envp) };
         }
         last_error = error;
         match error {
             libc::EACCES => saw_eacces = true,
             libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
-            // E2BIG, ENOMEM, ELOOP, ETXTBSY, etc. must not be hidden by an
-            // earlier EACCES or retried as if the executable were missing.
             _ => return error,
         }
     }
@@ -1434,10 +1429,10 @@ unsafe fn child_spawn_fail(
 struct SpawnChildContext<'a> {
     spawn_attrs: Option<&'static SpawnAttrs>,
     spawn_actions: Option<&'static SpawnFileActions>,
-    candidate_ptrs: &'a [*const c_char],
+    file: &'a std::ffi::CStr,
+    search_path: Option<&'a [u8]>,
     argv: *const *mut c_char,
     envp: *const *mut c_char,
-    is_path_search: bool,
     original_mask: u64,
     /// Write end of the error pipe, or -1 when `err_slot` is used.
     err_fd: c_int,
@@ -1486,44 +1481,15 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         unsafe { child_spawn_fail(err_fd, err_slot, error) };
     }
 
-    // Try execve for each candidate path; reading the slice does not allocate.
-    let mut saw_eacces = false;
-    let mut final_err = libc::ENOENT;
-    for &cand_path in ctx.candidate_ptrs.iter() {
-        // execve only returns on error
-        let err = unsafe {
-            raw_syscall::sys_execve(
-                cand_path as *const u8,
-                ctx.argv as *const *const u8,
-                // Linux and GNU treat a NULL envp as an empty environment.
-                // Inheriting environ here would disclose parent-only values
-                // to a child whose caller explicitly supplied no environment.
-                ctx.envp as *const *const u8,
-            )
-        }
-        .err()
-        .unwrap_or(libc::ENOENT);
-        // Without a PATH search, preserve the syscall's exact errno
-        // (in particular ENOTDIR), rather than folding it into ENOENT.
-        if !ctx.is_path_search {
-            unsafe { child_spawn_fail(err_fd, err_slot, err) };
-        }
-        final_err = err;
-        match err {
-            libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
-            libc::EACCES => {
-                saw_eacces = true;
-            }
-            // A terminal error (notably ENOEXEC) wins over an earlier
-            // EACCES. posix_spawnp must not run an implicit shell here.
-            _ => unsafe { child_spawn_fail(err_fd, err_slot, err) },
-        }
-    }
-
-    if saw_eacces {
-        final_err = libc::EACCES;
-    }
-    unsafe { child_spawn_fail(err_fd, err_slot, final_err) };
+    let argv = ctx.argv.cast::<*const c_char>();
+    let envp = ctx.envp.cast::<*const c_char>();
+    // Linux treats a NULL envp as an empty environment. The inherited PATH
+    // is only a search input and must never replace the child's envp.
+    let error = match ctx.search_path {
+        Some(path) => unsafe { search_exec_path::<false>(ctx.file.to_bytes(), path, argv, envp) },
+        None => unsafe { execve_error(ctx.file.as_ptr(), argv, envp) },
+    };
+    unsafe { child_spawn_fail(err_fd, err_slot, error) };
 }
 
 /// Stack for a `CLONE_VM` spawn child.
@@ -1711,49 +1677,13 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         ))
     };
 
-    // Prepare candidate paths in the parent process to avoid allocations in the
-    // child process after fork, which is not async-signal safe and can deadlock
-    // if another thread held an allocator lock during clone().
-    let mut candidate_paths: Vec<std::ffi::CString> = Vec::new();
-
-    if search_path {
-        let file_bytes = path_slice;
-
-        if file_bytes.contains(&b'/') {
-            candidate_paths.push(std::ffi::CString::from(file_cstr));
-        } else {
-            // PATH comes from the caller's environment, not the environment
-            // vector that will be installed in the newly executed program.
-            let owned_path = unsafe { path_bytes_from_env_vector(std::ptr::null()) };
-            let path_bytes = owned_path.as_slice();
-            for dir in path_bytes.split(|b| *b == b':') {
-                // Match the searching exec boundary: an unrepresentably long
-                // PATH component must not hide a usable later executable.
-                // Shorter components still reach execve, whose ENAMETOOLONG
-                // is terminal (for example a single NAME_MAX+1 directory).
-                if dir.len() >= libc::PATH_MAX as usize {
-                    continue;
-                }
-                let mut full = dir.to_vec();
-                if !full.ends_with(b"/") && !full.is_empty() {
-                    full.push(b'/');
-                }
-                full.extend_from_slice(file_bytes);
-                if let Ok(c) = std::ffi::CString::new(full) {
-                    candidate_paths.push(c);
-                }
-            }
-            // An empty candidate list reports ENOENT in the child, after
-            // attributes and file actions. It must not invent a CWD lookup
-            // or mask an earlier action failure by returning in the parent.
+    let search_dirs = if is_path_search {
+        match process_search_path() {
+            Ok(path) => Some(path),
+            Err(error) => return error,
         }
-    }
-
-    // Create an array of raw pointers that the child process can iterate over safely.
-    let candidate_ptrs: Vec<*const c_char> = if search_path {
-        candidate_paths.iter().map(|c| c.as_ptr()).collect()
     } else {
-        vec![path]
+        None
     };
 
     // How the child reports a pre-exec failure errno. On x86_64 it is a
@@ -1813,10 +1743,10 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     let child_context = SpawnChildContext {
         spawn_attrs,
         spawn_actions,
-        candidate_ptrs: &candidate_ptrs,
+        file: file_cstr,
+        search_path: search_dirs.as_deref(),
         argv,
         envp,
-        is_path_search,
         original_mask: signal_guard.original,
         err_fd: err_pipe[1],
         err_slot: (!use_pipe).then_some(&child_error),
