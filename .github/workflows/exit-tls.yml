@@ -67,6 +67,8 @@ jobs:
           grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$root/fork-keys.log"
           cargo test -p frankenlibc-core --lib "${args[@]}" pthread::thread::tests::prepared_thread_ -- --test-threads=1 2>&1 | tee "$root/prepared-threads.log"
           grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/prepared-threads.log"
+          cargo test -p frankenlibc-abi --lib "${args[@]}" startup_abi::executable_init_tests::fixed_executable_without_phdr_ -- --test-threads=1 2>&1 | tee "$root/executable-layout.log"
+          grep -Eq 'test result: ok\. 7 passed; 0 failed;' "$root/executable-layout.log"
           python3 scripts/check_startup_thread_exit.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/startup"
           FRANKENLIBC_SMOKE_LIB_PATH="$PWD/target/release/libfrankenlibc_abi.so" \
             scripts/check_owned_startup_default_e2e.sh --legacy-crt-only 2>&1 | tee "$root/legacy-crt.log"
