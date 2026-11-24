@@ -3107,12 +3107,26 @@ fn hosts_lookup_error_code(
     }
 }
 
+/// Resolve interface names with the native ioctl backend. Zero denotes an
+/// unknown interface in both numeric hosts and nameserver configuration.
+fn interface_index(zone: &[u8]) -> u32 {
+    let Ok(name) = std::ffi::CString::new(zone) else {
+        return 0;
+    };
+    // SAFETY: the CString owns its NUL-terminated name for this call.
+    unsafe { crate::inet_abi::if_nametoindex(name.as_ptr()) }
+}
+
+pub(crate) fn parse_resolver_config(content: &[u8]) -> frankenlibc_core::resolv::ResolverConfig {
+    frankenlibc_core::resolv::ResolverConfig::parse_with_interfaces(content, interface_index)
+}
+
 /// Use the normal resolver configuration unless an explicit backend override
 /// is selected, following the hosts/services backend convention.
 fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
     let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
     let mut config = match std::fs::read(path) {
-        Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
+        Ok(content) => parse_resolver_config(&content),
         Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
     };
     // Address and reverse lookups honor the same process overrides as
@@ -3707,29 +3721,23 @@ pub unsafe extern "C" fn getaddrinfo(
 
     match host_text {
         Some(text) => {
-            let numeric = match address_policy.numeric(text, |zone| {
-                let Ok(name) = std::ffi::CString::new(zone) else {
-                    return 0;
+            let numeric =
+                match address_policy.numeric(text, |zone| interface_index(zone.as_bytes())) {
+                    Ok(address) => address,
+                    Err(error) => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return match error {
+                            NumericError::AddressFamily => EAI_ADDRFAMILY,
+                            NumericError::InvalidScope => libc::EAI_NONAME,
+                        };
+                    }
                 };
-                // SAFETY: CString supplies a terminated interface name. The
-                // native interface lookup returns zero for unknown names.
-                unsafe { crate::inet_abi::if_nametoindex(name.as_ptr()) }
-            }) {
-                Ok(address) => address,
-                Err(error) => {
-                    record_resolver_stage_outcome(
-                        &ordering,
-                        aligned,
-                        recent_page,
-                        Some(stage_index(&ordering, CheckStage::Bounds)),
-                    );
-                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                    return match error {
-                        NumericError::AddressFamily => EAI_ADDRFAMILY,
-                        NumericError::InvalidScope => libc::EAI_NONAME,
-                    };
-                }
-            };
             if let Some(address) = numeric {
                 push_addrinfo_address_nodes(
                     &mut nodes,

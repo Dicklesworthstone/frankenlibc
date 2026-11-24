@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use super::{QueryError, exchange_raw_until, question, response_matches};
-use crate::resolv::config::{DNS_PORT, ResolverConfig};
+use crate::resolv::config::ResolverConfig;
 use crate::resolv::dns::{DNS_HEADER_SIZE, DnsHeader, DnsMessage, qclass, qtype, rcode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,10 +77,8 @@ pub struct Config {
 impl From<&ResolverConfig> for Config {
     fn from(config: &ResolverConfig) -> Self {
         Self {
-            nameservers: config
-                .nameservers
-                .iter()
-                .map(|&ip| SocketAddr::new(ip, DNS_PORT))
+            nameservers: (0..config.nameservers.len())
+                .map(|index| config.nameserver_endpoint(index))
                 .collect(),
             timeout: config.query_timeout(),
             attempts: config.attempts,

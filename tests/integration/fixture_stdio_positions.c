@@ -95,6 +95,82 @@ static int untouched_position(const void *position, size_t size) {
     return 1;
 }
 
+/* fdopen borrows the existing open file description. Check both the FILE
+   position and the cursor seen through its descriptor before any I/O. */
+static int check_descriptor_association(void) {
+    char path[] = "/tmp/fl_stdio_descriptor_XXXXXX";
+    int seed = mkstemp(path);
+    POSITION_CHECK(seed >= 0 && write(seed, "ABCDEF", 6) == 6 && close(seed) == 0);
+
+    for (int already_appending = 0; already_appending <= 1; ++already_appending) {
+        for (int updating = 0; updating <= 1; ++updating) {
+            for (int cloexec = 0; cloexec <= 1; ++cloexec) {
+                int fd = open(path, O_RDWR | O_NONBLOCK |
+                              (already_appending ? O_APPEND : 0) | (cloexec ? O_CLOEXEC : 0));
+                POSITION_CHECK(fd >= 0 && lseek(fd, 2, SEEK_SET) == 2);
+                FILE *fp = fdopen(fd, updating ? "a+e" : "ae");
+                POSITION_CHECK(fp && fileno(fp) == fd);
+                long start = already_appending || updating ? 2 : 6;
+                POSITION_CHECK(ftell(fp) == start && lseek(fd, 0, SEEK_CUR) == start);
+                POSITION_CHECK((fcntl(fd, F_GETFD) & FD_CLOEXEC) == (cloexec ? FD_CLOEXEC : 0));
+                POSITION_CHECK((fcntl(fd, F_GETFL) & (O_APPEND | O_NONBLOCK)) == (O_APPEND | O_NONBLOCK));
+                if (updating) POSITION_CHECK(fgetc(fp) == 'C');
+                POSITION_CHECK(fclose(fp) == 0);
+            }
+        }
+    }
+
+    const char *modes[] = {"r,+", "rxxx+", "rxxxx+"};
+    for (size_t i = 0; i < sizeof modes / sizeof modes[0]; ++i) {
+        int fd = open(path, O_RDONLY);
+        POSITION_CHECK(fd >= 0);
+        errno = 0;
+        FILE *fp = fdopen(fd, modes[i]);
+        if (i < 2) {
+            POSITION_CHECK(!fp && errno == EINVAL);
+            POSITION_CHECK(close(fd) == 0);
+        } else {
+            POSITION_CHECK(fp && fgetc(fp) == 'A' && fclose(fp) == 0);
+        }
+    }
+
+    for (int anonymous = 0; anonymous <= 1; ++anonymous) {
+        for (int updating = 0; updating <= 1; ++updating) {
+            FILE *fp = fopen(path, "r+");
+            POSITION_CHECK(fp && fseek(fp, 2, SEEK_SET) == 0);
+            int fd = fileno(fp);
+            POSITION_CHECK(freopen(anonymous ? NULL : path, updating ? "a+" : "a", fp) == fp);
+            POSITION_CHECK(fileno(fp) == fd && ftell(fp) == (updating ? 0 : 6));
+            POSITION_CHECK(lseek(fd, 0, SEEK_CUR) == (updating ? 0 : 6));
+            POSITION_CHECK(fclose(fp) == 0);
+        }
+    }
+
+    FILE *direct = fopen(path, "a+");
+    POSITION_CHECK(direct && setvbuf(direct, NULL, _IONBF, 0) == 0);
+    POSITION_CHECK(fseek(direct, 1, SEEK_SET) == 0 && fputc('G', direct) == 'G');
+    POSITION_CHECK(ftell(direct) == 7 && __fpending(direct) == 0);
+    POSITION_CHECK(fseek(direct, 1, SEEK_SET) == 0 && fwrite("HI", 1, 2, direct) == 2);
+    POSITION_CHECK(fseek(direct, -1, SEEK_CUR) == 0 && fgetc(direct) == 'I');
+    POSITION_CHECK(fclose(direct) == 0);
+
+    /* Ordinary FILEs remain buffered when a descriptor number is recycled.
+       Isolate fd 2 so failed child assertions can be reported by the parent. */
+    pid_t pid = fork();
+    POSITION_CHECK(pid >= 0);
+    if (pid == 0) {
+        if (close(STDERR_FILENO)) _exit(1);
+        FILE *fp = fopen(path, "w");
+        if (!fp || fileno(fp) != STDERR_FILENO || fputc('X', fp) != 'X' ||
+            __fpending(fp) != 1 || fclose(fp)) _exit(2);
+        _exit(0);
+    }
+    int status;
+    POSITION_CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && !WEXITSTATUS(status));
+    POSITION_CHECK(unlink(path) == 0);
+    return 0;
+}
+
 static int check_saved_positions(void) {
     /* Both an uncached and a read-cached unseekable stream must fail without
        publishing any part of the opaque output or setting its I/O error bit. */
@@ -220,7 +296,7 @@ static int check_saved_positions(void) {
 }
 
 int main(void) {
-    if (check_saved_positions() != 0) return 1;
+    if (check_descriptor_association() != 0 || check_saved_positions() != 0) return 1;
     char path[64];
     snprintf(path, sizeof path, "/tmp/fl_stdio_pos_%d", (int)getpid());
 

@@ -10,7 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::resolv::config::{DNS_PORT, ResolverConfig};
+use crate::resolv::config::ResolverConfig;
 use crate::resolv::dns::{
     DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsHeader, DnsMessage, DnsRecord, DnsResolution,
     build_search_names, qclass, qtype, rcode,
@@ -685,7 +685,7 @@ where
                 if refused_servers[server_index] {
                     continue;
                 }
-                let server = SocketAddr::new(config.nameservers[server_index], DNS_PORT);
+                let server = config.nameserver_endpoint(server_index);
                 for (index, record_type) in [qtype::A, qtype::AAAA].into_iter().enumerate() {
                     if done[index] {
                         continue;
@@ -902,10 +902,7 @@ where
     let mut temporary = false;
     for _ in 0..config.attempts.max(1) {
         for offset in 0..config.nameservers.len() {
-            let server = SocketAddr::new(
-                config.nameservers[(start + offset) % config.nameservers.len()],
-                DNS_PORT,
-            );
+            let server = config.nameserver_endpoint((start + offset) % config.nameservers.len());
             match query(
                 &name,
                 qtype::PTR,

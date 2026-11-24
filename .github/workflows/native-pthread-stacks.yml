@@ -417,7 +417,7 @@ jobs:
           grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$root/native-policy.log"
           cargo test -p frankenlibc-abi --lib "${args[@]}" \
             owned_tls_cache::tests:: -- --test-threads=1 2>&1 | tee "$root/cache-owner.log"
-          grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-owner.log"
+          grep -Eq 'test result: ok\. 17 passed; 0 failed;' "$root/cache-owner.log"
           cargo test -p frankenlibc-abi "${args[@]}" --test pthread_host_thread_handoff_test \
             host_tls_late_callback_ -- --test-threads=1 2>&1 | tee "$root/host-cache-rearm.log"
           grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$root/host-cache-rearm.log"

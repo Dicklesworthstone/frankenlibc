@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 
 CASES = {
@@ -16,6 +17,32 @@ CASES = {
     "worker-last-detached": 0, "fork-exit": 23,
     "constructor-exit": 29,
 }
+
+
+def build_fixed_executables(source: Path, out: Path) -> tuple[str, str]:
+    """Keep the normal CRT handoff and remove only the optional PT_PHDR tag."""
+    names = ("c-exec-with-phdr", "c-exec-without-phdr")
+    control, variant = (out / name for name in names)
+    subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-O2", "-Wall",
+                    "-Wextra", "-Werror", "-pthread", "-fno-pie", "-no-pie",
+                    str(source), "-ldl", "-o", str(control)], check=True)
+    original = control.read_bytes()
+    if (len(original) < 64 or original[:7] != b"\x7fELF\x02\x01\x01"
+            or struct.unpack_from("<H", original, 16)[0] != 2):
+        raise ValueError("fixed executable fixture must be ELF64 little-endian ET_EXEC")
+    phoff = struct.unpack_from("<Q", original, 32)[0]
+    phent, phnum = struct.unpack_from("<HH", original, 54)
+    if phent != 56 or not phnum or phoff < 64 or phoff + phnum * phent > len(original):
+        raise ValueError("fixed executable fixture has an invalid program-header table")
+    offsets = [phoff + index * phent for index in range(phnum)]
+    types = [struct.unpack_from("<I", original, offset)[0] for offset in offsets]
+    if types.count(6) != 1 or 2 not in types:
+        raise ValueError("fixed executable fixture requires PT_PHDR and PT_DYNAMIC")
+    modified = bytearray(original)
+    struct.pack_into("<I", modified, offsets[types.index(6)], 0)
+    variant.write_bytes(modified)
+    variant.chmod(control.stat().st_mode & 0o777)
+    return names
 
 
 def main() -> int:
@@ -40,6 +67,7 @@ def main() -> int:
     for name, command in builds.items():
         subprocess.run(command + ["-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
                        str(source), "-ldl", "-o", str(out / name)], check=True)
+    fixed_builds = build_fixed_executables(source, out)
     clean = {key: value for key, value in os.environ.items()
              if key != "LD_PRELOAD" and not key.startswith("FRANKENLIBC_")}
     clean["FRANKENLIBC_MAIN_CTOR_DROP"] = "removed-by-constructor"
@@ -86,6 +114,9 @@ def main() -> int:
     for build in builds:
         for case in CASES:
             references[build, case] = run("host", build, case, clean)
+    for build in fixed_builds:
+        references[build, "return"] = run("host", build, "return", clean,
+                                          references["c", "return"])
     library = args.library.resolve(strict=True) if args.library else None
     adapter = args.startup_adapter.resolve(strict=True) if args.startup_adapter else None
     if library:
@@ -100,6 +131,11 @@ def main() -> int:
             for build in builds:
                 for case in CASES:
                     run(mode, build, case, env, references[build, case])
+            for backend in ("0", "1"):
+                fixed_env = dict(env, FRANKENLIBC_THREAD_NATIVE=backend)
+                for build in fixed_builds:
+                    run(f"{mode}-fixed-{backend}", build, "return", fixed_env,
+                        references[build, "return"])
             # The last native clone used to discard its handle/TLS before
             # process callbacks. Hosted workers cannot exercise that path.
             # C++ compiler TLS remains a separate native integration boundary.
