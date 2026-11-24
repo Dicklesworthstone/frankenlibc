@@ -15,8 +15,9 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::startup_helpers::{
-    AT_NULL, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint, StartupInvariants,
-    build_invariants, classify_secure_mode, normalize_argc, startup_path_respects_dag,
+    AT_NULL, EXECUTABLE_ELF_HEADER_BYTES, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
+    StartupInvariants, build_invariants, classify_secure_mode, fixed_executable_load_bias,
+    normalize_argc, startup_path_respects_dag,
 };
 use crate::util::scan_c_string;
 
@@ -967,8 +968,6 @@ unsafe fn read_auxv_pairs(stack_end: *mut c_void, max_pairs: usize) -> AuxvPairs
     AuxvPairs::Heap(out)
 }
 
-const EXECUTABLE_ELF_HEADER_BYTES: usize = 64;
-
 /// Read only the executable's fixed ELF header. This fallback runs before its
 /// constructors and must not initialize stdio, resolve host symbols, or allocate.
 fn read_executable_elf_header() -> Result<[u8; EXECUTABLE_ELF_HEADER_BYTES], ()> {
@@ -1010,85 +1009,25 @@ fn read_executable_elf_header() -> Result<[u8; EXECUTABLE_ELF_HEADER_BYTES], ()>
     result
 }
 
-/// Establish the zero load bias of an ET_EXEC image without PT_PHDR. The file
-/// header comes from /proc/self/exe; the program headers and addresses come from
-/// the kernel auxv. Matching both views avoids guessing an ELF-header address or
-/// assuming that the program-header table immediately follows the ELF header.
-fn fixed_executable_load_bias(
-    header: &[u8; EXECUTABLE_ELF_HEADER_BYTES],
+/// Resolve the main executable's load bias from its kernel-supplied headers.
+/// Constructor dispatch and native TLS destructor ownership must admit the
+/// same executable classes: PT_PHDR is optional for a verified ET_EXEC image.
+/// This fallback uses raw I/O only and never enters the host loader.
+pub(crate) fn executable_load_bias(
     phdr_addr: usize,
     phdrs: &[libc::Elf64_Phdr],
-    entry: usize,
+    entry: Option<usize>,
 ) -> Result<usize, ()> {
-    let native_machine = if cfg!(target_arch = "x86_64") {
-        62u16
-    } else if cfg!(target_arch = "aarch64") {
-        183u16
+    if let Some(header) = phdrs.iter().find(|header| header.p_type == libc::PT_PHDR) {
+        // PT_PHDR supplies the link-time address for both PIE and ET_EXEC.
+        phdr_addr
+            .checked_sub(usize::try_from(header.p_vaddr).map_err(|_| ())?)
+            .ok_or(())
     } else {
-        return Err(());
-    };
-    let phent = std::mem::size_of::<libc::Elf64_Phdr>();
-    if std::mem::size_of::<usize>() != 8
-        || &header[..7] != b"\x7fELF\x02\x01\x01"
-        || u16::from_le_bytes(header[16..18].try_into().map_err(|_| ())?) != libc::ET_EXEC
-        || u16::from_le_bytes(header[18..20].try_into().map_err(|_| ())?) != native_machine
-        || u32::from_le_bytes(header[20..24].try_into().map_err(|_| ())?) != 1
-        || usize::from(u16::from_le_bytes(
-            header[52..54].try_into().map_err(|_| ())?,
-        )) != EXECUTABLE_ELF_HEADER_BYTES
-        || usize::from(u16::from_le_bytes(
-            header[54..56].try_into().map_err(|_| ())?,
-        )) != phent
-        || usize::from(u16::from_le_bytes(
-            header[56..58].try_into().map_err(|_| ())?,
-        )) != phdrs.len()
-        || phdrs.is_empty()
-        || phdrs.len() > MAX_STARTUP_SCAN
-        || phdr_addr == 0
-        || !phdr_addr.is_multiple_of(std::mem::align_of::<libc::Elf64_Phdr>())
-    {
-        return Err(());
-    }
-    let file_entry = usize::try_from(u64::from_le_bytes(
-        header[24..32].try_into().map_err(|_| ())?,
-    ))
-    .map_err(|_| ())?;
-    let phoff = usize::try_from(u64::from_le_bytes(
-        header[32..40].try_into().map_err(|_| ())?,
-    ))
-    .map_err(|_| ())?;
-    if file_entry != entry || phoff < EXECUTABLE_ELF_HEADER_BYTES {
-        return Err(());
-    }
-    let table_bytes = phdrs.len().checked_mul(phent).ok_or(())?;
-    let table_file_end = phoff.checked_add(table_bytes).ok_or(())?;
-    let table_memory_end = phdr_addr.checked_add(table_bytes).ok_or(())?;
-    let mut headers_mapped = false;
-    let mut entry_mapped = false;
-    for segment in phdrs.iter().filter(|p| p.p_type == libc::PT_LOAD) {
-        let start = usize::try_from(segment.p_vaddr).map_err(|_| ())?;
-        let memory_size = usize::try_from(segment.p_memsz).map_err(|_| ())?;
-        let file_start = usize::try_from(segment.p_offset).map_err(|_| ())?;
-        let file_size = usize::try_from(segment.p_filesz).map_err(|_| ())?;
-        let memory_end = start.checked_add(memory_size).ok_or(())?;
-        let file_end = file_start.checked_add(file_size).ok_or(())?;
-        if file_size > memory_size
-            || (segment.p_align > 1
-                && (!segment.p_align.is_power_of_two()
-                    || segment.p_vaddr % segment.p_align != segment.p_offset % segment.p_align))
-        {
-            return Err(());
-        }
-        if segment.p_flags & libc::PF_R != 0 && phoff >= file_start && table_file_end <= file_end {
-            let mapped_table = start.checked_add(phoff - file_start).ok_or(())?;
-            headers_mapped |= mapped_table == phdr_addr && table_memory_end <= memory_end;
-        }
-        entry_mapped |= segment.p_flags & libc::PF_X != 0 && entry >= start && entry < memory_end;
-    }
-    if headers_mapped && entry_mapped {
-        Ok(0)
-    } else {
-        Err(())
+        // A missing program-header segment does not establish a PIE bias.
+        // Match the fixed executable's file header to the actual auxv mapping.
+        let header = read_executable_elf_header()?;
+        fixed_executable_load_bias(&header, phdr_addr, phdrs, entry.ok_or(())?)
     }
 }
 
@@ -1124,16 +1063,7 @@ unsafe fn call_executable_init(
     let Some(dynamic) = phdrs.iter().find(|p| p.p_type == libc::PT_DYNAMIC) else {
         return Ok(());
     };
-    let bias = if let Some(header) = phdrs.iter().find(|p| p.p_type == libc::PT_PHDR) {
-        // PT_PHDR directly supplies the link-time address for PIE and ET_EXEC.
-        phdr_addr.checked_sub(header.p_vaddr as usize).ok_or(())?
-    } else {
-        // PT_PHDR is optional. Admit only a verified fixed-address executable;
-        // PIE still requires the existing explicit load-bias metadata.
-        let header = read_executable_elf_header()?;
-        let entry = aux(libc::AT_ENTRY as usize).ok_or(())?;
-        fixed_executable_load_bias(&header, phdr_addr, phdrs, entry)?
-    };
+    let bias = executable_load_bias(phdr_addr, phdrs, aux(libc::AT_ENTRY as usize))?;
     let mapped = |addr: usize, len: usize, flags: u32| {
         let Some(end) = addr.checked_add(len) else {
             return false;
@@ -2385,216 +2315,5 @@ pub(crate) fn own_image_range() -> Option<(usize, usize)> {
         // so it is mapped at `low` plus the load bias: 0 for the shared
         // object, the link address for a non-PIE link.
         (high > low).then(|| (base as usize, base as usize + (high - low)))
-    }
-}
-
-#[cfg(test)]
-mod executable_init_tests {
-    use super::{EXECUTABLE_ELF_HEADER_BYTES, fixed_executable_load_bias};
-
-    fn fixed_image(
-        phoff: u64,
-        table_load_offset: u64,
-    ) -> (
-        [u8; EXECUTABLE_ELF_HEADER_BYTES],
-        [libc::Elf64_Phdr; 3],
-        usize,
-        usize,
-    ) {
-        let data = libc::Elf64_Phdr {
-            p_type: libc::PT_LOAD,
-            p_flags: libc::PF_R,
-            p_offset: table_load_offset,
-            p_vaddr: 0x400000,
-            p_paddr: 0x400000,
-            p_filesz: 0x1000,
-            p_memsz: 0x1000,
-            p_align: 0x1000,
-        };
-        let code = libc::Elf64_Phdr {
-            p_type: libc::PT_LOAD,
-            p_flags: libc::PF_R | libc::PF_X,
-            p_offset: table_load_offset + 0x1000,
-            p_vaddr: 0x401000,
-            p_paddr: 0x401000,
-            p_filesz: 0x1000,
-            p_memsz: 0x1000,
-            p_align: 0x1000,
-        };
-        // A removed optional PT_PHDR entry leaves the table count unchanged.
-        let removed = libc::Elf64_Phdr {
-            p_type: libc::PT_NULL,
-            p_flags: 0,
-            p_offset: 0,
-            p_vaddr: 0,
-            p_paddr: 0,
-            p_filesz: 0,
-            p_memsz: 0,
-            p_align: 0,
-        };
-        let entry = 0x401080usize;
-        let mut header = [0u8; EXECUTABLE_ELF_HEADER_BYTES];
-        header[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
-        header[16..18].copy_from_slice(&libc::ET_EXEC.to_le_bytes());
-        let machine = if cfg!(target_arch = "x86_64") {
-            62u16
-        } else {
-            183u16
-        };
-        header[18..20].copy_from_slice(&machine.to_le_bytes());
-        header[20..24].copy_from_slice(&1u32.to_le_bytes());
-        header[24..32].copy_from_slice(&(entry as u64).to_le_bytes());
-        header[32..40].copy_from_slice(&phoff.to_le_bytes());
-        header[52..54].copy_from_slice(&(EXECUTABLE_ELF_HEADER_BYTES as u16).to_le_bytes());
-        header[54..56]
-            .copy_from_slice(&(std::mem::size_of::<libc::Elf64_Phdr>() as u16).to_le_bytes());
-        header[56..58].copy_from_slice(&3u16.to_le_bytes());
-        let phdr_addr = 0x400000 + (phoff - table_load_offset) as usize;
-        (header, [data, code, removed], phdr_addr, entry)
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_accepts_nonstandard_table_offset() {
-        for phoff in [64, 0x180, 0x800] {
-            let (header, phdrs, address, entry) = fixed_image(phoff, 0);
-            assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, entry),
-                Ok(0)
-            );
-        }
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_translates_nonzero_segment_file_offset() {
-        let (header, phdrs, address, entry) = fixed_image(0x2180, 0x2000);
-        assert_eq!(address, 0x400180);
-        assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry),
-            Ok(0)
-        );
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_rejects_pie_and_malformed_headers() {
-        let (header, phdrs, address, entry) = fixed_image(0x180, 0);
-        for (offset, replacement) in [
-            (0, b'?'), // Magic.
-            (4, 1),    // ELF32.
-            (5, 2),    // Big-endian metadata.
-            (6, 0),    // Identification version.
-            (16, 3),   // ET_DYN must not use the ET_EXEC fallback.
-            (18, 0),   // Wrong machine.
-            (20, 0),   // ELF version.
-            (52, 63),  // Truncated ELF header layout.
-            (54, 55),  // Wrong program-header entry size.
-            (56, 2),   // File/auxv program-header counts disagree.
-        ] {
-            let mut malformed = header;
-            malformed[offset] = replacement;
-            assert_eq!(
-                fixed_executable_load_bias(&malformed, address, &phdrs, entry),
-                Err(()),
-                "accepted malformed ELF header field at {offset}"
-            );
-        }
-        let mut overlapping = header;
-        overlapping[32..40].copy_from_slice(&32u64.to_le_bytes());
-        assert_eq!(
-            fixed_executable_load_bias(&overlapping, 0x400020, &phdrs, entry),
-            Err(())
-        );
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_checks_auxv_addresses() {
-        let (header, phdrs, address, entry) = fixed_image(0x180, 0);
-        for wrong_address in [0, address + 1, address + 8, address + 0x100000] {
-            assert_eq!(
-                fixed_executable_load_bias(&header, wrong_address, &phdrs, entry),
-                Err(())
-            );
-        }
-        assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry + 1),
-            Err(())
-        );
-        assert_eq!(
-            fixed_executable_load_bias(&header, address, &[], entry),
-            Err(())
-        );
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_requires_complete_readable_file_backing() {
-        for case in 0..4 {
-            let (header, mut phdrs, address, entry) = fixed_image(0x180, 0);
-            match case {
-                0 => phdrs[0].p_flags = libc::PF_X,
-                1 => {
-                    // All but the last table byte is file-backed; memory alone
-                    // is insufficient even though the PT_LOAD remains readable.
-                    phdrs[0].p_filesz = 0x180 + std::mem::size_of_val(&phdrs) as u64 - 1;
-                }
-                2 => phdrs[0].p_memsz = phdrs[0].p_filesz - 1,
-                3 => {
-                    phdrs[0].p_offset = 0x188;
-                    phdrs[0].p_align = 1;
-                }
-                _ => unreachable!(),
-            }
-            assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, entry),
-                Err(()),
-                "accepted invalid table mapping case {case}"
-            );
-        }
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_requires_executable_entry_mapping() {
-        let (header, mut phdrs, address, entry) = fixed_image(0x180, 0);
-        phdrs[1].p_flags = libc::PF_R;
-        assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry),
-            Err(())
-        );
-        for invalid_entry in [0x400100u64, 0x402000] {
-            let (mut header, phdrs, address, _) = fixed_image(0x180, 0);
-            header[24..32].copy_from_slice(&invalid_entry.to_le_bytes());
-            assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, invalid_entry as usize),
-                Err(())
-            );
-        }
-    }
-
-    #[test]
-    fn fixed_executable_without_phdr_rejects_overflow_and_invalid_alignment() {
-        let (mut header, phdrs, address, entry) = fixed_image(0x180, 0);
-        header[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
-        assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry),
-            Err(())
-        );
-        let (header, phdrs, _, entry) = fixed_image(0x180, 0);
-        assert_eq!(
-            fixed_executable_load_bias(&header, usize::MAX - 7, &phdrs, entry),
-            Err(())
-        );
-        for case in 0..4 {
-            let (header, mut phdrs, address, entry) = fixed_image(0x180, 0);
-            match case {
-                0 => phdrs[0].p_vaddr = u64::MAX - 0x7ff,
-                1 => phdrs[0].p_offset = u64::MAX - 0x7ff,
-                2 => phdrs[0].p_align = 3,
-                3 => phdrs[0].p_vaddr += 1,
-                _ => unreachable!(),
-            }
-            assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, entry),
-                Err(()),
-                "accepted overflow/alignment case {case}"
-            );
-        }
     }
 }

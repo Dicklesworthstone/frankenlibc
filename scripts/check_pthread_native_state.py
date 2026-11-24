@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import struct
 import subprocess
 
 
@@ -111,6 +112,26 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def without_program_header(control, variant):
+    """Preserve the executable and its table, changing only PT_PHDR to PT_NULL."""
+    original = control.read_bytes()
+    if (len(original) < 64 or original[:7] != b"\x7fELF\x02\x01\x01"
+            or struct.unpack_from("<H", original, 16)[0] != 2):
+        raise ValueError("TLS destructor control must be ELF64 little-endian ET_EXEC")
+    phoff = struct.unpack_from("<Q", original, 32)[0]
+    phent, phnum = struct.unpack_from("<HH", original, 54)
+    if phent != 56 or not phnum or phoff < 64 or phoff + phnum * phent > len(original):
+        raise ValueError("TLS destructor control has an invalid program-header table")
+    offsets = [phoff + index * phent for index in range(phnum)]
+    types = [struct.unpack_from("<I", original, offset)[0] for offset in offsets]
+    if types.count(6) != 1 or 2 not in types or 7 not in types:
+        raise ValueError("TLS destructor control requires PT_PHDR, PT_DYNAMIC and PT_TLS")
+    modified = bytearray(original)
+    struct.pack_into("<I", modified, offsets[types.index(6)], 0)
+    variant.write_bytes(modified)
+    variant.chmod(control.stat().st_mode & 0o777)
+
+
 def check_public_tls_destructors(root, library, output, environment, compile_fixture):
     source = root / "tests/integration/fixture_pthread_native_tls_dtors.cpp"
     binary = output / "fixture_public_tls_dtors"
@@ -120,6 +141,15 @@ def check_public_tls_destructors(root, library, output, environment, compile_fix
     flags = ["-std=c++17", "-O2", "-fno-omit-frame-pointer", "-Wall", "-Wextra", "-Werror"]
     compile_fixture("public-tls", compiler + flags + [str(source), "-o", str(binary),
                                                      "-pthread", "-ldl"])
+    fixed_binaries = {
+        "exec-with-phdr": output / "fixture_public_tls_dtors_exec_with_phdr",
+        "exec-without-phdr": output / "fixture_public_tls_dtors_exec_without_phdr",
+    }
+    compile_fixture("public-tls-exec", compiler + flags + ["-fno-pie", "-no-pie",
+                    str(source), "-o", str(fixed_binaries["exec-with-phdr"]),
+                    "-pthread", "-ldl"])
+    without_program_header(fixed_binaries["exec-with-phdr"],
+                           fixed_binaries["exec-without-phdr"])
     module_flags = flags + ["-shared", "-fPIC", "-DFRANKENLIBC_TLS_DTOR_MODULE"]
     compile_fixture("public-tls-native-module", compiler + module_flags + [
         "-nostdlib", "-DFRANKENLIBC_TLS_DTOR_NATIVE_MODULE", str(source),
@@ -128,8 +158,9 @@ def check_public_tls_destructors(root, library, output, environment, compile_fix
         str(source), "-Wl,--no-as-needed", "-lc", "-o", str(host_module)])
     records, failures = [], []
 
-    def execute(lane, case, extra):
-        command = [str(binary), case]
+    def execute(lane, case, extra, image="default"):
+        executable = binary if image == "default" else fixed_binaries[image]
+        command = [str(executable), case]
         if case == "native-dso":
             command.append(str(native_module))
         elif case.startswith("host-"):
@@ -144,17 +175,19 @@ def check_public_tls_destructors(root, library, output, environment, compile_fix
             stderr = (error.stderr or b"").decode(errors="replace") + "\nfixture timeout\n"
         passed = (code == 0 and stdout.startswith(f"native public TLS dtors {case}: ")
                   and stdout.endswith(" PASS\n") and not stderr)
-        row = {"lane": lane, "case": case, "returncode": code,
+        row = {"lane": lane, "case": case, "image": image, "returncode": code,
                "stdout": stdout, "stderr": stderr, "passed": passed}
         records.append(row)
-        (output / f"{lane}-{case}.log").write_text(stdout + stderr)
+        prefix = lane if image == "default" else f"{lane}-{image}"
+        (output / f"{prefix}-{case}.log").write_text(stdout + stderr)
         return row
 
     negative = execute("provider-negative", "return", {"FRANKENLIBC_TEST_LIBRARY": str(library)})
     if not (negative["returncode"] == 80 and not negative["stdout"] and
             negative["stderr"] == "wrong provider for pthread_create\n"):
         failures.append("provider-negative")
-    common = ("return", "exit", "cancel", "late-key", "runtime-callback",
+    common = ("return", "exit", "cancel", "compiler-return", "compiler-exit",
+              "compiler-cancel", "late-key", "runtime-callback",
               "process-exit", "process-recursive", "process-empty")
     runtime_retry_cases = ("runtime-retry-pending", "runtime-retry-consumed")
     gnu_cases = common + ("creator-error", "creator-error-consumed", "native-dso",
@@ -190,11 +223,41 @@ def check_public_tls_destructors(root, library, output, environment, compile_fix
                 print(f"public-tls {lane} {case}: {'PASS' if row['passed'] else 'FAIL'}", flush=True)
                 if not row["passed"]:
                     failures.append(f"{lane}:{case}")
+    # Exercise the ordinary C++ compiler registration as well as the public
+    # ABI. Constructor startup and native lifetime admission must agree for
+    # a legal fixed executable whose optional PT_PHDR entry is absent.
+    fixed_cases = ("return", "exit", "cancel", "compiler-return", "compiler-exit",
+                   "compiler-cancel", "late-key", "process-exit", "process-recursive",
+                   "process-empty")
+    fixed_gnu_count = 0
+    for image in fixed_binaries:
+        for case in fixed_cases:
+            row = execute("gnu", case, {}, image)
+            fixed_gnu_count += 1
+            print(f"public-tls gnu {image} {case}: {'PASS' if row['passed'] else 'FAIL'}",
+                  flush=True)
+            if not row["passed"]:
+                failures.append(f"gnu:{image}:{case}")
+        for mode in ("strict", "hardened"):
+            lane = f"native-{mode}"
+            for case in fixed_cases:
+                row = execute(lane, case, {
+                    "LD_PRELOAD": str(library), "FRANKENLIBC_TEST_LIBRARY": str(library),
+                    "FRANKENLIBC_MODE": mode, "FRANKENLIBC_THREAD_NATIVE": "1",
+                    "FRANKENLIBC_RUNTIME_MATH": "off",
+                }, image)
+                candidate_count += 1
+                print(f"public-tls {lane} {image} {case}: "
+                      f"{'PASS' if row['passed'] else 'FAIL'}", flush=True)
+                if not row["passed"]:
+                    failures.append(f"{lane}:{image}:{case}")
     report = {
         "scope": "public-tls-dtors", "library": str(library),
         "library_sha256": sha256(library), "fixture_sha256": sha256(source),
         "binary_sha256": sha256(binary), "native_module_sha256": sha256(native_module),
-        "host_module_sha256": sha256(host_module), "gnu_cases": len(gnu_cases),
+        "host_module_sha256": sha256(host_module),
+        "fixed_binary_sha256": {name: sha256(path) for name, path in fixed_binaries.items()},
+        "gnu_cases": len(gnu_cases) + fixed_gnu_count,
         "candidate_cases": candidate_count, "provider_negative_cases": 1,
         "policy": "Native public registrations require a native pin or proven process-lifetime owner and provider; unloadable host images are rejected.",
         "late_key_policy": "Native teardown requires its final TLS drain (five events); GNU controls verify TLS-before-key ordering (four events). Hosted late-key variants are outside this focused lane because their existing bridges differ by feature.",
@@ -203,7 +266,7 @@ def check_public_tls_destructors(root, library, output, environment, compile_fix
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
         raise SystemExit("public native TLS destructors: FAIL " + ", ".join(failures))
-    print(f"public native TLS destructors: PASS ({len(gnu_cases)} live GNU cases, "
+    print(f"public native TLS destructors: PASS ({len(gnu_cases) + fixed_gnu_count} live GNU cases, "
           f"{candidate_count} candidate cases, one provider negative)")
 
 

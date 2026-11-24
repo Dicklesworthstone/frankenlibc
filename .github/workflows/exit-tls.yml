@@ -6,6 +6,7 @@ on:
       - 'crates/frankenlibc-abi/src/exit_handlers.rs'
       - 'crates/frankenlibc-abi/src/stdlib_abi.rs'
       - 'crates/frankenlibc-abi/src/startup_abi.rs'
+      - 'crates/frankenlibc-abi/src/startup_helpers.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
       - 'crates/frankenlibc-core/src/pthread/tls.rs'
@@ -55,7 +56,7 @@ jobs:
           mkdir -p "$root"
           git rev-parse HEAD > "$root/revision.txt"
           rustc --version --verbose > "$root/rustc.txt"
-          for file in exit_handlers.rs stdlib_abi.rs startup_abi.rs; do
+          for file in exit_handlers.rs stdlib_abi.rs startup_abi.rs startup_helpers.rs; do
             cp "crates/frankenlibc-abi/src/$file" "$root/$file"
             git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
           done
@@ -67,7 +68,7 @@ jobs:
           grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$root/fork-keys.log"
           cargo test -p frankenlibc-core --lib "${args[@]}" pthread::thread::tests::prepared_thread_ -- --test-threads=1 2>&1 | tee "$root/prepared-threads.log"
           grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/prepared-threads.log"
-          cargo test -p frankenlibc-abi --lib "${args[@]}" startup_abi::executable_init_tests::fixed_executable_without_phdr_ -- --test-threads=1 2>&1 | tee "$root/executable-layout.log"
+          cargo test -p frankenlibc-abi --lib "${args[@]}" startup_helpers::executable_init_tests::fixed_executable_without_phdr_ -- --test-threads=1 2>&1 | tee "$root/executable-layout.log"
           grep -Eq 'test result: ok\. 7 passed; 0 failed;' "$root/executable-layout.log"
           python3 scripts/check_startup_thread_exit.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/startup"
           FRANKENLIBC_SMOKE_LIB_PATH="$PWD/target/release/libfrankenlibc_abi.so" \

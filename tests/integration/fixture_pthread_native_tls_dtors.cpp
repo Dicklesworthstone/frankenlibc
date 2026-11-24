@@ -63,6 +63,8 @@ static uintptr_t worker_tp;
 static uintptr_t creator_tp;
 static int events[16];
 static const char *exit_kind;
+static const char *thread_exit_kind;
+static bool compiler_tls_case;
 static pthread_key_t late_key;
 static bool use_late_key;
 static Destructor module_callback;
@@ -106,7 +108,7 @@ static void record(void *argument) {
         !process_scratch_matches(value == 2 ? "beta" : value == 3 ? "gamma" : "delta"))
         registration_failed.store(1);
     if (value == 2 &&
-        __cxa_thread_atexit_impl(record, (void *)(uintptr_t)3, __dso_handle))
+        __cxa_thread_atexit_impl(record, (void *)(uintptr_t)3, &__dso_handle))
         registration_failed.store(1);
     if (value == 2 && recursive_process_exit) exit(0);
 }
@@ -160,7 +162,7 @@ static void creator_callback(void *) {
 
 static void late_key_callback(void *) {
     record((void *)(uintptr_t)4);
-    if (__cxa_thread_atexit_impl(record, (void *)(uintptr_t)5, __dso_handle))
+    if (__cxa_thread_atexit_impl(record, (void *)(uintptr_t)5, &__dso_handle))
         registration_failed.store(1);
 }
 
@@ -192,19 +194,21 @@ static void *worker(void *) {
                 registration_failed.store(1);
             touch_process_tls();
         }
-    } else if (__cxa_thread_atexit_impl(record, (void *)(uintptr_t)1, __dso_handle) ||
-               __cxa_thread_atexit_impl(record, (void *)(uintptr_t)2, __dso_handle)) {
+    } else if (compiler_tls_case) {
+        touch_process_tls();
+    } else if (__cxa_thread_atexit_impl(record, (void *)(uintptr_t)1, &__dso_handle) ||
+               __cxa_thread_atexit_impl(record, (void *)(uintptr_t)2, &__dso_handle)) {
         registration_failed.store(1);
     }
     ready.store(1, std::memory_order_release);
     if (process_exit_case) exit(0);
-    if (strcmp(exit_kind, "cancel") == 0) {
+    if (strcmp(thread_exit_kind, "cancel") == 0) {
         for (;;) {
             pthread_testcancel();
             sched_yield();
         }
     }
-    if (strcmp(exit_kind, "exit") == 0) pthread_exit((void *)(uintptr_t)17);
+    if (strcmp(thread_exit_kind, "exit") == 0) pthread_exit((void *)(uintptr_t)17);
     return (void *)(uintptr_t)17;
 }
 
@@ -264,6 +268,10 @@ static bool prepare_runtime_pin_retry(bool consumed, bool native) {
 
 int main(int argc, char **argv) {
     exit_kind = argc >= 2 ? argv[1] : "return";
+    compiler_tls_case = !strcmp(exit_kind, "compiler-return") ||
+                        !strcmp(exit_kind, "compiler-exit") ||
+                        !strcmp(exit_kind, "compiler-cancel");
+    thread_exit_kind = compiler_tls_case ? exit_kind + strlen("compiler-") : exit_kind;
     bool native_module = !strcmp(exit_kind, "native-dso");
     bool host_owner = !strcmp(exit_kind, "host-owner");
     bool host_provider = !strcmp(exit_kind, "host-provider");
@@ -283,7 +291,7 @@ int main(int argc, char **argv) {
     use_late_key = !strcmp(exit_kind, "late-key");
     if (strcmp(exit_kind, "return") && strcmp(exit_kind, "exit") &&
         strcmp(exit_kind, "cancel") && !use_late_key && !use_module &&
-        !creator_error && !runtime_callback && !process_exit_case) return 2;
+        !creator_error && !runtime_callback && !process_exit_case && !compiler_tls_case) return 2;
     // A mismatched executable owner cannot pin an unloadable callback in GNU.
     // This is an explicit rejection check for the native registration policy,
     // not a valid GNU unload-and-call workload.
@@ -294,7 +302,9 @@ int main(int argc, char **argv) {
         check_provider(name);
     creator_tid = syscall(SYS_gettid);
     creator_tp = (uintptr_t)__builtin_thread_pointer();
-    if (__cxa_thread_atexit_impl(creator_callback, nullptr, __dso_handle)) return 3;
+    // The owner is the CRT symbol's address. Its stored value is NULL in a
+    // non-PIE executable; passing that value is not a valid GNU owner identity.
+    if (__cxa_thread_atexit_impl(creator_callback, nullptr, &__dso_handle)) return 3;
     if (process_exit_case) {
         check_provider("exit");
         check_provider("strtok");
@@ -345,7 +355,7 @@ int main(int argc, char **argv) {
             return 16;
         prepare(module_event, nullptr);
         module_callback = host_owner ? record : callback();
-        module_owner = host_provider ? __dso_handle : owner();
+        module_owner = host_provider ? &__dso_handle : owner();
     }
     pthread_t thread;
     if (pthread_create(&thread, nullptr, worker, nullptr)) return 4;
@@ -367,11 +377,11 @@ int main(int argc, char **argv) {
         }
     }
     if (module_callback) release_worker.store(1, std::memory_order_release);
-    if (!strcmp(exit_kind, "cancel") && pthread_cancel(thread)) return 5;
+    if (!strcmp(thread_exit_kind, "cancel") && pthread_cancel(thread)) return 5;
     void *result = nullptr;
     if (pthread_join(thread, &result)) return 6;
     if (use_late_key && pthread_key_delete(late_key)) return 11;
-    void *expected = !strcmp(exit_kind, "cancel") ? PTHREAD_CANCELED
+    void *expected = !strcmp(thread_exit_kind, "cancel") ? PTHREAD_CANCELED
                                                   : (void *)(uintptr_t)17;
     bool ok = result == expected && !registration_failed.load() &&
               !wrong_thread.load() && !creator_callbacks.load() &&

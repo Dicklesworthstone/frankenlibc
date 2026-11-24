@@ -126,10 +126,11 @@ fn executable_image() -> Option<ProcessImage> {
     // SAFETY: these bounded, aligned program headers come from kernel auxv;
     // the executable and its header table remain mapped for process lifetime.
     let headers = unsafe { std::slice::from_raw_parts(phdr as *const libc::Elf64_Phdr, count) };
-    let table = headers
-        .iter()
-        .find(|header| header.p_type == libc::PT_PHDR)?;
-    let base = phdr.checked_sub(usize::try_from(table.p_vaddr).ok()?)?;
+    // Use exactly the startup admission rule. Otherwise a fixed executable
+    // without the optional PT_PHDR starts successfully but loses every native
+    // C++ TLS callback because its executable owner/provider is unrecognized.
+    let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_ENTRY) } as usize;
+    let base = crate::startup_abi::executable_load_bias(phdr, headers, Some(entry)).ok()?;
     ProcessImage::from_phdrs(base, headers)
 }
 
