@@ -7966,7 +7966,11 @@ unsafe fn fd_seek_locked(
         return Err(SeekErr::WriteFailed);
     }
 
-    let (target_off, target_whence) = if whence == libc::SEEK_CUR {
+    // An append write can go straight to the descriptor or flush on a
+    // buffer boundary. Its actual destination was chosen by the kernel.
+    let (target_off, target_whence) = if whence == libc::SEEK_CUR
+        && !(s.is_appending() && s.last_was_write())
+    {
         match s.offset().checked_add(offset) {
             Some(off) => (off, libc::SEEK_SET),
             None => return Err(SeekErr::Errno(errno::EOVERFLOW)),
@@ -8308,9 +8312,17 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // GNU position queries account for pending append output without writing
     // it. Seeking the descriptor to EOF discovers where O_APPEND will place
     // those bytes, while the buffer remains pending for fflush/fclose.
-    if s.is_appending() && s.fd() >= 0 && !s.pending_flush().is_empty() {
-        let position = raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_END)
-            .and_then(|end| buffered_stream_position(end, s.pending_flush().len(), 0));
+    let pending = s.pending_flush().len();
+    if s.is_appending() && s.fd() >= 0 && (pending != 0 || s.last_was_write()) {
+        // With no pending bytes, automatic/unbuffered writes have already
+        // advanced the shared descriptor. EOF may have moved again since.
+        let whence = if pending == 0 {
+            libc::SEEK_CUR
+        } else {
+            libc::SEEK_END
+        };
+        let position = raw_syscall::sys_lseek(s.fd(), 0, whence)
+            .and_then(|offset| buffered_stream_position(offset, pending, 0));
         match position {
             Ok(position) => s.set_offset(position),
             Err(error) => {
