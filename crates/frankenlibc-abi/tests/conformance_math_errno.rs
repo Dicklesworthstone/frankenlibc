@@ -617,9 +617,21 @@ fn atan2_atan2f_underflow_erange_matches_glibc() {
                 "atan2({label}) {mode_name} -> {out:e} ({:#x})",
                 out.to_bits()
             );
-            if mode == 0x0000 && matches!(label, "min_sub,1e308" | "-min_sub,1e308" | "min_sub,2.0" | "1e-200,1e200") {
-                assert_eq!(out, 0.0, "atan2({label}) must underflow to zero in FE_TONEAREST");
-                assert_eq!(rd(), ERANGE, "atan2({label}) must set ERANGE in FE_TONEAREST");
+            if mode == 0x0000
+                && matches!(
+                    label,
+                    "min_sub,1e308" | "-min_sub,1e308" | "min_sub,2.0" | "1e-200,1e200"
+                )
+            {
+                assert_eq!(
+                    out, 0.0,
+                    "atan2({label}) must underflow to zero in FE_TONEAREST"
+                );
+                assert_eq!(
+                    rd(),
+                    ERANGE,
+                    "atan2({label}) must set ERANGE in FE_TONEAREST"
+                );
             }
         }
 
@@ -646,9 +658,21 @@ fn atan2_atan2f_underflow_erange_matches_glibc() {
                 "atan2f({label}) {mode_name} -> {out:e} ({:#x})",
                 out.to_bits()
             );
-            if mode == 0x0000 && matches!(label, "min_sub,1e38" | "-min_sub,1e38" | "1e-38,1e10" | "min_sub,2.0") {
-                assert_eq!(out, 0.0, "atan2f({label}) must underflow to zero in FE_TONEAREST");
-                assert_eq!(rd(), ERANGE, "atan2f({label}) must set ERANGE in FE_TONEAREST");
+            if mode == 0x0000
+                && matches!(
+                    label,
+                    "min_sub,1e38" | "-min_sub,1e38" | "1e-38,1e10" | "min_sub,2.0"
+                )
+            {
+                assert_eq!(
+                    out, 0.0,
+                    "atan2f({label}) must underflow to zero in FE_TONEAREST"
+                );
+                assert_eq!(
+                    rd(),
+                    ERANGE,
+                    "atan2f({label}) must set ERANGE in FE_TONEAREST"
+                );
             }
         }
     }
