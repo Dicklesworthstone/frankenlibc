@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*.rs'
+      - 'crates/frankenlibc-abi/src/startup_abi.rs'
+      - 'crates/frankenlibc-abi/src/startup_helpers.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_global*'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_phdr_test.rs'
       - 'crates/frankenlibc-abi/tests/standalone_native_loader_regressions.rs'
@@ -80,10 +82,12 @@ jobs:
           mkdir -p artifacts/global-scope
           features=()
           if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
+          expected_phdr_tests=4
+          if [[ "$FEATURES" == *standalone* ]]; then expected_phdr_tests=10; fi
           status=0
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --no-fail-fast -p frankenlibc-abi "${features[@]}" --test dlfcn_native_phdr_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/global-scope/phdr-${mode}.log" || status=1
-            grep -F 'test result: ok. 4 passed; 0 failed;' "artifacts/global-scope/phdr-${mode}.log" || status=1
+            grep -F "test result: ok. ${expected_phdr_tests} passed; 0 failed;" "artifacts/global-scope/phdr-${mode}.log" || status=1
           done
           exit "$status"
       - name: Execute standalone public loading contracts

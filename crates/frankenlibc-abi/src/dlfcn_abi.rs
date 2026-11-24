@@ -9,9 +9,9 @@ use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 #[cfg(feature = "standalone")]
-use frankenlibc_core::elf::ElfLoader;
+use frankenlibc_core::elf::{Elf64Header, Elf64ProgramHeader, ElfType, ProgramType};
 #[cfg(feature = "standalone")]
-use frankenlibc_core::elf::{Elf64ProgramHeader, ProgramType};
+use frankenlibc_core::proc_maps::MapsEntry;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
@@ -562,11 +562,11 @@ use native::load_native_dso;
 #[cfg(not(test))]
 pub(crate) use native::{ThreadExitForkGuard, lock_thread_exit_for_fork};
 use native::{close_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol};
-pub(crate) use native::{native_address_info_extra, query_object_info};
 pub(crate) use native::{
     drain_current_thread_tls_destructors, prepare_native_public_tls_destructors,
     register_native_public_tls_destructor,
 };
+pub(crate) use native::{native_address_info_extra, query_object_info};
 
 #[cfg(any(feature = "standalone", feature = "conformance-testing"))]
 pub(crate) fn native_tls_address(module_id: usize, offset: usize) -> *mut c_void {
@@ -1549,24 +1549,12 @@ pub unsafe extern "C-unwind" fn dl_iterate_phdr(
 #[cfg(feature = "standalone")]
 const STANDALONE_DL_ITERATE_MAX_OBJECTS: usize = 256;
 #[cfg(feature = "standalone")]
-const STANDALONE_PAGE_MASK: u64 = !0xfff;
-
-#[cfg(feature = "standalone")]
-#[derive(Clone, Copy)]
-struct StandaloneMapEntry {
-    start: usize,
-    offset: u64,
-}
-
-#[cfg(feature = "standalone")]
-struct StandaloneMapObject {
-    path: String,
-    entries: Vec<StandaloneMapEntry>,
-}
+const STANDALONE_DL_ITERATE_MAX_PHDRS: usize = 4096;
 
 #[cfg(feature = "standalone")]
 struct StandalonePhdrObject {
     base: usize,
+    source_table: usize,
     name: Vec<u8>,
     phdrs: Vec<libc::Elf64_Phdr>,
 }
@@ -1604,112 +1592,373 @@ unsafe extern "C-unwind" fn standalone_dl_iterate_phdr(
 
 #[cfg(feature = "standalone")]
 fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
-    let Some(map_objects) = standalone_map_objects() else {
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
         return Vec::new();
     };
-    let mut objects = Vec::new();
+    let entries = maps
+        .lines()
+        .filter_map(frankenlibc_core::proc_maps::parse_maps_line)
+        .collect::<Vec<_>>();
+    // Auxv identifies the executable and vDSO independently of their names
+    // and the continued existence of their backing files.
+    let main_phdr = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHDR) } as usize;
+    let main_count = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHNUM) } as usize;
+    let vdso = unsafe { crate::stdlib_abi::getauxval(libc::AT_SYSINFO_EHDR) } as usize;
+    let mut objects = Vec::<StandalonePhdrObject>::new();
+    if let Some(main) = standalone_main_phdr_object(&entries, main_phdr, main_count) {
+        objects.push(main);
+    }
 
-    for map_object in map_objects
-        .into_iter()
-        .take(STANDALONE_DL_ITERATE_MAX_OBJECTS)
+    // Reserve the bounded prefix's first entries for the process-lifetime
+    // executable and vDSO, even when many file-backed images are present.
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.start == vdso)
+        .chain(entries.iter().filter(|entry| entry.start != vdso))
     {
-        let Ok(bytes) = std::fs::read(&map_object.path) else {
-            continue;
-        };
-        let Ok(loaded) = ElfLoader::new(0).parse(&bytes) else {
-            continue;
-        };
-        let Some(base) = standalone_load_base(&loaded.program_headers, &map_object.entries) else {
-            continue;
-        };
-        let phdrs = loaded
-            .program_headers
-            .iter()
-            .map(libc_phdr_from_clean_room_header)
-            .collect::<Vec<_>>();
-        if phdrs.is_empty() {
+        if objects.len() == STANDALONE_DL_ITERATE_MAX_OBJECTS {
+            break;
+        }
+        if entry.offset != 0
+            || !entry.perms.contains('r')
+            || !(entry.inode != 0 || (entry.start == vdso && entry.path == Some("[vdso]")))
+        {
             continue;
         }
-
-        let mut name = map_object.path.into_bytes();
-        name.push(0);
-        objects.push(StandalonePhdrObject { base, name, phdrs });
+        let Some(object) = standalone_mapped_phdr_object(entry, &entries) else {
+            continue;
+        };
+        if objects
+            .iter()
+            .any(|existing| existing.source_table == object.source_table)
+        {
+            continue;
+        }
+        let mut object = object;
+        if object.source_table == main_phdr && object.phdrs.len() == main_count {
+            // dl_iterate_phdr(3): the executable is first with an empty name.
+            object.name = vec![0];
+            objects.insert(0, object);
+        } else if entry.start == vdso {
+            // Both supported Linux ABIs (x86_64 and aarch64) use this name.
+            object.name = b"linux-vdso.so.1\0".to_vec();
+            let after_main = usize::from(objects.first().is_some_and(|first| first.name == [0]));
+            objects.insert(after_main, object);
+        } else {
+            objects.push(object);
+        }
     }
 
     objects
 }
 
 #[cfg(feature = "standalone")]
-fn standalone_map_objects() -> Option<Vec<StandaloneMapObject>> {
-    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
-    let mut objects = Vec::<StandaloneMapObject>::new();
+fn standalone_main_phdr_object(
+    entries: &[MapsEntry<'_>],
+    table: usize,
+    count: usize,
+) -> Option<StandalonePhdrObject> {
+    let stride = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHENT) } as usize;
+    if table == 0
+        || count == 0
+        || count > STANDALONE_DL_ITERATE_MAX_PHDRS
+        || stride != Elf64ProgramHeader::SIZE
+        || !table.is_multiple_of(std::mem::align_of::<libc::Elf64_Phdr>())
+    {
+        return None;
+    }
+    let origin = entries
+        .iter()
+        .find(|entry| entry.start <= table && table < entry.end)?;
+    let offset = origin.offset.checked_add((table - origin.start) as u64)?;
+    let length = count.checked_mul(stride)?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(length).ok()?;
+    bytes.resize(length, 0);
+    standalone_copy_mapped(entries, origin, table, offset, &mut bytes)?;
+    let mut headers = Vec::new();
+    headers.try_reserve_exact(count).ok()?;
+    for bytes in bytes.chunks_exact(stride) {
+        headers.push(Elf64ProgramHeader::parse(bytes).ok()?);
+    }
+    let phdrs = headers
+        .iter()
+        .map(libc_phdr_from_clean_room_header)
+        .collect::<Vec<_>>();
+    let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_ENTRY) } as usize;
+    // The executable's ELF header need not itself be mapped. The shared
+    // startup helper derives bias from PT_PHDR, or proves fixed ET_EXEC when
+    // PT_PHDR is absent. The published program headers always come from the
+    // live auxv table, including when that fallback reads the file's ELF header.
+    let base = crate::startup_abi::executable_load_bias(table, &phdrs, Some(entry)).ok()?;
+    if !standalone_loads_match_mappings(base, &headers, table, offset, length, origin, entries) {
+        return None;
+    }
+    Some(StandalonePhdrObject {
+        base,
+        source_table: table,
+        name: vec![0],
+        phdrs,
+    })
+}
 
-    for line in maps.lines() {
-        let Some(entry) = frankenlibc_core::proc_maps::parse_maps_line(line) else {
-            continue;
-        };
-        let Some(path) = entry.path else {
-            continue;
-        };
-        if entry.inode == 0
-            || !entry.perms.contains('r')
-            || !path.starts_with('/')
-            || path.ends_with(" (deleted)")
+#[cfg(feature = "standalone")]
+fn standalone_mapped_phdr_object(
+    origin: &MapsEntry<'_>,
+    entries: &[MapsEntry<'_>],
+) -> Option<StandalonePhdrObject> {
+    // /proc/self/maps is an address/identity index, never a reason to reopen
+    // its path. An unlink, rename, replacement, or memfd must not change the
+    // metadata describing code already mapped into this process.
+    let mut header_bytes = [0u8; Elf64Header::SIZE];
+    standalone_copy_mapped(entries, origin, origin.start, 0, &mut header_bytes)?;
+    let header = Elf64Header::parse(&header_bytes).ok()?;
+    let native_machine = if cfg!(target_arch = "x86_64") {
+        62
+    } else {
+        183
+    };
+    if !matches!(header.e_type, ElfType::Exec | ElfType::Dyn)
+        || header.e_machine.to_u16() != native_machine
+        || header.e_ident[6] != 1
+        || header.e_version != 1
+        || usize::from(header.e_ehsize) != Elf64Header::SIZE
+        || usize::from(header.e_phentsize) != Elf64ProgramHeader::SIZE
+        || header.e_phnum == 0
+        || usize::from(header.e_phnum) > STANDALONE_DL_ITERATE_MAX_PHDRS
+        || header.e_phoff < Elf64Header::SIZE as u64
+    {
+        return None;
+    }
+    let table_len = usize::from(header.e_phnum).checked_mul(Elf64ProgramHeader::SIZE)?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(table_len).ok()?;
+    bytes.resize(table_len, 0);
+    // e_phoff is a file offset, not a virtual offset from the ELF header.
+    // The table can occupy a different PT_LOAD. The decoded load geometry
+    // must bind each candidate to this particular header and load bias.
+    'candidate: for mapping in entries {
+        if mapping.inode != origin.inode
+            || mapping.dev != origin.dev
+            || (origin.inode == 0 && mapping.path != origin.path)
+            || !mapping.perms.contains('r')
         {
             continue;
         }
-
-        if let Some(existing) = objects.iter_mut().find(|object| object.path == path) {
-            existing.entries.push(StandaloneMapEntry {
-                start: entry.start,
-                offset: entry.offset,
-            });
+        let Some(delta) = header
+            .e_phoff
+            .checked_sub(mapping.offset)
+            .and_then(|offset| usize::try_from(offset).ok())
+        else {
+            continue;
+        };
+        let Some(table) = mapping
+            .start
+            .checked_add(delta)
+            .filter(|table| *table < mapping.end)
+        else {
+            continue;
+        };
+        if standalone_copy_mapped(entries, origin, table, header.e_phoff, &mut bytes).is_none() {
             continue;
         }
-
-        objects.push(StandaloneMapObject {
-            path: path.to_owned(),
-            entries: vec![StandaloneMapEntry {
-                start: entry.start,
-                offset: entry.offset,
-            }],
+        let mut headers = Vec::new();
+        headers
+            .try_reserve_exact(usize::from(header.e_phnum))
+            .ok()?;
+        for bytes in bytes.chunks_exact(Elf64ProgramHeader::SIZE) {
+            let Ok(header) = Elf64ProgramHeader::parse(bytes) else {
+                continue 'candidate;
+            };
+            headers.push(header);
+        }
+        let Some(base) = standalone_load_base(&header, &headers, table, origin, entries) else {
+            continue;
+        };
+        let mut name = origin.path.unwrap_or("").as_bytes().to_vec();
+        name.push(0);
+        let phdrs = headers
+            .iter()
+            .map(libc_phdr_from_clean_room_header)
+            .collect();
+        return Some(StandalonePhdrObject {
+            base,
+            source_table: table,
+            name,
+            phdrs,
         });
     }
-
-    Some(objects)
+    None
 }
 
 #[cfg(feature = "standalone")]
 fn standalone_load_base(
+    header: &Elf64Header,
     phdrs: &[Elf64ProgramHeader],
-    entries: &[StandaloneMapEntry],
+    table: usize,
+    origin: &MapsEntry<'_>,
+    entries: &[MapsEntry<'_>],
 ) -> Option<usize> {
-    for entry in entries {
-        for phdr in phdrs.iter().filter(|phdr| phdr.is_load()) {
-            if page_floor(phdr.p_offset) != entry.offset {
-                continue;
-            }
-            let vaddr = usize::try_from(page_floor(phdr.p_vaddr)).ok()?;
-            if let Some(base) = entry.start.checked_sub(vaddr) {
-                return Some(base);
-            }
+    let table_len = usize::from(header.e_phnum).checked_mul(Elf64ProgramHeader::SIZE)?;
+    for first in phdrs.iter().filter(|phdr| {
+        phdr.is_load() && phdr.p_offset == 0 && phdr.p_filesz >= Elf64Header::SIZE as u64
+    }) {
+        let Some(base) = origin
+            .start
+            .checked_sub(usize::try_from(first.p_vaddr).ok()?)
+        else {
+            continue;
+        };
+        if header.is_executable() && base != 0 {
+            continue;
+        }
+        if standalone_loads_match_mappings(
+            base,
+            phdrs,
+            table,
+            header.e_phoff,
+            table_len,
+            origin,
+            entries,
+        ) {
+            return Some(base);
         }
     }
-
-    let min_load_vaddr = phdrs
-        .iter()
-        .filter(|phdr| phdr.is_load())
-        .filter_map(|phdr| usize::try_from(page_floor(phdr.p_vaddr)).ok())
-        .min()?;
-    entries
-        .iter()
-        .find(|entry| entry.offset == 0)
-        .and_then(|entry| entry.start.checked_sub(min_load_vaddr))
+    None
 }
 
 #[cfg(feature = "standalone")]
-fn page_floor(value: u64) -> u64 {
-    value & STANDALONE_PAGE_MASK
+fn standalone_loads_match_mappings(
+    base: usize,
+    phdrs: &[Elf64ProgramHeader],
+    table: usize,
+    table_offset: u64,
+    table_len: usize,
+    origin: &MapsEntry<'_>,
+    entries: &[MapsEntry<'_>],
+) -> bool {
+    let Some(table_end) = table_offset.checked_add(table_len as u64) else {
+        return false;
+    };
+    let mut table_is_loaded = false;
+    let valid = phdrs.iter().filter(|phdr| phdr.is_load()).all(|phdr| {
+        let Some(start) = usize::try_from(phdr.p_vaddr)
+            .ok()
+            .and_then(|v| base.checked_add(v))
+        else {
+            return false;
+        };
+        let (Ok(filesz), Ok(memsz)) = (
+            usize::try_from(phdr.p_filesz),
+            usize::try_from(phdr.p_memsz),
+        ) else {
+            return false;
+        };
+        let Some(file_end) = phdr.p_offset.checked_add(phdr.p_filesz) else {
+            return false;
+        };
+        if filesz > memsz
+            || !phdr.is_valid_alignment()
+            || (phdr.p_align > 1 && phdr.p_vaddr % phdr.p_align != phdr.p_offset % phdr.p_align)
+            || !standalone_mapped_range(entries, None, start, memsz, None, phdr.p_flags.0)
+            || !standalone_mapped_range(
+                entries,
+                Some(origin),
+                start,
+                filesz,
+                Some(phdr.p_offset),
+                phdr.p_flags.0,
+            )
+        {
+            return false;
+        }
+        if phdr.p_flags.is_readable()
+            && phdr.p_offset <= table_offset
+            && table_end <= file_end
+            && usize::try_from(table_offset - phdr.p_offset)
+                .ok()
+                .and_then(|offset| start.checked_add(offset))
+                == Some(table)
+        {
+            table_is_loaded = true;
+        }
+        true
+    });
+    valid && table_is_loaded
+}
+
+#[cfg(feature = "standalone")]
+fn standalone_mapped_range(
+    entries: &[MapsEntry<'_>],
+    origin: Option<&MapsEntry<'_>>,
+    start: usize,
+    bytes: usize,
+    offset: Option<u64>,
+    flags: u32,
+) -> bool {
+    let Some(end) = start.checked_add(bytes) else {
+        return false;
+    };
+    let mut cursor = start;
+    while cursor < end {
+        let Some(entry) = entries
+            .iter()
+            .find(|entry| entry.start <= cursor && cursor < entry.end)
+        else {
+            return false;
+        };
+        if (flags & libc::PF_R != 0 && !entry.perms.contains('r'))
+            || (flags & libc::PF_X != 0 && !entry.perms.contains('x'))
+            || origin.is_some_and(|origin| {
+                origin.inode != entry.inode
+                    || origin.dev != entry.dev
+                    || (origin.inode == 0 && origin.path != entry.path)
+            })
+        {
+            return false;
+        }
+        if let Some(offset) = offset {
+            let expected = offset.checked_add((cursor - start) as u64);
+            let actual = entry.offset.checked_add((cursor - entry.start) as u64);
+            if expected.is_none() || expected != actual {
+                return false;
+            }
+        }
+        cursor = end.min(entry.end);
+    }
+    true
+}
+
+#[cfg(feature = "standalone")]
+fn standalone_copy_mapped(
+    entries: &[MapsEntry<'_>],
+    origin: &MapsEntry<'_>,
+    address: usize,
+    offset: u64,
+    destination: &mut [u8],
+) -> Option<()> {
+    if !standalone_mapped_range(
+        entries,
+        Some(origin),
+        address,
+        destination.len(),
+        Some(offset),
+        libc::PF_R,
+    ) {
+        return None;
+    }
+    // SAFETY: the destination is exclusively borrowed initialized storage.
+    // The source remains an integer address passed to the existing raw kernel
+    // copy. A concurrent unmap/protection change or a partial read fails closed
+    // without constructing a Rust reference to possibly vanished memory.
+    unsafe {
+        crate::io_abi::iov_snapshot::copy_user_bytes_raw(
+            address as *const u8,
+            destination.as_mut_ptr(),
+            destination.len(),
+        )
+    }
+    .ok()
 }
 
 #[cfg(feature = "standalone")]
