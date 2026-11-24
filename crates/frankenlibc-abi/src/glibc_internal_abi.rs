@@ -6263,16 +6263,19 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut 
     }
 }
 
-/// `dlmopen` — open shared object in a specific link-map namespace.
+/// `dlmopen` — open a shared object in the requested link-map namespace.
 ///
-/// Native: ignores the namespace and delegates to dlopen.
+/// Base-namespace loads retain the native loader path. Interpose builds use
+/// the host loader for isolated namespaces; standalone builds report those
+/// namespaces unavailable until the owned loader implements them.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlmopen(
-    _lmid: c_long,
+    lmid: c_long,
     filename: *const c_char,
     flags: c_int,
 ) -> *mut c_void {
-    unsafe { crate::dlfcn_abi::dlopen(filename, flags) }
+    // SAFETY: forward the caller's GNU dlmopen arguments unchanged.
+    unsafe { crate::dlfcn_abi::open_namespace(lmid, filename, flags) }
 }
 // NOTE: dlvsym is defined in dlfcn_abi.rs with a full implementation.
 // dysize: native — returns 366 for leap years, 365 otherwise

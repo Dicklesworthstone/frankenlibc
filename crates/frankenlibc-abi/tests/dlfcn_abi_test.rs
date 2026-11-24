@@ -73,6 +73,284 @@ fn compile_native_test_dso_with_versions(code: &str, versions: Option<&str>) -> 
     output
 }
 
+#[cfg(not(feature = "standalone"))]
+struct NamespaceApi {
+    name: &'static str,
+    open: unsafe extern "C" fn(libc::c_long, *const libc::c_char, c_int) -> *mut c_void,
+    symbol: unsafe extern "C" fn(*mut c_void, *const libc::c_char) -> *mut c_void,
+    info: unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int,
+    close: unsafe extern "C" fn(*mut c_void) -> c_int,
+    error: unsafe extern "C" fn() -> *const libc::c_char,
+}
+
+#[cfg(not(feature = "standalone"))]
+fn namespace_apis() -> [NamespaceApi; 2] {
+    use frankenlibc_abi::glibc_internal_abi::{dlinfo, dlmopen};
+
+    // SAFETY: each independently resolved GNU symbol is checked against the
+    // candidate's definition and assigned its documented C ABI.
+    let host = unsafe {
+        NamespaceApi {
+            name: "GNU",
+            open: dlsym_oracle::host_fn(c"dlmopen", dlmopen as *const ()),
+            symbol: dlsym_oracle::host_fn(c"dlsym", dlsym as *const ()),
+            info: dlsym_oracle::host_fn(c"dlinfo", dlinfo as *const ()),
+            close: dlsym_oracle::host_fn(c"dlclose", dlclose as *const ()),
+            error: dlsym_oracle::host_fn(c"dlerror", dlerror as *const ()),
+        }
+    };
+    [
+        host,
+        NamespaceApi {
+            name: "FrankenLibC",
+            open: dlmopen,
+            symbol: dlsym,
+            info: dlinfo,
+            close: dlclose,
+            error: dlerror,
+        },
+    ]
+}
+
+#[test]
+#[cfg(not(feature = "standalone"))]
+fn dlmopen_new_namespaces_isolate_state_and_reopen_by_id() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    for api in namespace_apis() {
+        let path = compile_self_contained_test_dso();
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: each C function is invoked only while its owning handle has
+        // a live reference. The fixture owns its state inside its loaded image.
+        unsafe {
+            (api.error)();
+            let base = (api.open)(0, path.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL);
+            let first = (api.open)(-1, path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            let second = (api.open)(-1, path.as_ptr(), libc::RTLD_NOW | libc::RTLD_DEEPBIND);
+            assert!(!base.is_null(), "{}: base load failed", api.name);
+            assert!(!first.is_null(), "{}: first isolated load failed", api.name);
+            assert!(
+                !second.is_null(),
+                "{}: second isolated load failed",
+                api.name
+            );
+            assert!(
+                (api.error)().is_null(),
+                "{}: successful load error",
+                api.name
+            );
+
+            let mut ids = [-1 as libc::c_long; 3];
+            for (handle, id) in [base, first, second].into_iter().zip(&mut ids) {
+                assert_eq!(
+                    (api.info)(handle, 1, (id as *mut libc::c_long).cast()),
+                    0,
+                    "{}: RTLD_DI_LMID",
+                    api.name
+                );
+            }
+            assert_eq!(ids[0], 0, "{}: base namespace", api.name);
+            assert!(
+                ids[1] > 0 && ids[2] > 0,
+                "{}: isolated namespace IDs",
+                api.name
+            );
+            assert_ne!(ids[1], ids[2], "{}: fresh namespace IDs", api.name);
+            assert_ne!(base, first, "{}: base handle aliased", api.name);
+            assert_ne!(first, second, "{}: isolated handles aliased", api.name);
+
+            type Increment = unsafe extern "C" fn() -> c_int;
+            let mut symbols = [std::ptr::null_mut(); 3];
+            for (handle, symbol) in [base, first, second].into_iter().zip(&mut symbols) {
+                *symbol = (api.symbol)(handle, c"franken_native_increment".as_ptr());
+                assert!(!symbol.is_null(), "{}: fixture symbol", api.name);
+                assert!(
+                    (api.error)().is_null(),
+                    "{}: successful lookup error",
+                    api.name
+                );
+            }
+            assert_ne!(symbols[0], symbols[1], "{}: base code aliased", api.name);
+            assert_ne!(
+                symbols[1], symbols[2],
+                "{}: isolated code aliased",
+                api.name
+            );
+            let base_increment: Increment = std::mem::transmute(symbols[0]);
+            let first_increment: Increment = std::mem::transmute(symbols[1]);
+            let second_increment: Increment = std::mem::transmute(symbols[2]);
+            assert_eq!(base_increment(), 1);
+            assert_eq!(first_increment(), 1);
+            assert_eq!(second_increment(), 1);
+            assert_eq!(first_increment(), 2);
+            assert_eq!(base_increment(), 2);
+            assert_eq!(second_increment(), 2);
+
+            let reopened = (api.open)(ids[1], path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+            assert_eq!(reopened, first, "{}: existing namespace reopen", api.name);
+            assert!(
+                (api.error)().is_null(),
+                "{}: successful reopen error",
+                api.name
+            );
+            assert_eq!(first_increment(), 3);
+            assert_eq!((api.close)(first), 0);
+            assert_eq!(first_increment(), 4, "{}: reopened lifetime", api.name);
+            assert_eq!(second_increment(), 3, "{}: other namespace state", api.name);
+            assert_eq!((api.close)(reopened), 0);
+            assert_eq!((api.close)(second), 0);
+            assert_eq!((api.close)(base), 0);
+        }
+    }
+}
+
+#[test]
+#[cfg(not(feature = "standalone"))]
+fn dlmopen_namespace_errors_do_not_publish_base_objects() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    for api in namespace_apis() {
+        let path = compile_self_contained_test_dso();
+        let missing = path.with_file_name("missing_namespace_fixture.so");
+        let missing = CString::new(missing.as_os_str().as_bytes()).unwrap();
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: paths are live C strings. Invalid IDs and modes are explicit
+        // GNU loader error cases; every successful handle is closed below.
+        unsafe {
+            for (id, name, flags) in [
+                (-1, std::ptr::null(), libc::RTLD_NOW),
+                (-1, path.as_ptr(), 0),
+                (-1, path.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL),
+                (-1, path.as_ptr(), libc::RTLD_GLOBAL),
+            ] {
+                (api.error)();
+                assert!(
+                    (api.open)(id, name, flags).is_null(),
+                    "{}: accepted namespace={id} flags={flags:#x}",
+                    api.name
+                );
+                let error = (api.error)();
+                assert!(!error.is_null(), "{}: missing loader diagnostic", api.name);
+                assert!(!CStr::from_ptr(error).to_bytes().is_empty());
+                assert!(
+                    (api.error)().is_null(),
+                    "{}: diagnostic was not consumed",
+                    api.name
+                );
+                assert!(
+                    (api.open)(0, path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null(),
+                    "{}: rejected namespace load published a base object",
+                    api.name
+                );
+                (api.error)();
+            }
+            assert!((api.open)(-1, missing.as_ptr(), libc::RTLD_NOW).is_null());
+            let error = (api.error)();
+            assert!(
+                !error.is_null(),
+                "{}: missing pathname diagnostic",
+                api.name
+            );
+            assert!(
+                CStr::from_ptr(error)
+                    .to_string_lossy()
+                    .contains("missing_namespace_fixture.so"),
+                "{}: the host pathname diagnostic was discarded",
+                api.name
+            );
+            assert!((api.error)().is_null());
+
+            let recovered = (api.open)(-1, path.as_ptr(), libc::RTLD_NOW);
+            assert!(
+                !recovered.is_null(),
+                "{}: errors poisoned later loads",
+                api.name
+            );
+            assert!((api.error)().is_null());
+            assert_eq!((api.close)(recovered), 0);
+        }
+    }
+
+    // Out-of-range IDs are checked against the documented public namespace
+    // range. Do not run these through the in-process GNU oracle: some GNU
+    // versions retain a loader lock after returning their error. Refusal must
+    // leave a different hosted thread able to enter the loader afterward.
+    let path = compile_self_contained_test_dso();
+    let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let invalid_path = path.clone();
+    std::thread::spawn(move || unsafe {
+        use frankenlibc_abi::glibc_internal_abi::dlmopen;
+        for id in [-3, -2, 16, libc::c_long::MAX] {
+            assert!(dlmopen(id, invalid_path.as_ptr(), libc::RTLD_NOW).is_null());
+            let error = dlerror();
+            assert!(!error.is_null());
+            assert!(!CStr::from_ptr(error).to_bytes().is_empty());
+            assert!(dlerror().is_null());
+        }
+    })
+    .join()
+    .expect("invalid namespace worker");
+    std::thread::spawn(move || unsafe {
+        use frankenlibc_abi::glibc_internal_abi::dlmopen;
+        let recovered = dlmopen(-1, path.as_ptr(), libc::RTLD_NOW);
+        assert!(!recovered.is_null(), "invalid IDs poisoned another thread");
+        assert!(dlerror().is_null());
+        assert_eq!(dlclose(recovered), 0);
+    })
+    .join()
+    .expect("namespace recovery worker");
+}
+
+#[test]
+fn dlmopen_base_namespace_retains_native_loader_ownership() {
+    use frankenlibc_abi::glibc_internal_abi::{dlinfo, dlmopen};
+
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = compile_self_contained_test_dso();
+    let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: both references name the same live self-contained native DSO;
+    // no opaque host handle may be substituted for its tagged native handle.
+    unsafe {
+        let base = dlmopen(0, path.as_ptr(), libc::RTLD_NOW);
+        assert!(native_dso_handle_for_tests(base));
+        let reopened = dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(reopened, base);
+        let mut id: libc::c_long = -1;
+        assert_eq!(dlinfo(base, 1, (&raw mut id).cast()), 0);
+        assert_eq!(id, 0);
+        assert_eq!(dlclose(base), 0);
+        assert!(native_dso_handle_for_tests(reopened));
+        assert_eq!(dlclose(reopened), 0);
+        assert!(!native_dso_handle_for_tests(base));
+    }
+}
+
+#[test]
+#[cfg(feature = "standalone")]
+fn dlmopen_standalone_rejects_unowned_namespaces() {
+    use frankenlibc_abi::glibc_internal_abi::dlmopen;
+
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = compile_self_contained_test_dso();
+    let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: valid filenames make namespace rejection observable separately
+    // from missing-file handling. No successful namespace alias is permitted.
+    unsafe {
+        for id in [-1, 1, libc::c_long::MAX] {
+            assert!(dlmopen(id, path.as_ptr(), libc::RTLD_NOW).is_null());
+            let error = dlerror();
+            assert!(!error.is_null());
+            assert!(
+                CStr::from_ptr(error)
+                    .to_bytes()
+                    .starts_with(b"operation unavailable"),
+                "standalone must report the unsupported namespace"
+            );
+            assert!(dlerror().is_null());
+            assert!(dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null());
+            dlerror();
+        }
+    }
+}
+
 #[derive(Default)]
 struct DlIterateProbe {
     count: usize,

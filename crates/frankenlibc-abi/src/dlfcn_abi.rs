@@ -77,7 +77,6 @@ fn set_dlerror_host(msg: *const c_char) {
 #[cfg(not(feature = "standalone"))]
 unsafe fn host_dlopen_with_error(filename: *const c_char, flags: c_int) -> *mut c_void {
     type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-    type DlerrorFn = unsafe extern "C" fn() -> *const c_char;
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
         set_dlerror(dlfcn_core::ERR_NOT_FOUND);
         return std::ptr::null_mut();
@@ -93,6 +92,14 @@ unsafe fn host_dlopen_with_error(filename: *const c_char, flags: c_int) -> *mut 
     // interposed allocator.
     let flags = flags & !dlfcn_core::RTLD_DEEPBIND;
     let handle = unsafe { host_dlopen(filename, flags) };
+    // SAFETY: the result and any pending diagnostic belong to this host loader.
+    unsafe { host_open_result(handle) }
+}
+
+/// Share the host error lifetime between ordinary and namespace-aware loads.
+#[cfg(not(feature = "standalone"))]
+unsafe fn host_open_result(handle: *mut c_void) -> *mut c_void {
+    type DlerrorFn = unsafe extern "C" fn() -> *const c_char;
     if !handle.is_null() {
         clear_dlerror();
         return handle;
@@ -106,6 +113,28 @@ unsafe fn host_dlopen_with_error(filename: *const c_char, flags: c_int) -> *mut 
         _ => set_dlerror(dlfcn_core::ERR_NOT_FOUND),
     }
     std::ptr::null_mut()
+}
+
+/// A non-base namespace belongs entirely to the host loader in interpose
+/// builds. Preserve all flags: the base-namespace DEEPBIND adjustment must not
+/// turn an explicitly isolated load into a shared-runtime load.
+#[cfg(not(feature = "standalone"))]
+unsafe fn host_dlmopen_with_error(
+    lmid: libc::c_long,
+    filename: *const c_char,
+    flags: c_int,
+) -> *mut c_void {
+    type DlmopenFn = unsafe extern "C" fn(libc::c_long, *const c_char, c_int) -> *mut c_void;
+    let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlmopen") else {
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        return std::ptr::null_mut();
+    };
+    // SAFETY: the host symbol has dlmopen's GNU C ABI. Its namespace IDs and
+    // returned opaque handles are interpreted only by the owning host loader.
+    let host_dlmopen: DlmopenFn = unsafe { core::mem::transmute(addr) };
+    let handle = unsafe { host_dlmopen(lmid, filename, flags) };
+    // SAFETY: consume the diagnostic on the same hosted thread as the call.
+    unsafe { host_open_result(handle) }
 }
 
 /// Pathname `dlopen` in interpose builds: the native loader is authoritative
@@ -621,6 +650,77 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
     {
         // SAFETY: forward the original ABI arguments to the interpose path.
         unsafe { dlopen_interpose(filename, flags) }
+    }
+}
+
+/// Shared implementation for the GNU dlmopen export. Namespace identity is
+/// part of the request: only LM_ID_BASE may enter the native base loader.
+/// Other namespaces must never silently reuse base handles or global state.
+pub(crate) unsafe fn open_namespace(
+    lmid: libc::c_long,
+    filename: *const c_char,
+    flags: c_int,
+) -> *mut c_void {
+    if lmid == 0 {
+        // SAFETY: LM_ID_BASE retains the existing dlopen argument contract.
+        return unsafe { dlopen(filename, flags) };
+    }
+
+    #[cfg(feature = "standalone")]
+    {
+        let _ = (filename, flags);
+        // The owned loader currently has one namespace. Report that boundary
+        // instead of returning a successful base-namespace alias.
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        std::ptr::null_mut()
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        // Native clones still share their creator's compiler TLS. Entering
+        // host ld.so here would mutate the creator's loader/allocator state.
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+            || crate::malloc_abi::raw_shared_tls_clone_active()
+        {
+            set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+            return std::ptr::null_mut();
+        }
+        // GNU documents at most 16 namespaces, including LM_ID_BASE. Reject
+        // IDs outside that public range before entering the host: some GNU
+        // versions leave loader state locked after an invalid-target error.
+        // Live IDs within the range remain the host's responsibility, including
+        // namespaces created externally and discovered through dlinfo.
+        const HOST_NAMESPACE_LIMIT: libc::c_long = 16;
+        if lmid < -1 || lmid >= HOST_NAMESPACE_LIMIT {
+            set_dlerror(b"invalid target namespace in dlmopen()\0");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: use the same caller-string validation as public dlopen.
+        if !filename.is_null() && unsafe { bounded_cstr_bytes(filename) }.is_none() {
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
+        let decision = if runtime_policy::bootstrap_passthrough_active() {
+            None
+        } else {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Loader, filename as usize, 0, false, true, 0);
+            Some(decision)
+        };
+        if let Some(decision) = &decision
+            && matches!(decision.action, MembraneAction::Deny)
+        {
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+            return std::ptr::null_mut();
+        }
+        // SAFETY: the non-null filename was bounded above; null filenames and
+        // invalid/nonexistent namespace IDs retain the host's error contract.
+        // No native registry lock crosses host constructors or finalizers.
+        let handle = unsafe { host_dlmopen_with_error(lmid, filename, flags) };
+        if let Some(decision) = decision {
+            runtime_policy::observe(ApiFamily::Loader, decision.profile, 12, handle.is_null());
+        }
+        handle
     }
 }
 
