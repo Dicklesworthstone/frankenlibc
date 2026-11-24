@@ -4819,7 +4819,9 @@ unsafe extern "C" fn raw_overlap_copy_returning_dst(
     n: usize,
 ) -> *mut c_void {
     unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
-    dst
+    // Prevent IPSCCP `returned` propagation from substituting caller's `dst`,
+    // which otherwise breaks sibling tail-call emission and forces `push %rbx`.
+    core::hint::black_box(dst)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5050,7 +5052,8 @@ unsafe extern "C" fn raw_memmove_bytes_returning_dst(
     n: usize,
 ) -> *mut c_void {
     unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
-    dst
+    // Prevent IPSCCP `returned` propagation so `memmove` emits a 0-push `jmp`.
+    core::hint::black_box(dst)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5223,7 +5226,8 @@ unsafe extern "C" fn raw_memset_bytes_returning_dst(
     n: usize,
 ) -> *mut c_void {
     unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
-    dst
+    // Prevent IPSCCP `returned` propagation so `memset` emits a 0-push `jmp`.
+    core::hint::black_box(dst)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5665,26 +5669,69 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             if n > page_rem {
                 return unsafe { memchr_page_bounded_ptr(s, c, n) };
             }
-            let mut i = 0usize;
-            unsafe {
-                while i + 8 <= n {
-                    let x = std::ptr::read_unaligned(p.add(i).cast::<u64>()) ^ splat;
-                    let mask = x.wrapping_sub(ONES) & !x & HIGHS;
-                    if mask != 0 {
-                        let j = (mask.to_le().trailing_zeros() / 8) as usize;
-                        return (p as *mut u8).add(i + j).cast();
+            #[cfg(target_arch = "x86_64")]
+            if n >= 16 {
+                // Baseline SSE2 two-window scan for 16 <= n < 32: avoids a
+                // loop and keeps GPR pressure low enough for a 0-push leaf.
+                use core::arch::x86_64::{
+                    _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8,
+                };
+                // SAFETY: `16 <= n <= page_rem`, so both `[0, 16)` and
+                // `[n - 16, n)` stay strictly inside `p`'s mapped page.
+                unsafe {
+                    let v_needle = _mm_set1_epi8(needle as i8);
+                    let m0 = _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.cast()), v_needle))
+                        as u32;
+                    if m0 != 0 {
+                        return (p as *mut u8).add(m0.trailing_zeros() as usize).cast();
                     }
-                    i += 8;
+                    let m1 = _mm_movemask_epi8(_mm_cmpeq_epi8(
+                        _mm_loadu_si128(p.add(n - 16).cast()),
+                        v_needle,
+                    )) as u32;
+                    if m1 != 0 {
+                        return (p as *mut u8)
+                            .add(n - 16 + m1.trailing_zeros() as usize)
+                            .cast();
+                    }
                 }
-                if i < n {
-                    {
-                        // OVERLAPPING FINAL WORD instead of a byte tail. `n - 8 <= i`
-                        // (the loop above left `n - i < 8`), so this window covers all of
-                        // `[i, n)` in one read. It also re-reads `[n-8, i)`, which is
-                        // harmless AND still correct: control only reaches here because
-                        // that region contained no match, so its lanes are zero in the
-                        // mask and `trailing_zeros` still names the first match at or
-                        // after `i`. At n=31 the byte tail ran seven times.
+                return std::ptr::null_mut();
+            }
+            #[cfg(target_arch = "x86_64")]
+            {
+                // Straight-line two-word SWAR scan for 8 <= n < 16: no loop
+                // counter or extra GPRs, keeping `memchr` a 0-push frameless leaf.
+                // SAFETY: `8 <= n < 16` and `n <= page_rem`.
+                unsafe {
+                    let x0 = std::ptr::read_unaligned(p.cast::<u64>()) ^ splat;
+                    let m0 = x0.wrapping_sub(ONES) & !x0 & HIGHS;
+                    if m0 != 0 {
+                        let j = (m0.to_le().trailing_zeros() / 8) as usize;
+                        return (p as *mut u8).add(j).cast();
+                    }
+                    let x1 = std::ptr::read_unaligned(p.add(n - 8).cast::<u64>()) ^ splat;
+                    let m1 = x1.wrapping_sub(ONES) & !x1 & HIGHS;
+                    if m1 != 0 {
+                        let j = (m1.to_le().trailing_zeros() / 8) as usize;
+                        return (p as *mut u8).add(n - 8 + j).cast();
+                    }
+                }
+                return std::ptr::null_mut();
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                let mut i = 0usize;
+                unsafe {
+                    while i + 8 <= n {
+                        let x = std::ptr::read_unaligned(p.add(i).cast::<u64>()) ^ splat;
+                        let mask = x.wrapping_sub(ONES) & !x & HIGHS;
+                        if mask != 0 {
+                            let j = (mask.to_le().trailing_zeros() / 8) as usize;
+                            return (p as *mut u8).add(i + j).cast();
+                        }
+                        i += 8;
+                    }
+                    if i < n {
                         let x = std::ptr::read_unaligned(p.add(n - 8).cast::<u64>()) ^ splat;
                         let mask = x.wrapping_sub(ONES) & !x & HIGHS;
                         if mask != 0 {
@@ -5693,8 +5740,8 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
                         }
                     }
                 }
+                return std::ptr::null_mut();
             }
-            return std::ptr::null_mut();
         }
         return unsafe { memchr_long_strict(s, c, n) };
     }

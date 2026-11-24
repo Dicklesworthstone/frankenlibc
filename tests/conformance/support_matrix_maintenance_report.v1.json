@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-24T03:40:10Z",
-  "source_commit": "1a3f054cceeb5de4b368c938d7679617e5e5fc86",
-  "source_generated_at_utc": "2026-11-24T03:20:00Z",
-  "newest_abi_commit": "2720e67c850877b0a3b7766d43828c176e14e340",
-  "newest_abi_commit_time": "2026-11-23T22:14:11-05:00",
+  "generated_at": "2026-11-24T04:36:34Z",
+  "source_commit": "394d8517c9f02a76d978ba3cc2c93b9b1aa1940d",
+  "source_generated_at_utc": "2026-11-24T04:34:00Z",
+  "newest_abi_commit": "394d8517c9f02a76d978ba3cc2c93b9b1aa1940d",
+  "newest_abi_commit_time": "2026-11-23T22:57:05-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -64,8 +64,8 @@
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
     "promotion_proof_symbol_count": 256,
-    "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
-    "promotion_triage_manifest_loaded": true,
+    "promotion_triage_manifest_path": null,
+    "promotion_triage_manifest_loaded": false,
     "status_count_delta": {
       "GlibcCallThrough": 0,
       "Implemented": 0,
@@ -101,7 +101,7 @@
       "status": "pass",
       "implemented_promotion_delta": 0,
       "violation_count": 0,
-      "promotion_triage_manifest_loaded": true
+      "promotion_triage_manifest_loaded": false
     },
     "downgrade_only_evidence": {
       "status": "pass",
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "ea9881bd11224ad091a738dc48055788f65a71d2d13f8dfbd4102c53215fe796",
+        "artifact_sha256": "178ecc103c93a3b5cf313c36591fc2cb9adadb98eaf86b3fc6b2c0f4cb8112f4",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 24,
-        "source_tree_sha256": "bf6ca7579386176395aa0b28dfca8c28c856c2f466f1aa5ca764c4c7461f7b51"
+        "source_tree_sha256": "86266ff3350158bd573a2c32c92c80753eb3f8b0a31d0c2ec7989cb5f9cd6b6f"
       }
     },
     "summary": {
@@ -46007,7 +46007,7 @@
   "fixture_coverage_ratchet": {
     "schema_version": "fixture_coverage_ratchet.v1",
     "bead": "bd-8t1chf",
-    "promotion_triage_manifest_loaded": true,
+    "promotion_triage_manifest_loaded": false,
     "policy": {
       "high_impact_modules": [
         "math_abi",

@@ -2424,7 +2424,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 125,
-    "source_tree_sha256": "d2fcbd21f2580f5c95f701a721fd4a90f7068ceff8eada57b9cd8bd7950d7682",
+    "source_tree_sha256": "86266ff3350158bd573a2c32c92c80753eb3f8b0a31d0c2ec7989cb5f9cd6b6f",
     "version": 24
   },
   "module_census": [
@@ -3325,7 +3325,7 @@
         "source_unique_export_symbol_count": 4615,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "d2aac4524397e38af265d5cecef068425f055cea141665b9cd2f6ead98ad6c0c",
+        "support_matrix_sha256": "c122ca127ab93d300f5e9e6588052c647339824fe03fea73f7162c693a386ffb",
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [],
@@ -20259,7 +20259,7 @@
         "source_unique_export_symbol_count": 4616,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "d2aac4524397e38af265d5cecef068425f055cea141665b9cd2f6ead98ad6c0c",
+        "support_matrix_sha256": "c122ca127ab93d300f5e9e6588052c647339824fe03fea73f7162c693a386ffb",
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [],
@@ -20822,7 +20822,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/string_abi.rs",
-      "sha256": "65c15b43bd67d6b264fa6f7c5b545256dd03f56b60aab0d0c10e2a85a88a793f"
+      "sha256": "690bebdd1635462191000ad84ddc32d2223745284be1fe96b83173d0b277c03a"
     },
     {
       "path": "crates/frankenlibc-abi/src/termios_abi.rs",
