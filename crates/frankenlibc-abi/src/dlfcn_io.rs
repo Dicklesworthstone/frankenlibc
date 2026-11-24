@@ -43,6 +43,11 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     };
     let supported = if name == "getentropy" {
         "GLIBC_2.25"
+    } else if name == "gettid" {
+        // The public thread-ID wrapper arrived after both architecture
+        // baselines. Native clones need the kernel TID, never a cached PID or
+        // a host TLS identity inherited from their creator.
+        "GLIBC_2.30"
     } else if matches!(name, "arc4random" | "arc4random_buf" | "arc4random_uniform") {
         // Entropy interfaces postdate both architecture baselines; do not
         // lower these versions to AArch64's initial GLIBC_2.17 namespace.
@@ -221,6 +226,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "waitid" => process::waitid as *const (),
         "getpid" => unistd::getpid as *const (),
         "getppid" => unistd::getppid as *const (),
+        "gettid" => internal::gettid as *const (),
         "getpgrp" => unistd::getpgrp as *const (),
         "getpgid" => unistd::getpgid as *const (),
         "getsid" => unistd::getsid as *const (),

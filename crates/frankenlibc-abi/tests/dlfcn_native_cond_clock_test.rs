@@ -391,6 +391,30 @@ void *clock_wait_pointer(const char *version) {
     if(!version) return (void *)pthread_cond_clockwait;
     return dlvsym(RTLD_DEFAULT,"pthread_cond_clockwait",version);
 }
+void *thread_id_pointer(const char *version) {
+    if(!version) return (void *)gettid;
+    return dlvsym(RTLD_DEFAULT,"gettid",version);
+}
+static int kernel_tid(void) {
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"((long)SYS_gettid) : "rcx","r11","memory");
+    return (int)result;
+}
+struct identity { int creator;int observed;int kernel; };
+static void *identity_worker(void *argument) {
+    struct identity *state=argument;
+    state->observed=gettid();state->kernel=kernel_tid();
+    return 0;
+}
+int thread_identity_values(void) {
+    struct identity state={gettid(),0,0};
+    CHECK(state.creator>0 && state.creator==kernel_tid());
+    pthread_t worker;CHECK(pthread_create(&worker,0,identity_worker,&state)==0);
+    CHECK(pthread_join(worker,0)==0);
+    CHECK(state.observed>0 && state.observed==state.kernel);
+    CHECK(state.observed!=state.creator && gettid()==state.creator);
+    return 0;
+}
 "#;
 
 struct Library {
@@ -574,9 +598,41 @@ fn native_clock_provider_versions_are_exact() {
         for version in [c"GLIBC_2.2.5", c"GLIBC_PRIVATE", c"MISSING_VERSION"] {
             assert!(unsafe { pointer(version.as_ptr()) }.is_null());
         }
+        // A single unresolved gettid import used to reject this whole DSO,
+        // silently selecting the host loader before any condition test ran.
+        // Check both direct binding and caller-relative versioned lookup.
+        let pointer: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+            unsafe { std::mem::transmute(lib.symbol(c"thread_id_pointer")) };
+        let candidate = frankenlibc_abi::glibc_internal_abi::gettid as *const ();
+        let expected = if native {
+            candidate.cast_mut().cast()
+        } else {
+            unsafe { dlsym_oracle::host_addr(c"gettid", candidate) }
+        };
+        assert_eq!(unsafe { pointer(std::ptr::null()) }, expected);
+        assert_eq!(unsafe { pointer(c"GLIBC_2.30".as_ptr()) }, expected);
+        for version in [
+            c"GLIBC_2.2.5",
+            c"GLIBC_2.17",
+            c"GLIBC_2.34",
+            c"GLIBC_PRIVATE",
+        ] {
+            assert!(unsafe { pointer(version.as_ptr()) }.is_null());
+        }
+        protocol(native, c"thread_identity_values");
+        if native {
+            struct RestoreThreading(bool);
+            impl Drop for RestoreThreading {
+                fn drop(&mut self) {
+                    pthread_abi::pthread_threading_restore_for_tests(self.0);
+                }
+            }
+            let _threading =
+                RestoreThreading(pthread_abi::pthread_threading_swap_force_native_for_tests());
+            protocol(native, c"thread_identity_values");
+        }
     });
 }
-
 
 extern "C" fn recursive_native_thread_probe() -> c_int {
     c_int::from(frankenlibc_core::pthread::thread::current_thread_handle().is_some())
@@ -600,7 +656,10 @@ fn recursive_protocol(native: bool, native_threads: bool, name: &CStr) {
             unsafe { std::mem::transmute(lib.symbol(c"recursive_provider")) };
         unsafe { set_probe(recursive_native_thread_probe, c_int::from(native_threads)) };
         for (index, (symbol, candidate)) in [
-            (c"pthread_cond_wait", pthread_abi::pthread_cond_wait as *const ()),
+            (
+                c"pthread_cond_wait",
+                pthread_abi::pthread_cond_wait as *const (),
+            ),
             (
                 c"pthread_cond_timedwait",
                 pthread_abi::pthread_cond_timedwait as *const (),
@@ -609,7 +668,10 @@ fn recursive_protocol(native: bool, native_threads: bool, name: &CStr) {
                 c"pthread_cond_clockwait",
                 pthread_abi::pthread_cond_clockwait as *const (),
             ),
-            (c"pthread_mutex_lock", pthread_abi::pthread_mutex_lock as *const ()),
+            (
+                c"pthread_mutex_lock",
+                pthread_abi::pthread_mutex_lock as *const (),
+            ),
             (
                 c"pthread_mutex_unlock",
                 pthread_abi::pthread_mutex_unlock as *const (),
