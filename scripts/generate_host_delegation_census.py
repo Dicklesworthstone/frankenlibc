@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 23
+DETECTOR_VERSION = 24
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -118,15 +118,38 @@ AVX2_DISPATCH_DECL_RE = re.compile(
     re.DOTALL,
 )
 RAW_LITERAL_RE = re.compile(r'resolve_host_symbol_raw\s*\(\s*"([^"]+)"')
+RAW_CALL_RE = re.compile(r"\bresolve_host_symbol_raw\s*\(")
 RAW_DYNAMIC_RE = re.compile(r"resolve_host_symbol_raw\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 CACHED_LITERAL_RE = re.compile(r'resolve_host_symbol_cached\s*\([^,]+,\s*"([^"]+)"')
+CACHED_CALL_RE = re.compile(r"\bresolve_host_symbol_cached\s*\(")
 RESOLVED_THREAD_RE = re.compile(r"\bresolved_thread_([A-Za-z0-9_]+)_raw\s*\(")
+RESOLVER_VALUE_REF_RES = (
+    ("resolve_host_symbol_raw", re.compile(r"(?<![\w.])resolve_host_symbol_raw\b(?!\s*\()")),
+    ("resolve_host_symbol_cached", re.compile(r"(?<![\w.])resolve_host_symbol_cached\b(?!\s*\()")),
+)
+STATIC_HOST_NEEDLE_RES = tuple(
+    (needle, host_symbol, kind, re.compile(rf"(?<![\w.]){needle}\b"))
+    for needle, host_symbol, kind in (
+        ("delegate_to_host_libc_start_main", "__libc_start_main", "startup_host_delegate"),
+        ("host_dlsym", "dlsym", "host_dlsym_helper"),
+        ("host_dlvsym", "dlvsym", "host_dlvsym_helper"),
+        ("dlvsym_next", "dlvsym", "rtld_next_host_dlvsym"),
+        ("host_dl_iterate_phdr_cached", "dl_iterate_phdr", "cached_host_loader_symbol"),
+        ("host_dladdr_cached", "dladdr", "cached_host_loader_symbol"),
+        ("host_malloc_raw", "malloc", "cached_host_allocator_symbol"),
+        ("host_calloc_raw", "calloc", "cached_host_allocator_symbol"),
+        ("host_realloc_raw", "realloc", "cached_host_allocator_symbol"),
+        ("host_free_raw", "free", "cached_host_allocator_symbol"),
+        ("host_errno_location_raw", "__errno_location", "cached_host_errno_symbol"),
+    )
+)
+SCOPE_PUNCT_RE = re.compile(r"[{};()\[\]]")
 PARAM_BINDING_RE = re.compile(
     r"(?:^|[,(])\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:"
 )
 LOCAL_BINDING_RE = re.compile(
     r"\blet\s+(?:mut\s+)?(?:(?:Some|Ok|Err)\s*\(\s*)?"
-    r"([A-Za-z_][A-Za-z0-9_]*)"
+    r"([A-Za-z_][A-Za-z0-9_]*)(?!\s*(?:\{|::|\())"
 )
 LOCAL_TUPLE_BINDING_RE = re.compile(
     r"\blet\s+(?:(?:Some|Ok|Err)\s*\(\s*)?\(\s*([^()\n]+?)\s*\)"
@@ -415,8 +438,8 @@ def replace_preserving_newlines(original: str, replacement: str) -> str:
 
 
 @lru_cache(maxsize=8192)
-def rust_code_mask(text: str) -> str:
-    """Blank comments and literals while preserving offsets and newlines."""
+def _rust_lexical_mask(text: str, mask_literals: bool) -> str:
+    """Blank comments (and optionally literals) while preserving offsets and newlines."""
 
     first = MASK_TRIGGER_RE.search(text)
     if first is None:
@@ -474,21 +497,20 @@ def rust_code_mask(text: str) -> str:
 
         raw_match = RAW_STRING_START_RE.match(text, idx)
         if raw_match is not None:
-            if idx > last_unmasked:
-                chunks.append(text[last_unmasked:idx])
             opening_len = len(raw_match.group(0))
             closing = '"' + raw_match.group("hashes")
             end = text.find(closing, idx + opening_len)
             end = n if end < 0 else end + len(closing)
-            chunks.append(blank_preserving_newlines(text[idx:end]))
+            if mask_literals:
+                if idx > last_unmasked:
+                    chunks.append(text[last_unmasked:idx])
+                chunks.append(blank_preserving_newlines(text[idx:end]))
+                last_unmasked = end
             idx = end
-            last_unmasked = idx
             continue
 
         quote_idx = idx + 1 if text.startswith(('b"', 'c"'), idx) else idx
         if quote_idx < n and text[quote_idx] == '"':
-            if idx > last_unmasked:
-                chunks.append(text[last_unmasked:idx])
             end = quote_idx + 1
             escaped = False
             while end < n:
@@ -500,25 +522,39 @@ def rust_code_mask(text: str) -> str:
                     escaped = True
                 else:
                     escaped = False
-            chunks.append(blank_preserving_newlines(text[idx:end]))
+            if mask_literals:
+                if idx > last_unmasked:
+                    chunks.append(text[last_unmasked:idx])
+                chunks.append(blank_preserving_newlines(text[idx:end]))
+                last_unmasked = end
             idx = end
-            last_unmasked = idx
             continue
 
         char_match = CHAR_LITERAL_RE.match(text, idx)
         if char_match is not None:
-            if idx > last_unmasked:
-                chunks.append(text[last_unmasked:idx])
             char_end = char_match.end()
-            chunks.append(" " * (char_end - idx))
+            if mask_literals:
+                if idx > last_unmasked:
+                    chunks.append(text[last_unmasked:idx])
+                chunks.append(" " * (char_end - idx))
+                last_unmasked = char_end
             idx = char_end
-            last_unmasked = idx
             continue
         idx += 1
 
     if last_unmasked < n:
         chunks.append(text[last_unmasked:])
     return "".join(chunks)
+
+
+def rust_code_mask(text: str) -> str:
+    """Blank comments and literals while preserving offsets and newlines."""
+    return _rust_lexical_mask(text, True)
+
+
+def rust_strip_comments_only(text: str) -> str:
+    """Blank only comments while preserving literals, offsets, and newlines."""
+    return _rust_lexical_mask(text, False)
 
 
 def matching_delimiter(mask: str, opening: int, left: str, right: str) -> int | None:
@@ -534,8 +570,10 @@ def matching_delimiter(mask: str, opening: int, left: str, right: str) -> int | 
     return None
 
 
-def matching_turbofish_end(mask: str, opening: int) -> tuple[int, bool] | None:
-    """Return ``(exclusive_end, followed_by_call_paren)`` of `<...>` turbofish type args."""
+def matching_turbofish_end(
+    mask: str, opening: int
+) -> tuple[int, bool, str, int] | None:
+    """Return ``(angle_end, is_call_tail, trailing_path, span_end)`` of `<...>` turbofish args."""
     angle_depth = 0
     paren_depth = 0
     bracket_depth = 0
@@ -571,8 +609,54 @@ def matching_turbofish_end(mask: str, opening: int) -> tuple[int, bool] | None:
             elif char == ">":
                 angle_depth -= 1
                 if angle_depth == 0:
-                    tail = mask[idx + 1 :].lstrip()
-                    return idx + 1, tail.startswith("(")
+                    angle_end = idx + 1
+                    tail_pos = angle_end
+                    while tail_pos < length and mask[tail_pos].isspace():
+                        tail_pos += 1
+                    if tail_pos < length and mask[tail_pos] == "(":
+                        return angle_end, True, "", angle_end
+                    # Qualified associated-item calls such as `HostType::<i32>::call_host(...)`.
+                    trailing_segments: list[str] = []
+                    scan_pos = tail_pos
+                    while mask.startswith("::", scan_pos):
+                        scan_pos += 2
+                        while scan_pos < length and mask[scan_pos].isspace():
+                            scan_pos += 1
+                        seg_match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", mask[scan_pos:])
+                        if seg_match is None:
+                            break
+                        trailing_segments.append(seg_match.group(0))
+                        scan_pos += len(seg_match.group(0))
+                        after_seg = scan_pos
+                        while after_seg < length and mask[after_seg].isspace():
+                            after_seg += 1
+                        if mask.startswith("::", after_seg):
+                            after_colons = after_seg + 2
+                            while after_colons < length and mask[after_colons].isspace():
+                                after_colons += 1
+                            if after_colons < length and mask[after_colons] == "<":
+                                nested = matching_turbofish_end(mask, after_colons)
+                                if nested is not None:
+                                    _, nested_call, nested_trail, nested_span_end = nested
+                                    if nested_trail:
+                                        trailing_segments.extend(
+                                            nested_trail.lstrip(":").split("::")
+                                        )
+                                    return (
+                                        angle_end,
+                                        nested_call,
+                                        "::" + "::".join(trailing_segments),
+                                        nested_span_end,
+                                    )
+                        scan_pos = after_seg
+                    if trailing_segments and scan_pos < length and mask[scan_pos] == "(":
+                        return (
+                            angle_end,
+                            True,
+                            "::" + "::".join(trailing_segments),
+                            scan_pos,
+                        )
+                    return angle_end, False, "", angle_end
             elif char == ";":
                 return None
         idx += 1
@@ -1222,6 +1306,10 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
             if exported
             else f"fn {name}() {{ {body} }}"
         )
+        sig_lines = [
+            (line_no + offset, sig_line)
+            for offset, sig_line in enumerate(signature.split("\n"))
+        ]
         functions.append(
             FunctionInfo(
                 name=name,
@@ -1230,7 +1318,7 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
                 body_start_line=line_no,
                 signature=signature,
                 attr_text="#[unsafe(no_mangle)]" if exported else "",
-                lines=[(line_no, signature)],
+                lines=sig_lines,
             )
         )
 
@@ -1310,6 +1398,7 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
                 *rpc_svc_macros,
                 *unistd_leaf_macros,
                 *unistd_errno_macros,
+                *unistd_nss_parser_macros,
             }:
                 line_no = text.count("\n", 0, invocation.start()) + 1
                 raise ValueError(
@@ -1589,8 +1678,8 @@ def parse_impl_spans(mask: str) -> list[tuple[int, int, str]]:
         if close is None:
             continue
         header = mask[impl_match.end() : brace]
-        header = re.split(r"\bwhere\b", header, maxsplit=1)[0]
-        cleaned = _strip_angle_groups(header).strip()
+        cleaned = _strip_angle_groups(header)
+        cleaned = re.split(r"\bwhere\b", cleaned, maxsplit=1)[0].strip()
         if re.search(r"\bfor\b", cleaned):
             target = re.split(r"\bfor\b", cleaned)[-1].strip()
         else:
@@ -1647,6 +1736,8 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
         declaration_only = False
         parameter_depth = 0
         bracket_depth = 0
+        angle_depth = 0
+        inner_brace_depth = 0
         saw_parameter_list = False
         parameters_closed = False
         body_start_line = idx + 1
@@ -1660,23 +1751,65 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
                 # must not mistake the extern block's brace for a body.
                 masked_current = masked_current[match.start() :]
             body_offset: int | None = None
-            for offset, char in enumerate(masked_current):
+            offset = 0
+            while offset < len(masked_current):
+                if masked_current.startswith(("->", "=>"), offset):
+                    offset += 2
+                    continue
+                char = masked_current[offset]
                 if char == "(":
                     parameter_depth += 1
-                    saw_parameter_list = True
+                    if angle_depth == 0 and bracket_depth == 0 and inner_brace_depth == 0:
+                        saw_parameter_list = True
+                    offset += 1
                     continue
                 if char == ")" and parameter_depth > 0:
                     parameter_depth -= 1
-                    if saw_parameter_list and parameter_depth == 0:
+                    if (
+                        saw_parameter_list
+                        and parameter_depth == 0
+                        and angle_depth == 0
+                        and bracket_depth == 0
+                        and inner_brace_depth == 0
+                    ):
                         parameters_closed = True
+                    offset += 1
                     continue
                 if char == "[":
                     bracket_depth += 1
+                    offset += 1
                     continue
                 if char == "]" and bracket_depth > 0:
                     bracket_depth -= 1
+                    offset += 1
                     continue
-                if not parameters_closed or parameter_depth != 0 or bracket_depth != 0:
+                if inner_brace_depth > 0:
+                    if char == "{":
+                        inner_brace_depth += 1
+                    elif char == "}":
+                        inner_brace_depth -= 1
+                    offset += 1
+                    continue
+                if char == "<" and parameter_depth == 0 and bracket_depth == 0:
+                    angle_depth += 1
+                    offset += 1
+                    continue
+                if char == ">" and angle_depth > 0 and parameter_depth == 0 and bracket_depth == 0:
+                    angle_depth -= 1
+                    offset += 1
+                    continue
+                if char == "{" and (angle_depth > 0 or parameter_depth > 0 or bracket_depth > 0):
+                    inner_brace_depth += 1
+                    offset += 1
+                    continue
+                if (
+                    not parameters_closed
+                    or parameter_depth != 0
+                    or bracket_depth != 0
+                    or angle_depth != 0
+                    or inner_brace_depth != 0
+                ):
+                    offset += 1
                     continue
                 if char == ";":
                     declaration_only = True
@@ -1686,6 +1819,7 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
                     body_start_line = end_idx + 1
                     body_offset = offset
                     break
+                offset += 1
             if declaration_only:
                 break
             if seen_open and body_offset is not None:
@@ -1724,24 +1858,6 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
     return functions
 
 
-def strip_comments(line: str) -> str:
-    return line.split("//", 1)[0]
-
-
-def function_body_line(function: FunctionInfo, line_no: int, raw_line: str) -> str:
-    """Return only executable body text for one parsed function line."""
-
-    if line_no < function.body_start_line:
-        return ""
-    line = strip_comments(raw_line)
-    if line_no == function.body_start_line:
-        opening_brace = line.find("{")
-        if opening_brace < 0:
-            return ""
-        return line[opening_brace + 1 :]
-    return line
-
-
 def function_body_lines(function: FunctionInfo) -> list[tuple[int, str, str]]:
     """Return raw evidence plus a comment/literal-free executable view."""
 
@@ -1749,17 +1865,31 @@ def function_body_lines(function: FunctionInfo) -> list[tuple[int, str, str]]:
         return function._body_lines_cache
 
     raw_text = "\n".join(raw_line for _, raw_line in function.lines)
+    comment_free_lines = rust_strip_comments_only(raw_text).split("\n")
     masked_lines = rust_code_mask(raw_text).split("\n")
-    if len(masked_lines) != len(function.lines):
+    if len(masked_lines) != len(function.lines) or len(comment_free_lines) != len(function.lines):
         raise ValueError(f"Rust lexical mask changed line count for {function.identity}")
-    result = [
-        (
-            line_no,
-            function_body_line(function, line_no, raw_line),
-            function_body_line(function, line_no, masked_line),
-        )
-        for (line_no, raw_line), masked_line in zip(function.lines, masked_lines)
-    ]
+    result: list[tuple[int, str, str]] = []
+    for (line_no, _), comment_free_line, masked_line in zip(
+        function.lines, comment_free_lines, masked_lines
+    ):
+        if line_no < function.body_start_line:
+            result.append((line_no, "", ""))
+            continue
+        if line_no == function.body_start_line:
+            opening_brace = masked_line.find("{")
+            if opening_brace < 0:
+                result.append((line_no, "", ""))
+            else:
+                result.append(
+                    (
+                        line_no,
+                        comment_free_line[opening_brace + 1 :],
+                        masked_line[opening_brace + 1 :],
+                    )
+                )
+            continue
+        result.append((line_no, comment_free_line, masked_line))
     function._body_lines_cache = result
     return result
 
@@ -1817,9 +1947,9 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
         tf_res = matching_turbofish_end(body_text, angle_open)
         if tf_res is None:
             continue
-        tf_end, is_call_tail = tf_res
-        turbofish_arg_spans.append((angle_open, tf_end))
-        tf_path = tf_match.group("path")
+        tf_end, is_call_tail, trailing_path, span_end = tf_res
+        turbofish_arg_spans.append((angle_open, span_end if is_call_tail else tf_end))
+        tf_path = tf_match.group("path") + trailing_path
         if is_method or not is_call_tail or tf_path in RUST_NON_CALL_KEYWORDS:
             continue
         while (
@@ -1854,6 +1984,68 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             return False
         return any(start <= position < end for start, end in turbofish_arg_spans)
 
+    def is_closing_generic_angle(gt_pos: int) -> bool:
+        """Return True if `>` at `gt_pos` closes a `<...>` generic/turbofish argument list."""
+        angle = 1
+        paren = 0
+        bracket = 0
+        brace = 0
+        pos = gt_pos - 1
+        while pos >= 0:
+            ch = body_text[pos]
+            if pos >= 1 and body_text[pos - 1 : pos + 1] in {"->", "=>"}:
+                pos -= 2
+                continue
+            if ch == ")":
+                paren += 1
+            elif ch == "(":
+                if paren == 0:
+                    return False
+                paren -= 1
+            elif ch == "]":
+                bracket += 1
+            elif ch == "[":
+                if bracket == 0:
+                    return False
+                bracket -= 1
+            elif ch == "}":
+                brace += 1
+            elif ch == "{":
+                if brace == 0:
+                    return False
+                brace -= 1
+            elif paren == 0 and bracket == 0 and brace == 0:
+                if ch == ">":
+                    angle += 1
+                elif ch == "<":
+                    angle -= 1
+                    if angle == 0:
+                        prev = pos - 1
+                        while prev >= 0 and body_text[prev].isspace():
+                            prev -= 1
+                        if prev >= 1 and body_text[prev - 1 : prev + 1] == "::":
+                            return True
+                        if prev >= 0 and (body_text[prev].isalnum() or body_text[prev] == "_"):
+                            wstart = prev
+                            while wstart > 0 and (
+                                body_text[wstart - 1].isalnum()
+                                or body_text[wstart - 1] == "_"
+                            ):
+                                wstart -= 1
+                            word = body_text[wstart : prev + 1]
+                            if word in RUST_NON_CALL_KEYWORDS and word != "for":
+                                return False
+                            return True
+                        return False
+                elif ch == ";":
+                    return False
+                elif ch == "=" and (pos == 0 or body_text[pos - 1] not in "=!<>"):
+                    return False
+                elif pos >= 1 and body_text[pos - 1 : pos + 1] in {"&&", "||", "==", "!="}:
+                    return False
+            pos -= 1
+        return False
+
     def brace_is_expr_block(abs_pos: int) -> bool:
         cursor = abs_pos - 1
         while cursor >= 0 and body_text[cursor].isspace():
@@ -1861,8 +2053,25 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
         if cursor < 0:
             return False
         ch = body_text[cursor]
-        if ch in "=+-*/%&|^<>!,:;([~@":
+        if ch in "=+-*/%&|^<!,:;([~@":
             return True
+        if ch == ">":
+            if cursor >= 1 and body_text[cursor - 1] == "=":
+                return True
+            return not is_closing_generic_angle(cursor)
+        if ch == "." and cursor >= 1 and body_text[cursor - 1] == ".":
+            close = matching_delimiter(body_text, abs_pos, "{", "}")
+            if close is not None:
+                after = close
+                while after < len(body_text) and body_text[after].isspace():
+                    after += 1
+                if after < len(body_text):
+                    tail = body_text[after:]
+                    if tail.startswith(
+                        ("&&", "||", "==", "!=", "<=", ">=", ".", "?", "+", "-", "*", "/", "%", "&", "|", "^", "<", ">")
+                    ) or re.match(r"as\b", tail):
+                        return True
+            return False
         if ch.isalnum() or ch == "_":
             start = cursor
             while start > 0 and (body_text[start - 1].isalnum() or body_text[start - 1] == "_"):
@@ -1879,70 +2088,158 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             return body_text[start : cursor + 1] in EXPR_BLOCK_PRECEDING_KEYWORDS
         return False
 
+    def split_closure_params(params_text: str) -> list[str]:
+        parts: list[str] = []
+        start = 0
+        angle = 0
+        paren = 0
+        bracket = 0
+        brace = 0
+        idx = 0
+        while idx < len(params_text):
+            if params_text.startswith(("->", "=>"), idx):
+                idx += 2
+                continue
+            ch = params_text[idx]
+            if ch == "<":
+                angle += 1
+            elif ch == ">" and angle > 0:
+                angle -= 1
+            elif ch == "(":
+                paren += 1
+            elif ch == ")" and paren > 0:
+                paren -= 1
+            elif ch == "[":
+                bracket += 1
+            elif ch == "]" and bracket > 0:
+                bracket -= 1
+            elif ch == "{":
+                brace += 1
+            elif ch == "}" and brace > 0:
+                brace -= 1
+            elif ch == "," and angle == 0 and paren == 0 and bracket == 0 and brace == 0:
+                parts.append(params_text[start:idx])
+                start = idx + 1
+            idx += 1
+        parts.append(params_text[start:])
+        return parts
+
     closure_pre_keywords = frozenset(
         {"move", "async", "static", "return", "yield", "in", "match", "if", "while", "else"}
     )
+    closure_body_braces: set[int] = set()
     closure_brace_bindings: dict[int, set[str]] = {}
-    for closure in re.finditer(r"\|([^|\n]*)\|", body_text):
-        c_start = closure.start()
-        c_end = closure.end()
+    body_len = len(body_text)
+    scan_i = 0
+    while scan_i < body_len:
+        c_start = body_text.find("|", scan_i)
+        if c_start < 0:
+            break
+        scan_i = c_start
         if is_macro_token(c_start) or is_turbofish_type_arg(c_start):
+            scan_i += 1
             continue
-        # Reject `||` logical-OR tokens and bitwise-OR expressions (`expr | x | expr`).
+        # Reject trailing pipe of `||`.
         if c_start > 0 and body_text[c_start - 1] == "|":
-            continue
-        if c_end < len(body_text) and body_text[c_end] == "|":
+            scan_i += 1
             continue
         prev = c_start - 1
         while prev >= 0 and body_text[prev].isspace():
             prev -= 1
+        valid_prefix = True
         if prev >= 0:
             pch = body_text[prev]
             if pch in ")]}?":
-                continue
-            if pch.isalnum() or pch == "_":
+                valid_prefix = False
+            elif pch.isalnum() or pch == "_":
                 wstart = prev
                 while wstart > 0 and (
                     body_text[wstart - 1].isalnum() or body_text[wstart - 1] == "_"
                 ):
                     wstart -= 1
-                if body_text[wstart : prev + 1] not in closure_pre_keywords:
+                if wstart >= 2 and body_text[wstart - 2 : wstart] == "r#":
+                    valid_prefix = False
+                else:
+                    wprev = wstart - 1
+                    while wprev >= 0 and body_text[wprev].isspace():
+                        wprev -= 1
+                    if wprev >= 0 and body_text[wprev] == ".":
+                        valid_prefix = False
+                    elif wprev >= 1 and body_text[wprev - 1 : wprev + 1] == "::":
+                        valid_prefix = False
+                    elif body_text[wstart : prev + 1] not in closure_pre_keywords:
+                        valid_prefix = False
+        if not valid_prefix:
+            scan_i += 1
+            continue
+        if c_start + 1 < body_len and body_text[c_start + 1] == "|":
+            c_end = c_start + 2
+            params_raw = ""
+        else:
+            p_pos = c_start + 1
+            p_angle = 0
+            p_paren = 0
+            p_bracket = 0
+            p_brace = 0
+            close_pipe = -1
+            while p_pos < body_len:
+                if body_text.startswith(("->", "=>"), p_pos):
+                    p_pos += 2
                     continue
-        # Validate parameter list strictly and require an explicit `{` block
-        # body immediately after `|params|` (optionally preceded by `-> Type`).
-        params_raw = closure.group(1).strip()
-        if not params_raw:
-            continue
-        parsed_params: list[str] = []
-        valid_params = True
-        for raw_param in params_raw.split(","):
-            raw_param = raw_param.strip()
-            if not raw_param:
+                pch = body_text[p_pos]
+                if pch == "<":
+                    p_angle += 1
+                elif pch == ">" and p_angle > 0:
+                    p_angle -= 1
+                elif pch == "(":
+                    p_paren += 1
+                elif pch == ")":
+                    if p_paren == 0:
+                        break
+                    p_paren -= 1
+                elif pch == "[":
+                    p_bracket += 1
+                elif pch == "]":
+                    if p_bracket == 0:
+                        break
+                    p_bracket -= 1
+                elif pch == "{":
+                    p_brace += 1
+                elif pch == "}":
+                    if p_brace == 0:
+                        break
+                    p_brace -= 1
+                elif p_angle == 0 and p_paren == 0 and p_bracket == 0 and p_brace == 0:
+                    if pch == ";":
+                        break
+                    if pch == "|":
+                        if p_pos + 1 < body_len and body_text[p_pos + 1] == "|":
+                            break
+                        close_pipe = p_pos
+                        break
+                p_pos += 1
+            if close_pipe < 0:
+                scan_i += 1
                 continue
-            param_match = re.match(
-                r"^(?:(?:mut|ref)\s+)*([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[^=|,]+)?$",
-                raw_param,
-            )
-            if param_match is None:
-                valid_params = False
-                break
-            if param_match.group(1) != "_":
-                parsed_params.append(param_match.group(1))
-        if not valid_params or not parsed_params:
-            continue
+            c_end = close_pipe + 1
+            params_raw = body_text[c_start + 1 : close_pipe].strip()
         tail = c_end
-        while tail < len(body_text) and body_text[tail].isspace():
+        while tail < body_len and body_text[tail].isspace():
             tail += 1
         if body_text[tail : tail + 2] == "->":
             tail += 2
             ret_angle = 0
             ret_paren = 0
             ret_bracket = 0
-            while tail < len(body_text):
+            ret_brace = 0
+            while tail < body_len:
+                if body_text.startswith(("->", "=>"), tail):
+                    tail += 2
+                    continue
                 tch = body_text[tail]
                 if tch == "<":
                     ret_angle += 1
-                elif tch == ">" and ret_angle > 0 and body_text[tail - 1] != "-":
+                elif tch == ">" and ret_angle > 0:
                     ret_angle -= 1
                 elif tch == "(":
                     ret_paren += 1
@@ -1956,14 +2253,81 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
                     if ret_bracket == 0:
                         break
                     ret_bracket -= 1
-                elif ret_angle == 0 and ret_paren == 0 and ret_bracket == 0:
+                elif tch == "{" and (ret_angle > 0 or ret_paren > 0 or ret_bracket > 0 or ret_brace > 0):
+                    ret_brace += 1
+                elif tch == "}" and ret_brace > 0:
+                    ret_brace -= 1
+                elif ret_angle == 0 and ret_paren == 0 and ret_bracket == 0 and ret_brace == 0:
                     if tch in "{;=,)":
                         break
                 tail += 1
-        if tail < len(body_text) and body_text[tail] == "{":
-            closure_brace_bindings.setdefault(tail, set()).update(parsed_params)
+        if tail < body_len and body_text[tail] == "{":
+            closure_body_braces.add(tail)
+            if params_raw:
+                parsed_params: list[str] = []
+                valid_params = True
+                for raw_param in split_closure_params(params_raw):
+                    raw_param = raw_param.strip()
+                    if not raw_param:
+                        continue
+                    param_match = re.match(
+                        r"^(?:(?:mut|ref)\s+)*([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[^=|]+)?$",
+                        raw_param,
+                        re.DOTALL,
+                    )
+                    if param_match is None:
+                        valid_params = False
+                        break
+                    if param_match.group(1) != "_":
+                        parsed_params.append(param_match.group(1))
+                if valid_params and parsed_params:
+                    closure_brace_bindings.setdefault(tail, set()).update(parsed_params)
+            scan_i = c_end
+            continue
+        scan_i += 1
 
-    active_scopes = [set(PARAM_BINDING_RE.findall(function.signature))]
+    def extract_fn_param_bindings(signature: str) -> set[str]:
+        sig_mask = rust_code_mask(signature)
+        fn_match = FUNCTION_RE.search(sig_mask)
+        if fn_match is None:
+            return set()
+        pos = fn_match.end()
+        angle = 0
+        bracket = 0
+        brace = 0
+        open_paren = -1
+        while pos < len(sig_mask):
+            if sig_mask.startswith(("->", "=>"), pos):
+                pos += 2
+                continue
+            ch = sig_mask[pos]
+            if ch == "<" and bracket == 0 and brace == 0:
+                angle += 1
+            elif ch == ">" and angle > 0 and bracket == 0 and brace == 0:
+                angle -= 1
+            elif ch == "[":
+                bracket += 1
+            elif ch == "]" and bracket > 0:
+                bracket -= 1
+            elif ch == "{":
+                if angle == 0 and bracket == 0:
+                    break
+                brace += 1
+            elif ch == "}" and brace > 0:
+                brace -= 1
+            elif ch == "(" and angle == 0 and bracket == 0 and brace == 0:
+                open_paren = pos
+                break
+            pos += 1
+        if open_paren < 0:
+            return set()
+        close_paren = matching_delimiter(sig_mask, open_paren, "(", ")")
+        if close_paren is None:
+            return set()
+        param_slice = sig_mask[open_paren:close_paren]
+        return set(PARAM_BINDING_RE.findall(param_slice))
+
+    active_scopes = [extract_fn_param_bindings(function.signature)]
     scope_is_macro = [False]
     scope_base_depths: list[tuple[int, int]] = [(0, 0)]
     pending_bindings = [set()]
@@ -1986,6 +2350,12 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             if prev >= 1 and body_text[prev - 1 : prev + 1] == "::":
                 continue
             kw = header_kw.group(1)
+            if kw == "for":
+                after_kw = line_offset + header_kw.end()
+                while after_kw < body_len and body_text[after_kw].isspace():
+                    after_kw += 1
+                if after_kw < body_len and body_text[after_kw] == "<":
+                    continue
             events.append((header_kw.start(), 0, "header_kw", "cond" if kw in {"if", "while"} else kw))
         for arrow in FAT_ARROW_RE.finditer(line):
             abs_pos = line_offset + arrow.start()
@@ -2029,10 +2399,12 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             events.append((col, 2, "call", tf_path))
         for col, sym_path in asm_sym_events_by_idx.get(line_idx, ()):
             events.append((col, 2, "call", sym_path))
-        for position, char in enumerate(line):
+        for punct in SCOPE_PUNCT_RE.finditer(line):
+            position = punct.start()
             abs_pos = line_offset + position
             if is_macro_token(abs_pos) or is_turbofish_type_arg(abs_pos):
                 continue
+            char = punct.group(0)
             if char == "{":
                 events.append((position, 0, "open", abs_pos))
             elif char == "}":
@@ -2069,8 +2441,8 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
                     header_stack.pop()
             elif kind == "open":
                 new_scope: set[str] = set()
-                if value in closure_brace_bindings:
-                    new_scope.update(closure_brace_bindings[value])
+                if value in closure_body_braces:
+                    new_scope.update(closure_brace_bindings.get(value, ()))
                 elif (
                     header_stack
                     and header_stack[-1][1:4]
@@ -2147,7 +2519,7 @@ def detect_host_calls(
         if not line.strip():
             continue
         expression = raw_line.strip()
-        for resolver in re.finditer(r"\bresolve_host_symbol_raw\s*\(", line):
+        for resolver in RAW_CALL_RE.finditer(line):
             literal = RAW_LITERAL_RE.match(raw_line, resolver.start())
             if literal is not None:
                 calls.append(
@@ -2162,7 +2534,7 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
-        for resolver in re.finditer(r"\bresolve_host_symbol_cached\s*\(", line):
+        for resolver in CACHED_CALL_RE.finditer(line):
             literal = CACHED_LITERAL_RE.match(raw_line, resolver.start())
             if literal is not None:
                 calls.append(
@@ -2259,10 +2631,10 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
-        for resolver_name in ("resolve_host_symbol_raw", "resolve_host_symbol_cached"):
-            if function.name == resolver_name:
+        for resolver_name, val_ref_re in RESOLVER_VALUE_REF_RES:
+            if function.name == resolver_name or resolver_name not in line:
                 continue
-            for val_ref in re.finditer(rf"(?<![\w.]){resolver_name}\b(?!\s*\()", line):
+            for val_ref in val_ref_re.finditer(line):
                 # Ignore `use ...::resolve_host_symbol_*` imports; flag actual value bindings/refs.
                 prefix_before = line[: val_ref.start()].lstrip()
                 if prefix_before.startswith(("use ", "pub use ")):
@@ -2279,23 +2651,10 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
-        static_needles = [
-            ("delegate_to_host_libc_start_main", "__libc_start_main", "startup_host_delegate"),
-            ("host_dlsym", "dlsym", "host_dlsym_helper"),
-            ("host_dlvsym", "dlvsym", "host_dlvsym_helper"),
-            ("dlvsym_next", "dlvsym", "rtld_next_host_dlvsym"),
-            ("host_dl_iterate_phdr_cached", "dl_iterate_phdr", "cached_host_loader_symbol"),
-            ("host_dladdr_cached", "dladdr", "cached_host_loader_symbol"),
-            ("host_malloc_raw", "malloc", "cached_host_allocator_symbol"),
-            ("host_calloc_raw", "calloc", "cached_host_allocator_symbol"),
-            ("host_realloc_raw", "realloc", "cached_host_allocator_symbol"),
-            ("host_free_raw", "free", "cached_host_allocator_symbol"),
-            ("host_errno_location_raw", "__errno_location", "cached_host_errno_symbol"),
-        ]
-        for needle, host_symbol, kind in static_needles:
-            if function.name == needle:
+        for needle, host_symbol, kind, needle_re in STATIC_HOST_NEEDLE_RES:
+            if function.name == needle or needle not in line:
                 continue
-            for hit in re.finditer(rf"(?<![\w.]){needle}\b", line):
+            for hit in needle_re.finditer(line):
                 prefix_before = line[: hit.start()].lstrip()
                 if prefix_before.startswith(("use ", "pub use ")):
                     continue
@@ -2399,10 +2758,10 @@ def qualified_target_module(
         if not rest:
             return cur_mod, True
         if cur_mod == "lib":
-            if len(rest) == 1 and rest[0] in known_modules:
-                return rest[0], True
             if len(rest) == 1 and module_aliases is not None and rest[0] in module_aliases:
                 return module_aliases[rest[0]], True
+            if len(rest) == 1 and rest[0] in known_modules:
+                return rest[0], True
             nested = "::".join(rest)
             if module_aliases is not None and nested in module_aliases:
                 return module_aliases[nested], True
@@ -2413,18 +2772,26 @@ def qualified_target_module(
         return None, True
     if prefix == ["crate"]:
         return "lib", True
-    if len(prefix) == 1 and prefix[0] in known_modules:
-        return prefix[0], True
-    if len(prefix) == 1 and module_aliases is not None and prefix[0] in module_aliases:
-        return module_aliases[prefix[0]], True
+    if len(prefix) == 1:
+        if module_aliases is not None:
+            child_key = f"{caller_module}::{prefix[0]}"
+            if child_key in module_aliases:
+                return module_aliases[child_key], True
+            if prefix[0] in module_aliases:
+                return module_aliases[prefix[0]], True
+        if prefix[0] in known_modules:
+            return prefix[0], True
     if len(prefix) == 2 and prefix[0] == "crate":
-        if prefix[1] in known_modules:
-            return prefix[1], True
         if module_aliases is not None and prefix[1] in module_aliases:
             return module_aliases[prefix[1]], True
+        if prefix[1] in known_modules:
+            return prefix[1], True
         return None, True
     if len(prefix) >= 2 and prefix[0] == "self":
-        return caller_module, True
+        nested = f"{caller_module}::{'::'.join(prefix[1:])}"
+        if module_aliases is not None and nested in module_aliases:
+            return module_aliases[nested], True
+        return None, True
     if len(prefix) >= 3 and prefix[0] == "crate":
         # Do not silently drop a nested component and attribute a global
         # wrapper to the similarly named reentrant function in its parent.
@@ -3168,7 +3535,6 @@ def profile_source_view(
                         )
                     )
                     continue
-                module_alias_candidates.setdefault(module_name, set()).add(source_path.stem)
                 full_module = "::".join(part for part in (parent_module, module_name) if part)
                 module_alias_candidates.setdefault(full_module, set()).add(source_path.stem)
                 if parent_module and parent.stem not in {parent_module, "mod"}:
@@ -4720,6 +5086,161 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
         v23_nss_syms.get("_nss_files_parse_servent") == {"getuid"}
         and v23_nss_syms.get("_nss_files_parse_pwent") == {"getgid"},
         f"v23 unistd_abi.rs nss_files_parse_* macros did not trace bodies: {v23_nss_syms}",
+    )
+
+    # Regression checks for v24 soundness fixes:
+    # (a) closing generic `>` in `if let ... = None::<i32> { ... }` must close the `if` header,
+    # (b) `|| -> T { ... }`, `|_| -> T { ... }`, and generic-comma closures must not pop `header_stack`,
+    # (c) HRTB `for<'a>` must not push a bogus `for` header,
+    # (d) `0..{ 1 } && let ...` must treat `{ 1 }` as expr block without breaking `x.. { ... }`,
+    # (e) `impl other::Clean<{ fn f<T>() where T: Copy {} 0 }> for Host` must resolve `Host`,
+    # (f) multiline `failure_export!`, `HostType::<i32>::call_host()`, struct-pattern `let h { x }`,
+    #     `"http://..."` before `resolve_host_symbol_raw`, multiline const-generic fn signatures,
+    #     and generic type-param bounds `fn f<A, host_helper: Copy>()` must all remain fail-closed,
+    # (g) `module_aliases` must take precedence over `known_modules` (`math_abi` -> `math_exports`)
+    #     and `self::child::helper()` must not silently drop `child`.
+    v24_scope_path = root / "crates/frankenlibc-abi/src/v24_scope.rs"
+    v24_scope_src = (
+        "fn host_helper() -> i32 { unsafe { libc::getuid() as i32 } }\n"
+        "struct HostType<T>(T);\n"
+        "impl<T> HostType<T> {\n"
+        "    fn call_host() -> i32 { unsafe { libc::getuid() as i32 } }\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_turbofish_if_let_no_leak() -> i32 {\n'
+        "    if let Some(host_helper) = None::<i32> {\n"
+        "        let _ = host_helper;\n"
+        "    }\n"
+        "    { host_helper() }\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_zero_arg_closure_scrutinee_no_shadow() -> i32 {\n'
+        "    if let host_helper = || -> i32 { host_helper() } {\n"
+        "        return host_helper();\n"
+        "    }\n"
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_hrtb_for_no_leak(f: Option<for<\'a> fn(&\'a i32)>) -> i32 {\n'
+        "    if let Some(_g): Option<for<'a> fn(&'a i32)> = f && let Some(host_helper) = Some(1) {\n"
+        "        let _ = host_helper;\n"
+        "    }\n"
+        "    host_helper()\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_range_expr_block_no_leak() -> i32 {\n'
+        "    if let _ = 0..{ 1 } && let Some(host_helper) = Some(1) {\n"
+        "        let _ = host_helper;\n"
+        "    }\n"
+        "    host_helper()\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_turbofish_assoc_call() -> i32 {\n'
+        "    HostType::<i32>::call_host()\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_struct_pattern_no_shadow() -> i32 {\n'
+        "    let host_helper { x } = make();\n"
+        "    let _ = x;\n"
+        "    host_helper()\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_url_literal_before_resolver() -> i32 {\n'
+        '    let _ = "http://example.com"; let _ = resolve_host_symbol_raw("getuid");\n'
+        "    0\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_generic_bound_no_shadow<A, host_helper: Copy>() -> i32 {\n'
+        "    host_helper()\n"
+        "}\n"
+        "fn const_generic_ret_helper<const N: usize>()\n"
+        "    -> Arr<{\n"
+        "        N + 1\n"
+        "    }>\n"
+        "{\n"
+        "    let _ = unsafe { libc::getuid() };\n"
+        "}\n"
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_const_generic_ret_caller() -> i32 {\n'
+        "    let _ = const_generic_ret_helper::<1>();\n"
+        "    0\n"
+        "}\n"
+    )
+    v24_scope_analysis = analyze_host_dependencies(
+        parse_functions(v24_scope_path, v24_scope_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+        declared_types_by_module={"v24_scope": {"HostType"}},
+    )
+    v24_scope_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v24_scope_analysis["symbol_rows"]
+    }
+    require(
+        v24_scope_syms.get("exported_turbofish_if_let_no_leak") == {"getuid"}
+        and v24_scope_syms.get("exported_zero_arg_closure_scrutinee_no_shadow") == {"getuid"}
+        and v24_scope_syms.get("exported_hrtb_for_no_leak") == {"getuid"}
+        and v24_scope_syms.get("exported_range_expr_block_no_leak") == {"getuid"}
+        and v24_scope_syms.get("exported_turbofish_assoc_call") == {"getuid"}
+        and v24_scope_syms.get("exported_struct_pattern_no_shadow") == {"getuid"}
+        and v24_scope_syms.get("exported_url_literal_before_resolver") == {"getuid"}
+        and v24_scope_syms.get("exported_generic_bound_no_shadow") == {"getuid"}
+        and v24_scope_syms.get("exported_const_generic_ret_caller") == {"getuid"},
+        f"v24 fail-closed scanner regression failed: {v24_scope_syms}",
+    )
+    v24_impl_spans = parse_impl_spans(
+        "impl other::Clean<{ fn f<T>() where T: Copy {} 0 }> for Host {\n"
+        "    fn leaf() {}\n"
+        "}\n"
+    )
+    require(
+        [s[2] for s in v24_impl_spans] == ["Host"],
+        f"v24 impl where-inside-const-generic misattributed type: {v24_impl_spans}",
+    )
+    v24_multiline_rpc = parse_functions(
+        root / "crates/frankenlibc-abi/src/rpc_svc.rs",
+        "fn secret_host() -> i32 { unsafe { libc::getuid() as i32 } }\n"
+        "failure_export!(\n"
+        "    svcerr_multiline,\n"
+        "    secret_host()\n"
+        ");\n",
+    )
+    v24_multiline_analysis = analyze_host_dependencies(
+        v24_multiline_rpc,
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    v24_multiline_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v24_multiline_analysis["symbol_rows"]
+    }
+    require(
+        v24_multiline_syms.get("svcerr_multiline") == {"getuid"},
+        f"v24 multiline failure_export! failed: {v24_multiline_syms}",
+    )
+    require(
+        qualified_target_module(
+            "caller",
+            ["crate", "math_abi", "foo"],
+            {"math_abi", "math_exports"},
+            {"math_abi": "math_exports"},
+        )
+        == ("math_exports", True),
+        "v24 module_aliases must take precedence over known_modules for #[path] remaps",
+    )
+    require(
+        qualified_target_module(
+            "parent",
+            ["self", "child", "helper"],
+            {"parent", "child"},
+            {},
+        )
+        == (None, True),
+        "v24 self::child::helper() must not silently drop child into parent",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

@@ -38,7 +38,7 @@ if artifact.get("schema_version") != "host_delegation_census.v1":
     errors.append("schema_version_mismatch")
 if artifact.get("bead") != "bd-smp21.1":
     errors.append("bead_mismatch")
-if artifact.get("detector", {}).get("version") != 23:
+if artifact.get("detector", {}).get("version") != 24:
     errors.append("detector_version_mismatch")
 
 summary = artifact.get("summary", {})
@@ -146,6 +146,12 @@ for row in callsites:
     if line > len(text_lines) or not text_lines[line - 1].strip():
         errors.append(f"callsite_bad_line:{row.get('id')}")
 
+def display_path(path: pathlib.Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
 status = "fail" if errors else "pass"
 report = {
     "schema_version": "host_delegation_census.report.v1",
@@ -160,7 +166,7 @@ report = {
             name: profile.get("summary", {}) for name, profile in sorted(profiles.items())
         },
     },
-    "artifact_refs": [str(artifact_path.relative_to(root)), str(report_path.relative_to(root)), str(log_path.relative_to(root))],
+    "artifact_refs": [display_path(artifact_path), display_path(report_path), display_path(log_path)],
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 event = {

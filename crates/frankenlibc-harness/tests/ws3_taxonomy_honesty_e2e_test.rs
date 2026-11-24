@@ -172,13 +172,13 @@ fn contract_binds_gate_sources_events_and_expected_counts() -> TestResult {
 
     let summary = &contract["completion_debt_evidence"]["required_summary"];
     assert_eq!(summary["total_symbols"].as_u64(), Some(4119));
-    assert_eq!(summary["implemented"].as_u64(), Some(2545));
+    assert_eq!(summary["implemented"].as_u64(), Some(2542));
     assert_eq!(summary["raw_syscall"].as_u64(), Some(408));
-    assert_eq!(summary["native"].as_u64(), Some(2953));
-    assert_eq!(summary["wraps_host_libc"].as_u64(), Some(1166));
+    assert_eq!(summary["native"].as_u64(), Some(2950));
+    assert_eq!(summary["wraps_host_libc"].as_u64(), Some(1169));
     assert_eq!(summary["glibc_callthrough"].as_u64(), Some(0));
     assert_eq!(summary["stub"].as_u64(), Some(0));
-    assert_eq!(summary["native_pct"].as_f64(), Some(71.7));
+    assert_eq!(summary["native_pct"].as_f64(), Some(71.6));
 
     let events: BTreeSet<_> = contract["completion_debt_evidence"]["required_events"]
         .as_array()
@@ -235,13 +235,13 @@ fn gate_passes_current_taxonomy_and_emits_jsonl() -> TestResult {
     assert_eq!(report["bead"].as_str(), Some("bd-smp21.5"));
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["summary"]["total_symbols"].as_u64(), Some(4119));
-    assert_eq!(report["summary"]["implemented"].as_u64(), Some(2545));
+    assert_eq!(report["summary"]["implemented"].as_u64(), Some(2542));
     assert_eq!(report["summary"]["raw_syscall"].as_u64(), Some(408));
-    assert_eq!(report["summary"]["native"].as_u64(), Some(2953));
-    assert_eq!(report["summary"]["wraps_host_libc"].as_u64(), Some(1166));
+    assert_eq!(report["summary"]["native"].as_u64(), Some(2950));
+    assert_eq!(report["summary"]["wraps_host_libc"].as_u64(), Some(1169));
     assert_eq!(report["summary"]["glibc_callthrough"].as_u64(), Some(0));
     assert_eq!(report["summary"]["stub"].as_u64(), Some(0));
-    assert_eq!(report["summary"]["native_pct"].as_f64(), Some(71.7));
+    assert_eq!(report["summary"]["native_pct"].as_f64(), Some(71.6));
     assert_eq!(
         report["summary"]["implemented_host_delegation_count"].as_u64(),
         Some(0)

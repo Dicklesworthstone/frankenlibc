@@ -1,12 +1,12 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-11-23T04:50:00Z",
-  "source_commit": "06360bf5b9134e770c43de42e12e61ca3d861bd1",
+  "generated_at_utc": "2026-11-24T03:20:00Z",
+  "source_commit": "1a3f054cceeb5de4b368c938d7679617e5e5fc86",
   "total_exported": 4119,
   "counts": {
-    "implemented": 2543,
+    "implemented": 2542,
     "raw_syscall": 408,
-    "wraps_host_libc": 1168,
+    "wraps_host_libc": 1169,
     "glibc_call_through": 0,
     "stub": 0
   },

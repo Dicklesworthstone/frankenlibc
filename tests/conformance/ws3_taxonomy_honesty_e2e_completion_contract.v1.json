@@ -18,15 +18,15 @@
   "completion_debt_evidence": {
     "required_summary": {
       "total_symbols": 4119,
-      "implemented": 2545,
+      "implemented": 2542,
       "raw_syscall": 408,
-      "native": 2953,
-      "wraps_host_libc": 1166,
+      "native": 2950,
+      "wraps_host_libc": 1169,
       "glibc_callthrough": 0,
-      "callthrough": 1166,
+      "callthrough": 1169,
       "stub": 0,
-      "native_pct": 71.7,
-      "callthrough_pct": 28.3,
+      "native_pct": 71.6,
+      "callthrough_pct": 28.4,
       "implemented_host_delegation_count": 0
     },
     "required_checks": [

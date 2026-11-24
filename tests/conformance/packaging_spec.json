@@ -61,7 +61,7 @@
       "guarantee": "All exported symbols are self-contained. Zero host glibc dependency. Every symbol either runs native Rust code or issues raw Linux syscalls.",
       "status": "blocked_by_host_backed_rows",
       "blockers": {
-        "total_symbols_to_migrate": 1166,
+        "total_symbols_to_migrate": 1169,
         "WrapsHostLibc_remaining": {
           "c11threads_abi": 5,
           "dirent_abi": 5,
@@ -75,7 +75,7 @@
           "malloc_abi": 11,
           "math_abi": 507,
           "process_abi": 2,
-          "pthread_abi": 30,
+          "pthread_abi": 33,
           "pwd_abi": 8,
           "resolv_abi": 5,
           "rpc_abi": 27,
@@ -134,17 +134,17 @@
   "current_assessment": {
     "total_symbols": 4119,
     "interpose_ready": 4119,
-    "replace_ready": 2953,
-    "replace_blocked": 1166,
+    "replace_ready": 2950,
+    "replace_blocked": 1169,
     "symbol_distribution": {
-      "Implemented": 2545,
+      "Implemented": 2542,
       "RawSyscall": 408,
-      "WrapsHostLibc": 1166,
+      "WrapsHostLibc": 1169,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "interpose_pct": 100,
-    "replace_pct": 71.7
+    "replace_pct": 71.6
   },
   "naming_convention": {
     "interpose": {

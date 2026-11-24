@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-11-23T04:50:00Z",
-  "source_commit": "06360bf5b9134e770c43de42e12e61ca3d861bd1",
+  "generated_at_utc": "2026-11-24T03:20:00Z",
+  "source_commit": "1a3f054cceeb5de4b368c938d7679617e5e5fc86",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
@@ -10577,11 +10577,11 @@
     },
     {
       "symbol": "pthread_self",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native self id resolution: returns managed ThreadHandle-backed pthread_t when available, otherwise kernel tid fallback",
-      "hardened_semantics": "Native self id resolution under membrane policy routing with deterministic managed-handle preference",
+      "strict_semantics": "Native self id resolution with host pthread_self recovery after owned TLS key teardown on owned-tls-cache interpose builds; compiled out in standalone",
+      "hardened_semantics": "Native self id resolution under membrane policy routing with deterministic managed-handle preference and host pthread_self recovery on owned-tls-cache interpose builds",
       "default_stub": false
     },
     {
@@ -33231,22 +33231,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2543,
+    "implemented": 2542,
     "raw_syscall": 408,
-    "wraps_host_libc": 1168,
+    "wraps_host_libc": 1169,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2543,
+  "implemented": 2542,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2543,
+    "implemented": 2542,
     "raw_syscall": 408,
-    "wraps_host_libc": 1168,
+    "wraps_host_libc": 1169,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "wraps_host_libc": 1168
+  "wraps_host_libc": 1169
 }
