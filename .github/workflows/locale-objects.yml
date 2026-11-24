@@ -6,6 +6,7 @@ on:
       - 'crates/frankenlibc-abi/src/locale_abi*'
       - 'crates/frankenlibc-abi/src/locale_abi/**'
       - 'crates/frankenlibc-abi/src/locale_objects*'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/string_abi*'
       - 'crates/frankenlibc-abi/src/time_abi*'
       - 'crates/frankenlibc-abi/src/wchar_abi*'
@@ -45,6 +46,7 @@ jobs:
           sudo apt-get install -y locales locales-all
           sudo localedef -i de_DE -f UTF-8 de_DE.UTF-8
           sudo localedef -i fr_FR -f UTF-8 fr_FR.UTF-8
+          sudo localedef -i tr_TR -f UTF-8 tr_TR.UTF-8
           mkdir -p artifacts/locale-results/locales
           localedef --no-archive --no-warnings=ascii -i ja_JP -f SHIFT_JIS artifacts/locale-results/locales/ja_JP.SJIS
           localedef --no-archive -i ja_JP -f EUC-JP artifacts/locale-results/locales/ja_JP.EUC-JP
@@ -69,6 +71,36 @@ jobs:
           mkdir -p artifacts/locale-results
           cargo build -p frankenlibc-abi --release
           cc -O2 -fno-builtin -Wall -Wextra -Werror -pthread tests/integration/fixture_locale_objects.c -o artifacts/locale-results/probe -ldl
+      - name: Compare explicit wide locales, case folding, and thread isolation
+        run: |
+          probe="$PWD/artifacts/locale-results/probe"
+          candidate="$(realpath target/release/libfrankenlibc_abi.so)"
+          host="$(env -u LD_PRELOAD -u LD_AUDIT "$probe" provider)"
+          failed=0
+          for case in wide wide-threads; do
+            host_log="artifacts/locale-results/$case.host"
+            if ! timeout 30 env -u LD_PRELOAD -u LD_AUDIT "$probe" "$case" "$host" > "$host_log" 2>&1; then failed=1; fi
+            if ! grep -Fxq "$case: ok" "$host_log"; then failed=1; fi
+            for mode in strict hardened; do
+              log="artifacts/locale-results/$case.$mode"
+              if ! timeout 30 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$candidate" "$probe" "$case" "$candidate" > "$log" 2>&1; then failed=1; fi
+              if ! grep -Fxq "$case: ok" "$log"; then failed=1; fi
+              if ! diff -u "$host_log" "$log"; then failed=1; fi
+              cat "$log"
+            done
+            if [[ "$case" == wide ]]; then
+              for provider in host strict hardened; do
+                log="artifacts/locale-results/$case.$provider"
+                if [[ "$(grep -Ec '^wide:[^:]+:[[:xdigit:]]{8}:' "$log")" -ne 132 ]]; then failed=1; fi
+                if [[ "$(grep -c '^wide-compare:' "$log")" -ne 33 ]]; then failed=1; fi
+                if [[ "$(grep -c '^wide-guard:' "$log")" -ne 3 ]]; then failed=1; fi
+              done
+            fi
+          done
+          status=0
+          env -u LD_PRELOAD -u LD_AUDIT "$probe" wide "$candidate" > artifacts/locale-results/wide-provider-negative.log 2>&1 || status=$?
+          if [[ "$status" -ne 86 ]] || ! grep -Fxq 'locale-wide:provider-mismatch:newlocale' artifacts/locale-results/wide-provider-negative.log; then failed=1; fi
+          exit "$failed"
       - name: Compare independent host and deployed strict and hardened cases
         shell: bash
         run: |

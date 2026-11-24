@@ -230,6 +230,284 @@ static void named(void) {
     puts("named: ok");
 }
 
+/* Explicit wide-character locale APIs must consult the object's LC_CTYPE,
+ * independently of the selected thread locale and its other categories.
+ * Descriptor constructors and consumers always belong to the same provider
+ * and use the same locale: GNU's opaque descriptors are not interchangeable
+ * with another libc's representation. */
+struct wide_class {
+    const char *name;
+    const char *symbol;
+    int (*classify)(wint_t, locale_t);
+    int (*internal)(wint_t, locale_t);
+};
+static struct wide_class wide_classes[] = {
+    {"alnum", "iswalnum_l", iswalnum_l, NULL},
+    {"alpha", "iswalpha_l", iswalpha_l, NULL},
+    {"blank", "iswblank_l", iswblank_l, NULL},
+    {"cntrl", "iswcntrl_l", iswcntrl_l, NULL},
+    {"digit", "iswdigit_l", iswdigit_l, NULL},
+    {"graph", "iswgraph_l", iswgraph_l, NULL},
+    {"lower", "iswlower_l", iswlower_l, NULL},
+    {"print", "iswprint_l", iswprint_l, NULL},
+    {"punct", "iswpunct_l", iswpunct_l, NULL},
+    {"space", "iswspace_l", iswspace_l, NULL},
+    {"upper", "iswupper_l", iswupper_l, NULL},
+    {"xdigit", "iswxdigit_l", iswxdigit_l, NULL},
+};
+static wctype_t (*wide_internal_wctype)(const char *, locale_t);
+static int (*wide_internal_iswctype)(wint_t, wctype_t, locale_t);
+static wctrans_t (*wide_internal_wctrans)(const char *, locale_t);
+static wint_t (*wide_internal_towctrans)(wint_t, wctrans_t, locale_t);
+static wint_t (*wide_internal_toupper)(wint_t, locale_t);
+static wint_t (*wide_internal_tolower)(wint_t, locale_t);
+static int (*wide_internal_compare)(const wchar_t *, const wchar_t *, locale_t);
+static int (*wide_internal_ncompare)(const wchar_t *, const wchar_t *, size_t, locale_t);
+
+static void *wide_symbol(const char *expected, const char *name, const void *address) {
+    struct stat wanted, actual;
+    Dl_info info = {0};
+    CHECK(stat(expected, &wanted) == 0);
+    void *symbol = address ? (void *)address : dlsym(RTLD_DEFAULT, name);
+    if (!symbol || !dladdr(symbol, &info) || !info.dli_fname ||
+        stat(info.dli_fname, &actual) != 0 || wanted.st_dev != actual.st_dev ||
+        wanted.st_ino != actual.st_ino) {
+        fprintf(stderr, "locale-wide:provider-mismatch:%s\n", name);
+        exit(86);
+    }
+    return symbol;
+}
+
+static void wide_provider(const char *expected) {
+    static const struct { const char *name; const void *address; } functions[] = {
+        {"newlocale", (const void *)newlocale}, {"setlocale", (const void *)setlocale},
+        {"uselocale", (const void *)uselocale}, {"freelocale", (const void *)freelocale},
+        {"nl_langinfo_l", (const void *)nl_langinfo_l},
+        {"__ctype_get_mb_cur_max", (const void *)__ctype_get_mb_cur_max},
+        {"iswalpha", (const void *)iswalpha}, {"towlower", (const void *)towlower},
+        {"towupper", (const void *)towupper}, {"wctype_l", (const void *)wctype_l},
+        {"iswctype_l", (const void *)iswctype_l}, {"wctrans_l", (const void *)wctrans_l},
+        {"towctrans_l", (const void *)towctrans_l},
+        {"towlower_l", (const void *)towlower_l}, {"towupper_l", (const void *)towupper_l},
+        {"wcscasecmp", (const void *)wcscasecmp}, {"wcsncasecmp", (const void *)wcsncasecmp},
+        {"wcscasecmp_l", (const void *)wcscasecmp_l},
+        {"wcsncasecmp_l", (const void *)wcsncasecmp_l},
+    };
+    for (size_t i = 0; i < sizeof functions / sizeof *functions; ++i)
+        (void)wide_symbol(expected, functions[i].name, functions[i].address);
+    for (size_t i = 0; i < sizeof wide_classes / sizeof *wide_classes; ++i) {
+        struct wide_class *entry = &wide_classes[i];
+        (void)wide_symbol(expected, entry->symbol, (const void *)entry->classify);
+        char alias[32];
+        CHECK(snprintf(alias, sizeof alias, "__%s", entry->symbol) > 0);
+        entry->internal = (int (*)(wint_t, locale_t))wide_symbol(expected, alias, NULL);
+    }
+    wide_internal_wctype = (wctype_t (*)(const char *, locale_t))
+        wide_symbol(expected, "__wctype_l", NULL);
+    wide_internal_iswctype = (int (*)(wint_t, wctype_t, locale_t))
+        wide_symbol(expected, "__iswctype_l", NULL);
+    wide_internal_wctrans = (wctrans_t (*)(const char *, locale_t))
+        wide_symbol(expected, "__wctrans_l", NULL);
+    wide_internal_towctrans = (wint_t (*)(wint_t, wctrans_t, locale_t))
+        wide_symbol(expected, "__towctrans_l", NULL);
+    wide_internal_toupper = (wint_t (*)(wint_t, locale_t))
+        wide_symbol(expected, "__towupper_l", NULL);
+    wide_internal_tolower = (wint_t (*)(wint_t, locale_t))
+        wide_symbol(expected, "__towlower_l", NULL);
+    wide_internal_compare = (int (*)(const wchar_t *, const wchar_t *, locale_t))
+        wide_symbol(expected, "__wcscasecmp_l", NULL);
+    wide_internal_ncompare = (int (*)(const wchar_t *, const wchar_t *, size_t, locale_t))
+        wide_symbol(expected, "__wcsncasecmp_l", NULL);
+}
+
+static void wide_rows(locale_t loc, const char *name) {
+    static const wint_t values[] = {
+        0, 9, 10, 11, 12, 13, 31, 32, 33, 48, 57, 65, 70, 90, 97, 102, 122, 127,
+        0x85, 0xa0, 0xc4, 0xe4, 0xdf, 0x130, 0x131, 0x3a3, 0x3c2, 0x3c3,
+        0x2003, 0x2028, 0x2029, 0x3000, 0x4e00, 0x10400, 0x10428, 0x1f600,
+        /* GNU compatibility observations, beyond POSIX's character domain. */
+        0xd7ff, 0xd800, 0xdfff, 0xe000, 0x10ffff, 0x110000, 0x7fffffff, WEOF,
+    };
+    wctype_t descriptors[12], internal_descriptors[12];
+    CHECK(!wctype_l("fl_missing_class", loc));
+    CHECK(!wctrans_l("fl_missing_mapping", loc));
+    for (size_t i = 0; i < sizeof wide_classes / sizeof *wide_classes; ++i) {
+        descriptors[i] = wctype_l(wide_classes[i].name, loc);
+        internal_descriptors[i] = wide_internal_wctype(wide_classes[i].name, loc);
+        CHECK(descriptors[i] && internal_descriptors[i]);
+    }
+    wctrans_t upper = wctrans_l("toupper", loc), lower = wctrans_l("tolower", loc);
+    wctrans_t internal_upper = wide_internal_wctrans("toupper", loc);
+    wctrans_t internal_lower = wide_internal_wctrans("tolower", loc);
+    CHECK(upper && lower && internal_upper && internal_lower);
+    locale_t selected = uselocale((locale_t)0);
+    size_t width = MB_CUR_MAX;
+    for (size_t j = 0; j < sizeof values / sizeof *values; ++j) {
+        wint_t wc = values[j];
+        unsigned mask = 0;
+        for (size_t i = 0; i < sizeof wide_classes / sizeof *wide_classes; ++i) {
+            int classified = !!wide_classes[i].classify(wc, loc);
+            CHECK(!!wide_classes[i].internal(wc, loc) == classified);
+            CHECK(!!iswctype_l(wc, descriptors[i], loc) == classified);
+            CHECK(!!wide_internal_iswctype(wc, internal_descriptors[i], loc) == classified);
+            mask |= (unsigned)classified << i;
+        }
+        wint_t up = towupper_l(wc, loc), down = towlower_l(wc, loc);
+        CHECK(wide_internal_toupper(wc, loc) == up);
+        CHECK(wide_internal_tolower(wc, loc) == down);
+        CHECK(towctrans_l(wc, upper, loc) == up);
+        CHECK(towctrans_l(wc, lower, loc) == down);
+        CHECK(wide_internal_towctrans(wc, internal_upper, loc) == up);
+        CHECK(wide_internal_towctrans(wc, internal_lower, loc) == down);
+        CHECK(uselocale((locale_t)0) == selected && MB_CUR_MAX == width);
+        printf("wide:%s:%08x:%03x:%08x:%08x\n", name, (unsigned)wc, mask,
+               (unsigned)up, (unsigned)down);
+    }
+}
+
+static int wide_sign(int value) { return (value > 0) - (value < 0); }
+
+static void wide_comparisons(locale_t loc, const char *name) {
+    static const struct { const wchar_t *left, *right; } pairs[] = {
+        {L"", L""}, {L"ASCII-long-PREFIX", L"ascii-LONG-prefix"},
+        {L"\u00c4pfel", L"\u00e4PFEL"}, {L"\u03a3", L"\u03c3"},
+        {L"\U00010400", L"\U00010428"}, {L"\u0130", L"i"},
+        {L"I", L"\u0131"}, {L"I", L"i"}, {L"xI-tail", L"Xi-TaIL"},
+        {L"ab", L"ABx"}, {L"abcdefX", L"ABCDEFy"},
+    };
+    static const size_t bounds[] = {0, 1, 2, 3, 8, 64};
+    locale_t ambient = uselocale((locale_t)0);
+    for (size_t i = 0; i < sizeof pairs / sizeof *pairs; ++i) {
+        const wchar_t *left = pairs[i].left, *right = pairs[i].right;
+        int cmp = wcscasecmp_l(left, right, loc);
+        CHECK(wide_internal_compare(left, right, loc) == cmp);
+        CHECK(uselocale((locale_t)0) == ambient);
+        CHECK(uselocale(loc) == ambient);
+        CHECK(wide_sign(wcscasecmp(left, right)) == wide_sign(cmp));
+        CHECK(uselocale(ambient) == loc);
+        printf("wide-compare:%s:%zu:%d", name, i, wide_sign(cmp));
+        for (size_t j = 0; j < sizeof bounds / sizeof *bounds; ++j) {
+            size_t n = bounds[j];
+            int bounded = wcsncasecmp_l(left, right, n, loc);
+            CHECK(wide_internal_ncompare(left, right, n, loc) == bounded);
+            CHECK(uselocale((locale_t)0) == ambient);
+            CHECK(uselocale(loc) == ambient);
+            CHECK(wide_sign(wcsncasecmp(left, right, n)) == wide_sign(bounded));
+            CHECK(uselocale(ambient) == loc);
+            printf(":%d", wide_sign(bounded));
+        }
+        putchar('\n');
+    }
+    long page = sysconf(_SC_PAGESIZE);
+    CHECK(page > 0);
+    size_t length = (size_t)page * 4;
+    char *mapping = mmap(NULL, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapping != MAP_FAILED);
+    CHECK(mprotect(mapping, (size_t)page, PROT_READ | PROT_WRITE) == 0);
+    CHECK(mprotect(mapping + 2 * page, (size_t)page, PROT_READ | PROT_WRITE) == 0);
+    wchar_t *left_end = (wchar_t *)(mapping + page);
+    wchar_t *right_end = (wchar_t *)(mapping + 3 * page);
+    left_end[-2] = 0x00c4; right_end[-2] = 0x00e4;
+    left_end[-1] = 0; right_end[-1] = 0;
+    int terminated = wcscasecmp_l(left_end - 2, right_end - 2, loc);
+    CHECK(wide_internal_compare(left_end - 2, right_end - 2, loc) == terminated);
+    CHECK(wide_sign(terminated) == wide_sign(towlower_l(0xc4, loc) - towlower_l(0xe4, loc)));
+    CHECK(wcsncasecmp_l(left_end - 2, right_end - 2, 3, loc) == terminated);
+    /* Equal one-element prefixes have no accessible terminator. Both the
+     * nonzero bound and n == 0 with inaccessible pointers must stop in time. */
+    left_end[-1] = L'I'; right_end[-1] = 0x0131;
+    int bounded = wcsncasecmp_l(left_end - 1, right_end - 1, 1, loc);
+    CHECK(wide_internal_ncompare(left_end - 1, right_end - 1, 1, loc) == bounded);
+    CHECK(wcsncasecmp_l(left_end, right_end, 0, loc) == 0);
+    CHECK(wide_internal_ncompare(left_end, right_end, 0, loc) == 0);
+    CHECK(uselocale((locale_t)0) == ambient);
+    CHECK(munmap(mapping, length) == 0);
+    printf("wide-guard:%s:%d:%d\n", name, wide_sign(terminated), wide_sign(bounded));
+}
+
+static void wide(const char *provider) {
+    wide_provider(provider);
+    CHECK(setlocale(LC_ALL, "C"));
+    locale_t c = newlocale(LC_NUMERIC_MASK, "tr_TR.UTF-8", (locale_t)0);
+    locale_t u = newlocale(LC_CTYPE_MASK, "C.UTF-8", (locale_t)0);
+    locale_t tr = newlocale(LC_CTYPE_MASK, "tr_TR.UTF-8", (locale_t)0);
+    CHECK(c && u && tr);
+    /* Contradicting categories catch accidental use of the object's name,
+     * numeric category, or the thread's selected locale in place of CTYPE. */
+    CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, c), ","));
+    CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, tr), "."));
+    locale_t locales[] = {c, u, tr};
+    const char *names[] = {"C-ctype-Turkish-numeric", "C.UTF-8", "tr_TR.UTF-8"};
+    for (size_t i = 0; i < sizeof locales / sizeof *locales; ++i) {
+        locale_t ambient = i == 0 ? u : c;
+        CHECK(uselocale(ambient) == LC_GLOBAL_LOCALE);
+        wide_rows(locales[i], names[i]);
+        wide_comparisons(locales[i], names[i]);
+        CHECK(uselocale((locale_t)0) == ambient);
+        CHECK(!strcmp(setlocale(LC_CTYPE, NULL), "C"));
+        CHECK(uselocale(LC_GLOBAL_LOCALE) == ambient);
+    }
+    CHECK(towlower_l(L'I', tr) == 0x0131);
+    CHECK(towupper_l(L'i', tr) == 0x0130);
+    CHECK(towlower_l(L'I', u) == L'i');
+    CHECK(towupper_l(L'i', u) == L'I');
+    CHECK(!iswalpha_l(0x00e4, c) && iswalpha_l(0x00e4, u));
+    freelocale(tr);
+    freelocale(u);
+    freelocale(c);
+    puts("wide: ok");
+}
+
+struct wide_thread_case {
+    locale_t selected, explicit, turkish;
+    int unicode;
+    pthread_barrier_t *barrier;
+};
+static void *wide_worker(void *opaque) {
+    struct wide_thread_case *arg = opaque;
+    CHECK(uselocale(arg->selected) == LC_GLOBAL_LOCALE);
+    for (unsigned i = 0; i < 100; ++i) {
+        int rc = pthread_barrier_wait(arg->barrier);
+        CHECK(rc == 0 || rc == PTHREAD_BARRIER_SERIAL_THREAD);
+        CHECK(!!iswalpha_l(0x00e4, arg->explicit) == !arg->unicode);
+        CHECK(towlower_l(0x00c4, arg->explicit) == (arg->unicode ? 0x00c4U : 0x00e4U));
+        CHECK(towlower_l(L'I', arg->turkish) == 0x0131);
+        CHECK(towupper_l(L'i', arg->turkish) == 0x0130);
+        CHECK(wcscasecmp_l(L"I", L"\u0131", arg->turkish) == 0);
+        CHECK((wcscasecmp_l(L"\u00c4", L"\u00e4", arg->explicit) == 0) == !arg->unicode);
+        CHECK(!!iswalpha(0x00e4) == arg->unicode);
+        CHECK((wcscasecmp(L"\u00c4", L"\u00e4") == 0) == arg->unicode);
+        CHECK(uselocale((locale_t)0) == arg->selected);
+        CHECK(MB_CUR_MAX == (arg->unicode ? 6U : 1U));
+        CHECK(!strcmp(setlocale(LC_CTYPE, NULL), "C"));
+    }
+    CHECK(uselocale(LC_GLOBAL_LOCALE) == arg->selected);
+    return NULL;
+}
+
+static void wide_threads(const char *provider) {
+    wide_provider(provider);
+    CHECK(setlocale(LC_ALL, "C"));
+    locale_t c = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    locale_t u = newlocale(LC_CTYPE_MASK, "C.UTF-8", (locale_t)0);
+    locale_t tr = newlocale(LC_CTYPE_MASK, "tr_TR.UTF-8", (locale_t)0);
+    CHECK(c && u && tr);
+    pthread_barrier_t barrier;
+    CHECK(pthread_barrier_init(&barrier, NULL, 2) == 0);
+    struct wide_thread_case a = {c, u, tr, 0, &barrier}, b = {u, c, tr, 1, &barrier};
+    pthread_t ta, tb;
+    CHECK(pthread_create(&ta, NULL, wide_worker, &a) == 0);
+    CHECK(pthread_create(&tb, NULL, wide_worker, &b) == 0);
+    CHECK(pthread_join(ta, NULL) == 0);
+    CHECK(pthread_join(tb, NULL) == 0);
+    CHECK(pthread_barrier_destroy(&barrier) == 0);
+    CHECK(uselocale((locale_t)0) == LC_GLOBAL_LOCALE && MB_CUR_MAX == 1);
+    freelocale(tr);
+    freelocale(u);
+    freelocale(c);
+    puts("wide-threads: ok");
+}
+
 /* These vectors are independent of the implementation's iconv tables. The
  * runner compiles real localedef data and compares the same caller with GNU
  * and both deployed modes. In particular, SHIFT_JIS is not an ASCII superset. */
@@ -587,6 +865,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "composition")) composition();
     else if (!strcmp(argv[1], "threads")) threads();
     else if (!strcmp(argv[1], "named")) named();
+    else if (!strcmp(argv[1], "wide")) { CHECK(argc == 3); wide(argv[2]); }
+    else if (!strcmp(argv[1], "wide-threads")) { CHECK(argc == 3); wide_threads(argv[2]); }
     else if (!strcmp(argv[1], "multibyte-sjis")) { CHECK(argc == 3); multibyte(0, argv[2]); }
     else if (!strcmp(argv[1], "multibyte-eucjp")) { CHECK(argc == 3); multibyte(1, argv[2]); }
     else if (!strcmp(argv[1], "multibyte-gb18030")) { CHECK(argc == 3); multibyte(2, argv[2]); }

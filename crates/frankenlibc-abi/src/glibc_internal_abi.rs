@@ -739,15 +739,14 @@ pub unsafe extern "C" fn __wctype_l(name: *const c_char, loc: *mut c_void) -> c_
 }
 
 // Public wchar locale variants (missing from matrix)
-// wcscasecmp_l/wcsncasecmp_l: locale-ignored — forward to wchar_abi
+// wcscasecmp_l/wcsncasecmp_l share the explicit-locale wide comparison engine.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscasecmp_l(
     s1: *const WcharT,
     s2: *const WcharT,
     loc: *mut c_void,
 ) -> c_int {
-    let _ = loc;
-    unsafe { crate::wchar_abi::wcscasecmp(s1.cast(), s2.cast()) }
+    unsafe { crate::wchar_abi::__wcscasecmp_l(s1, s2, loc) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsncasecmp_l(
@@ -756,8 +755,7 @@ pub unsafe extern "C" fn wcsncasecmp_l(
     n: SizeT,
     loc: *mut c_void,
 ) -> c_int {
-    let _ = loc;
-    unsafe { crate::wchar_abi::wcsncasecmp(s1.cast(), s2.cast(), n) }
+    unsafe { crate::wchar_abi::__wcsncasecmp_l(s1, s2, n, loc) }
 }
 // __bzero → bzero
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

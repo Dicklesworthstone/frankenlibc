@@ -1701,7 +1701,7 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7)),
             &config.transport,
             |owner, kind, endpoint, timeout, trust_ad, use_vc| {
-                assert_eq!(owner, b"7.2.0.192.in-addr.arpa");
+                assert_eq!(owner, b"7.2.0.192.in-addr.arpa.");
                 assert_eq!(kind, qtype::PTR);
                 assert_eq!(endpoint, server);
                 assert_eq!(timeout, Duration::from_millis(175));

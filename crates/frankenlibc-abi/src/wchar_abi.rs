@@ -4265,7 +4265,17 @@ fn ascii_wide_class(class: usize, wc: u32) -> bool {
 
 #[inline(always)]
 fn wide_class(class: usize, wc: u32, builtin: fn(u32) -> bool) -> c_int {
-    c_int::from(match crate::locale_abi::wide_ctype() {
+    wide_class_in(crate::locale_abi::wide_ctype(), class, wc, builtin)
+}
+
+#[inline(always)]
+fn wide_class_in(
+    ctype: crate::locale_abi::WideCtype,
+    class: usize,
+    wc: u32,
+    builtin: fn(u32) -> bool,
+) -> c_int {
+    c_int::from(match ctype {
         crate::locale_abi::WideCtype::Tables(t) => t.is_class(class, wc),
         crate::locale_abi::WideCtype::Ascii => ascii_wide_class(class, wc),
         crate::locale_abi::WideCtype::Builtin => builtin(wc),
@@ -4288,7 +4298,12 @@ fn wide_width(wc: u32) -> c_int {
 /// POSIX `towupper` — convert wide character to uppercase.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towupper(wc: u32) -> u32 {
-    match crate::locale_abi::wide_ctype() {
+    wide_upper_in(crate::locale_abi::wide_ctype(), wc)
+}
+
+#[inline]
+fn wide_upper_in(ctype: crate::locale_abi::WideCtype, wc: u32) -> u32 {
+    match ctype {
         crate::locale_abi::WideCtype::Tables(t) => t.to_upper(wc),
         crate::locale_abi::WideCtype::Ascii => {
             if (u32::from(b'a')..=u32::from(b'z')).contains(&wc) {
@@ -4304,7 +4319,12 @@ pub unsafe extern "C" fn towupper(wc: u32) -> u32 {
 /// POSIX `towlower` — convert wide character to lowercase.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towlower(wc: u32) -> u32 {
-    match crate::locale_abi::wide_ctype() {
+    wide_lower_in(crate::locale_abi::wide_ctype(), wc)
+}
+
+#[inline]
+fn wide_lower_in(ctype: crate::locale_abi::WideCtype, wc: u32) -> u32 {
+    match ctype {
         crate::locale_abi::WideCtype::Tables(t) => t.to_lower(wc),
         crate::locale_abi::WideCtype::Ascii => {
             if (u32::from(b'A')..=u32::from(b'Z')).contains(&wc) {
@@ -9574,17 +9594,56 @@ pub unsafe fn bench_scan_wcscasecmp_simd(s1: *const u32, s2: *const u32, bound: 
     unsafe { scan_wcscasecmp_simd(s1, s2, bound).0 }
 }
 
+/// Compare using one immutable LC_CTYPE snapshot. ASCII folding is valid for
+/// the C locale only: even ASCII `I` has a different lowercase in Turkish.
+/// Other locales use their complete wide mapping, stopping at the first NUL
+/// or requested bound without reading a later page.
+unsafe fn scan_wcscasecmp_in(
+    s1: *const u32,
+    s2: *const u32,
+    bound: usize,
+    ctype: crate::locale_abi::WideCtype,
+) -> (c_int, usize, bool) {
+    if matches!(ctype, crate::locale_abi::WideCtype::Ascii) {
+        // SAFETY: the same bounded/NUL-terminated input contract applies.
+        return unsafe { scan_wcscasecmp_simd(s1, s2, bound) };
+    }
+    let mut i = 0;
+    while i < bound {
+        // SAFETY: callers supply readable strings through the first NUL, or
+        // `bound` readable elements. No lookahead spans a terminator.
+        let (raw, other) = unsafe { (*s1.add(i), *s2.add(i)) };
+        let left = wide_lower_in(ctype, raw);
+        let right = wide_lower_in(ctype, other);
+        i += 1;
+        if left != right || raw == 0 {
+            return (left.wrapping_sub(right) as c_int, i, false);
+        }
+    }
+    (0, bound, true)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
+    // SAFETY: this is the public string contract with the current LC_CTYPE.
+    unsafe { wcscasecmp_in(s1, s2, crate::locale_abi::wide_ctype()) }
+}
+
+#[inline]
+unsafe fn wcscasecmp_in(
+    s1: *const u32,
+    s2: *const u32,
+    ctype: crate::locale_abi::WideCtype,
+) -> c_int {
     if s1.is_null() || s2.is_null() {
         return 0;
     }
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough has
     // `cmp_bound == None`, so this is byte-identical to the strict full path
-    // (`scan_wcscasecmp_simd` with no limit); skips the decide + observe tax.
+    // (a scan with no limit); skips the decide + observe tax.
     if runtime_policy::strict_passthrough_active() {
-        let (r, _span, _hit) = unsafe { scan_wcscasecmp_simd(s1, s2, usize::MAX) };
+        let (r, _span, _hit) = unsafe { scan_wcscasecmp_in(s1, s2, usize::MAX, ctype) };
         return r;
     }
 
@@ -9619,11 +9678,11 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
         (None, None) => None,
     };
 
-    // Fused portable-SIMD ASCII-folded wide compare (shared scan_wcscasecmp_simd),
-    // byte-identical to the old scalar abi_towlower loop. `cmp_bound == None` => no
-    // limit; any hit-limit is the membrane bound, so it maps directly to `adverse`.
+    // `cmp_bound == None` means no limit. Any hit-limit is the membrane
+    // bound, so it maps directly to `adverse` in every locale.
     let (result, adverse, span) = unsafe {
-        let (r, span, hit_limit) = scan_wcscasecmp_simd(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        let (r, span, hit_limit) =
+            scan_wcscasecmp_in(s1, s2, cmp_bound.unwrap_or(usize::MAX), ctype);
         (r, hit_limit, span)
     };
 
@@ -9650,16 +9709,27 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -> c_int {
+    // SAFETY: this is the public bounded string contract and current locale.
+    unsafe { wcsncasecmp_in(s1, s2, n, crate::locale_abi::wide_ctype()) }
+}
+
+#[inline]
+unsafe fn wcsncasecmp_in(
+    s1: *const u32,
+    s2: *const u32,
+    n: usize,
+    ctype: crate::locale_abi::WideCtype,
+) -> c_int {
     if s1.is_null() || s2.is_null() || n == 0 {
         return 0;
     }
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
     // clamp (`cmp_bound == Some(n)`, `adverse` false), byte-identical to the strict
-    // full path (ASCII-folded core compare bounded by `n`); skips the decide +
+    // full path (locale-aware compare bounded by `n`); skips the decide +
     // observe tax.
     if runtime_policy::strict_passthrough_active() {
-        let (r, _span, _hit) = unsafe { scan_wcscasecmp_simd(s1, s2, n) };
+        let (r, _span, _hit) = unsafe { scan_wcscasecmp_in(s1, s2, n, ctype) };
         return r;
     }
 
@@ -9703,12 +9773,11 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
         (None, None) => Some(n),
     };
 
-    // Fused portable-SIMD ASCII-folded wide compare (shared scan_wcscasecmp_simd);
     // `cmp_bound` is always Some here. `adverse` only when the limit is reached
     // before n (a membrane clamp), matching the old scalar loop exactly.
     let limit = cmp_bound.expect("wcsncasecmp cmp_bound is always Some");
     let (result, adverse, span) = unsafe {
-        let (r, span, hit_limit) = scan_wcscasecmp_simd(s1, s2, limit);
+        let (r, span, hit_limit) = scan_wcscasecmp_in(s1, s2, limit, ctype);
         (r, hit_limit && limit < n, span)
     };
 
@@ -9813,7 +9882,7 @@ unsafe extern "C" fn wmemrchr_validating(s: *const u32, c: u32, n: usize) -> *mu
 }
 
 // ===========================================================================
-// Locale-aware wide character _l variants — C locale passthrough
+// Locale-aware wide character _l variants
 // ===========================================================================
 
 /// Wide character type descriptor used by wctype/iswctype.
@@ -9854,8 +9923,24 @@ pub unsafe extern "C" fn wctype(name: *const u8) -> WctypeT {
 
 /// `iswctype_l` — test wide character classification (locale variant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswctype_l(wc: u32, desc: WctypeT, _locale: *mut std::ffi::c_void) -> i32 {
-    unsafe { iswctype(wc, desc) }
+pub unsafe extern "C" fn iswctype_l(wc: u32, desc: WctypeT, locale: *mut std::ffi::c_void) -> i32 {
+    // Descriptors name the same twelve standard classes in every locale;
+    // their membership comes from the supplied object's LC_CTYPE tables.
+    match desc {
+        1 => unsafe { iswalnum_l(wc, locale) },
+        2 => unsafe { iswalpha_l(wc, locale) },
+        3 => unsafe { iswblank_l(wc, locale) },
+        4 => unsafe { iswcntrl_l(wc, locale) },
+        5 => unsafe { iswdigit_l(wc, locale) },
+        6 => unsafe { iswgraph_l(wc, locale) },
+        7 => unsafe { iswlower_l(wc, locale) },
+        8 => unsafe { iswprint_l(wc, locale) },
+        9 => unsafe { iswpunct_l(wc, locale) },
+        10 => unsafe { iswspace_l(wc, locale) },
+        11 => unsafe { iswupper_l(wc, locale) },
+        12 => unsafe { iswxdigit_l(wc, locale) },
+        _ => 0,
+    }
 }
 
 /// `iswctype` — test wide character classification.
@@ -9885,14 +9970,14 @@ pub unsafe extern "C" fn iswctype(wc: u32, desc: WctypeT) -> i32 {
 
 /// `towupper_l` — convert wide character to uppercase (locale variant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn towupper_l(wc: u32, _locale: *mut std::ffi::c_void) -> u32 {
-    unsafe { towupper(wc) }
+pub unsafe extern "C" fn towupper_l(wc: u32, locale: *mut std::ffi::c_void) -> u32 {
+    wide_upper_in(crate::locale_abi::handle_wide_ctype(locale), wc)
 }
 
 /// `towlower_l` — convert wide character to lowercase (locale variant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn towlower_l(wc: u32, _locale: *mut std::ffi::c_void) -> u32 {
-    unsafe { towlower(wc) }
+pub unsafe extern "C" fn towlower_l(wc: u32, locale: *mut std::ffi::c_void) -> u32 {
+    wide_lower_in(crate::locale_abi::handle_wide_ctype(locale), wc)
 }
 
 // ===========================================================================
@@ -11060,52 +11145,112 @@ pub unsafe extern "C" fn mbrtoc16(
 // ===========================================================================
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswalnum_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswalnum(wc) }
+pub unsafe extern "C" fn iswalnum_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_ALNUM,
+        wc,
+        wchar_core::iswalnum,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswalpha_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswalpha(wc) }
+pub unsafe extern "C" fn iswalpha_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_ALPHA,
+        wc,
+        wchar_core::iswalpha,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswblank_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswblank(wc) }
+pub unsafe extern "C" fn iswblank_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_BLANK,
+        wc,
+        wchar_core::iswblank,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswcntrl_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswcntrl(wc) }
+pub unsafe extern "C" fn iswcntrl_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_CNTRL,
+        wc,
+        wchar_core::iswcntrl,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswdigit_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswdigit(wc) }
+pub unsafe extern "C" fn iswdigit_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_DIGIT,
+        wc,
+        wchar_core::iswdigit,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswgraph_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswgraph(wc) }
+pub unsafe extern "C" fn iswgraph_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_GRAPH,
+        wc,
+        wchar_core::iswgraph,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswlower_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswlower(wc) }
+pub unsafe extern "C" fn iswlower_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_LOWER,
+        wc,
+        wchar_core::iswlower,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswprint_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswprint(wc) }
+pub unsafe extern "C" fn iswprint_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_PRINT,
+        wc,
+        wchar_core::iswprint,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswpunct_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswpunct(wc) }
+pub unsafe extern "C" fn iswpunct_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_PUNCT,
+        wc,
+        wchar_core::iswpunct,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswspace_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswspace(wc) }
+pub unsafe extern "C" fn iswspace_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_SPACE,
+        wc,
+        wchar_core::iswspace,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswupper_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswupper(wc) }
+pub unsafe extern "C" fn iswupper_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_UPPER,
+        wc,
+        wchar_core::iswupper,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iswxdigit_l(wc: u32, _l: *mut c_void) -> c_int {
-    unsafe { iswxdigit(wc) }
+pub unsafe extern "C" fn iswxdigit_l(wc: u32, locale: *mut c_void) -> c_int {
+    wide_class_in(
+        crate::locale_abi::handle_wide_ctype(locale),
+        WC_XDIGIT,
+        wc,
+        wchar_core::iswxdigit,
+    )
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wctrans_l(property: *const u8, _l: *mut c_void) -> WctransT {
@@ -11119,10 +11264,10 @@ pub unsafe extern "C" fn wctrans_l(property: *const u8, _l: *mut c_void) -> Wctr
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn towctrans_l(wc: u32, desc: WctransT, _l: *mut c_void) -> u32 {
+pub unsafe extern "C" fn towctrans_l(wc: u32, desc: WctransT, locale: *mut c_void) -> u32 {
     match desc {
-        1 => unsafe { towupper(wc) },
-        2 => unsafe { towlower(wc) },
+        1 => unsafe { towupper_l(wc, locale) },
+        2 => unsafe { towlower_l(wc, locale) },
         _ => wc,
     }
 }
@@ -11204,9 +11349,17 @@ pub unsafe extern "C" fn __towupper_l(wc: u32, l: *mut c_void) -> u32 {
 pub unsafe extern "C" fn __wcscasecmp_l(
     s1: *const libc::wchar_t,
     s2: *const libc::wchar_t,
-    _l: *mut c_void,
+    locale: *mut c_void,
 ) -> c_int {
-    unsafe { wcscasecmp(s1 as *const u32, s2 as *const u32) }
+    // SAFETY: preserve the existing bounds/membrane policy using this handle's
+    // immutable category, with no temporary change to the calling thread.
+    unsafe {
+        wcscasecmp_in(
+            s1.cast(),
+            s2.cast(),
+            crate::locale_abi::handle_wide_ctype(locale),
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -11214,9 +11367,17 @@ pub unsafe extern "C" fn __wcsncasecmp_l(
     s1: *const libc::wchar_t,
     s2: *const libc::wchar_t,
     n: usize,
-    _l: *mut c_void,
+    locale: *mut c_void,
 ) -> c_int {
-    unsafe { wcsncasecmp(s1 as *const u32, s2 as *const u32, n) }
+    // SAFETY: the bounded inputs retain their public string contract.
+    unsafe {
+        wcsncasecmp_in(
+            s1.cast(),
+            s2.cast(),
+            n,
+            crate::locale_abi::handle_wide_ctype(locale),
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
