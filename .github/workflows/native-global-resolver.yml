@@ -15,6 +15,14 @@ on:
       - 'crates/frankenlibc-core/src/socket/mod.rs'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/dns_transport/**'
+      - 'crates/frankenlibc-abi/src/locale_abi.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_vdso_getrandom.rs'
+      - 'crates/frankenlibc-abi/tests/locale_abi_test.rs'
+      - 'crates/frankenlibc-core/src/pthread/tls.rs'
+      - 'crates/frankenlibc-core/src/pthread/thread.rs'
+      - 'crates/frankenlibc-core/src/stdio/printf.rs'
+      - 'crates/frankenlibc-core/tests/dns_nameserver_failover.rs'
+      - 'crates/frankenlibc-core/tests/printf_int_differential_probe.rs'
       - 'scripts/integrate_global_resolver.py'
       - 'tests/conformance/global_resolver_abi.c'
       - 'tests/conformance/rresvport_abi.c'
@@ -152,3 +160,79 @@ jobs:
         with:
           name: native-global-resolver-results
           path: artifacts/global-resolver/**
+
+  integration-regressions:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUSTFLAGS: '-Zthreads=1 -Cllvm-args=-enable-tlsdesc'
+      FEATURE: ${{ matrix.feature }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Run canonical DNS and native thread ownership regressions
+        run: |
+          set -euo pipefail
+          out=artifacts/integration-regressions
+          mkdir -p "$out"
+          git rev-parse HEAD > "$out/commit.txt"
+          rustc --version --verbose > "$out/rustc.txt"
+          if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
+          cp Cargo.lock "$out/Cargo.lock"
+          features=()
+          if [[ "$FEATURE" != default ]]; then features=(--features "$FEATURE"); fi
+          failed=0
+          run_case() {
+            local label="$1" expected="$2"; shift 2
+            local log="$out/$label.log"
+            if "$@" 2>&1 | tee "$log"; then
+              if ! grep -Eq "^test result: ok\\. $expected passed; 0 failed; 0 ignored;" "$log"; then
+                echo "::error::$label did not execute the expected passing tests"
+                failed=1
+              fi
+            else
+              echo "::error::$label failed"
+              failed=1
+            fi
+          }
+          require_cases() {
+            local label="$1" prefix="$2" expected="$3" count
+            count=$(grep -Ec "^test $prefix[^ ]* \.\.\. ok$" "$out/$label.log" || true)
+            if [[ "$count" -ne "$expected" ]]; then
+              echo "::error::$label executed $count passing $prefix cases; expected $expected"
+              failed=1
+            fi
+          }
+          run_case dns '[1-9][0-9]*' cargo test --locked -p frankenlibc-core "${features[@]}" --test dns_nameserver_failover -- --test-threads=1
+          require_cases dns canonical_name_ 3
+          run_case printf '[1-9][0-9]*' cargo test --locked -p frankenlibc-core "${features[@]}" --test printf_int_differential_probe -- --test-threads=1
+          require_cases printf native_admission_ 2
+          run_case getrandom 6 cargo test --locked -p frankenlibc-abi "${features[@]}" --test conformance_diff_vdso_getrandom -- --test-threads=1
+          require_cases getrandom native_ownership::native_getrandom_ 2
+          for mode in strict hardened; do
+            run_case "global-$mode" 15 env "FRANKENLIBC_MODE=$mode" cargo test --locked -p frankenlibc-abi "${features[@]}" --test global_resolver_test -- --test-threads=1
+            require_cases "global-$mode" global_host_canonical_names_match_gnu_for_binary_cname_labels 1
+            run_case "locale-$mode" 3 env "FRANKENLIBC_MODE=$mode" cargo test --locked -p frankenlibc-abi "${features[@]}" --test locale_abi_test locale_native_tls_ -- --test-threads=1
+          done
+          test "$failed" -eq 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-regressions-${{ matrix.feature }}
+          path: artifacts/integration-regressions/**
+          if-no-files-found: error
+          retention-days: 7

@@ -348,26 +348,40 @@ mod native_ownership {
 
     fn run_workers<const N: usize>() {
         let mut threads = [0; N];
+        let mut created = 0;
+        let mut create_status = 0;
         for thread in &mut threads {
             // SAFETY: the worker has no borrowed arguments and returns status.
-            assert_eq!(
-                unsafe {
-                    frankenlibc_abi::pthread_abi::pthread_create(
-                        thread,
-                        std::ptr::null(),
-                        Some(worker),
-                        std::ptr::null_mut(),
-                    )
-                },
-                0
-            );
+            create_status = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_create(
+                    thread,
+                    std::ptr::null(),
+                    Some(worker),
+                    std::ptr::null_mut(),
+                )
+            };
+            if create_status != 0 {
+                break;
+            }
+            created += 1;
         }
-        let results = threads.map(|thread| {
+        // Resource pressure may prevent a later create. Join every published
+        // worker before an assertion can unwind the probe/cache owner's stack.
+        let mut results = [(0, 0); N];
+        for (index, thread) in threads[..created].iter().copied().enumerate() {
             let mut result = std::ptr::null_mut();
             // SAFETY: each live, joinable worker is joined exactly once.
             let status = unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) };
-            (status, result as usize)
-        });
+            if status != 0 {
+                // An unsuccessful join cannot prove the worker released the
+                // probe. End this isolated child without unwinding its owner.
+                eprintln!("native getrandom worker join failed: {status}");
+                std::process::abort();
+            }
+            results[index] = (status, result as usize);
+        }
+        assert_eq!(create_status, 0, "native worker creation failed");
+        assert_eq!(created, N);
         assert_eq!(results, [(0, 0); N]);
     }
 
