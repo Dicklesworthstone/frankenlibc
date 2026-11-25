@@ -6211,54 +6211,15 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
             return libc::EOF;
         }
 
-        if let Some(cell) = stream_cell(id) {
-            let mut byte = [0u8; 1];
-            let mut s = cell.lock();
-            if s.buffered_read_into(&mut byte) == 1 {
-                drop(s);
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-                return byte[0] as c_int;
-            }
-            // EOF stays set until clearerr/ungetc; do not call the backend
-            // again. A previous error alone does not forbid a character retry.
-            if s.is_eof() {
-                drop(s);
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-                return libc::EOF;
-            }
-            if !s.is_readable() {
-                drop(s);
-                // SAFETY: only this thread's errno cell is modified.
-                unsafe { set_abi_errno(errno::EBADF) };
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-                return libc::EOF;
-            }
-        }
-
-        let mut byte = [0u8; 1];
-        let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
-
         let Some(cell) = stream_cell(id) else {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         };
         let mut s_guard = cell.lock();
-        let s = &mut *s_guard;
-
-        if rc > 0 {
-            s.set_offset(s.offset().saturating_add(1));
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-            return byte[0] as c_int;
-        }
-        if rc == 0 {
-            s.set_eof();
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-            return libc::EOF;
-        }
-
-        s.set_error();
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-        return libc::EOF;
+        let mut byte = [0u8; 1];
+        let read = unsafe { cookie_read_into(id, &mut s_guard, &mut byte) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, read == 0);
+        return if read == 1 { byte[0] as c_int } else { libc::EOF };
     }
 
     let Some(cell) = stream_cell(id) else {
@@ -7627,80 +7588,8 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
             unsafe { set_abi_errno(errno::EBADF) };
             return 0;
         };
-        let buffered = {
-            let mut s = cell.lock();
-            if !s.is_readable() {
-                s.set_error();
-                // A read hook does not grant read permission to a FILE
-                // opened for output. Reject before invoking application code
-                // or touching its destination, just as the character path does.
-                // SAFETY: only the calling thread's errno slot is modified.
-                unsafe { set_abi_errno(errno::EBADF) };
-                return 0;
-            }
-            let buffered = s.buffered_read_into(dst);
-            // EOF is sticky even if the cookie later supplies more data.
-            // clearerr, successful seeking or pushback can clear it. An old
-            // error indicator alone, however, must still permit a read retry.
-            if s.is_eof() {
-                return buffered.checked_div(size).unwrap_or(0);
-            }
-            buffered
-        };
-        let mut read_total = buffered;
-        let mut reached_eof = false;
-        let mut had_error = false;
-
-        while read_total < total {
-            let rc = unsafe {
-                cookie_stream_read(
-                    id,
-                    dst[read_total..].as_mut_ptr(),
-                    total.saturating_sub(read_total),
-                )
-            };
-            let errno_val = if rc < 0 {
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            } else {
-                0
-            };
-            match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
-                // Cookie errors are observable callback results, not syscalls to retry.
-                StreamPolicyAction::Retry | StreamPolicyAction::Escalate => {
-                    had_error = true;
-                    break;
-                }
-                StreamPolicyAction::Yield => {
-                    reached_eof = rc == 0;
-                    break;
-                }
-                StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {}
-            }
-            if rc > 0 {
-                let advanced = (rc as usize).min(total - read_total);
-                if advanced == 0 {
-                    had_error = true;
-                    break;
-                }
-                read_total += advanced;
-                continue;
-            }
-            break;
-        }
-
-        if let Some(cell) = stream_cell(id) {
-            let mut s_guard = cell.lock();
-            let s = &mut *s_guard;
-            let delta = (read_total - buffered).min(i64::MAX as usize) as i64;
-            s.set_offset(s.offset().saturating_add(delta));
-            if reached_eof {
-                s.set_eof();
-            }
-            if had_error {
-                s.set_error();
-            }
-        }
-
+        let mut s_guard = cell.lock();
+        let read_total = unsafe { cookie_read_into(id, &mut s_guard, dst) };
         return read_total.checked_div(size).unwrap_or(0);
     }
 
@@ -20362,6 +20251,105 @@ fn cookie_registry() -> &'static Mutex<Option<StreamMap<CookieStreamInfo>>> {
 #[inline]
 fn lock_cookie_registry() -> std::sync::MutexGuard<'static, Option<StreamMap<CookieStreamInfo>>> {
     crate::runtime_policy::lock_std_mutex_preserving_errno(&COOKIE_REGISTRY)
+}
+
+/// Read cookie input through the same buffer and logical cursor used by
+/// pushback, GNU read windows, seeking, flushing and buffer replacement.
+///
+/// GNU custom streams are fully buffered by default, including large fread
+/// requests: the hook refills the configured buffer, rather than receiving the
+/// caller's remaining length. Unbuffered custom streams request one byte.
+/// Built-in fmemopen already owns a refill-aware cursor, so it keeps its
+/// existing direct transfer without a second read-ahead window.
+///
+/// No stream-buffer reference crosses application code. The caller retains the
+/// public FILE lock and StreamCell while with_callback releases the private
+/// state mutex; the reusable scratch buffer stays owned through reentry/unwind.
+unsafe fn cookie_read_into(id: usize, stream: &mut StreamGuard<'_>, dst: &mut [u8]) -> usize {
+    if dst.is_empty() {
+        return 0;
+    }
+    if !stream.is_readable() {
+        stream.set_error();
+        // A supplied read hook does not grant an output-only stream read access.
+        // SAFETY: only the calling thread's errno slot is modified.
+        unsafe { set_abi_errno(errno::EBADF) };
+        return 0;
+    }
+
+    let fixed_memory = fixed_mem_cookie(id).is_some();
+    let mut scratch: Option<RefillTmpGuard> = None;
+    let mut read_total = 0;
+    while read_total < dst.len() {
+        read_total += stream.buffered_read_into(&mut dst[read_total..]);
+        // EOF forbids another callback until cleared; an old error alone does
+        // not. Consumed bytes still count, including an incomplete fread item.
+        if read_total == dst.len() || stream.is_eof() {
+            break;
+        }
+
+        let capacity = stream.buffer_capacity();
+        let direct = fixed_memory || capacity == 0;
+        let requested = if fixed_memory {
+            dst.len() - read_total
+        } else {
+            capacity.max(1)
+        };
+        let result = if direct {
+            // SAFETY: the requested prefix fits the caller's remaining slice,
+            // and no reference to private stream storage spans the callback.
+            stream.with_callback(|| unsafe {
+                cookie_stream_read(id, dst[read_total..].as_mut_ptr(), requested)
+            })
+        } else {
+            let tmp = &mut scratch.get_or_insert_with(RefillTmpGuard::take).0;
+            if tmp.len() < requested {
+                if tmp.try_reserve_exact(requested - tmp.len()).is_err() {
+                    stream.set_error();
+                    // SAFETY: only the calling thread's errno slot is modified.
+                    unsafe { set_abi_errno(errno::ENOMEM) };
+                    break;
+                }
+                tmp.resize(requested, 0);
+            }
+            // SAFETY: this owned scratch span remains writable for the full
+            // configured request even if the callback reenters stream APIs.
+            stream.with_callback(|| unsafe {
+                cookie_stream_read(id, tmp.as_mut_ptr(), requested)
+            })
+        };
+
+        if result <= 0 {
+            if result == 0 {
+                stream.set_eof();
+            } else {
+                // Hook failures are results, not syscalls to retry. Preserve
+                // the callback's errno, including EINTR/EAGAIN or no change.
+                stream.set_error();
+            }
+            break;
+        }
+
+        let received = (result as usize).min(requested);
+        if direct {
+            read_total += received;
+            let new_offset = stream
+                .offset()
+                .saturating_add(received.min(i64::MAX as usize) as i64);
+            stream.set_offset(new_offset);
+        } else {
+            let bytes = &scratch.as_ref().expect("buffered read owns scratch").0[..received];
+            if stream.readable_buffered() == 0 && stream.buffer_capacity() >= received {
+                stream.fill_read_buffer(bytes);
+            } else {
+                // A reentrant callback may change buffering or supply its own
+                // input. Do not truncate this completed read to a new capacity
+                // or overwrite that live input; retain the returned bytes.
+                stream.pushback_read_bytes(bytes);
+            }
+        }
+    }
+    read_total
 }
 
 /// Read from a cookie-backed stream. Called by fread/fgetc for cookie streams.

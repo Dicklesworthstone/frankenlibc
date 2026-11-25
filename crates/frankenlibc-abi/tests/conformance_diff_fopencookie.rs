@@ -63,6 +63,7 @@ mod g {
         pub fn fileno(f: *mut c_void) -> c_int;
         pub fn fputc(byte: c_int, f: *mut c_void) -> c_int;
         pub fn fseeko(f: *mut c_void, offset: i64, whence: c_int) -> c_int;
+        pub fn ftell(f: *mut c_void) -> libc::c_long;
         pub fn getdelim(p: *mut *mut c_char, n: *mut usize, d: c_int, f: *mut c_void) -> isize;
         pub fn getline(p: *mut *mut c_char, n: *mut usize, f: *mut c_void) -> isize;
     }
@@ -73,6 +74,453 @@ use frankenlibc_abi::stdio_abi as fl;
 /// each call so "errno was left alone" is a positive observation rather than
 /// the absence of one.
 const SENTINEL_ERRNO: c_int = 0x5EED;
+
+struct ReadAheadCookie {
+    native: bool,
+    data: Vec<u8>,
+    position: usize,
+    read_limit: usize,
+    requests: Vec<usize>,
+    seeks: Vec<(i64, c_int)>,
+    seek_error: c_int,
+}
+
+unsafe extern "C-unwind" fn read_ahead_cookie_read(
+    cookie: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> isize {
+    // SAFETY: each observer owns this state and keeps it live through fclose.
+    let state = unsafe { &mut *cookie.cast::<ReadAheadCookie>() };
+    state.requests.push(capacity);
+    let count = capacity
+        .min(state.read_limit)
+        .min(state.data.len().saturating_sub(state.position));
+    // SAFETY: the callback receives capacity writable bytes and count is
+    // bounded by both that destination and the remaining independent input.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            state.data.as_ptr().add(state.position),
+            buffer.cast(),
+            count,
+        );
+    }
+    state.position += count;
+    count as isize
+}
+
+unsafe extern "C-unwind" fn read_ahead_cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: both providers supply live cookie and writable offset storage.
+    let (state, offset) = unsafe { (&mut *cookie.cast::<ReadAheadCookie>(), &mut *offset) };
+    state.seeks.push((*offset, whence));
+    if state.seek_error != 0 {
+        // SAFETY: write only this callback provider's current-thread errno.
+        unsafe { *reentrant_errno_slot(state.native) = state.seek_error };
+        return -1;
+    }
+    let base = match whence {
+        libc::SEEK_SET => 0,
+        libc::SEEK_CUR => state.position as i64,
+        libc::SEEK_END => state.data.len() as i64,
+        _ => unreachable!("stdio passed an invalid seek origin"),
+    };
+    let position = base.checked_add(*offset).expect("bounded test position");
+    assert!((0..=state.data.len() as i64).contains(&position));
+    state.position = position as usize;
+    *offset = position;
+    0
+}
+
+#[derive(Debug, PartialEq)]
+struct ReadAheadObservation {
+    result: i64,
+    bytes: Vec<u8>,
+    errno: c_int,
+    error: bool,
+    eof: bool,
+    logical_position: libc::c_long,
+    backend_position: usize,
+    read_calls: usize,
+}
+
+unsafe fn observe_read_ahead_state(
+    native: bool,
+    stream: *mut c_void,
+    state: *const ReadAheadCookie,
+    result: i64,
+    bytes: Vec<u8>,
+) -> ReadAheadObservation {
+    let error = if native { fl::ferror } else { g::ferror };
+    let eof = if native { fl::feof } else { g::feof };
+    let tell = if native { fl::ftell } else { g::ftell };
+    // SAFETY: the observer retains stream and state through close. Capture
+    // operation errno before the independent position query invokes seek.
+    unsafe {
+        let errno = *reentrant_errno_slot(native);
+        let logical_position = tell(stream);
+        ReadAheadObservation {
+            result,
+            bytes,
+            errno,
+            error: error(stream) != 0,
+            eof: eof(stream) != 0,
+            logical_position,
+            backend_position: (*state).position,
+            read_calls: (*state).requests.len(),
+        }
+    }
+}
+
+fn cookie_read_ahead_sequence(
+    native: bool,
+    mode: c_int,
+    capacity: Option<usize>,
+    read_limit: usize,
+    unlocked: bool,
+) -> (Vec<ReadAheadObservation>, Vec<usize>) {
+    let bulk = if mode == libc::_IONBF { 13 } else { 20_000 };
+    let mut state = ReadAheadCookie {
+        native,
+        data: (0..bulk + 28).map(|index| (index % 251) as u8).collect(),
+        position: 0,
+        read_limit,
+        requests: Vec::new(),
+        seeks: Vec::new(),
+        seek_error: 0,
+    };
+    let open = if native { fl::fopencookie } else { g::fopencookie };
+    let configure = if native { fl::setvbuf } else { g::setvbuf };
+    let character = if native { fl::fgetc } else { g::fgetc };
+    let read = match (native, unlocked) {
+        (true, false) => fl::fread,
+        (true, true) => fl::fread_unlocked,
+        (false, false) => g::fread,
+        (false, true) => g::fread_unlocked,
+    };
+    let close = if native { fl::fclose } else { g::fclose };
+    let mut buffer = vec![0; capacity.unwrap_or(0)];
+    let funcs = CookieIoFuncs {
+        read: Some(read_ahead_cookie_read),
+        seek: Some(read_ahead_cookie_seek),
+        ..CookieIoFuncs::default()
+    };
+    // SAFETY: all callback state, caller buffering and read destinations stay
+    // live through the matching provider's fclose; requests fit each output.
+    unsafe {
+        let state_pointer = &raw mut state;
+        let stream = open(state_pointer.cast(), c"r".as_ptr(), funcs);
+        assert!(!stream.is_null());
+        assert_eq!(
+            configure(
+                stream,
+                capacity.map_or(std::ptr::null_mut(), |_| buffer.as_mut_ptr()),
+                mode,
+                capacity.unwrap_or(16_384),
+            ),
+            0
+        );
+        *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+        let first = character(stream);
+        let mut observations = vec![observe_read_ahead_state(
+            native,
+            stream,
+            state_pointer,
+            i64::from(first),
+            Vec::new(),
+        )];
+        for (size, count) in [(3, 7), (1, bulk), (3, 4)] {
+            let mut output = vec![0xa5; size * count + 3];
+            *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+            let result = read(output.as_mut_ptr().cast(), size, count, stream);
+            observations.push(observe_read_ahead_state(
+                native,
+                stream,
+                state_pointer,
+                result as i64,
+                output,
+            ));
+        }
+        *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+        let final_character = character(stream);
+        observations.push(observe_read_ahead_state(
+            native,
+            stream,
+            state_pointer,
+            i64::from(final_character),
+            Vec::new(),
+        ));
+        assert_eq!(close(stream), 0);
+        (observations, state.requests)
+    }
+}
+
+#[test]
+fn cookie_input_reads_use_configured_refills_and_preserve_partial_elements() {
+    assert_ne!(g::fopencookie as *const (), fl::fopencookie as *const ());
+    // GNU documents fopencookie as fully buffered. The live oracle also
+    // determines hook request sizes for explicit buffers, short callbacks,
+    // large fread requests and the one-byte unbuffered path.
+    for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+        for capacity in [None, Some(7), Some(16_384)] {
+            for read_limit in [usize::MAX, 3] {
+                for unlocked in [false, true] {
+                    let host =
+                        cookie_read_ahead_sequence(false, mode, capacity, read_limit, unlocked);
+                    let refill = if mode == libc::_IONBF {
+                        1
+                    } else {
+                        capacity.unwrap_or(8192)
+                    };
+                    assert!(host.1.iter().all(|&requested| requested == refill));
+                    assert_eq!(host.0[0].logical_position, 1);
+                    assert_eq!(host.0[0].backend_position, refill.min(read_limit));
+                    assert_eq!(host.0[0].read_calls, 1);
+                    assert_eq!(host.0[3].result, 2, "six bytes form two complete elements");
+                    assert!(host.0[3].eof && host.0[4].eof);
+                    assert_eq!(host.0[3].read_calls, host.0[4].read_calls);
+                    assert!(host.0.iter().all(|o| !o.error && o.errno == SENTINEL_ERRNO));
+                    assert_eq!(
+                        cookie_read_ahead_sequence(true, mode, capacity, read_limit, unlocked),
+                        host,
+                        "mode={mode} capacity={capacity:?} limit={read_limit} unlocked={unlocked}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn cookie_read_ahead_position_sequence(
+    native: bool,
+    seek_error: c_int,
+) -> (Vec<ReadAheadObservation>, Vec<usize>) {
+    let mut state = ReadAheadCookie {
+        native,
+        data: b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
+        position: 0,
+        read_limit: usize::MAX,
+        requests: Vec::new(),
+        seeks: Vec::new(),
+        seek_error: 0,
+    };
+    let open = if native { fl::fopencookie } else { g::fopencookie };
+    let configure = if native { fl::setvbuf } else { g::setvbuf };
+    let read = if native { fl::fgetc } else { g::fgetc };
+    let push = if native { fl::ungetc } else { g::ungetc };
+    let seek = if native { fl::fseeko } else { g::fseeko };
+    let flush = if native { fl::fflush } else { g::fflush };
+    let close = if native { fl::fclose } else { g::fclose };
+    let funcs = CookieIoFuncs {
+        read: Some(read_ahead_cookie_read),
+        seek: Some(read_ahead_cookie_seek),
+        ..CookieIoFuncs::default()
+    };
+    let mut original = [0; 7];
+    let mut replacement = [0; 3];
+    let mut observations = Vec::new();
+    // SAFETY: both buffers and the callback state outlive the FILE, and each
+    // operation uses the same provider which created it.
+    unsafe {
+        let state_pointer = &raw mut state;
+        let stream = open(state_pointer.cast(), c"r".as_ptr(), funcs);
+        assert!(!stream.is_null());
+        assert_eq!(configure(stream, original.as_mut_ptr(), libc::_IOFBF, 7), 0);
+        let capture = |result: c_int| {
+            observe_read_ahead_state(
+                native,
+                stream,
+                state_pointer,
+                i64::from(result),
+                Vec::new(),
+            )
+        };
+        for operation in 0..10 {
+            *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+            let result = match operation {
+                0 | 2 | 4 | 6 | 8 => read(stream),
+                1 => push(b'Z' as c_int, stream),
+                // Cross the prefetched window so this verifies backend
+                // repositioning rather than an optional in-buffer seek.
+                3 => seek(stream, 12, libc::SEEK_CUR),
+                5 => configure(stream, std::ptr::null_mut(), libc::_IOLBF, 1),
+                7 => configure(stream, replacement.as_mut_ptr(), libc::_IOFBF, 3),
+                9 => configure(stream, std::ptr::null_mut(), libc::_IONBF, 0),
+                _ => unreachable!(),
+            };
+            observations.push(capture(result));
+        }
+        // Restore a real read-ahead window, then fail input synchronization.
+        assert_eq!(configure(stream, original.as_mut_ptr(), libc::_IOFBF, 7), 0);
+        *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+        observations.push(capture(read(stream)));
+        state.seek_error = seek_error;
+        *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+        let seek_start = state.seeks.len();
+        let flushed = flush(stream);
+        assert!(
+            state.seeks[seek_start..].contains(&(-6, libc::SEEK_CUR)),
+            "input flush must return the six unread prefetched bytes"
+        );
+        observations.push(capture(flushed));
+        *reentrant_errno_slot(native) = SENTINEL_ERRNO;
+        observations.push(capture(read(stream)));
+        state.seek_error = 0;
+        assert_eq!(close(stream), 0);
+        (observations, state.requests)
+    }
+}
+
+#[test]
+fn cookie_read_ahead_tracks_seek_flush_and_buffer_replacement() {
+    for seek_error in [0, libc::ESPIPE, libc::EIO] {
+        let host = cookie_read_ahead_position_sequence(false, seek_error);
+        assert_eq!(
+            (host.0[0].logical_position, host.0[0].backend_position),
+            (1, 7)
+        );
+        assert_eq!(host.0[1].logical_position, 0);
+        assert_eq!(host.0[2].result, i64::from(b'Z'));
+        assert_eq!(host.0[3].logical_position, 13);
+        assert_eq!(
+            host.0[5].read_calls, host.0[6].read_calls,
+            "NULL setvbuf retains unread input"
+        );
+        assert_eq!(host.0[7].logical_position, host.0[6].logical_position);
+        assert_eq!(
+            host.0[11].result,
+            if seek_error == libc::EIO { -1 } else { 0 }
+        );
+        if seek_error != 0 {
+            assert_eq!(
+                host.0[11].read_calls, host.0[12].read_calls,
+                "failed synchronization keeps prefetched bytes"
+            );
+        }
+        assert_eq!(
+            cookie_read_ahead_position_sequence(true, seek_error),
+            host,
+            "seek error={seek_error}"
+        );
+    }
+}
+
+struct RebufferingReadCookie {
+    stream: *mut c_void,
+    mode: c_int,
+    position: usize,
+    requests: Vec<usize>,
+    rebuffered: bool,
+    replacement: [c_char; 3],
+}
+
+unsafe extern "C-unwind" fn rebuffering_cookie_read(
+    cookie: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> isize {
+    // SAFETY: the isolated test retains this stable cookie through fclose.
+    let state = unsafe { &mut *cookie.cast::<RebufferingReadCookie>() };
+    state.requests.push(capacity);
+    if !state.rebuffered {
+        state.rebuffered = true;
+        // This only changes stream buffering/status; no pending input/output
+        // exists yet, so it cannot invoke another cookie hook.
+        // SAFETY: the caller retains the live FILE, and replacement is stable
+        // storage in this cookie until fclose.
+        unsafe {
+            assert_eq!(fl::ferror(state.stream), 0);
+            assert_eq!(fl::feof(state.stream), 0);
+            fl::clearerr(state.stream);
+            assert_eq!(
+                fl::setvbuf(
+                    state.stream,
+                    state.replacement.as_mut_ptr(),
+                    state.mode,
+                    state.replacement.len(),
+                ),
+                0
+            );
+        }
+    }
+    let data = b"abcdefghij";
+    let count = capacity.min(data.len() - state.position);
+    // SAFETY: count fits both the callback destination and remaining data.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            data.as_ptr().add(state.position),
+            buffer.cast(),
+            count,
+        );
+    }
+    state.position += count;
+    count as isize
+}
+
+#[test]
+fn cookie_read_callback_can_shrink_or_remove_buffer_without_losing_input() {
+    const TEST: &str = "cookie_read_callback_can_shrink_or_remove_buffer_without_losing_input";
+    const CHILD: &str = "FRANKENLIBC_COOKIE_READ_REBUFFER_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "callback rebuffering: {:?}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    // This tests the native callback-safety contract, not GNU equivalence:
+    // GNU passes its own mutable input buffer to the hook, so replacing that
+    // buffer inside the hook is not a portable oracle operation.
+    // SAFETY: only this selected test runs in the isolated child.
+    unsafe { libc::alarm(5) };
+    for mode in [libc::_IOFBF, libc::_IONBF] {
+        let mut state = RebufferingReadCookie {
+            stream: std::ptr::null_mut(),
+            mode,
+            position: 0,
+            requests: Vec::new(),
+            rebuffered: false,
+            replacement: [0; 3],
+        };
+        let hooks = CookieIoFuncs {
+            read: Some(rebuffering_cookie_read),
+            ..CookieIoFuncs::default()
+        };
+        let mut initial = [0; 7];
+        // SAFETY: stream, cookie and both buffering allocations remain live
+        // through close; the destination contains the requested ten bytes.
+        unsafe {
+            state.stream = fl::fopencookie((&raw mut state).cast(), c"r".as_ptr(), hooks);
+            assert!(!state.stream.is_null());
+            assert_eq!(fl::setvbuf(state.stream, initial.as_mut_ptr(), libc::_IOFBF, 7), 0);
+            let mut output = [0u8; 10];
+            assert_eq!(fl::fread(output.as_mut_ptr().cast(), 1, 10, state.stream), 10);
+            assert_eq!(&output, b"abcdefghij");
+            assert_eq!(state.requests[0], 7);
+            let expected = if mode == libc::_IONBF { 1 } else { 3 };
+            assert!(state.requests[1..].iter().all(|&size| size == expected));
+            assert_eq!(state.requests.len(), if mode == libc::_IONBF { 4 } else { 2 });
+            assert_eq!(fl::fgetc(state.stream), libc::EOF);
+            assert_ne!(fl::feof(state.stream), 0);
+            assert_eq!(fl::ferror(state.stream), 0);
+            assert_eq!(fl::fclose(state.stream), 0);
+        }
+    }
+    // SAFETY: cancel the isolated child's timeout after all callbacks return.
+    unsafe { libc::alarm(0) };
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum InputSeekResult {
