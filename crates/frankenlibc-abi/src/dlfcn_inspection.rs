@@ -12,8 +12,11 @@ use super::{NATIVE_DSOS, NativeDso, OPERATIONS};
 
 /// Match the loaded image, including its inter-segment reservation, but not
 /// the page-rounded tail after the last PT_LOAD's p_memsz. No queried address
-/// is dereferenced. The ABI loader currently requires a zero low_vaddr.
+/// is dereferenced. The first mapped address can differ from the ELF load bias.
 fn contains_address(dso: &NativeDso, address: usize) -> bool {
+    let Some(image_offset) = address.checked_sub(dso.mapping.base) else {
+        return false;
+    };
     let Some(offset) = (address as u64).checked_sub(dso.object.base) else {
         return false;
     };
@@ -25,7 +28,7 @@ fn contains_address(dso: &NativeDso, address: usize) -> bool {
         .filter_map(|header| header.p_vaddr.checked_add(header.p_memsz))
         .max()
         .unwrap_or(0);
-    offset < end && offset < dso.mapping.len as u64
+    offset < end && image_offset < dso.mapping.len
 }
 
 fn symbol_name<'a>(object: &'a LoadedObject, symbol: &Elf64Symbol) -> Option<&'a CStr> {
@@ -97,7 +100,7 @@ pub(crate) unsafe fn address_info_extra(
     // Retiring DSOs remain inspectable while their finalizers execute.
     let mut result = libc::Dl_info {
         dli_fname: dso.name.as_ptr(),
-        dli_fbase: dso.object.base as usize as *mut c_void,
+        dli_fbase: dso.mapping.base as *mut c_void,
         dli_sname: std::ptr::null(),
         dli_saddr: std::ptr::null_mut(),
     };

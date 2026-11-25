@@ -93,18 +93,21 @@ struct ObjectImage {
     id: usize,
     base: usize,
     len: usize,
+    bias: u64,
     headers: Vec<Elf64ProgramHeader>,
 }
 
 impl ObjectImage {
     fn executable(&self, address: usize) -> bool {
-        let Some(offset) = address.checked_sub(self.base) else {
+        let Some(image_offset) = address.checked_sub(self.base) else {
             return false;
         };
-        if offset >= self.len {
+        if image_offset >= self.len {
             return false;
         }
-        let offset = offset as u64;
+        let Some(offset) = (address as u64).checked_sub(self.bias) else {
+            return false;
+        };
         let mut backed = false;
         let mut executable = false;
         // Match native protect_object and lifecycle::executable_address,
@@ -128,13 +131,17 @@ impl ObjectImage {
             if header.p_type != ProgramType::GnuRelro || header.p_memsz == 0 {
                 continue;
             }
-            let Ok(start) = usize::try_from(header.p_vaddr) else {
+            let Some(start) = self
+                .bias
+                .checked_add(header.p_vaddr)
+                .and_then(|start| usize::try_from(start).ok())
+                .and_then(|start| start.checked_sub(self.base))
+            else {
                 return false;
             };
-            let Some(end) = header
-                .p_vaddr
-                .checked_add(header.p_memsz)
-                .and_then(|end| usize::try_from(end).ok())
+            let Some(end) = usize::try_from(header.p_memsz)
+                .ok()
+                .and_then(|size| start.checked_add(size))
             else {
                 return false;
             };
@@ -143,7 +150,7 @@ impl ObjectImage {
             let Some(pages) = super::map_layout::relro_pages(&(start..end), self.len) else {
                 return false;
             };
-            if pages.contains(&(offset as usize)) {
+            if pages.contains(&image_offset) {
                 return false;
             }
         }
@@ -166,6 +173,7 @@ impl Context {
                     id: dso.id,
                     base: dso.mapping.base,
                     len: dso.mapping.len,
+                    bias: dso.object.base,
                     headers: dso.object.program_headers.clone(),
                 })
                 .collect(),
@@ -204,17 +212,16 @@ fn indirect_form(relocation: &Elf64Rela) -> bool {
 }
 
 fn writable_target(dso: &NativeDso, offset: u64) -> Option<usize> {
+    let range = dso.mapping.range(&dso.object, offset, 8)?;
     let end = offset.checked_add(8)?;
-    if end > dso.mapping.len as u64
-        || !dso.object.program_headers.iter().any(|header| {
-            header.is_load()
-                && header.p_vaddr <= offset
-                && header
-                    .p_vaddr
-                    .checked_add(header.p_memsz)
-                    .is_some_and(|limit| end <= limit)
-        })
-    {
+    if !dso.object.program_headers.iter().any(|header| {
+        header.is_load()
+            && header.p_vaddr <= offset
+            && header
+                .p_vaddr
+                .checked_add(header.p_memsz)
+                .is_some_and(|limit| end <= limit)
+    }) {
         return None;
     }
     // A late write must stay in writable, non-executable pages before RELRO.
@@ -246,7 +253,7 @@ fn writable_target(dso: &NativeDso, offset: u64) -> Option<usize> {
             return None;
         }
     }
-    dso.mapping.base.checked_add(usize::try_from(offset).ok()?)
+    dso.mapping.base.checked_add(range.start)
 }
 
 /// Identify indirect relocations without calling any machine code. The core
@@ -268,7 +275,7 @@ pub(super) fn prepare(
                     return None;
                 }
                 let address =
-                    usize::try_from(dso.mapping.base as i128 + relocation.r_addend as i128).ok()?;
+                    usize::try_from(dso.object.base as i128 + relocation.r_addend as i128).ok()?;
                 Some((dso.id, address))
             } else if matches!(
                 relocation.reloc_type(),

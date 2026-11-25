@@ -14,6 +14,7 @@ pub(super) struct Reservation {
     pub(super) image_len: usize,
     pub(super) reserve_len: usize,
     alignment: usize,
+    low_vaddr: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -25,13 +26,19 @@ pub(super) struct Placement {
 
 impl Reservation {
     /// Input tuples are (p_vaddr, p_offset, p_align) for PT_LOAD only.
-    /// The native loader has already required low_vaddr == 0. Thus an aligned
-    /// image base is also the load bias used by every relocation and symbol.
+    /// The load bias, rather than the first mapped address, must be aligned.
+    /// A nonzero low_vaddr can have a different residue modulo p_align.
     pub(super) fn new(
         image_len: usize,
+        low_vaddr: u64,
         segments: impl IntoIterator<Item = (u64, u64, u64)>,
     ) -> Option<Self> {
-        if image_len == 0 || !image_len.is_multiple_of(IMAGE_PAGE_SIZE) {
+        let low_vaddr = usize::try_from(low_vaddr).ok()?;
+        if image_len == 0
+            || !image_len.is_multiple_of(IMAGE_PAGE_SIZE)
+            || !low_vaddr.is_multiple_of(IMAGE_PAGE_SIZE)
+            || low_vaddr.checked_add(image_len).is_none()
+        {
             return None;
         }
         let mut alignment = IMAGE_PAGE_SIZE;
@@ -62,6 +69,7 @@ impl Reservation {
             image_len,
             reserve_len,
             alignment,
+            low_vaddr,
         })
     }
 
@@ -73,7 +81,11 @@ impl Reservation {
             return None;
         }
         let reserved_end = reserved_base.checked_add(self.reserve_len)?;
-        let base = reserved_base.checked_add(self.alignment - 1)? & !(self.alignment - 1);
+        let mask = self.alignment - 1;
+        let prefix = (self.low_vaddr & mask).wrapping_sub(reserved_base & mask) & mask;
+        let base = reserved_base.checked_add(prefix)?;
+        // This loader uses checked, nonnegative ELF load biases throughout.
+        base.checked_sub(self.low_vaddr)?;
         let image_end = base.checked_add(self.image_len)?;
         Some(Placement {
             base,

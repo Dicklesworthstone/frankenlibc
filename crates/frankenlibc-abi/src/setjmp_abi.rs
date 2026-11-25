@@ -1,14 +1,11 @@
 //! ABI layer for `<setjmp.h>`/`<signal.h>` non-local jump entrypoints.
 //!
-//! Phase-1 contract:
-//! - Capture (`setjmp`, `_setjmp`, `sigsetjmp`) is wired through deterministic
-//!   metadata capture in `frankenlibc-core`.
-//! - Restore (`longjmp`, `_longjmp`, `siglongjmp`) validates invariants through
-//!   the same metadata and then terminates explicitly because true stack
-//!   transfer remains deferred to the unsafe backend stage.
-//!
-//! This keeps behavior explicit and auditable: there is no silent call-through
-//! to host `setjmp` symbols and no silent fallback.
+//! The x86-64 native capture and restore backend is available in every build
+//! so a registered C pthread cleanup buffer can complete a real stack
+//! transfer. Its release ABI exports use that same assembly backend.
+//! Debug-facing phase-1 entrypoints separately exercise deterministic metadata
+//! validation and cannot restore a native x86-64 cleanup buffer. AArch64 keeps
+//! its existing release backend and debug phase-1 behavior.
 
 use std::ffi::{c_int, c_void};
 
@@ -284,8 +281,8 @@ pub unsafe extern "C" fn sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_int
     std::arch::naked_asm!("jmp __sigsetjmp",);
 }
 
-#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
-#[unsafe(no_mangle)]
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_int {
     std::arch::naked_asm!(
@@ -330,10 +327,13 @@ pub unsafe extern "C" fn __sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_i
     );
 }
 
-#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
-#[unsafe(no_mangle)]
+/// Restore a live native jump buffer after its deeper cleanup frames unwind.
+/// This backend also serves cancellation in debug rlibs, where the public
+/// Rust `longjmp` entry exercises phase-1 validation rather than transferring.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(export_name = "longjmp"))]
 #[unsafe(naked)]
-pub unsafe extern "C" fn longjmp(_env: *mut c_void, _val: c_int) -> ! {
+pub unsafe extern "C" fn native_longjmp(_env: *mut c_void, _val: c_int) -> ! {
     std::arch::naked_asm!(
         // Normalize return value: if val==0, return 1.
         "mov eax, esi",
@@ -543,6 +543,9 @@ pub unsafe extern "C" fn longjmp(_env: *mut c_void, _val: c_int) -> ! {
     );
 }
 
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+pub use native_longjmp as longjmp;
+
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
@@ -557,8 +560,9 @@ pub unsafe extern "C" fn siglongjmp(_env: *mut c_void, _val: c_int) -> ! {
     std::arch::naked_asm!("b longjmp");
 }
 
-// In debug/test builds, use the deterministic phase-1 path instead of
-// host delegation so verification stays on FrankenLibC-owned behavior.
+// Debug-facing phase-1 entrypoints verify metadata without performing a
+// non-local transfer across Rust frames. Native x86-64 C cleanup uses
+// __sigsetjmp and native_longjmp directly in every build.
 #[cfg(debug_assertions)]
 pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
     capture_entrypoint(env, false)

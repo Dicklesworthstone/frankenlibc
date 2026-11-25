@@ -1201,6 +1201,271 @@ fn iswspace_l_matches_base_for_ascii() {
     }
 }
 
+struct WideLocaleObject(*mut c_void);
+
+impl WideLocaleObject {
+    fn new(name: &CStr) -> Self {
+        // SAFETY: a terminated name and null base create an independent native
+        // locale object; no host libc locale handle crosses this ABI boundary.
+        let handle = unsafe {
+            frankenlibc_abi::locale_abi::newlocale(
+                libc::LC_CTYPE_MASK,
+                name.as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(!handle.is_null(), "required locale {name:?}");
+        Self(handle)
+    }
+
+    fn select(&self) -> SelectedWideLocale<'_> {
+        // SAFETY: this object remains alive for the guard's complete lifetime.
+        let previous = unsafe { frankenlibc_abi::locale_abi::uselocale(self.0) };
+        assert!(!previous.is_null());
+        SelectedWideLocale {
+            previous,
+            _selected: self,
+        }
+    }
+}
+
+impl Drop for WideLocaleObject {
+    fn drop(&mut self) {
+        // SAFETY: all selection guards borrow this owner and are already gone.
+        unsafe { frankenlibc_abi::locale_abi::freelocale(self.0) };
+    }
+}
+
+struct SelectedWideLocale<'a> {
+    previous: *mut c_void,
+    _selected: &'a WideLocaleObject,
+}
+
+impl Drop for SelectedWideLocale<'_> {
+    fn drop(&mut self) {
+        // SAFETY: previous is the native selector returned by uselocale, and
+        // the test does not retire its original selection while this is live.
+        unsafe { frankenlibc_abi::locale_abi::uselocale(self.previous) };
+    }
+}
+
+#[test]
+fn wide_locale_objects_control_classification_mapping_and_comparison() {
+    use frankenlibc_abi::glibc_internal_abi as internal;
+
+    type Classifier = unsafe extern "C" fn(u32, *mut c_void) -> c_int;
+    let classes: [(&CStr, Classifier, Classifier); 12] = [
+        (c"alnum", iswalnum_l, __iswalnum_l),
+        (c"alpha", iswalpha_l, __iswalpha_l),
+        (c"blank", iswblank_l, __iswblank_l),
+        (c"cntrl", iswcntrl_l, __iswcntrl_l),
+        (c"digit", iswdigit_l, __iswdigit_l),
+        (c"graph", iswgraph_l, __iswgraph_l),
+        (c"lower", iswlower_l, __iswlower_l),
+        (c"print", iswprint_l, __iswprint_l),
+        (c"punct", iswpunct_l, __iswpunct_l),
+        (c"space", iswspace_l, __iswspace_l),
+        (c"upper", iswupper_l, __iswupper_l),
+        (c"xdigit", iswxdigit_l, __iswxdigit_l),
+    ];
+    // Named semantic classes keep expectations independent of descriptor IDs
+    // and of the implementation's Unicode table representation.
+    let samples = [
+        (0x41, "alnum alpha graph print upper xdigit"),
+        (0x61, "alnum alpha graph lower print xdigit"),
+        (0x39, "alnum digit graph print xdigit"),
+        (0x20, "blank print space"),
+        (0x09, "blank cntrl space"),
+        (0x0a, "cntrl space"),
+        (0x21, "graph print punct"),
+        (0xc4, "alnum alpha graph print upper"),
+        (0xe4, "alnum alpha graph lower print"),
+        (0x2003, "blank print space"),
+        (0x2014, "graph print punct"),
+        (u32::MAX, ""),
+    ];
+    let c = WideLocaleObject::new(c"C");
+    let utf8 = WideLocaleObject::new(c"C.UTF-8");
+    for (requested, ambient, unicode) in [(&c, &utf8, false), (&utf8, &c, true)] {
+        let _selection = ambient.select();
+        let locale = requested.0;
+        // SAFETY: native locale handles stay live, all property names and
+        // wide strings are terminated, and zero-count calls read no elements.
+        unsafe {
+            for (name, classify, alias) in classes {
+                let descriptor = wctype_l(name.as_ptr().cast(), locale);
+                let alias_descriptor = internal::__wctype_l(name.as_ptr(), locale) as usize;
+                assert_ne!(descriptor, 0);
+                assert_ne!(alias_descriptor, 0);
+                for (wc, names) in samples {
+                    let expected = (unicode || wc < 128)
+                        && names
+                            .split_ascii_whitespace()
+                            .any(|value| value == name.to_str().unwrap());
+                    let results = [
+                        classify(wc, locale),
+                        alias(wc, locale),
+                        iswctype_l(wc, descriptor, locale),
+                        __iswctype_l(wc, alias_descriptor, locale),
+                    ];
+                    for result in results {
+                        assert_eq!(result != 0, expected, "{name:?} U+{wc:04X}, utf8={unicode}");
+                    }
+                }
+            }
+            let upper = wctrans_l(c"toupper".as_ptr().cast(), locale);
+            let lower = wctrans_l(c"tolower".as_ptr().cast(), locale);
+            let alias_upper = internal::__wctrans_l(c"toupper".as_ptr(), locale);
+            let alias_lower = internal::__wctrans_l(c"tolower".as_ptr(), locale);
+            assert!(upper != 0 && lower != 0 && alias_upper != 0 && alias_lower != 0);
+            for (small, capital) in [(0xe4, 0xc4), (0x3c3, 0x3a3), (0x10428, 0x10400)] {
+                let expected_upper = if unicode { capital } else { small };
+                let expected_lower = if unicode { small } else { capital };
+                assert_eq!(towupper_l(small, locale), expected_upper);
+                assert_eq!(__towupper_l(small, locale), expected_upper);
+                assert_eq!(towctrans_l(small, upper, locale), expected_upper);
+                assert_eq!(__towctrans_l(small, alias_upper, locale), expected_upper);
+                assert_eq!(towlower_l(capital, locale), expected_lower);
+                assert_eq!(__towlower_l(capital, locale), expected_lower);
+                assert_eq!(towctrans_l(capital, lower, locale), expected_lower);
+                assert_eq!(__towctrans_l(capital, alias_lower, locale), expected_lower);
+            }
+            assert_eq!(towupper_l(u32::MAX, locale), u32::MAX);
+            assert_eq!(__towlower_l(u32::MAX, locale), u32::MAX);
+
+            let capitals = [0xc4_u32, 0x10400, 0];
+            let smalls = [0xe4_u32, 0x10428, 0];
+            let expected = if unicode { 0 } else { -1 };
+            assert_eq!(
+                internal::wcscasecmp_l(capitals.as_ptr().cast(), smalls.as_ptr().cast(), locale)
+                    .signum(),
+                expected
+            );
+            assert_eq!(
+                __wcscasecmp_l(capitals.as_ptr().cast(), smalls.as_ptr().cast(), locale).signum(),
+                expected
+            );
+            assert_eq!(
+                wcscasecmp(capitals.as_ptr(), smalls.as_ptr()) == 0,
+                !unicode
+            );
+            assert_eq!(
+                wcsncasecmp(capitals.as_ptr(), smalls.as_ptr(), 2) == 0,
+                !unicode
+            );
+            assert_eq!(
+                internal::wcsncasecmp_l(
+                    capitals.as_ptr().cast(),
+                    smalls.as_ptr().cast(),
+                    8,
+                    locale
+                )
+                .signum(),
+                expected
+            );
+            let left = [0xc4_u32, b'A' as u32, 0];
+            let right = [0xe4_u32, b'B' as u32, 0];
+            for (count, expected) in [(0, 0), (1, expected), (2, -1), (8, -1)] {
+                assert_eq!(
+                    internal::wcsncasecmp_l(
+                        left.as_ptr().cast(),
+                        right.as_ptr().cast(),
+                        count,
+                        locale
+                    )
+                    .signum(),
+                    expected
+                );
+                assert_eq!(
+                    __wcsncasecmp_l(left.as_ptr().cast(), right.as_ptr().cast(), count, locale)
+                        .signum(),
+                    expected
+                );
+            }
+            // With a zero bound, no character may be read from either pointer.
+            let unreadable = std::ptr::NonNull::<libc::wchar_t>::dangling().as_ptr();
+            let other_unreadable = unreadable.wrapping_add(1);
+            assert_eq!(
+                internal::wcsncasecmp_l(unreadable, other_unreadable, 0, locale),
+                0
+            );
+            assert_eq!(__wcsncasecmp_l(unreadable, other_unreadable, 0, locale), 0);
+            assert_eq!(
+                wcsncasecmp(unreadable.cast(), other_unreadable.cast(), 0),
+                0
+            );
+            assert_eq!(
+                frankenlibc_abi::locale_abi::uselocale(std::ptr::null_mut()),
+                ambient.0
+            );
+            assert_eq!(iswalpha(0xe4) != 0, !unicode);
+        }
+    }
+}
+
+#[test]
+fn wide_locale_explicit_calls_preserve_concurrent_thread_selections() {
+    let parent = WideLocaleObject::new(c"C");
+    let _parent_selection = parent.select();
+    let start = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let workers = [false, true].map(|unicode| {
+            let start = &start;
+            scope.spawn(move || {
+                // Synchronize before fallible setup; a failed assertion in one
+                // worker cannot leave its peer waiting at a later barrier.
+                start.wait();
+                let c = WideLocaleObject::new(c"C");
+                let utf8 = WideLocaleObject::new(c"C.UTF-8");
+                let (selected, explicit) = if unicode { (&utf8, &c) } else { (&c, &utf8) };
+                let _selection = selected.select();
+                let capital = [0xc4_u32, 0];
+                let small = [0xe4_u32, 0];
+                for _ in 0..100 {
+                    // SAFETY: both handles belong to this worker and remain
+                    // alive; the wide input arrays include their terminators.
+                    unsafe {
+                        assert_eq!(iswalpha_l(0xe4, explicit.0) != 0, !unicode);
+                        assert_eq!(__iswalpha_l(0xe4, explicit.0) != 0, !unicode);
+                        assert_eq!(
+                            towlower_l(0xc4, explicit.0),
+                            if unicode { 0xc4 } else { 0xe4 }
+                        );
+                        assert_eq!(
+                            __wcscasecmp_l(
+                                capital.as_ptr().cast(),
+                                small.as_ptr().cast(),
+                                explicit.0
+                            ) == 0,
+                            !unicode
+                        );
+                        assert_eq!(iswalpha(0xe4) != 0, unicode);
+                        assert_eq!(towlower(0xc4), if unicode { 0xe4 } else { 0xc4 });
+                        assert_eq!(wcscasecmp(capital.as_ptr(), small.as_ptr()) == 0, unicode);
+                        assert_eq!(
+                            frankenlibc_abi::locale_abi::uselocale(std::ptr::null_mut()),
+                            selected.0
+                        );
+                    }
+                    std::thread::yield_now();
+                }
+            })
+        });
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+    // SAFETY: joining the workers cannot retire or alter this thread's object.
+    unsafe {
+        assert_eq!(
+            frankenlibc_abi::locale_abi::uselocale(std::ptr::null_mut()),
+            parent.0
+        );
+        assert_eq!(iswalpha(0xe4), 0);
+        assert_eq!(towlower(0xc4), 0xc4);
+    }
+}
+
 // ── mblen / mbtowc / wctomb ────────────────────────────────────────────────
 
 /// Switch to a UTF-8 locale for the duration of a multibyte test, and put the

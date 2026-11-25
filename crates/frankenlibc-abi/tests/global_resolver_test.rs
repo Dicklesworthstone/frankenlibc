@@ -857,11 +857,7 @@ fn global_host_lookup_preserves_timing_selected_before_implicit_init() {
     ));
     let write_config = |domain: &str| {
         // No explicit timing: the legacy initializer must retain caller values.
-        std::fs::write(
-            &path,
-            format!("nameserver 127.0.0.1\nsearch {domain}\n"),
-        )
-        .unwrap();
+        std::fs::write(&path, format!("nameserver 127.0.0.1\nsearch {domain}\n")).unwrap();
     };
     write_config("first.invalid");
     // SAFETY: isolated child; the DNS worker never reads these variables.

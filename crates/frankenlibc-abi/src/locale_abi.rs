@@ -419,6 +419,7 @@ static CTYPE_TABLES: AtomicPtr<frankenlibc_core::locale::data::CtypeTables<'stat
 
 /// How wide-character classification, case mapping and `wcwidth` behave.
 #[allow(dead_code)]
+#[derive(Clone, Copy)]
 pub(crate) enum WideCtype {
     /// The C/POSIX locale: ASCII only, as glibc's built-in C locale.
     Ascii,
@@ -463,6 +464,21 @@ pub(crate) fn wide_ctype() -> WideCtype {
         Charset::Ascii => WideCtype::Ascii,
         Charset::Utf8 => WideCtype::Builtin,
     }
+}
+
+/// Borrow the immutable LC_CTYPE tables of an explicit locale object without
+/// selecting it on this thread. The copied category view does not borrow the
+/// handle registry, and loaded tables remain alive independently of the object.
+/// Null/unknown handles retain the existing current-locale fallback; POSIX does
+/// not define those inputs (or LC_GLOBAL_LOCALE) for the wide `_l` functions.
+#[inline]
+pub(crate) fn handle_wide_ctype(handle: LocaleT) -> WideCtype {
+    if handle.is_null() {
+        return wide_ctype();
+    }
+    categories_for_handle(handle).map_or_else(wide_ctype, |categories| {
+        wide_ctype_thread_override(categories[locale_core::LC_CTYPE as usize])
+    })
 }
 
 /// glibc's C.UTF-8 is compiled locale data too; use it when installed so

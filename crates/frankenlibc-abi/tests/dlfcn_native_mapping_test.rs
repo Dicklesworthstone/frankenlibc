@@ -115,6 +115,16 @@ struct Fixture {
 }
 impl Fixture {
     fn new(alignment: usize, max_page: bool) -> Self {
+        Self::build(alignment, max_page, None, false, false)
+    }
+
+    fn build(
+        alignment: usize,
+        max_page: bool,
+        origin: Option<u64>,
+        tlsdesc: bool,
+        relr: bool,
+    ) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "frankenlibc-mapping-{}-{}",
             std::process::id(),
@@ -145,14 +155,26 @@ impl Fixture {
         if max_page {
             command.arg("-Wl,-z,max-page-size=0x200000");
         }
+        if let Some(origin) = origin {
+            command.args([
+                "-DNONZERO_RUNTIME",
+                "-Wl,-init,mapping_legacy_init,-fini,mapping_legacy_fini",
+            ]);
+            command.arg(format!("-Wl,-Ttext-segment={origin:#x}"));
+        }
+        if tlsdesc {
+            command.arg("-mtls-dialect=gnu2");
+        }
+        if relr {
+            command.arg("-Wl,-z,pack-relative-relocs");
+        }
         compile(&mut command);
         let object = parse(&library);
         assert!(object.needed_libraries.is_empty());
-        assert!(
-            object
-                .undefined_symbols()
-                .all(|(_, symbol)| symbol.is_weak())
-        );
+        assert!(object.undefined_symbols().all(|(_, symbol)| {
+            symbol.is_weak()
+                || (origin.is_some() && object.symbol_name(symbol) == Some("__tls_get_addr"))
+        }));
         assert_eq!(
             object
                 .program_headers
@@ -560,6 +582,7 @@ fn reservation_partitions_every_page_offset_without_overlapping_live_memory() {
         for length in [4096, 12288, alignment + 4096] {
             let layout = map_layout::Reservation::new(
                 length,
+                0,
                 [(0, 0, 4096), (alignment as u64, 0, alignment as u64)],
             )
             .unwrap();
@@ -583,18 +606,20 @@ fn reservation_partitions_every_page_offset_without_overlapping_live_memory() {
 fn reservation_rejects_invalid_sizes_congruence_alignment_and_overflow() {
     use map_layout::Reservation as R;
     for alignment in [0u64, 1, 4096, 65536] {
-        assert!(R::new(4096, [(0, 0, alignment)]).is_some());
+        assert!(R::new(4096, 0, [(0, 0, alignment)]).is_some());
     }
-    assert!(R::new(4096, []).is_none());
+    assert!(R::new(4096, 0, []).is_none());
     for size in [0usize, 1, 4095, 4097, usize::MAX] {
-        assert!(R::new(size, [(0, 0, 4096)]).is_none());
+        assert!(R::new(size, 0, [(0, 0, 4096)]).is_none());
     }
     for alignment in [3u64, 4097, 12288, 1u64 << 63, u64::MAX] {
-        assert!(R::new(4096, [(0, 0, alignment)]).is_none());
+        assert!(R::new(4096, 0, [(0, 0, alignment)]).is_none());
     }
-    assert!(R::new(4096, [(4096, 0, 65536)]).is_none());
-    assert!(R::new(4096, [(1, 0, 0)]).is_none());
-    let layout = R::new(4096, [(0, 0, 65536)]).unwrap();
+    assert!(R::new(4096, 0, [(4096, 0, 65536)]).is_none());
+    assert!(R::new(4096, 0, [(1, 0, 0)]).is_none());
+    assert!(R::new(4096, 1, [(0, 0, 4096)]).is_none());
+    assert!(R::new(4096, u64::MAX & !4095, [(0, 0, 4096)]).is_none());
+    let layout = R::new(4096, 0, [(0, 0, 65536)]).unwrap();
     assert!(layout.place(1).is_none());
     assert!(layout.place(usize::MAX & !4095).is_none());
 }
@@ -612,4 +637,215 @@ fn relro_rounding_excludes_partial_tail_and_validates_before_rounding() {
         end: 0x1000,
     };
     assert!(relro_pages(&reversed, 0x3000).is_none());
+}
+
+#[test]
+fn reservation_aligns_bias_for_nonzero_virtual_origins() {
+    for alignment in [4096usize, 8192, 65536, 2097152] {
+        for low in [0x11000u64, 0x1_0001_1000, 0x1_0020_0000] {
+            let layout = map_layout::Reservation::new(
+                0x3000,
+                low,
+                [
+                    (low, low % 4096, 4096),
+                    (
+                        low + alignment as u64,
+                        low % alignment as u64,
+                        alignment as u64,
+                    ),
+                ],
+            )
+            .unwrap();
+            for offset in (0..alignment).step_by(4096) {
+                let reserved = 0x7000_0000_0000usize + offset;
+                let placement = layout.place(reserved).unwrap();
+                assert_eq!((placement.base - low as usize) % alignment, 0);
+                assert_eq!(
+                    placement.prefix + 0x3000 + placement.suffix,
+                    layout.reserve_len
+                );
+                assert_eq!(reserved + placement.prefix, placement.base);
+                assert_eq!(placement.prefix % 4096, 0);
+                assert_eq!(placement.suffix % 4096, 0);
+                assert!(placement.prefix < alignment);
+            }
+        }
+    }
+    let layout = map_layout::Reservation::new(4096, 0x11000, [(0x11000, 0, 4096)]).unwrap();
+    assert!(layout.place(0x1000).is_none());
+}
+
+#[test]
+fn mapping_nonzero_origins_preserve_relocations_tls_callbacks_and_unwind() {
+    isolated(
+        "mapping_nonzero_origins_preserve_relocations_tls_callbacks_and_unwind",
+        |api| {
+            use std::sync::atomic::{AtomicI32, Ordering};
+            static FINALIZED: AtomicI32 = AtomicI32::new(0);
+            extern "C" fn finalized(event: c_int) {
+                FINALIZED
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |previous| {
+                        Some(previous * 10 + event)
+                    })
+                    .unwrap();
+            }
+            let mut geometries = vec![
+                (0x11000, 4096, false, false, false),
+                (0x10000, 65536, true, true, false),
+                (0x1_0001_0000, 65536, false, true, true),
+                (0x1_0001_1000, 4096, true, false, true),
+            ];
+            if api.native {
+                // GNU's loader can align the mapping start instead of the load
+                // bias for over-aligned images with a nonzero origin residue.
+                // Its shared controls above use aligned origins. Keep both
+                // residue cases as additional native requirements, with every
+                // alignment, TLS, lifecycle, and unwind assertion intact.
+                geometries.extend([
+                    (0x11000, 65536, true, true, false),
+                    (0x1_0001_1000, 65536, false, true, true),
+                ]);
+            }
+            for (origin, alignment, tlsdesc, relr, stripped) in geometries {
+                let fixture = Fixture::build(alignment, false, Some(origin), tlsdesc, relr);
+                if stripped {
+                    let mut bytes = std::fs::read(&fixture.library).unwrap();
+                    bytes[40..48].fill(0);
+                    bytes[58..64].fill(0);
+                    std::fs::write(&fixture.library, bytes).unwrap();
+                }
+                let object = parse(&fixture.library);
+                let image = ElfLoader::new(0)
+                    .materialize_load_image(&std::fs::read(&fixture.library).unwrap(), &object)
+                    .unwrap();
+                assert_eq!(image.low_vaddr, origin);
+                assert_eq!(!object.relr_dyn.is_empty(), relr);
+                assert!(object.tls_segment.is_some());
+                if stripped {
+                    assert!(object.section_headers.is_empty());
+                }
+                let second = fixture.dir.join("second.so");
+                std::fs::copy(&fixture.library, &second).unwrap();
+                let handles = [api.open(&fixture.library), api.open(&second)];
+                let mut starts = Vec::new();
+                for handle in handles {
+                    inspect(api, handle, &object, alignment, true);
+                    let probe = api.symbol(handle, c"mapping_runtime_probe");
+                    // SAFETY: every symbol below has the exact fixture declaration.
+                    let run: unsafe extern "C" fn() -> c_int =
+                        unsafe { std::mem::transmute(probe) };
+                    assert_eq!(unsafe { run() }, 1);
+                    starts.push(inspect_nonzero_metadata(api, handle, probe, &image));
+                    let next_address = api.symbol(handle, c"mapping_tls_next");
+                    let next: unsafe extern "C" fn() -> c_int =
+                        unsafe { std::mem::transmute(next_address) };
+                    assert_eq!(unsafe { next() }, 20);
+                    assert_eq!(
+                        std::thread::spawn(move || {
+                            // SAFETY: both handles remain live until this worker is joined.
+                            let next: unsafe extern "C" fn() -> c_int =
+                                unsafe { std::mem::transmute(next_address) };
+                            unsafe { next() }
+                        })
+                        .join()
+                        .unwrap(),
+                        20
+                    );
+                    assert_eq!(unsafe { next() }, 21);
+                    let set_finalize: unsafe extern "C" fn(extern "C" fn(c_int)) =
+                        unsafe { std::mem::transmute(api.symbol(handle, c"mapping_set_finalize")) };
+                    unsafe { set_finalize(finalized) };
+                }
+                assert_ne!(starts[0], starts[1]);
+                for handle in handles {
+                    FINALIZED.store(0, Ordering::SeqCst);
+                    api.close(handle);
+                    assert_eq!(FINALIZED.load(Ordering::SeqCst), 12);
+                }
+            }
+        },
+    );
+}
+
+fn inspect_nonzero_metadata(
+    api: Api,
+    handle: *mut c_void,
+    probe: usize,
+    image: &frankenlibc_core::elf::LoadImage,
+) -> usize {
+    #[repr(C)]
+    struct LinkMap {
+        bias: usize,
+        name: *const c_char,
+        dynamic: *const c_void,
+        next: *const c_void,
+        previous: *const c_void,
+    }
+    struct Frames {
+        first: usize,
+        end: usize,
+        seen: usize,
+    }
+    unsafe extern "C" {
+        fn _Unwind_Backtrace(
+            callback: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int,
+            argument: *mut c_void,
+        ) -> c_int;
+        fn _Unwind_GetIP(context: *mut c_void) -> usize;
+    }
+    unsafe extern "C" fn frame(context: *mut c_void, argument: *mut c_void) -> c_int {
+        // SAFETY: the synchronous unwinder supplies its context, and walk
+        // retains this stack-owned Frames for the complete invocation.
+        let (pc, frames) = unsafe { (_Unwind_GetIP(context), &mut *argument.cast::<Frames>()) };
+        frames.seen += usize::from(frames.first <= pc && pc < frames.end);
+        0
+    }
+    unsafe extern "C" fn walk(argument: *mut c_void) {
+        // SAFETY: frame and its argument retain the unwind callback ABI.
+        let _ = unsafe { _Unwind_Backtrace(frame, argument) };
+    }
+    type Info = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
+    type Address = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
+    let (info, address): (Info, Address) = if api.native {
+        (frankenlibc_abi::glibc_internal_abi::dlinfo, dl::dladdr)
+    } else {
+        // SAFETY: independent host symbols have these public signatures.
+        unsafe {
+            (
+                dlsym_oracle::host_fn(
+                    c"dlinfo",
+                    frankenlibc_abi::glibc_internal_abi::dlinfo as *const (),
+                ),
+                dlsym_oracle::host_fn(c"dladdr", dl::dladdr as *const ()),
+            )
+        }
+    };
+    let mut link = std::ptr::null_mut::<LinkMap>();
+    // SAFETY: the handle remains live and output storage matches RTLD_DI_LINKMAP.
+    assert_eq!(
+        unsafe { info(handle, 2, (&mut link as *mut *mut LinkMap).cast()) },
+        0
+    );
+    assert!(!link.is_null());
+    let bias = unsafe { (*link).bias };
+    let first = bias.checked_add(image.low_vaddr as usize).unwrap();
+    let mut found = std::mem::MaybeUninit::<libc::Dl_info>::uninit();
+    assert_eq!(
+        unsafe { address(probe as *const c_void, found.as_mut_ptr().cast()) },
+        1
+    );
+    assert_eq!(unsafe { found.assume_init() }.dli_fbase as usize, first);
+    let trace: unsafe extern "C" fn(unsafe extern "C" fn(*mut c_void), *mut c_void) -> c_int =
+        unsafe { std::mem::transmute(api.symbol(handle, c"mapping_walk")) };
+    let mut frames = Frames {
+        first,
+        end: first + image.memory.len(),
+        seen: 0,
+    };
+    assert_eq!(
+        unsafe { trace(walk, (&mut frames as *mut Frames).cast()) },
+        1
+    );
+    assert!(frames.seen > 0, "unwinder skipped the mapped DSO");
+    first
 }

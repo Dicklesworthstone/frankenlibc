@@ -821,6 +821,9 @@ impl SymbolLookup for NullSymbolLookup {
 pub struct ElfLoader {
     /// Relocation context
     ctx: RelocationContext,
+    /// ELF virtual address represented by the first byte of a relocation
+    /// buffer. This is independent of the runtime load bias in `ctx.base`.
+    image_vaddr: u64,
 }
 
 impl ElfLoader {
@@ -828,7 +831,16 @@ impl ElfLoader {
     pub fn new(base: u64) -> Self {
         Self {
             ctx: RelocationContext::new(base),
+            image_vaddr: 0,
         }
+    }
+
+    /// Relocate a materialized image whose lowest PT_LOAD address is nonzero.
+    /// Relocation expressions still use the original ELF virtual addresses;
+    /// only reads and writes into the supplied slice subtract this origin.
+    pub fn with_image_vaddr(mut self, image_vaddr: u64) -> Self {
+        self.image_vaddr = image_vaddr;
+        self
     }
 
     /// Set the GOT base address.
@@ -1366,7 +1378,10 @@ impl ElfLoader {
             Err(r) => return (r, 0),
         };
 
-        match write_relocation_value(memory, reloc.r_offset, value, size) {
+        let Some(offset) = reloc.r_offset.checked_sub(self.image_vaddr) else {
+            return (RelocationResult::Overflow, 0);
+        };
+        match write_relocation_value(memory, offset, value, size) {
             RelocationResult::Applied => (RelocationResult::Applied, size),
             result => (result, 0),
         }
@@ -1378,6 +1393,13 @@ impl ElfLoader {
         reloc: &Elf64Rela,
         resolver: &S,
     ) -> (RelocationResult, usize) {
+        let Some(offset) = reloc.r_offset.checked_sub(self.image_vaddr) else {
+            return (RelocationResult::Overflow, 0);
+        };
+        // Reject an invalid target before invoking a user IFUNC resolver.
+        if read_relocation_value(memory, offset, 8).is_none() {
+            return (RelocationResult::Overflow, 0);
+        }
         let resolver_address = match add_signed_to_u64(self.ctx.base, reloc.r_addend) {
             Some(value) => value,
             None => return (RelocationResult::Overflow, 0),
@@ -1385,13 +1407,16 @@ impl ElfLoader {
         let Some(value) = resolver.resolve_ifunc(resolver_address) else {
             return (RelocationResult::Unsupported(37), 0);
         };
-        match write_relocation_value(memory, reloc.r_offset, value, 8) {
+        match write_relocation_value(memory, offset, value, 8) {
             RelocationResult::Applied => (RelocationResult::Applied, 8),
             result => (result, 0),
         }
     }
 
     fn apply_relr_relative(&self, memory: &mut [u8], offset: u64) -> (RelocationResult, usize) {
+        let Some(offset) = offset.checked_sub(self.image_vaddr) else {
+            return (RelocationResult::Overflow, 0);
+        };
         let Some(addend) = read_relocation_value(memory, offset, 8) else {
             return (RelocationResult::Overflow, 0);
         };
@@ -3406,5 +3431,132 @@ mod tests {
         assert_eq!(report.events[0].write_size, 8);
         assert_eq!(u64::from_le_bytes(memory), 0xfeed_face_cafe_beef);
         assert_eq!(resolver.calls.into_inner(), vec![0x1040]);
+    }
+
+    #[test]
+    fn nonzero_image_relocations_preserve_virtual_address_expressions() -> ElfResult<()> {
+        let low = 0x1_0001_1000u64;
+        let bias = 0x7000_0000_0000u64;
+        let loader = ElfLoader::new(bias).with_image_vaddr(low);
+        let mut object = object_with_symbols(bias, None, &[], &[("data", low + 0x120, None)])?;
+        object.relr_dyn = vec![low];
+        object.rela_dyn = vec![
+            Elf64Rela {
+                r_offset: low + 8,
+                r_info: RelocationType::Relative.to_u32() as u64,
+                r_addend: (low + 0x100) as i64,
+            },
+            Elf64Rela {
+                r_offset: low + 16,
+                r_info: (1u64 << 32) | RelocationType::Pc32.to_u32() as u64,
+                r_addend: 0,
+            },
+            Elf64Rela {
+                r_offset: low + 24,
+                r_info: (1u64 << 32) | RelocationType::R64.to_u32() as u64,
+                r_addend: 7,
+            },
+        ];
+        let mut memory = [0u8; 32];
+        memory[..8].copy_from_slice(&(low + 0x80).to_le_bytes());
+        let report = loader.apply_relocations_with_policy(
+            &object,
+            &mut memory,
+            &NullSymbolLookup,
+            PltBindingPolicy::Eager,
+        );
+        assert_eq!(report.stats.applied, 4);
+        assert!(report.stats.all_successful());
+        assert_eq!(
+            u64::from_le_bytes(memory[..8].try_into().unwrap()),
+            bias + low + 0x80
+        );
+        assert_eq!(
+            u64::from_le_bytes(memory[8..16].try_into().unwrap()),
+            bias + low + 0x100
+        );
+        assert_eq!(
+            u32::from_le_bytes(memory[16..20].try_into().unwrap()),
+            0x110
+        );
+        assert_eq!(
+            u64::from_le_bytes(memory[24..].try_into().unwrap()),
+            bias + low + 0x127
+        );
+        assert_eq!(
+            report
+                .events
+                .iter()
+                .map(|event| event.offset)
+                .collect::<Vec<_>>(),
+            [low, low + 8, low + 16, low + 24]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nonzero_image_ifunc_uses_bias_and_rejects_outside_targets_before_callback() {
+        struct Resolver(RefCell<Vec<u64>>);
+        impl SymbolLookup for Resolver {
+            fn lookup(&self, _: &str) -> Option<u64> {
+                None
+            }
+            fn resolve_ifunc(&self, address: u64) -> Option<u64> {
+                self.0.borrow_mut().push(address);
+                Some(0x1234_5678)
+            }
+        }
+        let low = 0x11000;
+        let bias = 0x7000_0000;
+        let loader = ElfLoader::new(bias).with_image_vaddr(low);
+        let resolver = Resolver(RefCell::new(Vec::new()));
+        for target in [low - 1, low + 1, u64::MAX, low] {
+            let mut object = empty_loaded_object();
+            object.rela_dyn.push(Elf64Rela {
+                r_offset: target,
+                r_info: RelocationType::IRelative.to_u32() as u64,
+                r_addend: (low + 0x200) as i64,
+            });
+            let mut memory = [0xa5u8; 8];
+            let report = loader.apply_relocations_with_policy(
+                &object,
+                &mut memory,
+                &resolver,
+                PltBindingPolicy::Eager,
+            );
+            if target == low {
+                assert_eq!(report.stats.applied, 1);
+                assert_eq!(u64::from_le_bytes(memory), 0x1234_5678);
+            } else {
+                assert_eq!(report.stats.overflow, 1);
+                assert_eq!(memory, [0xa5; 8]);
+                assert!(resolver.0.borrow().is_empty());
+            }
+        }
+        assert_eq!(resolver.0.into_inner(), [bias + low + 0x200]);
+    }
+
+    #[test]
+    fn nonzero_image_relative_relocations_reject_underflow_and_partial_words() {
+        let low = 0x11000;
+        let loader = ElfLoader::new(0x7000_0000).with_image_vaddr(low);
+        for target in [0, low - 1, low + 1, u64::MAX] {
+            let mut object = empty_loaded_object();
+            object.relr_dyn.push(target);
+            object.rela_dyn.push(Elf64Rela {
+                r_offset: target,
+                r_info: RelocationType::Relative.to_u32() as u64,
+                r_addend: low as i64,
+            });
+            let mut memory = [0xa5u8; 8];
+            let report = loader.apply_relocations_with_policy(
+                &object,
+                &mut memory,
+                &NullSymbolLookup,
+                PltBindingPolicy::Eager,
+            );
+            assert_eq!(report.stats.overflow, 2);
+            assert_eq!(memory, [0xa5; 8]);
+        }
     }
 }

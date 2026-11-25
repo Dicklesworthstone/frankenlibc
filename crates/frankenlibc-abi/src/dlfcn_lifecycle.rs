@@ -123,19 +123,11 @@ impl Layout {
         let mut fini = read_array(dso, self.fini_array, self.fini_size)?;
         fini.reverse();
         if let Some(offset) = self.init.filter(|offset| *offset != 0) {
-            init.push(
-                dso.mapping
-                    .base
-                    .checked_add(usize::try_from(offset).ok()?)?,
-            );
+            init.push(usize::try_from(dso.object.base.checked_add(offset)?).ok()?);
         }
         init.extend(read_array(dso, self.init_array, self.init_size)?);
         if let Some(offset) = self.fini.filter(|offset| *offset != 0) {
-            fini.push(
-                dso.mapping
-                    .base
-                    .checked_add(usize::try_from(offset).ok()?)?,
-            );
+            fini.push(usize::try_from(dso.object.base.checked_add(offset)?).ok()?);
         }
         Some(Callbacks { init, fini })
     }
@@ -155,22 +147,21 @@ fn read_array(dso: &NativeDso, address: Option<u64>, size: Option<u64>) -> Optio
     if size == 0 {
         return Some(Vec::new());
     }
-    let offset = usize::try_from(address?).ok()?;
-    let end = offset.checked_add(size)?;
-    if end > dso.mapping.len
-        || !dso.object.program_headers.iter().any(|header| {
-            header.is_load()
-                && header.p_flags.0 & 4 != 0
-                && header.p_vaddr <= offset as u64
-                && header
-                    .p_vaddr
-                    .checked_add(header.p_memsz)
-                    .is_some_and(|limit| end as u64 <= limit)
-        })
-    {
+    let vaddr = address?;
+    let range = dso.mapping.range(&dso.object, vaddr, size)?;
+    let end = vaddr.checked_add(size as u64)?;
+    if !dso.object.program_headers.iter().any(|header| {
+        header.is_load()
+            && header.p_flags.0 & 4 != 0
+            && header.p_vaddr <= vaddr
+            && header
+                .p_vaddr
+                .checked_add(header.p_memsz)
+                .is_some_and(|limit| end <= limit)
+    }) {
         return None;
     }
-    let start = dso.mapping.base.checked_add(offset)?;
+    let start = dso.mapping.base.checked_add(range.start)?;
     let mut callbacks = Vec::with_capacity(size / 8);
     for offset in (0..size).step_by(8) {
         // SAFETY: checked readable PT_LOAD range of this unpublished mapping.
@@ -184,13 +175,15 @@ fn read_array(dso: &NativeDso, address: Option<u64>, size: Option<u64>) -> Optio
 }
 
 pub(super) fn executable_address(dso: &NativeDso, address: usize) -> bool {
-    let Some(offset) = address.checked_sub(dso.mapping.base) else {
+    let Some(image_offset) = address.checked_sub(dso.mapping.base) else {
         return false;
     };
-    if offset >= dso.mapping.len {
+    if image_offset >= dso.mapping.len {
         return false;
     }
-    let offset = offset as u64;
+    let Some(offset) = (address as u64).checked_sub(dso.object.base) else {
+        return false;
+    };
     let mut backed = false;
     let mut executable = false;
     // Match protect_object's actual page protections in program-header order.
@@ -215,22 +208,18 @@ pub(super) fn executable_address(dso: &NativeDso, address: usize) -> bool {
         if header.p_type != ProgramType::GnuRelro || header.p_memsz == 0 {
             continue;
         }
-        let Ok(start) = usize::try_from(header.p_vaddr) else {
+        let Ok(size) = usize::try_from(header.p_memsz) else {
             return false;
         };
-        let Some(end) = header
-            .p_vaddr
-            .checked_add(header.p_memsz)
-            .and_then(|end| usize::try_from(end).ok())
-        else {
+        let Some(range) = dso.mapping.range(&dso.object, header.p_vaddr, size) else {
             return false;
         };
         // Match the exact interval installed by protect_object. A trailing
         // partial RELRO page retains its PT_LOAD execution permission.
-        let Some(pages) = super::map_layout::relro_pages(&(start..end), dso.mapping.len) else {
+        let Some(pages) = super::map_layout::relro_pages(&range, dso.mapping.len) else {
             return false;
         };
-        if pages.contains(&(offset as usize)) {
+        if pages.contains(&image_offset) {
             return false;
         }
     }

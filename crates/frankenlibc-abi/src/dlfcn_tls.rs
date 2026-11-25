@@ -211,7 +211,11 @@ fn addend_offset(offset: u64, limit: u64, addend: i64) -> Option<u64> {
 pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'_>) -> Option<()> {
     for relocation in &dso.tls_relocations {
         let definition = definition(dso, resolver, relocation.symbol_index() as usize)?;
-        let start = usize::try_from(relocation.r_offset).ok()?;
+        let width = if is_descriptor(relocation) { 16 } else { 8 };
+        let start = dso
+            .mapping
+            .range(&dso.object, relocation.r_offset, width)?
+            .start;
         if is_descriptor(relocation) {
             #[cfg(target_arch = "x86_64")]
             {
@@ -341,10 +345,7 @@ impl Module {
         let first_byte = usize::try_from(segment.vaddr % align as u64).ok()?;
         let layout = Layout::from_size_align(size.checked_add(first_byte)?.max(1), align).ok()?;
         let count = usize::try_from(segment.filesz).ok()?;
-        let start = usize::try_from(segment.vaddr).ok()?;
-        if start.checked_add(count)? > dso.mapping.len {
-            return None;
-        }
+        let start = dso.mapping.range(&dso.object, segment.vaddr, count)?.start;
         let mut template = Vec::new();
         template.try_reserve_exact(count).ok()?;
         if count != 0 {
