@@ -2441,46 +2441,6 @@ fn clock_gettime_checked(clockid: c_int) -> Result<libc::timespec, c_int> {
     }
 }
 
-/// Convert an absolute `timespec` deadline from `clockid` to `CLOCK_REALTIME`.
-fn clock_convert_to_realtime(
-    clockid: c_int,
-    abstime: *const libc::timespec,
-) -> Result<libc::timespec, c_int> {
-    clock_convert_between(clockid, libc::CLOCK_REALTIME, abstime)
-}
-
-fn clock_convert_between(
-    from_clockid: c_int,
-    to_clockid: c_int,
-    abstime: *const libc::timespec,
-) -> Result<libc::timespec, c_int> {
-    if from_clockid == to_clockid {
-        // SAFETY: caller supplied a valid absolute timespec pointer.
-        return Ok(unsafe { *abstime });
-    }
-    let clock_now = clock_gettime_checked(from_clockid)?;
-    let target_now = clock_gettime_checked(to_clockid)?;
-    let deadline = unsafe { &*abstime };
-    // Epoch offsets can push a valid time_t deadline outside time_t's range.
-    // Widen before every operation, then clamp the translated instant so an
-    // extreme future deadline never wraps into the past or panics in the ABI.
-    const NS_PER_SECOND: i128 = 1_000_000_000;
-    let translated = (i128::from(target_now.tv_sec) + i128::from(deadline.tv_sec)
-        - i128::from(clock_now.tv_sec))
-        * NS_PER_SECOND
-        + i128::from(target_now.tv_nsec)
-        + i128::from(deadline.tv_nsec)
-        - i128::from(clock_now.tv_nsec);
-    let translated = translated.clamp(
-        i128::from(libc::time_t::MIN) * NS_PER_SECOND,
-        i128::from(libc::time_t::MAX) * NS_PER_SECOND + NS_PER_SECOND - 1,
-    );
-    Ok(libc::timespec {
-        tv_sec: translated.div_euclid(NS_PER_SECOND) as libc::time_t,
-        tv_nsec: translated.rem_euclid(NS_PER_SECOND) as libc::c_long,
-    })
-}
-
 fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
     if abstime.is_null() {
         return false;
@@ -2489,68 +2449,6 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
     // Negative seconds describe an expired instant, not an invalid timespec.
     // A free mutex must still be acquired before the timeout is considered.
     (0..1_000_000_000).contains(&ts.tv_nsec)
-}
-
-/// Futex wait with an absolute CLOCK_REALTIME deadline.
-///
-/// Linux `FUTEX_WAIT` expects a relative timeout, so convert the caller's
-/// absolute pthread-style deadline to a per-call relative duration.
-#[cfg(target_os = "linux")]
-fn futex_wait_timed(
-    word: &AtomicI32,
-    expected: i32,
-    abstime: *const libc::timespec,
-    private: bool,
-) -> c_int {
-    let now = match clock_gettime_checked(libc::CLOCK_REALTIME) {
-        Ok(now) => now,
-        Err(errno) => {
-            unsafe { set_abi_errno(errno) };
-            return -1;
-        }
-    };
-    let deadline = unsafe { &*abstime };
-    // Extreme negative tv_sec values are valid expired deadlines. Use
-    // checked_sub so they produce ETIMEDOUT instead of panicking in debug or
-    // wrapping to a ~9e18-second "infinite" timeout in release. (bd-dc9mc)
-    let Some(sec_diff) = deadline.tv_sec.checked_sub(now.tv_sec) else {
-        unsafe { set_abi_errno(libc::ETIMEDOUT) };
-        return -1;
-    };
-    let mut rel = libc::timespec {
-        tv_sec: sec_diff,
-        tv_nsec: deadline.tv_nsec - now.tv_nsec,
-    };
-    if rel.tv_nsec < 0 {
-        // tv_sec may already be at i64::MIN; fail closed with ETIMEDOUT.
-        let Some(adj) = rel.tv_sec.checked_sub(1) else {
-            unsafe { set_abi_errno(libc::ETIMEDOUT) };
-            return -1;
-        };
-        rel.tv_sec = adj;
-        rel.tv_nsec += 1_000_000_000;
-    }
-    if rel.tv_sec < 0 || (rel.tv_sec == 0 && rel.tv_nsec <= 0) {
-        unsafe { set_abi_errno(libc::ETIMEDOUT) };
-        return -1;
-    }
-    let futex_op = libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 };
-    match unsafe {
-        raw_syscall::sys_futex(
-            word as *const AtomicI32 as *const u32,
-            futex_op,
-            expected as u32,
-            &rel as *const libc::timespec as usize,
-            0,
-            0,
-        )
-    } {
-        Ok(_) => 0,
-        Err(errno) => {
-            unsafe { set_abi_errno(errno) };
-            -1
-        }
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2582,7 +2480,7 @@ fn futex_wait_absolute_clock(
             0
         };
     // SAFETY: the caller's live, aligned atomic word and timespec outlive the
-    // syscall. This is not a cancellation point (rwlock acquisition is not one).
+    // syscall. Mutex and rwlock acquisition are not cancellation points.
     match unsafe {
         raw_syscall::sys_futex(
             word as *const AtomicI32 as *const u32,
@@ -2593,21 +2491,9 @@ fn futex_wait_absolute_clock(
             u32::MAX,
         )
     } {
-        Ok(_) => 0,
-        Err(errno) => {
-            unsafe { set_abi_errno(errno) };
-            -1
-        }
+        Ok(_) | Err(libc::EINTR | libc::EAGAIN) => 0,
+        Err(error) => error,
     }
-}
-
-#[cfg(target_os = "linux")]
-fn futex_wait_timed_private(
-    word: &AtomicI32,
-    expected: i32,
-    abstime: *const libc::timespec,
-) -> c_int {
-    futex_wait_timed(word, expected, abstime, true)
 }
 
 #[allow(unsafe_code)]
@@ -3828,25 +3714,11 @@ fn mutex_owner_dead(pid: i32, tid: i32) -> bool {
             || (pid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH)))
 }
 
-/// Nanoseconds from now until an absolute CLOCK_REALTIME deadline.
-fn realtime_remaining_ns(deadline: &libc::timespec) -> i64 {
-    let mut now = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: valid out-pointer for clock_gettime.
-    let _ = unsafe {
-        raw_syscall::sys_clock_gettime(
-            libc::CLOCK_REALTIME,
-            &mut now as *mut libc::timespec as *mut u8,
-        )
-    };
-    // Saturating only the seconds multiplication leaves both the preceding
-    // subtraction and the final nanoseconds addition vulnerable to overflow.
-    let remaining = (i128::from(deadline.tv_sec) - i128::from(now.tv_sec)) * 1_000_000_000
-        + i128::from(deadline.tv_nsec)
-        - i128::from(now.tv_nsec);
-    remaining.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+/// A mutex timeout retains the caller's clock through every contention retry.
+#[derive(Clone, Copy)]
+struct MutexDeadline<'a> {
+    clock: c_int,
+    time: &'a libc::timespec,
 }
 
 /// Block while `word == expected` for at most `timeout_ns` (None: forever).
@@ -3889,7 +3761,7 @@ fn ext_futex_wake(word: &AtomicI32, raw_type: i32, count: i32) {
 unsafe fn ext_mutex_lock(
     mutex: *mut libc::pthread_mutex_t,
     raw_type: i32,
-    deadline: Option<&libc::timespec>,
+    deadline: Option<MutexDeadline<'_>>,
     try_only: bool,
 ) -> c_int {
     let Some(m) = ext_mutex_fields(mutex) else {
@@ -3986,7 +3858,7 @@ fn ext_acquire(
     m: &ExtMutex<'_>,
     raw_type: i32,
     tid: i32,
-    deadline: Option<&libc::timespec>,
+    deadline: Option<MutexDeadline<'_>>,
     try_only: bool,
 ) -> c_int {
     let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
@@ -4038,20 +3910,41 @@ fn ext_acquire(
         if m.word.swap(2, Ordering::Acquire) == 0 {
             return 0;
         }
-        let mut timeout = robust.then_some(ROBUST_OWNER_POLL_NS);
-        if let Some(deadline) = deadline {
-            // Free acquisition and ordinary robust recovery take precedence
-            // over timeout validation; only a blocking wait needs this field.
-            if !(0..1_000_000_000).contains(&deadline.tv_nsec) {
+        let mut poll_ns = robust.then_some(ROBUST_OWNER_POLL_NS);
+        if let Some(MutexDeadline { clock, time }) = deadline {
+            // Free acquisition and ordinary robust recovery take precedence.
+            if !(0..1_000_000_000).contains(&time.tv_nsec) {
                 return libc::EINVAL;
             }
-            let remaining = realtime_remaining_ns(deadline);
+            if !robust {
+                let rc = futex_wait_absolute_clock(
+                    m.word,
+                    2,
+                    time,
+                    clock,
+                    futex_private_bit(raw_type) != 0,
+                );
+                if rc != 0 {
+                    return rc;
+                }
+                continue;
+            }
+            // Robust owner death may require a userspace liveness probe even
+            // without a wake. Bound each polling interval by this clock's
+            // remaining budget; a clock adjustment is seen on the next probe.
+            let now = match clock_gettime_checked(clock) {
+                Ok(now) => now,
+                Err(error) => return error,
+            };
+            let remaining = (i128::from(time.tv_sec) - i128::from(now.tv_sec)) * 1_000_000_000
+                + i128::from(time.tv_nsec)
+                - i128::from(now.tv_nsec);
             if remaining <= 0 {
                 return libc::ETIMEDOUT;
             }
-            timeout = Some(timeout.map_or(remaining, |t| t.min(remaining)));
+            poll_ns = Some(remaining.min(i128::from(ROBUST_OWNER_POLL_NS)) as i64);
         }
-        ext_futex_wait(m.word, 2, raw_type, timeout);
+        ext_futex_wait(m.word, 2, raw_type, poll_ns);
     }
 }
 
@@ -4060,7 +3953,7 @@ fn ext_pi_acquire(
     m: &ExtMutex<'_>,
     raw_type: i32,
     tid: i32,
-    deadline: Option<&libc::timespec>,
+    deadline: Option<MutexDeadline<'_>>,
     try_only: bool,
 ) -> c_int {
     let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
@@ -4079,7 +3972,7 @@ fn ext_pi_acquire(
         // negative deadlines before even granting dead-owner recovery. Keep
         // that ordering ahead of our userspace takeover as well as the futex.
         if deadline.is_some_and(|deadline| {
-            deadline.tv_sec < 0 || !(0..1_000_000_000).contains(&deadline.tv_nsec)
+            deadline.time.tv_sec < 0 || !(0..1_000_000_000).contains(&deadline.time.tv_nsec)
         }) {
             return libc::EINVAL;
         }
@@ -4121,32 +4014,62 @@ fn ext_pi_acquire(
         if try_only {
             return libc::EBUSY;
         }
-        // FUTEX_LOCK_PI takes an absolute CLOCK_REALTIME deadline.
-        let ts_ptr = deadline.map_or(0, |d| d as *const libc::timespec as usize);
+        // Linux FUTEX_LOCK_PI uses realtime. Its PI2 counterpart accepts an
+        // absolute monotonic deadline without sampling either clock.
+        const FUTEX_LOCK_PI2: c_int = 13;
+        let op = if deadline.is_some_and(|d| d.clock == libc::CLOCK_MONOTONIC) {
+            FUTEX_LOCK_PI2
+        } else {
+            libc::FUTEX_LOCK_PI
+        };
+        let ts_ptr = deadline.map_or(0, |d| d.time as *const libc::timespec as usize);
         // SAFETY: PI futex on the caller's lock word with a live deadline.
         let r = unsafe {
             raw_syscall::sys_futex(
                 m.word as *const AtomicI32 as *const u32,
-                libc::FUTEX_LOCK_PI | futex_private_bit(raw_type),
+                op | futex_private_bit(raw_type),
                 0,
                 ts_ptr,
                 0,
                 0,
             )
         };
-        match r {
-            Ok(_) => {
+        match (r, deadline) {
+            (Ok(_), _) => {
                 if m.word.load(Ordering::Acquire) & FUTEX_PI_OWNER_DIED != 0 {
                     m.word.fetch_and(!FUTEX_PI_OWNER_DIED, Ordering::AcqRel);
                     return libc::EOWNERDEAD;
                 }
                 return 0;
             }
-            Err(libc::ETIMEDOUT) => return libc::ETIMEDOUT,
-            Err(libc::EINTR) | Err(libc::EAGAIN) => continue,
+            (Err(libc::ETIMEDOUT), _) => return libc::ETIMEDOUT,
+            (Err(libc::EINTR | libc::EAGAIN), _) => continue,
+            // Linux before 5.14 cannot time a PI lock against CLOCK_MONOTONIC.
+            (Err(libc::ENOSYS), _) if op == FUTEX_LOCK_PI2 => return libc::EINVAL,
+            // A normal PI mutex may report a wait cycle (including self
+            // locking) or a vanished non-robust owner. Neither grants the
+            // mutex, but a timed caller must still finish at its deadline.
+            (Err(error), Some(d)) if error == libc::EDEADLK || (!robust && error == libc::ESRCH) =>
+            {
+                loop {
+                    // SAFETY: d.time is the caller's live absolute deadline.
+                    match unsafe {
+                        raw_syscall::sys_clock_nanosleep(
+                            d.clock,
+                            libc::TIMER_ABSTIME,
+                            (d.time as *const libc::timespec).cast(),
+                            std::ptr::null_mut(),
+                        )
+                    } {
+                        Ok(()) => return libc::ETIMEDOUT,
+                        Err(libc::EINTR) => continue,
+                        Err(error) => return error,
+                    }
+                }
+            }
             // The holder no longer exists and the mutex is not robust: glibc
             // blocks such a locker forever; so does fl.
-            Err(_) if !robust => loop {
+            (Err(_), _) if !robust => loop {
                 let forever = libc::timespec {
                     tv_sec: 3600,
                     tv_nsec: 0,
@@ -4159,7 +4082,7 @@ fn ext_pi_acquire(
                     )
                 };
             },
-            Err(_) => continue,
+            (Err(_), _) => continue,
         }
     }
 }
@@ -4470,17 +4393,9 @@ fn futex_rwlock_timed_rdlock(
         // SAFETY: the common ABI path validated this live deadline.
         let rc =
             futex_wait_absolute_clock(wait_word, expected, unsafe { &*abstime }, clockid, private);
-        if rc == 0 {
-            continue;
+        if rc != 0 {
+            return rc;
         }
-        let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
-        if errno == libc::ETIMEDOUT {
-            return libc::ETIMEDOUT;
-        }
-        if errno == libc::EINTR || errno == libc::EAGAIN {
-            continue;
-        }
-        return if errno == 0 { libc::EAGAIN } else { errno };
     }
 }
 
@@ -4509,17 +4424,9 @@ fn futex_rwlock_timed_wrlock(
         waiter.register(wpref);
         // SAFETY: the common ABI path validated this live deadline.
         let rc = futex_wait_absolute_clock(word, state, unsafe { &*abstime }, clockid, private);
-        if rc == 0 {
-            continue;
+        if rc != 0 {
+            return rc;
         }
-        let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
-        if errno == libc::ETIMEDOUT {
-            return libc::ETIMEDOUT;
-        }
-        if errno == libc::EINTR || errno == libc::EAGAIN {
-            continue;
-        }
-        return if errno == 0 { libc::EAGAIN } else { errno };
     }
 }
 
@@ -11285,6 +11192,14 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     mutex: *mut libc::pthread_mutex_t,
     abstime: *const libc::timespec,
 ) -> c_int {
+    unsafe { mutex_timedlock(mutex, libc::CLOCK_REALTIME, abstime) }
+}
+
+unsafe fn mutex_timedlock(
+    mutex: *mut libc::pthread_mutex_t,
+    clock: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
     if mutex.is_null() || abstime.is_null() {
         return libc::EINVAL;
     }
@@ -11297,8 +11212,18 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     }
     let raw_type = read_mutex_type_word(mutex);
     if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
-        // SAFETY: abstime is non-null and validated above.
-        return unsafe { ext_mutex_lock(mutex, raw_type, Some(&*abstime), false) };
+        // SAFETY: abstime is a non-null caller-supplied timespec.
+        return unsafe {
+            ext_mutex_lock(
+                mutex,
+                raw_type,
+                Some(MutexDeadline {
+                    clock,
+                    time: &*abstime,
+                }),
+                false,
+            )
+        };
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
@@ -11326,7 +11251,7 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
                     return 0;
                 }
             }
-            let rc = timed_futex_lock_normal(word, abstime);
+            let rc = timed_futex_lock_normal(word, clock, abstime);
             if rc != 0 {
                 return rc;
             }
@@ -11351,7 +11276,7 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
                     return libc::EDEADLK;
                 }
             }
-            let rc = timed_futex_lock_normal(word, abstime);
+            let rc = timed_futex_lock_normal(word, clock, abstime);
             if rc != 0 {
                 return rc;
             }
@@ -11365,10 +11290,10 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
         _ => {}
     }
 
-    timed_futex_lock_normal(word, abstime)
+    timed_futex_lock_normal(word, clock, abstime)
 }
 
-fn timed_futex_lock_normal(word: &AtomicI32, abstime: *const libc::timespec) -> c_int {
+fn timed_futex_lock_normal(word: &AtomicI32, clock: c_int, abstime: *const libc::timespec) -> c_int {
     if word
         .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
@@ -11397,18 +11322,10 @@ fn timed_futex_lock_normal(word: &AtomicI32, abstime: *const libc::timespec) -> 
 
         #[cfg(target_os = "linux")]
         {
-            let rc = futex_wait_timed_private(word, 2, abstime);
-            if rc == 0 {
-                continue;
+            let rc = futex_wait_absolute_clock(word, 2, unsafe { &*abstime }, clock, true);
+            if rc != 0 {
+                return rc;
             }
-            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
-            if errno == libc::ETIMEDOUT {
-                return libc::ETIMEDOUT;
-            }
-            if errno == libc::EINTR || errno == libc::EAGAIN {
-                continue;
-            }
-            return if errno == 0 { libc::EAGAIN } else { errno };
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -11556,8 +11473,7 @@ pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
 
 /// GNU `pthread_mutex_clocklock` — lock with specific clock timeout.
 ///
-/// Native implementation: converts clock deadline to CLOCK_REALTIME and
-/// delegates to `pthread_mutex_timedlock`.
+/// The original absolute deadline is interpreted in the selected clock.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_clocklock(
     mutex: *mut libc::pthread_mutex_t,
@@ -11574,22 +11490,7 @@ pub unsafe extern "C" fn pthread_mutex_clocklock(
     if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
         return libc::EINVAL;
     }
-    // Forward malformed nanoseconds without normalizing them: timedlock must
-    // first attempt immediate ownership transitions, then reject a blocking
-    // wait. Negative deadlines are expired on both clocks; preserve that sign
-    // for PI's EINVAL and ordinary mutexes' ETIMEDOUT without epoch arithmetic.
-    if clockid == libc::CLOCK_REALTIME
-        || !absolute_timespec_valid(abstime)
-        || unsafe { (*abstime).tv_sec } < 0
-    {
-        return unsafe { pthread_mutex_timedlock(mutex, abstime) };
-    }
-    // Convert to CLOCK_REALTIME deadline.
-    let real_deadline = match clock_convert_to_realtime(clockid, abstime) {
-        Ok(deadline) => deadline,
-        Err(err) => return err,
-    };
-    unsafe { pthread_mutex_timedlock(mutex, &real_deadline) }
+    unsafe { mutex_timedlock(mutex, clockid, abstime) }
 }
 
 /// Shared timed rwlock path: preserve the requested clock, static initializer,

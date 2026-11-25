@@ -223,6 +223,55 @@ fn mutex_deadlines_expired_waiters_match_host_errors() {
 }
 
 #[test]
+fn normal_pi_self_wait_honors_deadline_and_preserves_errno() {
+    isolated_mutex_deadline(
+        "normal_pi_self_wait_honors_deadline_and_preserves_errno",
+        || {
+            for native in [false, true] {
+                let (lock, unlock, destroy) = mutex_ops(native);
+                for flags in 0..8 {
+                    let mut mutex = mutex(native, flags);
+                    // SAFETY: this thread owns the initialized mutex for the entire test.
+                    unsafe {
+                        assert_eq!(lock(&mut *mutex), 0);
+                        for clock in MUTEX_CLOCKS {
+                            let clock_id = clock.unwrap_or(libc::CLOCK_REALTIME);
+                            let mut deadline = std::mem::zeroed();
+                            assert_eq!(libc::clock_gettime(clock_id, &mut deadline), 0);
+                            deadline.tv_nsec += 5_000_000;
+                            if deadline.tv_nsec >= 1_000_000_000 {
+                                deadline.tv_sec += 1;
+                                deadline.tv_nsec -= 1_000_000_000;
+                            }
+                            let errno = if native {
+                                frankenlibc_abi::errno_abi::__errno_location()
+                            } else {
+                                libc::__errno_location()
+                            };
+                            *errno = libc::EDOM;
+                            let status = mutex_wait(native, clock, &mut *mutex, &deadline);
+                            let after = *errno;
+                            assert_eq!(
+                                (status, after),
+                                (libc::ETIMEDOUT, libc::EDOM),
+                                "native={native}, flags={flags}, clock={clock:?}"
+                            );
+                            let mut now = std::mem::zeroed();
+                            assert_eq!(libc::clock_gettime(clock_id, &mut now), 0);
+                            assert!(
+                                (now.tv_sec, now.tv_nsec) >= (deadline.tv_sec, deadline.tv_nsec)
+                            );
+                        }
+                        assert_eq!(unlock(&mut *mutex), 0);
+                        assert_eq!(destroy(&mut *mutex), 0);
+                    }
+                }
+            }
+        },
+    );
+}
+
+#[test]
 fn mutex_deadlines_invalid_nanoseconds_are_not_normalized() {
     isolated_mutex_deadline(
         "mutex_deadlines_invalid_nanoseconds_are_not_normalized",
