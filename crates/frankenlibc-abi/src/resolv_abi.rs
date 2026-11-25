@@ -9801,38 +9801,32 @@ pub unsafe extern "C" fn __sym_ston(
 
 // --- Resolver lifecycle / queries ---
 
-/// `__res_close(*statp) -> ()` — close resolver state sockets. Stub
-/// no-op since we don't manage sockets per-state.
+/// `res_close(void)` — close the calling thread's resolver transports.
+/// Every native exchange already closes its socket, so none remain to close.
 ///
 /// # Safety
-/// `statp` may be NULL; we don't dereference it.
+/// This entry point has no caller-owned memory preconditions.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __res_close(_statp: *mut c_void) {}
+pub unsafe extern "C" fn __res_close() {}
 
-/// `__res_isourserver(*statp, *addr) -> int` — check if `*addr`
-/// matches a configured IPv4 nameserver.
+/// `res_isourserver(addr)` — test an endpoint against the calling thread's
+/// public `_res` configuration, without implicitly initializing that state.
+/// The public C ABI takes one argument; the stateful `res_ourserver_p` helper
+/// from the reference implementation is not this exported entry point.
 ///
 /// # Safety
-/// `addr` may be NULL. Non-NULL pointers must point to a `sockaddr_in`.
+/// A non-null `addr` must point to a live `sockaddr_in` or `sockaddr_in6`
+/// matching its address family. Null, misaligned, and known-short inputs fail.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, addr: *const c_void) -> c_int {
-    if !tracked_object_fits(addr.cast::<libc::sockaddr_in>()) {
+pub unsafe extern "C" fn __res_isourserver(addr: *const c_void) -> c_int {
+    if addr.is_null() {
         return 0;
     }
-    let sin = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
-    if sin.sin_family != libc::AF_INET as libc::sa_family_t {
-        return 0;
+    // SAFETY: __res_state supplies this thread's stable, aligned public state;
+    // the predicate checks its count and the family-specific sockaddr bounds.
+    unsafe {
+        crate::resolv_state::is_our_server(crate::glibc_internal_abi::__res_state(), addr) as c_int
     }
-
-    let needle = sin.sin_addr.s_addr;
-    for nameserver in &crate::unistd_abi::RESOLV_CONFIG.nameservers {
-        if let std::net::IpAddr::V4(ip) = nameserver
-            && u32::from_ne_bytes(ip.octets()) == needle
-        {
-            return 1;
-        }
-    }
-    0
 }
 
 /// `__res_nameinquery(name, type, class, *buf, eom) -> int` — return

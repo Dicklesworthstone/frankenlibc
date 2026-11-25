@@ -340,6 +340,90 @@ unsafe fn checked_state<'a>(state: *mut c_void) -> Result<&'a mut State, c_int> 
     Ok(unsafe { &mut *state.cast::<State>() })
 }
 
+/// Test an endpoint against a live public resolver state without initializing
+/// or refreshing it. Configured wildcard addresses match any peer of the same
+/// family and port; IPv6 flow/scope fields are not part of this legacy test.
+///
+/// # Safety
+/// The state and family-sized address must remain readable during the call,
+/// as must each non-null server pointer installed in the state.
+pub(crate) unsafe fn is_our_server(pointer: *mut c_void, address: *const c_void) -> bool {
+    fn object_fits<T>(pointer: *const T) -> bool {
+        (pointer as usize).is_multiple_of(std::mem::align_of::<T>())
+            && fits(pointer as usize, std::mem::size_of::<T>())
+    }
+
+    if !object_fits(pointer.cast::<State>()) || !object_fits(address.cast::<libc::sa_family_t>()) {
+        return false;
+    }
+    // SAFETY: both objects are live for this call and their known extents and
+    // alignments were checked. Shared borrows allow address to point into the
+    // state's own nsaddr_list, a valid use of the public C interface.
+    let state = unsafe { &*pointer.cast::<State>() };
+    if !(0..=MAXNS as c_int).contains(&state.nscount) {
+        return false;
+    }
+    // SAFETY: the aligned family field was checked above.
+    let family = unsafe { *address.cast::<libc::sa_family_t>() } as c_int;
+    let valid_peer = match family {
+        libc::AF_INET => object_fits(address.cast::<libc::sockaddr_in>()),
+        libc::AF_INET6 => object_fits(address.cast::<libc::sockaddr_in6>()),
+        _ => false,
+    };
+    if !valid_peer {
+        return false;
+    }
+    state.nsaddr_list[..state.nscount as usize]
+        .iter()
+        .enumerate()
+        .any(|(index, inline)| {
+            // A populated inline slot is authoritative even if an older
+            // extension pointer remains. Only an unspecified inline family
+            // selects extension storage, which may hold either IP family.
+            let server = match inline.sin_family as c_int {
+                libc::AF_INET => (inline as *const libc::sockaddr_in).cast::<c_void>(),
+                libc::AF_UNSPEC => {
+                    // SAFETY: index is bounded by the validated public count.
+                    unsafe { state.extension.ext.nsaddrs[index] }.cast::<c_void>()
+                }
+                _ => return false,
+            };
+            if !object_fits(server.cast::<libc::sa_family_t>()) {
+                return false;
+            }
+            // SAFETY: read only the checked family field before deciding how
+            // large the selected sockaddr must be.
+            if unsafe { *server.cast::<libc::sa_family_t>() } as c_int != family {
+                return false;
+            }
+            match family {
+                libc::AF_INET => {
+                    if !object_fits(server.cast::<libc::sockaddr_in>()) {
+                        return false;
+                    }
+                    // SAFETY: both complete IPv4 objects were checked.
+                    let peer = unsafe { &*address.cast::<libc::sockaddr_in>() };
+                    let server = unsafe { &*server.cast::<libc::sockaddr_in>() };
+                    server.sin_port == peer.sin_port
+                        && (server.sin_addr.s_addr == libc::INADDR_ANY
+                            || server.sin_addr.s_addr == peer.sin_addr.s_addr)
+                }
+                libc::AF_INET6 => {
+                    if !object_fits(server.cast::<libc::sockaddr_in6>()) {
+                        return false;
+                    }
+                    // SAFETY: both complete IPv6 objects were checked.
+                    let peer = unsafe { &*address.cast::<libc::sockaddr_in6>() };
+                    let server = unsafe { &*server.cast::<libc::sockaddr_in6>() };
+                    server.sin6_port == peer.sin6_port
+                        && (server.sin6_addr.s6_addr == [0; 16]
+                            || server.sin6_addr.s6_addr == peer.sin6_addr.s6_addr)
+                }
+                _ => false,
+            }
+        })
+}
+
 unsafe fn text(pointer: *const c_char) -> Result<Vec<u8>, c_int> {
     if pointer.is_null() {
         return Err(libc::EINVAL);

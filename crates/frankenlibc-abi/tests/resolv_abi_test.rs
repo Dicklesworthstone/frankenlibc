@@ -6120,63 +6120,325 @@ fn bd_dcfj5_sym_ston_rejects_tracked_unterminated_table_name() {
 
 #[test]
 fn bd_dcfj5_res_close_is_void_noop() {
-    use frankenlibc_abi::resolv_abi::*;
-    unsafe { __res_close(std::ptr::null_mut()) };
+    // The public <resolv.h> prototype is void res_close(void).
+    let close: unsafe extern "C" fn() = resolv_abi::__res_close;
+    // SAFETY: this zero-argument entry point has no memory preconditions.
+    unsafe { close() };
+}
+
+type ServerPredicateFn = unsafe extern "C" fn(*const c_void) -> c_int;
+type ServerState = frankenlibc_abi::resolv_state::State;
+
+/// Keep both real per-thread states intact, including owned search/IPv6
+/// pointers. The predicate must only read our temporary configuration: these
+/// tests neither initialize it nor free caller-owned endpoint pointers.
+struct ServerPredicateOracle {
+    states: [*mut ServerState; 2],
+    saved: [ServerState; 2],
+    candidate: ServerPredicateFn,
+    reference: ServerPredicateFn,
+    reference_errno: unsafe extern "C" fn() -> *mut c_int,
+}
+
+impl ServerPredicateOracle {
+    fn new() -> Self {
+        // Assigning the export to this type rejects the former two-argument
+        // Rust declaration at compile time. <resolv.h> declares ONE sockaddr.
+        let candidate: ServerPredicateFn = resolv_abi::__res_isourserver;
+        // SAFETY: the function types match the public GNU headers. host_fn
+        // independently resolves the provider and rejects a collapsed oracle.
+        unsafe {
+            let reference = dlsym_oracle::host_fn(c"__res_isourserver", candidate as *const ());
+            let host_state: unsafe extern "C" fn() -> *mut c_void = dlsym_oracle::host_fn(
+                c"__res_state",
+                frankenlibc_abi::glibc_internal_abi::__res_state as *const (),
+            );
+            let reference_errno = dlsym_oracle::host_fn(
+                c"__errno_location",
+                frankenlibc_abi::errno_abi::__errno_location as *const (),
+            );
+            let states = [
+                frankenlibc_abi::glibc_internal_abi::__res_state().cast::<ServerState>(),
+                host_state().cast::<ServerState>(),
+            ];
+            assert!(!states[0].is_null() && !states[1].is_null());
+            assert_ne!(states[0], states[1], "host and candidate must own distinct _res");
+            let saved = [
+                ptr::replace(states[0], ServerState::zeroed()),
+                ptr::replace(states[1], ServerState::zeroed()),
+            ];
+            Self {
+                states,
+                saved,
+                candidate,
+                reference,
+                reference_errno,
+            }
+        }
+    }
+
+    fn configure(&self, configure: impl Fn(&mut ServerState)) {
+        for &state in &self.states {
+            // SAFETY: the current thread owns each saved state. No endpoint
+            // predicate runs until this exclusive configuration borrow ends.
+            unsafe { configure(&mut *state) };
+        }
+    }
+
+    fn check(&self, name: &str, address: *const c_void, expected: c_int) {
+        // SAFETY: each caller retains its family-sized sockaddr and all
+        // configured extension pointers. Neither predicate retains the input.
+        unsafe {
+            let candidate_errno = frankenlibc_abi::errno_abi::__errno_location();
+            let host_errno = (self.reference_errno)();
+            *candidate_errno = libc::E2BIG;
+            *host_errno = libc::E2BIG;
+            let reference = (self.reference)(address);
+            let reference_errno = *host_errno;
+            *candidate_errno = libc::E2BIG;
+            *host_errno = libc::E2BIG;
+            let candidate = (self.candidate)(address);
+            let observed_errno = *candidate_errno;
+            assert_eq!(reference, expected, "GNU reference: {name}");
+            assert_eq!(candidate, reference, "candidate: {name}");
+            assert_eq!(reference_errno, libc::E2BIG, "GNU errno: {name}");
+            assert_eq!(observed_errno, libc::E2BIG, "candidate errno: {name}");
+            for &state in &self.states {
+                assert_eq!((*state).options, 0, "predicate initialized _res: {name}");
+            }
+        }
+    }
+}
+
+impl Drop for ServerPredicateOracle {
+    fn drop(&mut self) {
+        for (&state, saved) in self.states.iter().zip(&self.saved) {
+            // SAFETY: State contains only C scalars, arrays and borrowed raw
+            // pointers, with no Rust Drop fields. Restore each original image
+            // without closing or freeing any of its retained allocations.
+            unsafe { ptr::write(state, ptr::read(saved)) };
+        }
+    }
 }
 
 #[test]
-fn bd_dcfj5_res_isourserver_matches_configured_ipv4_nameserver() {
-    use frankenlibc_abi::resolv_abi::*;
-    let rc = unsafe { __res_isourserver(std::ptr::null(), std::ptr::null()) };
-    assert_eq!(rc, 0);
-
-    let config = std::fs::read("/etc/resolv.conf")
-        .map(|content| frankenlibc_core::resolv::config::ResolverConfig::parse(&content))
-        .unwrap_or_default();
-    if let Some(std::net::IpAddr::V4(expected)) = config.nameservers.first() {
-        let sin = libc::sockaddr_in {
-            sin_family: libc::AF_INET as libc::sa_family_t,
-            sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
-            sin_addr: libc::in_addr {
-                s_addr: u32::from_ne_bytes(expected.octets()),
-            },
-            sin_zero: [0; 8],
-        };
-        let rc = unsafe {
-            __res_isourserver(
-                std::ptr::null(),
-                (&sin as *const libc::sockaddr_in).cast::<c_void>(),
-            )
-        };
-        assert_eq!(rc, 1);
-    }
-
-    let mut other_octets = [192, 0, 2, 1];
-    for candidate in [[192, 0, 2, 1], [198, 51, 100, 1], [203, 0, 113, 1]] {
-        let configured = config
-            .nameservers
-            .iter()
-            .any(|addr| matches!(addr, std::net::IpAddr::V4(ip) if ip.octets() == candidate));
-        if !configured {
-            other_octets = candidate;
-            break;
-        }
-    }
-    let other = libc::sockaddr_in {
-        sin_family: libc::AF_INET as libc::sa_family_t,
-        sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+fn res_isourserver_matches_live_ipv4_state_ports_and_wildcards() {
+    let oracle = ServerPredicateOracle::new();
+    let server = libc::sockaddr_in {
+        sin_family: libc::AF_INET as _,
+        sin_port: 5353u16.to_be(),
         sin_addr: libc::in_addr {
-            s_addr: u32::from_ne_bytes(other_octets),
+            s_addr: u32::from_ne_bytes([192, 0, 2, 53]),
         },
         sin_zero: [0; 8],
     };
-    let rc = unsafe {
-        __res_isourserver(
-            std::ptr::null(),
-            (&other as *const libc::sockaddr_in).cast::<c_void>(),
-        )
+    let mut peer = server;
+    oracle.check("empty state", (&raw const peer).cast(), 0);
+
+    // Prove the reference actually reads its own _res, not an interposed
+    // candidate accessor hidden behind an otherwise distinct code address.
+    // SAFETY: the oracle owns both live per-thread state images, and peer is
+    // a complete sockaddr_in retained through each predicate call.
+    unsafe {
+        (*oracle.states[1]).nscount = 1;
+        (*oracle.states[1]).nsaddr_list[0] = server;
+        assert_eq!((oracle.reference)((&raw const peer).cast()), 1);
+        assert_eq!((oracle.candidate)((&raw const peer).cast()), 0);
+    }
+    oracle.configure(|state| {
+        *state = ServerState::zeroed();
+        state.nscount = 2;
+        state.nsaddr_list[1] = server;
+    });
+    oracle.check("second active slot without RES_INIT", (&raw const peer).cast(), 1);
+    // A caller may pass a sockaddr stored inside its own public _res.
+    // SAFETY: the oracle retains the state and its second fixed-size slot.
+    let aliased = unsafe { &raw const (*oracle.states[0]).nsaddr_list[1] };
+    oracle.check("input aliases state", aliased.cast(), 1);
+
+    peer.sin_port = 53u16.to_be();
+    oracle.check("wrong port", (&raw const peer).cast(), 0);
+    peer.sin_port = server.sin_port;
+    peer.sin_addr.s_addr = u32::from_ne_bytes([198, 51, 100, 53]);
+    oracle.check("wrong address", (&raw const peer).cast(), 0);
+    oracle.configure(|state| state.nsaddr_list[1].sin_addr.s_addr = libc::INADDR_ANY);
+    oracle.check("configured wildcard", (&raw const peer).cast(), 1);
+    peer.sin_port = 53u16.to_be();
+    oracle.check("wildcard still checks port", (&raw const peer).cast(), 0);
+    peer = server;
+    peer.sin_addr.s_addr = libc::INADDR_ANY;
+    oracle.configure(|state| state.nsaddr_list[1] = server);
+    oracle.check("peer wildcard is not a configured wildcard", (&raw const peer).cast(), 0);
+
+    peer = server;
+    oracle.configure(|state| state.nscount = 1);
+    oracle.check("inactive slot", (&raw const peer).cast(), 0);
+    oracle.configure(|state| {
+        state.nscount = 2;
+        state.nsaddr_list[1].sin_family = libc::AF_UNSPEC as _;
+    });
+    oracle.check("configured family mismatch", (&raw const peer).cast(), 0);
+    oracle.configure(|state| state.nsaddr_list[1] = server);
+    peer.sin_family = libc::AF_UNIX as _;
+    oracle.check("unsupported peer family", (&raw const peer).cast(), 0);
+    peer = server;
+    peer.sin_port = 5454u16.to_be();
+    oracle.configure(|state| state.nsaddr_list[1].sin_port = peer.sin_port);
+    oracle.check("live port override", (&raw const peer).cast(), 1);
+    oracle.check("old endpoint after override", (&raw const server).cast(), 0);
+}
+
+#[test]
+fn res_isourserver_matches_ipv6_extensions_without_cross_family_matches() {
+    let oracle = ServerPredicateOracle::new();
+    // SAFETY: sockaddr_in6 consists entirely of zero-valid C scalar fields.
+    let mut server: libc::sockaddr_in6 = unsafe { mem::zeroed() };
+    server.sin6_family = libc::AF_INET6 as _;
+    server.sin6_port = 5353u16.to_be();
+    server.sin6_addr.s6_addr = "fe80::53".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    server.sin6_flowinfo = 55u32.to_be();
+    server.sin6_scope_id = 8;
+    let mut peer = server;
+    let endpoint = &raw mut server;
+    oracle.configure(|state| {
+        state.nscount = 2;
+        // The native initializer leaves these transport counters zero. Only
+        // the public nscount selects active slots for this predicate.
+        state.extension.ext = frankenlibc_abi::resolv_state::Extension {
+            nscount: 0,
+            nsmap: [0, 1, 2],
+            nssocks: [-1; 3],
+            nscount6: 0,
+            nsinit: 0,
+            nsaddrs: [ptr::null_mut(), endpoint, ptr::null_mut()],
+            reserved: [0; 2],
+        };
+    });
+    oracle.check("IPv6 second slot", (&raw const peer).cast(), 1);
+    peer.sin6_scope_id = 9;
+    oracle.check("legacy predicate ignores scope", (&raw const peer).cast(), 1);
+    peer.sin6_flowinfo = 0;
+    oracle.check("legacy predicate ignores flow", (&raw const peer).cast(), 1);
+    peer.sin6_port = 53u16.to_be();
+    oracle.check("IPv6 wrong port", (&raw const peer).cast(), 0);
+    peer.sin6_port = server.sin6_port;
+    peer.sin6_addr.s6_addr = "fe80::54".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    oracle.check("IPv6 wrong address", (&raw const peer).cast(), 0);
+    server.sin6_addr.s6_addr = [0; 16];
+    oracle.check("IPv6 configured wildcard", (&raw const peer).cast(), 1);
+    peer.sin6_port = 53u16.to_be();
+    oracle.check("IPv6 wildcard still checks port", (&raw const peer).cast(), 0);
+    peer = server;
+    server.sin6_addr.s6_addr = "fe80::53".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    oracle.check("IPv6 peer wildcard", (&raw const peer).cast(), 0);
+    peer = server;
+    server.sin6_family = libc::AF_INET as _;
+    oracle.check("IPv6 configured family mismatch", (&raw const peer).cast(), 0);
+    server = peer;
+    oracle.configure(|state| state.nscount = 1);
+    oracle.check("IPv6 inactive slot", (&raw const peer).cast(), 0);
+    oracle.configure(|state| state.nscount = 2);
+    oracle.check("IPv6 live count override", (&raw const peer).cast(), 1);
+
+    let v4 = libc::sockaddr_in {
+        sin_family: libc::AF_INET as _,
+        sin_port: server.sin6_port,
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 0, 2, 53]),
+        },
+        sin_zero: [0; 8],
     };
-    assert_eq!(rc, 0);
+    server.sin6_addr.s6_addr = "::ffff:192.0.2.53"
+        .parse::<std::net::Ipv6Addr>()
+        .unwrap()
+        .octets();
+    oracle.check("IPv4 peer against mapped IPv6 server", (&raw const v4).cast(), 0);
+    peer = server;
+    oracle.configure(|state| {
+        *state = ServerState::zeroed();
+        state.nscount = 1;
+        state.nsaddr_list[0] = v4;
+    });
+    oracle.check("mapped IPv6 peer against IPv4 server", (&raw const peer).cast(), 0);
+}
+
+#[test]
+fn res_isourserver_respects_slot_precedence_and_extension_family() {
+    let oracle = ServerPredicateOracle::new();
+    let v4 = libc::sockaddr_in {
+        sin_family: libc::AF_INET as _,
+        sin_port: 5353u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 0, 2, 53]),
+        },
+        sin_zero: [0; 8],
+    };
+    // SAFETY: sockaddr_in6 consists entirely of zero-valid C scalar fields.
+    let mut v6: libc::sockaddr_in6 = unsafe { mem::zeroed() };
+    v6.sin6_family = libc::AF_INET6 as _;
+    v6.sin6_port = v4.sin_port;
+    v6.sin6_addr.s6_addr = "fe80::53".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    let v6_endpoint = &raw mut v6;
+    oracle.configure(|state| {
+        state.nscount = 1;
+        state.nsaddr_list[0] = v4;
+        state.extension.ext = frankenlibc_abi::resolv_state::Extension {
+            nscount: 0,
+            nsmap: [0, 1, 2],
+            nssocks: [-1; 3],
+            nscount6: 0,
+            nsinit: 0,
+            nsaddrs: [v6_endpoint, ptr::null_mut(), ptr::null_mut()],
+            reserved: [0; 2],
+        };
+    });
+    oracle.check("inline IPv4 slot takes precedence", (&raw const v4).cast(), 1);
+    oracle.check("inline slot masks stale IPv6 extension", (&raw const v6).cast(), 0);
+
+    oracle.configure(|state| state.nsaddr_list[0].sin_family = libc::AF_UNSPEC as _);
+    oracle.check("unspecified inline slot selects IPv6 extension", (&raw const v6).cast(), 1);
+    oracle.check("selected IPv6 extension does not match IPv4", (&raw const v4).cast(), 0);
+
+    // The extension field's declared pointer type does not determine the
+    // selected endpoint's family or size. This is only a sockaddr_in object.
+    let v4_endpoint = (&raw const v4).cast_mut().cast::<libc::sockaddr_in6>();
+    oracle.configure(|state| {
+        state.extension.ext = frankenlibc_abi::resolv_state::Extension {
+            nscount: 0,
+            nsmap: [0, 1, 2],
+            nssocks: [-1; 3],
+            nscount6: 0,
+            nsinit: 0,
+            nsaddrs: [v4_endpoint, ptr::null_mut(), ptr::null_mut()],
+            reserved: [0; 2],
+        };
+    });
+    oracle.check("IPv4 extension aliases query", (&raw const v4).cast(), 1);
+    oracle.check("selected IPv4 extension does not match IPv6", (&raw const v6).cast(), 0);
+}
+
+#[test]
+fn res_isourserver_rejects_invalid_state_counts_without_initializing() {
+    let oracle = ServerPredicateOracle::new();
+    let peer = libc::sockaddr_in {
+        sin_family: libc::AF_INET as _,
+        sin_port: 53u16.to_be(),
+        sin_addr: libc::in_addr { s_addr: 0 },
+        sin_zero: [0; 8],
+    };
+    // Invalid counts are outside the GNU caller contract. The candidate must
+    // fail before indexing either fixed-size nameserver array.
+    for count in [-1, 4, c_int::MAX] {
+        // SAFETY: state and peer remain valid; only the count is deliberately
+        // outside its supported range, which the candidate must reject.
+        unsafe {
+            (*oracle.states[0]).nscount = count;
+            assert_eq!((oracle.candidate)((&raw const peer).cast()), 0);
+            assert_eq!((*oracle.states[0]).options, 0);
+        }
+    }
+    // SAFETY: the candidate explicitly permits null as a rejected input.
+    assert_eq!(unsafe { (oracle.candidate)(ptr::null()) }, 0);
 }
 
 #[test]
@@ -6189,7 +6451,7 @@ fn bd_dcfj5_res_isourserver_rejects_tracked_short_sockaddr() {
         ptr::copy_nonoverlapping(family.as_ptr(), addr.as_mut_ptr(), family.len());
     }
 
-    let rc = unsafe { __res_isourserver(std::ptr::null(), addr.as_ptr().cast::<c_void>()) };
+    let rc = unsafe { __res_isourserver(addr.as_ptr().cast::<c_void>()) };
     assert_eq!(rc, 0);
 }
 
@@ -6213,7 +6475,7 @@ fn bd_dcfj5_res_isourserver_rejects_unaligned_sockaddr() {
         );
     }
 
-    let rc = unsafe { __res_isourserver(std::ptr::null(), bytes.as_ptr().add(1).cast::<c_void>()) };
+    let rc = unsafe { __res_isourserver(bytes.as_ptr().add(1).cast::<c_void>()) };
     assert_eq!(rc, 0);
 }
 
