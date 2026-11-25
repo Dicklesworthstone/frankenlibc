@@ -12,10 +12,12 @@ use frankenlibc_core::resolv::ResolverConfig;
 use frankenlibc_core::resolv::dns::{DnsRecord, qclass, qtype, rcode};
 
 fn cname_response(query: &[u8], targets: &[Vec<u8>], address: bool) -> Vec<u8> {
-    use frankenlibc_core::resolv::dns::{decode_domain_name, encode_domain_name};
-    let (_, consumed) = decode_domain_name(&query[12..], query).unwrap();
-    let end = 12 + consumed + 4;
-    let kind = u16::from_be_bytes([query[end - 4], query[end - 3]]);
+    use frankenlibc_core::resolv::dns::{DnsQuestion, encode_domain_name};
+    // The public question decoder includes QTYPE and QCLASS in its consumed
+    // length. Keep this integration target independent of private helpers.
+    let (question, consumed) = DnsQuestion::decode(&query[12..], query).unwrap();
+    let end = 12 + consumed;
+    let kind = question.qtype;
     let mut response = query[..end].to_vec();
     response[2..4].copy_from_slice(&[0x81, 0x80]);
     response[6..12].fill(0);
@@ -23,8 +25,7 @@ fn cname_response(query: &[u8], targets: &[Vec<u8>], address: bool) -> Vec<u8> {
     let mut owner = if !targets.is_empty() || !address {
         vec![0xc0, 12]
     } else {
-        let (queried, _) = decode_domain_name(&query[12..], query).unwrap();
-        encode_domain_name(&queried).unwrap()
+        encode_domain_name(&question.qname).unwrap()
     };
     for target in targets {
         let target = encode_domain_name(target).unwrap();
@@ -52,16 +53,19 @@ fn cname_response(query: &[u8], targets: &[Vec<u8>], address: bool) -> Vec<u8> {
 
 fn canonical_lookup(targets: Vec<Vec<u8>>, kind: u16, separate_packets: bool) -> Vec<u8> {
     use frankenlibc_core::dns_transport::{QueryOptions, query};
-    use frankenlibc_core::resolv::dns::{decode_domain_name, encode_domain_name};
+    use frankenlibc_core::resolv::dns::{DnsQuestion, encode_domain_name};
     let terminal = targets
         .last()
         .map(Vec::as_slice)
         .unwrap_or(b"origin.hostname.invalid");
     let mut terminal_wire = encode_domain_name(terminal).unwrap();
     terminal_wire.make_ascii_uppercase();
-    let expected_owner = decode_domain_name(&terminal_wire, &terminal_wire)
-        .unwrap()
-        .0;
+    terminal_wire.extend_from_slice(&kind.to_be_bytes());
+    terminal_wire.extend_from_slice(&qclass::IN.to_be_bytes());
+    let (expected_question, consumed) =
+        DnsQuestion::decode(&terminal_wire, &terminal_wire).unwrap();
+    assert_eq!(consumed, terminal_wire.len());
+    let expected_owner = expected_question.qname;
     let server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -77,10 +81,7 @@ fn canonical_lookup(targets: Vec<Vec<u8>>, kind: u16, separate_packets: bool) ->
             let mut sent = [0u8; 512];
             let (n, peer) = server.recv_from(&mut sent).unwrap();
             let answer = if separate_packets {
-                let next = targets
-                    .get(index)
-                    .map(std::slice::from_ref)
-                    .unwrap_or(&[]);
+                let next = targets.get(index).map(std::slice::from_ref).unwrap_or(&[]);
                 cname_response(&sent[..n], next, next.is_empty())
             } else {
                 cname_response(&sent[..n], &targets, true)

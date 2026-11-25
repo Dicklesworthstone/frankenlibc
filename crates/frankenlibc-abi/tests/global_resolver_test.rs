@@ -208,6 +208,10 @@ fn global_raw_send_rejects_invalid_output_before_socket_activity() {
 }
 #[test]
 fn global_tls_addresses_are_distinct_and_stable_across_threads() {
+    // Allocate the parent's state before spawning: all three owners must be
+    // alive together. Addresses from exited workers may legitimately be reused.
+    // SAFETY: this accessor returns the current thread's stable resolver state.
+    let parent_address = unsafe { __res_state() } as usize;
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
     let workers: Vec<_> = (0..2)
         .map(|_| {
@@ -222,13 +226,22 @@ fn global_tls_addresses_are_distinct_and_stable_across_threads() {
         })
         .collect();
     barrier.wait();
+    // Both workers retain their state while waiting at the second barrier.
+    // Defer assertions until after releasing and joining them so a failure
+    // cannot strand a live worker on the barrier.
+    let overlapping_parent_address = unsafe { __res_state() } as usize;
     barrier.wait();
     let addresses: Vec<_> = workers
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect();
+    assert_ne!(parent_address, 0);
+    assert_eq!(overlapping_parent_address, parent_address);
+    assert_eq!(unsafe { __res_state() } as usize, parent_address);
+    assert_ne!(addresses[0], 0);
+    assert_ne!(addresses[1], 0);
     assert_ne!(addresses[0], addresses[1]);
-    assert!(!addresses.contains(&(unsafe { __res_state() } as usize)));
+    assert!(!addresses.contains(&parent_address));
 }
 
 type Getaddrinfo = unsafe extern "C" fn(
