@@ -37,7 +37,7 @@ const UA_CLEANUP_PHASE: UnwindAction = 2;
 const UA_HANDLER_FRAME: UnwindAction = 4;
 const UA_FORCE_UNWIND: UnwindAction = 8;
 const UA_END_OF_STACK: UnwindAction = 16;
-const FRAME_REGISTRY_SLOTS: usize = 128;
+const INLINE_FRAME_REGISTRATIONS: usize = 128;
 const MAX_BACKTRACE_FRAMES: usize = 64;
 const MAX_UNWIND_FRAMES: usize = 4096;
 const MAX_STACK_SCAN_BYTES: usize = 8 * 1024 * 1024;
@@ -464,8 +464,56 @@ struct FrameRegistration {
     object: usize,
 }
 
-static FRAME_REGISTRY: Mutex<[FrameRegistration; FRAME_REGISTRY_SLOTS]> =
-    Mutex::new([FrameRegistration { fde: 0, object: 0 }; FRAME_REGISTRY_SLOTS]);
+// Startup registrations must work before the allocator is ready. Keep the
+// common case inline and grow only when a process loads more frame tables.
+struct FrameRegistry {
+    inline: [FrameRegistration; INLINE_FRAME_REGISTRATIONS],
+    overflow: Vec<FrameRegistration>,
+}
+
+impl FrameRegistry {
+    fn entries(&self) -> impl Iterator<Item = &FrameRegistration> {
+        self.inline
+            .iter()
+            .chain(&self.overflow)
+            .filter(|slot| slot.fde != 0)
+    }
+
+    fn insert(&mut self, fde: usize, object: usize) {
+        if let Some(slot) = self
+            .inline
+            .iter_mut()
+            .chain(&mut self.overflow)
+            .find(|slot| slot.fde == fde)
+        {
+            if object != 0 {
+                slot.object = object;
+            }
+        } else if let Some(slot) = self.inline.iter_mut().find(|slot| slot.fde == 0) {
+            *slot = FrameRegistration { fde, object };
+        } else {
+            self.overflow.push(FrameRegistration { fde, object });
+        }
+    }
+
+    fn remove(&mut self, fde: usize) -> Option<usize> {
+        if fde == 0 {
+            return None;
+        }
+        if let Some(slot) = self.inline.iter_mut().find(|slot| slot.fde == fde) {
+            let object = slot.object;
+            *slot = FrameRegistration { fde: 0, object: 0 };
+            return Some(object);
+        }
+        let index = self.overflow.iter().position(|slot| slot.fde == fde)?;
+        Some(self.overflow.swap_remove(index).object)
+    }
+}
+
+static FRAME_REGISTRY: Mutex<FrameRegistry> = Mutex::new(FrameRegistry {
+    inline: [FrameRegistration { fde: 0, object: 0 }; INLINE_FRAME_REGISTRATIONS],
+    overflow: Vec::new(),
+});
 
 // Keep the public Itanium ABI behind its opt-in feature. In the default
 // interpose build, resident libgcc owns opaque contexts and exception state;
@@ -1277,52 +1325,31 @@ core::arch::global_asm!(
 
 #[doc(hidden)]
 pub fn owned_frame_is_registered_for_tests(fde: *const c_void) -> bool {
-    frame_slot_index(fde as usize).is_some()
+    frame_registry()
+        .entries()
+        .any(|slot| slot.fde == fde as usize)
 }
 
 #[doc(hidden)]
 pub fn owned_frame_object_for_tests(fde: *const c_void) -> *mut c_void {
-    let Some(index) = frame_slot_index(fde as usize) else {
-        return core::ptr::null_mut();
-    };
-    frame_registry()[index].object as *mut c_void
+    frame_registry()
+        .entries()
+        .find(|slot| slot.fde == fde as usize)
+        .map_or(core::ptr::null_mut(), |slot| slot.object as *mut c_void)
 }
 
 fn register_frame(fde: usize, object: usize) {
-    if fde == 0 {
-        return;
-    }
-
-    let mut registry = frame_registry();
-    if let Some(slot) = registry.iter_mut().find(|slot| slot.fde == fde) {
-        if object != 0 {
-            slot.object = object;
-        }
-        return;
-    }
-
-    if let Some(slot) = registry.iter_mut().find(|slot| slot.fde == 0) {
-        *slot = FrameRegistration { fde, object };
+    if fde != 0 {
+        frame_registry().insert(fde, object);
     }
 }
 
 fn deregister_frame(fde: usize) -> Option<usize> {
-    let mut registry = frame_registry();
-    let slot = registry.iter_mut().find(|slot| slot.fde == fde)?;
-    let object = slot.object;
-    *slot = FrameRegistration { fde: 0, object: 0 };
-    Some(object)
-}
-
-fn frame_slot_index(fde: usize) -> Option<usize> {
-    if fde == 0 {
-        return None;
-    }
-    frame_registry().iter().position(|slot| slot.fde == fde)
+    frame_registry().remove(fde)
 }
 
 pub(crate) struct UnwindForkGuard {
-    _registry: MutexGuard<'static, [FrameRegistration; FRAME_REGISTRY_SLOTS]>,
+    _registry: MutexGuard<'static, FrameRegistry>,
 }
 
 /// Hold `FRAME_REGISTRY` across `fork()` so a concurrent `__register_frame`,
@@ -1333,7 +1360,7 @@ pub(crate) fn unwind_fork_prepare() -> UnwindForkGuard {
     }
 }
 
-fn frame_registry() -> MutexGuard<'static, [FrameRegistration; FRAME_REGISTRY_SLOTS]> {
+fn frame_registry() -> MutexGuard<'static, FrameRegistry> {
     FRAME_REGISTRY
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -2584,24 +2611,24 @@ struct RegisteredFdeRecord {
 fn find_registered_fde_record_for_ip(
     ip: usize,
 ) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
-    // First search explicitly registered frames (__register_frame).
-    // Hold `FRAME_REGISTRY` while copying registered `.eh_frame` bytes so a
-    // concurrent `dlclose` -> `__deregister_frame` -> `munmap` cannot unmap a
-    // slot's `.eh_frame` while we copy it, then release before DWARF parsing or
-    // `dl_iterate_phdr`.
-    let snapshots = {
+    // Deregistration precedes unmapping. Hold the registry guard through
+    // decoding (including indirect pointers) and copy only the matching
+    // table. Neither a personality callback nor dl_iterate_phdr runs here.
+    {
         let registry = frame_registry();
-        let mut snapshots = Vec::new();
-        for slot in registry.iter().filter(|slot| slot.fde != 0) {
-            if let Ok(eh_frame) = copy_registered_eh_frame(slot.fde) {
-                snapshots.push((slot.fde, eh_frame));
+        for slot in registry.entries() {
+            let Ok(len) = registered_eh_frame_len(slot.fde) else {
+                continue;
+            };
+            // SAFETY: the live registration covers the bounded, terminated
+            // table, and the registry guard excludes deregistration.
+            let bytes = unsafe { core::slice::from_raw_parts(slot.fde as *const u8, len) };
+            if let Ok(Some(fde)) = find_fde_for_ip(bytes, slot.fde, ip, true) {
+                return Ok(Some(RegisteredFdeRecord {
+                    fde,
+                    eh_frame: bytes.to_vec(),
+                }));
             }
-        }
-        snapshots
-    };
-    for (fde_base, eh_frame) in snapshots {
-        if let Ok(Some(fde)) = find_fde_for_ip(&eh_frame, fde_base, ip, true) {
-            return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
         }
     }
 
@@ -2912,18 +2939,6 @@ fn decode_live_fde_at_address(
     }))
 }
 
-fn copy_registered_eh_frame(fde: usize) -> Result<Vec<u8>, OwnedUnwindDecodeError> {
-    let len = registered_eh_frame_len(fde)?;
-    if len == 0 || len > MAX_REGISTERED_EH_FRAME_BYTES {
-        return Err(OwnedUnwindDecodeError::MalformedRecord);
-    }
-    // SAFETY: fde was registered through __register_frame* and points at an
-    // in-process .eh_frame byte stream. The bounded length scan above stops at
-    // the zero terminator before this copy.
-    let bytes = unsafe { core::slice::from_raw_parts(fde as *const u8, len) };
-    Ok(bytes.to_vec())
-}
-
 fn registered_eh_frame_len(fde: usize) -> Result<usize, OwnedUnwindDecodeError> {
     if fde == 0 {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
@@ -2931,6 +2946,9 @@ fn registered_eh_frame_len(fde: usize) -> Result<usize, OwnedUnwindDecodeError> 
 
     let mut cursor = 0usize;
     for _ in 0..MAX_REGISTERED_EH_FRAME_RECORDS {
+        if cursor > MAX_REGISTERED_EH_FRAME_BYTES - 4 {
+            return Err(OwnedUnwindDecodeError::MalformedRecord);
+        }
         let length_addr = fde
             .checked_add(cursor)
             .ok_or(OwnedUnwindDecodeError::Overflow)?;

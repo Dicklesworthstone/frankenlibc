@@ -127,6 +127,33 @@ fn frame_registration_records_and_removes_fde_sources() {
 }
 
 #[test]
+fn deregistration_returns_every_object_across_registry_growth_and_reuse() {
+    // Keep the tables and their zero terminators live until deregistration,
+    // including while other tests unwind on different threads.
+    let tables = [0u32; 300];
+    let mut objects = [0usize; 300];
+    for (table, object) in tables.iter().zip(&mut objects) {
+        let fde = std::ptr::from_ref(table).cast_mut().cast();
+        unsafe { __register_frame_info(fde, std::ptr::from_mut(object).cast()) };
+    }
+
+    // Remove alternating entries, then put them back while the others remain
+    // live. Assert after cleanup so failures leave no dangling registrations.
+    let mut matched = true;
+    for i in (0..tables.len()).step_by(2) {
+        let fde = std::ptr::from_ref(&tables[i]).cast_mut().cast();
+        let object = std::ptr::from_mut(&mut objects[i]).cast();
+        matched &= unsafe { __deregister_frame_info(fde) } == object;
+        unsafe { __register_frame_info(fde, object) };
+    }
+    for (table, object) in tables.iter().zip(&mut objects).rev() {
+        let fde = std::ptr::from_ref(table).cast_mut().cast();
+        matched &= unsafe { __deregister_frame_info(fde) } == std::ptr::from_mut(object).cast();
+    }
+    assert!(matched, "all registered tables must retain their object");
+}
+
+#[test]
 fn loaded_eh_frame_catalog_accepts_gnu_header_inside_load_segment() {
     let object_base = 0x1000_0000usize;
     let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
