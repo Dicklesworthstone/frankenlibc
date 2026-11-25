@@ -1273,7 +1273,6 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
     super::thread::reset_live_native_threads_after_fork();
     syscall::reset_native_cancel_syscalls_after_fork();
     let child_tid = syscall::sys_gettid();
-    crate::stdio::printf::rekey_native_printf_tables_after_fork(parent_tid, child_tid);
 
     if TLS_TABLE_USED.load(Ordering::Acquire) {
         rekey_fork_child_table(
@@ -1767,7 +1766,6 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
     // callbacks. Only then reclaim private cache values, keeping their lookup
     // table registered so cache Drop implementations can reenter safely.
     run_thread_key_destructor_rounds(tid, values_ptr, PTHREAD_KEYS_MAX, TLS_KEY_SLOTS);
-    crate::stdio::printf::clear_native_printf_tables_for_tid(tid);
     if registered {
         // Run ABI heap-cell teardown BEFORE `table_remove(tid)` so
         // `current_thread_handle()` still resolves to this thread's private

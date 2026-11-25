@@ -1728,7 +1728,6 @@ fn populate_fast_fixed_mem_read_tls(
 /// `%fs` can ever observe or race on a cached `Arc` / `RefCell`.
 pub(crate) fn drain_creator_compiler_tls_for_native_threads() {
     evict_parked_st_fmemopen_slot();
-    frankenlibc_core::stdio::printf::migrate_creator_thread_numeric_for_native_threads();
     let tls = &TLS_FAST_MEM_READ;
     tls.stream.set(0);
     tls.reg_gen.set(0);

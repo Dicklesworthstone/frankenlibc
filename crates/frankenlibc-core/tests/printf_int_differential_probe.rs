@@ -10,6 +10,99 @@ use frankenlibc_core::stdio::printf::{
     FormatSegment, format_signed, format_unsigned, parse_format_string,
 };
 
+// Native-thread admission is process-wide and irreversible. Isolate these
+// regressions so the ordinary differential cases retain their hosted setup.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn isolated_native_admission_case(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_PRINTF_NATIVE_ADMISSION_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return false;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stdout.contains("1 passed;"),
+        "isolated {name} failed: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
+    );
+    true
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn native_admission_preserves_numeric_locale_through_hosted_thread_churn() {
+    if isolated_native_admission_case(
+        "native_admission_preserves_numeric_locale_through_hosted_thread_churn",
+    ) {
+        return;
+    }
+    frankenlibc_core::pthread::tls::disable_tid_cache();
+    for generation in 0..2048 {
+        let formatted = std::thread::spawn(|| {
+            use frankenlibc_core::stdio::printf::{format_float, set_thread_numeric};
+            set_thread_numeric(b";", b"_", &[3]);
+            let mut output = Vec::new();
+            format_signed(12_345, &spec_of("%'d"), &mut output);
+            output.push(b' ');
+            format_float(1.5, &spec_of("%.1f"), &mut output);
+            // Thread exit owns cleanup; callers need not reset uselocale.
+            output
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            formatted, b"12_345 1;5",
+            "LC_NUMERIC lost after hosted thread generation {generation}"
+        );
+    }
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn native_admission_preserves_simultaneous_errors_after_thread_churn() {
+    if isolated_native_admission_case(
+        "native_admission_preserves_simultaneous_errors_after_thread_churn",
+    ) {
+        return;
+    }
+    use frankenlibc_core::errno::{EINVAL, ENOMEM, EOVERFLOW};
+    use frankenlibc_core::stdio::printf::{note_render_failure, take_render_failure};
+    use std::sync::{Arc, Barrier};
+
+    frankenlibc_core::pthread::tls::disable_tid_cache();
+    for _ in 0..2048 {
+        std::thread::spawn(|| {
+            // A thread may exit with a pending error; it must not consume a
+            // process-wide slot forever or affect later owners' failures.
+            note_render_failure(ENOMEM);
+        })
+        .join()
+        .unwrap();
+    }
+    let ready = Arc::new(Barrier::new(2));
+    let workers: Vec<_> = [EINVAL, EOVERFLOW]
+        .into_iter()
+        .map(|expected| {
+            let ready = Arc::clone(&ready);
+            std::thread::spawn(move || {
+                note_render_failure(expected);
+                ready.wait();
+                (expected, take_render_failure(), take_render_failure())
+            })
+        })
+        .collect();
+    for worker in workers {
+        let (expected, actual, consumed) = worker.join().unwrap();
+        assert_eq!(actual, expected, "another owner overwrote a pending failure");
+        assert_eq!(consumed, 0, "a consumed failure was replayed");
+    }
+}
+
 fn spec_of(fmt: &str) -> frankenlibc_core::stdio::printf::FormatSpec {
     parse_format_string(fmt.as_bytes())
         .as_slice()
