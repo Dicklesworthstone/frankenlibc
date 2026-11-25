@@ -375,7 +375,6 @@ mod native_ownership {
             if status != 0 {
                 // An unsuccessful join cannot prove the worker released the
                 // probe. End this isolated child without unwinding its owner.
-                eprintln!("native getrandom worker join failed: {status}");
                 std::process::abort();
             }
             results[index] = (status, result as usize);
