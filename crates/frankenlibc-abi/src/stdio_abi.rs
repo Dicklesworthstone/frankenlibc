@@ -6481,10 +6481,8 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
                 )
             };
             if rc < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if e == errno::EINTR {
-                    continue;
-                }
+                // EINTR is an observable write failure, just as in strict mode.
+                // Retrying can block after a non-restarting signal handler returned.
                 success = false;
                 break;
             } else if rc == 0 {
@@ -7215,10 +7213,8 @@ pub(crate) unsafe fn fputs_unlocked_for_caller(
                 )
             };
             if rc < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if e == errno::EINTR {
-                    continue;
-                }
+                // EINTR is an observable write failure, just as in strict mode.
+                // Retrying can block after a non-restarting signal handler returned.
                 success = false;
                 break;
             } else if rc == 0 {

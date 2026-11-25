@@ -901,7 +901,53 @@ static void interrupt_stdio_write(int signal_number) {
     errno = saved_errno;
 }
 
-static int test_fd_write_error(int interrupted, int immediate, int partial) {
+enum write_error_operation {
+    WRITE_ERROR_FFLUSH,
+    WRITE_ERROR_FWRITE,
+    WRITE_ERROR_FSEEK,
+    WRITE_ERROR_FPUTC,
+    WRITE_ERROR_FPUTC_UNLOCKED,
+    WRITE_ERROR_PUTC,
+    WRITE_ERROR_PUTC_UNLOCKED,
+    WRITE_ERROR_FPUTS,
+    WRITE_ERROR_FPUTS_UNLOCKED,
+    WRITE_ERROR_OPERATION_COUNT
+};
+
+static const char *const write_error_operation_names[] = {
+    "fflush", "fwrite", "fseek", "fputc", "fputc_unlocked",
+    "putc", "putc_unlocked", "fputs", "fputs_unlocked"
+};
+
+static long invoke_write_error_operation(int operation, FILE *stream,
+                                        const char *bytes, size_t count) {
+    switch (operation) {
+    case WRITE_ERROR_FFLUSH: return fflush(stream);
+    case WRITE_ERROR_FWRITE: return (long)fwrite(bytes, 1, count, stream);
+    case WRITE_ERROR_FSEEK: return fseek(stream, 0, SEEK_SET);
+    case WRITE_ERROR_FPUTC:
+    case WRITE_ERROR_FPUTC_UNLOCKED:
+    case WRITE_ERROR_PUTC:
+    case WRITE_ERROR_PUTC_UNLOCKED: {
+        /* Volatile function pointers bypass header macros and extern-inline
+         * write windows so each named exported ABI is actually exercised. */
+        int (*volatile write_character)(int, FILE *) =
+            operation == WRITE_ERROR_FPUTC ? fputc :
+            operation == WRITE_ERROR_FPUTC_UNLOCKED ? fputc_unlocked :
+            operation == WRITE_ERROR_PUTC ? putc : putc_unlocked;
+        return write_character('A', stream);
+    }
+    case WRITE_ERROR_FPUTS:
+    case WRITE_ERROR_FPUTS_UNLOCKED: {
+        int (*volatile write_string)(const char *, FILE *) =
+            operation == WRITE_ERROR_FPUTS ? fputs : fputs_unlocked;
+        return write_string("ABC", stream);
+    }
+    default: return -2;
+    }
+}
+
+static int test_fd_write_error(int interrupted, int operation, int partial) {
     int fds[2];
     if (pipe2(fds, O_NONBLOCK) != 0) return 1;
     if (fcntl(fds[1], F_SETPIPE_SZ, 4096) != 4096) return 1;
@@ -910,9 +956,10 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
     if (!partial && syscall(SYS_write, fds[1], bytes, 4096) != 4096) return 1;
     if (interrupted && fcntl(fds[1], F_SETFL, 0) != 0) return 1;
     FILE *stream = fdopen(fds[1], "w");
-    if (!stream || setvbuf(stream, buffer, immediate == 1 ? _IONBF : _IOFBF, sizeof(buffer))) return 1;
+    int immediate = operation != WRITE_ERROR_FFLUSH && operation != WRITE_ERROR_FSEEK;
+    if (!stream || setvbuf(stream, buffer, immediate ? _IONBF : _IOFBF, sizeof(buffer))) return 1;
     size_t count = partial ? sizeof(bytes) : 3;
-    if (immediate != 1 && fwrite(bytes, 1, count, stream) != count) return 1;
+    if (!immediate && fwrite(bytes, 1, count, stream) != count) return 1;
     write_error_signals = 0;
     write_error_reader = fds[0];
     struct itimerval timer = {0};
@@ -922,8 +969,7 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
         if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
     }
     errno = 0;
-    long result = immediate == 1 ? (long)fwrite(bytes, 1, count, stream) :
-                  immediate == 2 ? fseek(stream, 0, SEEK_SET) : fflush(stream);
+    long result = invoke_write_error_operation(operation, stream, bytes, count);
     int saved_errno = errno;
     memset(&timer, 0, sizeof(timer));
     if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
@@ -940,16 +986,16 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
     ssize_t close_replay = drain_write_pipe(fds[0]);
     close(fds[0]);
     write_error_reader = -1;
-    int failed = result != (immediate == 1 ? 0 : EOF) ||
+    int failed = result != (operation == WRITE_ERROR_FWRITE ? 0 : EOF) ||
                  saved_errno != (interrupted ? EINTR : EAGAIN) || !error || eof ||
                  signals != interrupted || first != 4096 || retry || retry_errno ||
                  retry_error || replay || closed || close_replay;
     printf("fd-write:%s:%s:%s result=%ld errno=%d error=%d eof=%d signals=%d first=%zd retry=%d retry_errno=%d retry_error=%d replay=%zd close=%d close_replay=%zd\n",
-           immediate == 1 ? "fwrite" : immediate == 2 ? "fseek" : "fflush", interrupted ? "EINTR" : "EAGAIN",
+           write_error_operation_names[operation], interrupted ? "EINTR" : "EAGAIN",
            partial ? "partial" : "full", result, saved_errno, error, eof, signals,
            first, retry, retry_errno, retry_error, replay, closed, close_replay);
     if (failed) fprintf(stderr, "FAIL: descriptor write error case %d/%d/%d\n",
-                        interrupted, immediate, partial);
+                        interrupted, operation, partial);
     return failed;
 }
 
@@ -1297,11 +1343,11 @@ static int test_fd_write_errors(void) {
     if (sigaction(SIGALRM, &action, &previous)) return 1;
     int failed = 0, cases = 0;
     for (int interrupted = 0; interrupted <= 1; ++interrupted)
-        for (int immediate = 0; immediate <= 2; ++immediate) {
-            failed += test_fd_write_error(interrupted, immediate, 0);
+        for (int operation = 0; operation < WRITE_ERROR_OPERATION_COUNT; ++operation) {
+            failed += test_fd_write_error(interrupted, operation, 0);
             ++cases;
         }
-    failed += test_fd_write_error(0, 0, 1);
+    failed += test_fd_write_error(0, WRITE_ERROR_FFLUSH, 1);
     ++cases;
     if (sigaction(SIGALRM, &previous, NULL)) ++failed;
     const int positions[][4] = {
@@ -2872,7 +2918,8 @@ int main(int argc, char **argv) {
         return failed != 0;
     }
     if (argc >= 2 && strcmp(argv[1], "write-errors") == 0) {
-        const char *symbols[] = {"fdopen", "fwrite", "fputs", "fprintf", "vfprintf", "fflush", "ftell", "fseek", "fseeko", "setvbuf",
+        const char *symbols[] = {"fdopen", "fwrite", "fputs", "fputs_unlocked", "fputc", "fputc_unlocked",
+                                 "putc", "putc_unlocked", "fprintf", "vfprintf", "fflush", "ftell", "fseek", "fseeko", "setvbuf",
                                  "fread", "fgetc", "ungetc", "clearerr", "ferror", "feof", "fclose", "fopencookie", "__fpending"};
         if (argc == 3 && check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;

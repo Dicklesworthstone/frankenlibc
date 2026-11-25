@@ -152,7 +152,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   if [[ "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
     error_kind=write
     error_mode=write-errors
-    error_cases=60
+    error_cases=72
     error_option=--write-errors
   elif [[ "${POPEN_ONLY}" -eq 1 ]]; then
     error_kind=popen
