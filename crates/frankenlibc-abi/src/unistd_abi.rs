@@ -5810,6 +5810,38 @@ thread_local! {
     };
 }
 
+/// Exercise public getrandom routing with a controlled cached provider. Return
+/// the cache address after the callback and restore the original hosted cache.
+///
+/// # Safety
+/// Call only on a hosted thread. The provider must obey the vDSO draw ABI and
+/// its state must remain live until all callback-created workers are joined.
+/// A null provider and null state select the ordinary cold-cache path.
+#[doc(hidden)]
+pub unsafe fn with_getrandom_vdso_cache_for_tests<R>(
+    provider: Option<unsafe extern "C" fn(*mut c_void, usize, c_uint, *mut c_void, usize) -> isize>,
+    state: *mut c_void,
+    state_len: usize,
+    callback: impl FnOnce() -> R,
+) -> (R, usize) {
+    struct Restore(VdsoDrawFast);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            VG_FAST.with(|cache| cache.set(self.0));
+        }
+    }
+    let previous = VG_FAST.with(|cache| {
+        cache.replace(VdsoDrawFast {
+            state,
+            f: provider,
+            state_len,
+        })
+    });
+    let _restore = Restore(previous);
+    let result = callback();
+    (result, VG_FAST.with(|cache| cache.get().state as usize))
+}
+
 #[cold]
 fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
     let f = crate::time_abi::vdso_getrandom_fn();
@@ -5901,6 +5933,21 @@ unsafe fn vdso_getrandom_draw_cold(
 /// path that was going to fail anyway.
 #[inline(always)]
 unsafe fn vdso_getrandom_draw(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
+    // Native clones still inherit their creator's compiler thread pointer.
+    // A vDSO RNG state is mutable and must never be shared by concurrent
+    // threads, even when the cache itself is already initialized. Decide from
+    // kernel identity before reading VG_FAST, including the native exit tail.
+    // Hosted callers retain their existing cache and fast path after admission.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if frankenlibc_core::pthread::tls::native_threads_may_exist() {
+        let tid = syscall::sys_gettid();
+        if tid <= 0
+            || frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some()
+            || frankenlibc_core::pthread::tls::current_thread_is_exiting_native()
+        {
+            return -1;
+        }
+    }
     let fast = VG_FAST.with(|c| c.get());
     let state = fast.state;
     if (state as usize) > 1 {

@@ -8,11 +8,9 @@
 //! syscalls whether called 100 times or 10,000 — it draws from a userspace
 //! CSPRNG in the vDSO — while fl issues 103 and 10,003, one per call.
 //!
-//! This gate covers the first half of closing that: resolving
-//! `__vdso_getrandom` out of the kernel-mapped vDSO and proving a real draw
-//! through it works. It deliberately does NOT test fl's `getrandom` being routed
-//! through the vDSO, because that routing is not landed — see the note at the
-//! end of this file.
+//! This gate resolves the kernel provider, performs real draws, and exercises
+//! public getrandom routing. Native clone workers must neither use nor
+//! initialize the creator's compiler-TLS generator cache.
 //!
 //! WHAT WOULD OTHERWISE GO UNNOTICED. A query that returns plausible-looking
 //! numbers nobody can act on would pass a resolution-only test. So the gate MAPS
@@ -256,22 +254,212 @@ fn fl_getrandom_zero_length_and_invalid_flags_match_live_glibc() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// WHAT IS DELIBERATELY NOT LANDED HERE, and why.
-//
-// Routing fl's `getrandom` through the vDSO needs PER-THREAD state, and in a
-// libc that is the hazardous part rather than the arithmetic:
-//
-//   1. The state must be mapped lazily per thread. A `thread_local!` carrying a
-//      `Drop` registers a TLS destructor through `__cxa_thread_atexit_impl` —
-//      which, inside our own libc, is a re-entry risk of exactly the class
-//      already recorded for interposed symbols.
-//   2. Without a destructor the mapping leaks one state per thread that ever
-//      draws. glibc avoids both horns with a free list of retired states, which
-//      is more machinery than belongs in the same change as the resolution.
-//
-// Shipping the draw path without settling those would trade a 92x slowdown for
-// either a re-entrancy hazard or an unbounded mapping leak, in the CSPRNG. The
-// resolution and parameter query are correct and useful on their own — they are
-// what the routing will be built on — so they land here, gated, and the state
-// lifecycle is tracked separately.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+mod native_ownership {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn isolated(name: &str) -> bool {
+        const CHILD: &str = "FRANKENLIBC_NATIVE_GETRANDOM_CHILD";
+        if std::env::var(CHILD).as_deref() == Ok(name) {
+            return false;
+        }
+        for mode in ["strict", "hardened"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture", "--test-threads=1"])
+                .env(CHILD, name)
+                .env("FRANKENLIBC_MODE", mode)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                !timed_out
+                    && output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+                "{mode} timeout={timed_out} status={}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        true
+    }
+
+    struct NativeBackend(bool);
+    impl NativeBackend {
+        fn select() -> Self {
+            Self(frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests())
+        }
+    }
+    impl Drop for NativeBackend {
+        fn drop(&mut self) {
+            frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+
+    unsafe extern "C" fn worker(_: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        let mut bytes = [0u8; 64];
+        for _ in 0..32 {
+            for flags in [0, libc::GRND_NONBLOCK] {
+                // SAFETY: this worker exclusively owns its live stack buffer.
+                let count = unsafe {
+                    frankenlibc_abi::unistd_abi::getrandom(
+                        bytes.as_mut_ptr().cast(),
+                        bytes.len(),
+                        flags,
+                    )
+                };
+                if count != bytes.len() as isize {
+                    return 2usize as *mut c_void;
+                }
+            }
+        }
+        bytes.fill(0xc3);
+        // SAFETY: output and errno are live writable storage for this worker.
+        let (count, error) = unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = 0;
+            let count = frankenlibc_abi::unistd_abi::getrandom(
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+                libc::c_uint::MAX,
+            );
+            (count, *frankenlibc_abi::errno_abi::__errno_location())
+        };
+        if count != -1 || error != libc::EINVAL || bytes != [0xc3; 64] {
+            return 3usize as *mut c_void;
+        }
+        std::ptr::null_mut()
+    }
+
+    fn run_workers<const N: usize>() {
+        let mut threads = [0; N];
+        for thread in &mut threads {
+            // SAFETY: the worker has no borrowed arguments and returns status.
+            assert_eq!(
+                unsafe {
+                    frankenlibc_abi::pthread_abi::pthread_create(
+                        thread,
+                        std::ptr::null(),
+                        Some(worker),
+                        std::ptr::null_mut(),
+                    )
+                },
+                0
+            );
+        }
+        let results = threads.map(|thread| {
+            let mut result = std::ptr::null_mut();
+            // SAFETY: each live, joinable worker is joined exactly once.
+            let status = unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) };
+            (status, result as usize)
+        });
+        assert_eq!(results, [(0, 0); N]);
+    }
+
+    struct Probe {
+        owner_tid: i32,
+        owner_calls: AtomicUsize,
+        foreign_calls: AtomicUsize,
+    }
+
+    unsafe extern "C" fn observe(
+        buffer: *mut c_void,
+        length: usize,
+        flags: libc::c_uint,
+        state: *mut c_void,
+        state_len: usize,
+    ) -> isize {
+        if state_len != std::mem::size_of::<Probe>() {
+            return -(libc::EINVAL as isize);
+        }
+        // SAFETY: the parent retains this probe until all workers are joined.
+        // Atomics make even the pre-fix wrong-owner observation race-free.
+        let probe = unsafe { &*state.cast::<Probe>() };
+        if frankenlibc_core::syscall::sys_gettid() == probe.owner_tid {
+            probe.owner_calls.fetch_add(1, Ordering::Relaxed);
+        } else {
+            probe.foreign_calls.fetch_add(1, Ordering::Relaxed);
+        }
+        // SAFETY: the public call supplies the destination span. Draw actual
+        // kernel entropy while observing provider selection, never test bytes.
+        unsafe { frankenlibc_core::syscall::sys_getrandom(buffer.cast(), length, flags) }
+            .unwrap_or_else(|error| -(error as isize))
+    }
+
+    #[test]
+    fn native_getrandom_never_uses_creator_vdso_state() {
+        if isolated("native_ownership::native_getrandom_never_uses_creator_vdso_state") {
+            return;
+        }
+        let _backend = NativeBackend::select();
+        let probe = Probe {
+            owner_tid: frankenlibc_core::syscall::sys_gettid(),
+            owner_calls: AtomicUsize::new(0),
+            foreign_calls: AtomicUsize::new(0),
+        };
+        let state = std::ptr::from_ref(&probe).cast_mut().cast();
+        // SAFETY: all workers join before the live probe or cache is retired.
+        let (_, retained) = unsafe {
+            frankenlibc_abi::unistd_abi::with_getrandom_vdso_cache_for_tests(
+                Some(observe),
+                state,
+                std::mem::size_of::<Probe>(),
+                || {
+                    let mut bytes = [0u8; 32];
+                    assert_eq!(
+                        frankenlibc_abi::unistd_abi::getrandom(bytes.as_mut_ptr().cast(), 32, 0),
+                        32
+                    );
+                    assert!(probe.owner_calls.load(Ordering::Relaxed) > 0);
+                    run_workers::<2>();
+                    let before = probe.owner_calls.load(Ordering::Relaxed);
+                    assert_eq!(
+                        frankenlibc_abi::unistd_abi::getrandom(bytes.as_mut_ptr().cast(), 32, 0),
+                        32
+                    );
+                    assert!(probe.owner_calls.load(Ordering::Relaxed) > before);
+                },
+            )
+        };
+        assert_eq!(retained, state as usize, "creator cache must stay live");
+        assert_eq!(
+            probe.foreign_calls.load(Ordering::Relaxed),
+            0,
+            "native workers entered the creator's vDSO generator"
+        );
+    }
+
+    #[test]
+    fn native_getrandom_leaves_creator_cold_cache_untouched() {
+        if isolated("native_ownership::native_getrandom_leaves_creator_cold_cache_untouched") {
+            return;
+        }
+        let _backend = NativeBackend::select();
+        // SAFETY: null selects normal cold initialization. One worker makes
+        // the pre-fix shared-cache write deterministic, without racing writers.
+        let (_, retained) = unsafe {
+            frankenlibc_abi::unistd_abi::with_getrandom_vdso_cache_for_tests(
+                None,
+                std::ptr::null_mut(),
+                0,
+                run_workers::<1>,
+            )
+        };
+        assert_eq!(retained, 0, "native call initialized creator TLS");
+    }
+}
