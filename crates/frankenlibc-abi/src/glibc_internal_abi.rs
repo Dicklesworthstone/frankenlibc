@@ -3804,15 +3804,34 @@ pub unsafe extern "C" fn __endmntent(fp: *mut c_void) -> c_int {
     unsafe { crate::unistd_abi::endmntent(fp) }
 }
 // --- stdio_ext.h functions: native stream queries ---
-// These query opaque FILE* internals. Since we don't control glibc's FILE struct,
-// we forward to libc for the ones that inspect it, or return safe defaults.
+// A host-owned FILE keeps its pending bytes, buffer and access mode in the
+// provider. Resolve only the requested operation and never pass a native
+// handle (including a retired one) to that provider.
+macro_rules! host_stdio_ext {
+    ($stream:expr, $name:ident, $result:ty, $fallback:expr) => {{
+        #[cfg(not(feature = "standalone"))]
+        {
+            static SYMBOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            if let Some(address) =
+                crate::stdio_abi::host_stream_extension($stream, &SYMBOL, stringify!($name))
+            {
+                // SAFETY: the symbol has the named stdio_ext.h signature and
+                // the caller supplied a live FILE owned by the host.
+                let call: unsafe extern "C" fn(*mut c_void) -> $result =
+                    unsafe { std::mem::transmute(address) };
+                return unsafe { call($stream) };
+            }
+        }
+        $fallback
+    }};
+}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fbufsize(fp: *mut c_void) -> SizeT {
     // Report the stream's actual buffer capacity (reflects setvbuf), not a
     // constant. bd-bap2cl.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.buf_size as SizeT,
-        None => libc::BUFSIZ as SizeT,
+        None => host_stdio_ext!(fp, __fbufsize, SizeT, libc::BUFSIZ as SizeT),
     }
 }
 // __fcntl: glibc's internal name for fcntl, variadic like it. It used to drop
@@ -3838,7 +3857,7 @@ pub unsafe extern "C" fn __flbf(fp: *mut c_void) -> c_int {
     // Nonzero iff the stream is line-buffered. bd-bap2cl.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.line_buffered as c_int,
-        None => 0,
+        None => host_stdio_ext!(fp, __flbf, c_int, 0),
     }
 }
 // __fork: glibc-internal alias of fork() — must run pthread_atfork handlers,
@@ -3855,22 +3874,21 @@ pub unsafe extern "C" fn __fpending(fp: *mut c_void) -> SizeT {
     // Number of bytes buffered for output but not yet flushed. bd-bap2cl.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.pending as SizeT,
-        None => 0,
+        None => host_stdio_ext!(fp, __fpending, SizeT, 0),
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fpurge(fp: *mut c_void) {
-    // Discard the stream's buffered data (unread input + unflushed output),
-    // like glibc. fl owns the buffer via the stream registry; the previous
-    // no-op silently kept buffered bytes. bd-k3hkhg.
-    crate::stdio_abi::stream_purge(fp);
+    if !crate::stdio_abi::stream_purge(fp) {
+        host_stdio_ext!(fp, __fpurge, (), ());
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __freadable(fp: *mut c_void) -> c_int {
     // Nonzero iff the stream was opened for reading. bd-bap2cl.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.readable as c_int,
-        None => 1,
+        None => host_stdio_ext!(fp, __freadable, c_int, 1),
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3879,7 +3897,7 @@ pub unsafe extern "C" fn __freading(fp: *mut c_void) -> c_int {
     // bd-2x73ye.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.reading as c_int,
-        None => 0,
+        None => host_stdio_ext!(fp, __freading, c_int, 0),
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3895,7 +3913,7 @@ pub unsafe extern "C" fn __fwritable(fp: *mut c_void) -> c_int {
     // Nonzero iff the stream was opened for writing. bd-bap2cl.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.writable as c_int,
-        None => 1,
+        None => host_stdio_ext!(fp, __fwritable, c_int, 1),
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3904,7 +3922,7 @@ pub unsafe extern "C" fn __fwriting(fp: *mut c_void) -> c_int {
     // bd-2x73ye.
     match crate::stdio_abi::stream_ext_info(fp) {
         Some(i) => i.writing as c_int,
-        None => 0,
+        None => host_stdio_ext!(fp, __fwriting, c_int, 0),
     }
 }
 // __getauxval: native — read from /proc/self/auxv

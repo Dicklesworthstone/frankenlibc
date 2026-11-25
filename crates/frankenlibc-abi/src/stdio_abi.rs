@@ -4282,6 +4282,18 @@ pub(crate) unsafe fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Opti
     None
 }
 
+#[cfg(not(feature = "standalone"))]
+pub(crate) fn host_stream_extension(
+    stream: *mut c_void,
+    slot: &OnceLock<usize>,
+    symbol: &'static str,
+) -> Option<usize> {
+    if stream.is_null() || !may_delegate_to_host(stream, canonical_stream_id(stream)) {
+        return None;
+    }
+    crate::host_resolve::resolve_host_symbol_cached(slot, symbol)
+}
+
 /// `__fpurge`: discard the stream's buffered (unread/unflushed) data. Returns
 /// true if fl owns the stream and purged it.
 pub(crate) fn stream_purge(stream: *mut c_void) -> bool {
@@ -22455,10 +22467,7 @@ pub unsafe extern "C-unwind" fn fgetln(stream: *mut c_void, len: *mut usize) -> 
 /// BSD `fpurge(stream)` — discard any pending input or unwritten
 /// output buffered on `stream`. Returns 0 on success, EOF on error.
 ///
-/// Internally delegates to the GNU `__fpurge` no-op stub (we don't
-/// keep our own buffer). The return value is therefore always 0
-/// when `stream` is non-NULL, matching glibc's `__fpurge` (which
-/// signals failure only via `ferror`).
+/// Uses the owning provider's GNU `__fpurge` operation for a live stream.
 ///
 /// # Safety
 ///
@@ -22469,8 +22478,7 @@ pub unsafe extern "C-unwind" fn fpurge(stream: *mut c_void) -> c_int {
         // BSD spec: NULL stream is undefined; we choose to return EOF.
         return -1;
     }
-    // SAFETY: __fpurge delegates to the GNU stub which is itself a no-op
-    // for non-FILE buffers (we don't own the FILE buffer).
+    // SAFETY: the caller supplies a live FILE.
     unsafe { crate::glibc_internal_abi::__fpurge(stream) };
     0
 }

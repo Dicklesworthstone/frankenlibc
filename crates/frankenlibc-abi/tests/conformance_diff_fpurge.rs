@@ -22,6 +22,14 @@ mod g {
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut File) -> usize;
         pub fn __fpurge(f: *mut File);
         pub fn __fpending(f: *mut File) -> usize;
+        pub fn __fbufsize(f: *mut File) -> usize;
+        pub fn __flbf(f: *mut File) -> c_int;
+        pub fn __freadable(f: *mut File) -> c_int;
+        pub fn __fwritable(f: *mut File) -> c_int;
+        pub fn __freading(f: *mut File) -> c_int;
+        pub fn __fwriting(f: *mut File) -> c_int;
+        pub fn fgetc(f: *mut File) -> c_int;
+        pub fn fputc(c: c_int, f: *mut File) -> c_int;
     }
 }
 use frankenlibc_abi::glibc_internal_abi as fle;
@@ -93,4 +101,50 @@ fn fpurge_discards_buffered_output_like_glibc() {
         f_len, g_len,
         "fl file length after purge+close {f_len} != glibc {g_len}"
     );
+}
+
+/// Exercise a mixed-provider process: glibc owns the actual buffer, while
+/// the application's stdio_ext calls resolve to FrankenLibC.
+#[test]
+fn host_owned_stream_extensions_use_the_original_buffer() {
+    let (path, cpath) = temp_path("mixed");
+    let mut buf = [0u8; 1024];
+    unsafe {
+        let fp = g::fopen(cpath.as_ptr(), c"w".as_ptr());
+        assert!(!fp.is_null());
+        assert_eq!(
+            g::setvbuf(fp, buf.as_mut_ptr().cast(), libc::_IOLBF, buf.len()),
+            0
+        );
+        assert_eq!(g::fputc(65, fp), 65);
+        assert_eq!(g::__fpending(fp), 1);
+        assert_eq!(fle::__fpending(fp), g::__fpending(fp));
+        assert_eq!(fle::__fbufsize(fp), g::__fbufsize(fp));
+        assert_eq!(fle::__flbf(fp), g::__flbf(fp));
+        assert_eq!(fle::__freadable(fp), g::__freadable(fp));
+        assert_eq!(fle::__fwritable(fp), g::__fwritable(fp));
+        assert_eq!(fle::__freading(fp), g::__freading(fp));
+        assert_eq!(fle::__fwriting(fp), g::__fwriting(fp));
+        fle::__fpurge(fp);
+        assert_eq!(g::__fpending(fp), 0);
+        assert_eq!(g::fclose(fp), 0);
+    }
+    assert!(std::fs::read(&path).unwrap().is_empty());
+
+    std::fs::write(&path, b"abcdef").unwrap();
+    unsafe {
+        let fp = g::fopen(cpath.as_ptr(), c"r".as_ptr());
+        assert!(!fp.is_null());
+        assert_eq!(
+            g::setvbuf(fp, buf.as_mut_ptr().cast(), libc::_IOFBF, buf.len()),
+            0
+        );
+        assert_eq!(g::fgetc(fp), i32::from(b'a'));
+        assert_eq!(fle::__fwritable(fp), g::__fwritable(fp));
+        assert_eq!(fle::__freading(fp), g::__freading(fp));
+        assert_eq!(fl::fpurge(fp), 0);
+        assert_eq!(g::fgetc(fp), libc::EOF);
+        assert_eq!(g::fclose(fp), 0);
+    }
+    std::fs::remove_file(path).unwrap();
 }
