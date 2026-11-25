@@ -720,6 +720,19 @@ pub unsafe extern "C-unwind" fn posix_close(fd: c_int, flag: c_int) -> c_int {
 /// C ABI entrypoint; no additional safety preconditions.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpid() -> libc::pid_t {
+    // Strict-mode fast path (DEFAULT deployed): `getpid` is a 0-arg raw
+    // syscall just like `getppid`/`getuid`/`getgid`; skip the decide+observe
+    // membrane frame in deployed strict mode while keeping full validation in
+    // hardened and test builds.
+    if runtime_policy::strict_passthrough_active() {
+        return syscall::sys_getpid();
+    }
+    unsafe { getpid_validating() }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn getpid_validating() -> libc::pid_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };

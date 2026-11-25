@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 25
+DETECTOR_VERSION = 26
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -117,19 +117,53 @@ AVX2_DISPATCH_DECL_RE = re.compile(
     r".*?=>\s*([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.DOTALL,
 )
-RAW_LITERAL_RE = re.compile(r'resolve_host_symbol_raw\s*\(\s*"([^"]+)"')
 RAW_CALL_RE = re.compile(r"\bresolve_host_symbol_raw\s*\(")
-CACHED_LITERAL_RE = re.compile(r'resolve_host_symbol_cached\s*\([^,]+,\s*"([^"]+)"')
 CACHED_CALL_RE = re.compile(r"\bresolve_host_symbol_cached\s*\(")
 USE_STMT_PREFIX_RE = re.compile(r"^(?:pub(?:\s*\([^)]*\))?\s+)?use\b")
 EXTERN_BLOCK_RE = re.compile(r'\b(?:unsafe\s+)?extern(?:\s+"[^"]+")?\s*\{')
-LINK_NAME_RE = re.compile(r'link_name\s*=\s*"([^"]+)"')
+LINK_NAME_ATTR_RE = re.compile(
+    r'^\s*#\[\s*link_name\s*=\s*(?:"((?:[^"\\]|\\.)*)"|r(#*)"(.*?)"\2)\s*\]\s*$',
+    re.DOTALL,
+)
 GLOBAL_ASM_START_RE = re.compile(r"\b(?:(?:core|std)\s*::\s*arch\s*::\s*)?global_asm\s*!\s*([(\[{])")
-ASM_DEFINED_LABEL_RE = re.compile(r"(?m)^\s*([A-Za-z_.$][A-Za-z0-9_.$]*)\s*:")
-ASM_DEFINED_SET_RE = re.compile(r"(?m)^\s*\.(?:set|equ)\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*,")
+ASM_DEFINED_LABEL_RE = re.compile(r"^\s*([A-Za-z_.$][A-Za-z0-9_.$]*)\s*:")
+ASM_DEFINED_SET_RE = re.compile(r"^\s*\.(?:set|equ|equiv)\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*,")
+ASM_VIS_DECL_RE = re.compile(r"^\s*\.(?:globl|global|weak|hidden|protected|internal)\s+(.+)$")
 INCLUDE_STR_RE = re.compile(r'include_str!\s*\(\s*"([^"]+)"\s*\)')
 QUALIFIED_VALUE_REF_RE = re.compile(
-    r"(?<![\w.])((?:[A-Za-z_][A-Za-z0-9_]*::)+[A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()"
+    r"(?<![\w.])((?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)+[A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()"
+)
+LIBC_NON_FN_VALUE_NAMES = frozenset(
+    {
+        "c_char", "c_double", "c_float", "c_int", "c_long", "c_longlong", "c_schar",
+        "c_short", "c_uchar", "c_uint", "c_ulong", "c_ulonglong", "c_ushort", "c_void",
+        "size_t", "ssize_t", "ptrdiff_t", "intptr_t", "uintptr_t", "intmax_t", "uintmax_t",
+        "off_t", "off64_t", "pid_t", "uid_t", "gid_t", "mode_t", "dev_t", "ino_t",
+        "nlink_t", "blksize_t", "blkcnt_t", "time_t", "suseconds_t", "clock_t", "clockid_t",
+        "timer_t", "socklen_t", "sa_family_t", "in_addr_t", "in_port_t", "nfds_t",
+        "rlim_t", "rlim64_t", "id_t", "idtype_t", "key_t", "mqd_t", "locale_t", "wint_t",
+        "wchar_t", "wctype_t", "wctrans_t", "sigset_t", "siginfo_t", "stack_t", "ucontext_t",
+        "mcontext_t", "gregset_t", "fpregset_t", "sig_atomic_t", "cpu_set_t", "pthread_t",
+        "pthread_attr_t", "pthread_mutex_t", "pthread_mutexattr_t", "pthread_cond_t",
+        "pthread_condattr_t", "pthread_rwlock_t", "pthread_rwlockattr_t", "pthread_once_t",
+        "pthread_key_t", "pthread_barrier_t", "pthread_barrierattr_t", "pthread_spinlock_t",
+        "sem_t", "iconv_t", "glob_t", "wordexp_t", "regex_t", "regmatch_t", "regmatch_t",
+        "div_t", "ldiv_t", "lldiv_t", "fenv_t", "fexcept_t", "jmp_buf", "sigjmp_buf",
+        "timespec", "timeval", "timezone", "itimerspec", "itimerval", "tm", "tms",
+        "stat", "stat64", "statfs", "statfs64", "statvfs", "statvfs64", "statx",
+        "sigaction", "sigevent", "sigval", "iovec", "msghdr", "mmsghdr", "cmsghdr",
+        "sockaddr", "sockaddr_in", "sockaddr_in6", "sockaddr_un", "sockaddr_storage",
+        "sockaddr_nl", "sockaddr_ll", "in_addr", "in6_addr", "ip_mreq", "ip_mreqn",
+        "ipv6_mreq", "linger", "ucred", "addrinfo", "hostent", "servent", "protoent",
+        "netent", "ifaddrs", "if_nameindex", "ifreq", "rlimit", "rlimit64", "rusage",
+        "flock", "flock64", "termios", "winsize", "utsname", "dirent", "dirent64",
+        "passwd", "group", "spwd", "epoll_event", "pollfd", "signalfd_siginfo",
+        "inotify_event", "sched_param", "sched_attr", "sysinfo", "shmid_ds", "msqid_ds",
+        "semid_ds", "sembuf", "mq_attr", "aiocb", "lconv", "option", "dl_phdr_info",
+        "Dl_info", "Elf64_Phdr", "Elf64_Ehdr", "Elf64_Shdr", "Elf64_Sym", "Elf64_Dyn",
+        "Elf64_Rela", "Elf64_Rel", "Elf64_Auxv", "Elf32_Phdr", "Elf32_Ehdr",
+        "FILE", "DIR", "syscall", "_libc_fpstate",
+    }
 )
 RESOLVED_THREAD_RE = re.compile(r"\bresolved_thread_([A-Za-z0-9_]+)_raw\s*\(")
 RESOLVER_VALUE_REF_RES = (
@@ -745,6 +779,23 @@ def extend_if_chain(mask: str, end: int) -> int:
     return end
 
 
+def _is_generic_angle_open(mask: str, idx: int, start: int, angle: int, seen_colon: bool) -> bool:
+    """Distinguish generic `<A, B>` brackets from binary comparison `a < b`."""
+    if angle > 0:
+        return True
+    before = mask[start:idx]
+    if before.rstrip().endswith("::"):
+        return True
+    if idx > start and (mask[idx - 1].isalnum() or mask[idx - 1] == "_"):
+        tok_start = idx - 1
+        while tok_start > start and (mask[tok_start - 1].isalnum() or mask[tok_start - 1] == "_"):
+            tok_start -= 1
+        token = mask[tok_start:idx]
+        if seen_colon or (token and token[0].isupper()):
+            return True
+    return False
+
+
 def cfg_target_end(mask: str, start: int) -> int | None:
     """Find the end of the Rust node governed by an outer cfg attribute."""
 
@@ -769,23 +820,34 @@ def cfg_target_end(mask: str, start: int) -> int | None:
         "while", "for", "loop", "unsafe", "extern",
     }
     paren = bracket = brace = angle = 0
+    seen_top_colon = False
     idx = start
     first_top_brace: int | None = None
     while idx < len(mask):
-        if mask.startswith(("->", "=>", "<=", ">="), idx):
+        if mask.startswith(("->", "=>", "<=", ">=", "<<"), idx):
+            idx += 2
+            continue
+        if mask.startswith("::", idx):
             idx += 2
             continue
         char = mask[idx]
         if char == "(":
             paren += 1
         elif char == ")":
+            if paren == 0:
+                return idx
             paren -= 1
         elif char == "[":
             bracket += 1
         elif char == "]":
+            if bracket == 0:
+                return idx
             bracket -= 1
+        elif char == ":" and paren == bracket == brace == 0:
+            seen_top_colon = True
         elif char == "<" and paren == bracket == brace == 0:
-            angle += 1
+            if _is_generic_angle_open(mask, idx, start, angle, seen_top_colon):
+                angle += 1
         elif char == ">" and angle > 0 and paren == bracket == brace == 0:
             angle -= 1
         elif char == "{":
@@ -1199,6 +1261,53 @@ def parse_module_imports(text: str) -> dict[str, str]:
         ):
             imports.setdefault(alias_name, rhs)
     return imports
+
+
+def parse_module_glob_imports(text: str) -> list[str]:
+    """Return target module paths from `use <path>::*;` glob imports."""
+    globs: list[str] = []
+    masked = rust_code_mask(text)
+    for match in USE_ITEM_RE.finditer(masked):
+        expression = " ".join(match.group(1).split())
+        normalized = re.sub(r"\s*::\s*", "::", expression)
+        normalized = re.sub(r"\{\s*", "{", normalized)
+        normalized = re.sub(r"\s*\}", "}", normalized)
+        cleaned = normalized.lstrip(":")
+        if "::*" in cleaned:
+            # Expand nested brace trees containing `*`.
+            stack = [("", cleaned)]
+            while stack:
+                prefix, item = stack.pop()
+                item = item.strip()
+                if not item:
+                    continue
+                if item == "*":
+                    if prefix:
+                        globs.append(prefix)
+                    continue
+                if item.endswith("::*") and "{" not in item:
+                    base = item[:-3].strip(":")
+                    full = f"{prefix}::{base}" if prefix and base else (base or prefix)
+                    if full:
+                        globs.append(full)
+                    continue
+                if "{" in item and item.endswith("}"):
+                    brace = item.find("{")
+                    head = item[:brace].rstrip(":")
+                    inner = item[brace + 1 : -1]
+                    next_prefix = f"{prefix}::{head}" if prefix and head else (head or prefix)
+                    depth = 0
+                    part_start = 0
+                    for i, ch in enumerate(inner):
+                        if ch == "{":
+                            depth += 1
+                        elif ch == "}":
+                            depth -= 1
+                        elif ch == "," and depth == 0:
+                            stack.append((next_prefix, inner[part_start:i]))
+                            part_start = i + 1
+                    stack.append((next_prefix, inner[part_start:]))
+    return globs
 
 
 def resolve_import_target(imports: dict[str, str], expression: str) -> str | None:
@@ -2589,58 +2698,151 @@ def _macro_rules_spans(mask: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _skip_rust_char_literal(src: str, idx: int) -> int:
+    """If `src[idx:]` begins a Rust char/byte-char literal, return its end index; else -1."""
+    if idx >= len(src) or src[idx] != "'":
+        return -1
+    if idx + 2 < len(src) and src[idx + 1] != "\\" and src[idx + 1] != "'" and src[idx + 2] == "'":
+        return idx + 3
+    if idx + 1 < len(src) and src[idx + 1] == "\\":
+        end = idx + 2
+        if end < len(src):
+            if src[end] == "x" and end + 3 < len(src) and src[end + 3] == "'":
+                return end + 4
+            if src[end] == "u" and end + 1 < len(src) and src[end + 1] == "{":
+                close = src.find("}", end + 2)
+                if close > 0 and close + 1 < len(src) and src[close + 1] == "'":
+                    return close + 2
+            if end + 1 < len(src) and src[end + 1] == "'":
+                return end + 2
+    return -1
+
+
+def _decode_rust_string_literal_at(src: str, idx: int) -> tuple[str, int] | None:
+    """Parse one raw or regular Rust string literal starting at `idx`."""
+    n = len(src)
+    if idx >= n:
+        return None
+    raw_match = RAW_STRING_START_RE.match(src, idx)
+    if raw_match is not None:
+        closing = '"' + raw_match.group("hashes")
+        body_start = raw_match.end()
+        close_pos = src.find(closing, body_start)
+        if close_pos < 0:
+            return None
+        return src[body_start:close_pos], close_pos + len(closing)
+    if src[idx] != '"':
+        return None
+    end = idx + 1
+    escaped = False
+    chars: list[str] = []
+    while end < n:
+        ch = src[end]
+        end += 1
+        if escaped:
+            if ch in ("\n", "\r"):
+                if ch == "\r" and end < n and src[end] == "\n":
+                    end += 1
+                while end < n and src[end] in (" ", "\t", "\n", "\r"):
+                    end += 1
+            elif ch == "n":
+                chars.append("\n")
+            elif ch == "t":
+                chars.append("\t")
+            elif ch == "r":
+                chars.append("\r")
+            else:
+                chars.append(ch)
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            return "".join(chars), end
+        else:
+            chars.append(ch)
+    return None
+
+
 def _extract_rust_string_literals(src: str) -> list[str]:
-    """Extract raw and regular Rust string literal contents without splitting raw quotes."""
+    """Extract raw and regular Rust string literal contents without splitting raw quotes or char literals."""
     out: list[str] = []
     idx = 0
     n = len(src)
     while idx < n:
-        raw_match = RAW_STRING_START_RE.match(src, idx)
-        if raw_match is not None:
-            closing = '"' + raw_match.group("hashes")
-            body_start = raw_match.end()
-            close_pos = src.find(closing, body_start)
-            if close_pos < 0:
-                break
-            out.append(src[body_start:close_pos])
-            idx = close_pos + len(closing)
-            continue
-        if src[idx] == '"':
-            end = idx + 1
-            escaped = False
-            chars: list[str] = []
-            while end < n:
-                ch = src[end]
-                end += 1
-                if escaped:
-                    if ch == "n":
-                        chars.append("\n")
-                    elif ch == "t":
-                        chars.append("\t")
-                    elif ch == "r":
-                        chars.append("\r")
-                    else:
-                        chars.append(ch)
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    break
-                else:
-                    chars.append(ch)
-            out.append("".join(chars))
-            idx = end
+        if src[idx] == "'":
+            char_end = _skip_rust_char_literal(src, idx)
+            if char_end > idx:
+                idx = char_end
+                continue
+        lit = _decode_rust_string_literal_at(src, idx)
+        if lit is not None:
+            body, next_idx = lit
+            out.append(body)
+            idx = next_idx
             continue
         idx += 1
     return out
 
 
-def parse_extern_fn_decls(text: str) -> dict[str, str]:
-    """Return {rust_fn_name: link_symbol} for extern fn declarations."""
+def _extract_resolver_call_literal(raw_text: str, call_start: int, arg_index: int) -> str | None:
+    """Extract an exact string-literal argument from a resolver call with balanced delimiters."""
+    open_paren = raw_text.find("(", call_start)
+    if open_paren < 0:
+        return None
+    args: list[str] = []
+    depth = 0
+    cur_start = open_paren + 1
+    idx = open_paren + 1
+    n = len(raw_text)
+    close_paren = -1
+    while idx < n:
+        if raw_text[idx] == "'":
+            char_end = _skip_rust_char_literal(raw_text, idx)
+            if char_end > idx:
+                idx = char_end
+                continue
+        lit = _decode_rust_string_literal_at(raw_text, idx)
+        if lit is not None:
+            idx = lit[1]
+            continue
+        ch = raw_text[idx]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                if ch == ")":
+                    args.append(raw_text[cur_start:idx])
+                    close_paren = idx
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append(raw_text[cur_start:idx])
+            cur_start = idx + 1
+        idx += 1
+    if close_paren < 0:
+        return None
+    cleaned_args = [a.strip() for a in args]
+    if cleaned_args and cleaned_args[-1] == "":
+        cleaned_args.pop()
+    expected_arity = arg_index + 1
+    if len(cleaned_args) != expected_arity:
+        return None
+    target_arg = cleaned_args[arg_index]
+    parsed = _decode_rust_string_literal_at(target_arg, 0)
+    if parsed is None:
+        return None
+    value, end_pos = parsed
+    if target_arg[end_pos:].strip():
+        return None
+    return value if value else None
+
+
+def parse_extern_fn_decls(text: str) -> dict[str, set[str]]:
+    """Return {rust_fn_name: {link_symbol, ...}} for extern fn declarations."""
     comment_free = rust_strip_comments_only(text)
     mask = rust_code_mask(text)
     macro_spans = _macro_rules_spans(mask)
-    result: dict[str, str] = {}
+    result: dict[str, set[str]] = {}
     for block_match in EXTERN_BLOCK_RE.finditer(comment_free):
         start = block_match.start()
         if any(ms <= start < me for ms, me in macro_spans):
@@ -2671,15 +2873,69 @@ def parse_extern_fn_decls(text: str) -> dict[str, str]:
                     break
                 preceding.insert(0, body_raw[a_start:a_end])
                 cursor = a_start
-            attr_text = "\n".join(preceding)
-            link_match = LINK_NAME_RE.search(attr_text)
-            link_symbol = link_match.group(1) if link_match is not None else fn_name
-            result[fn_name] = link_symbol
+            link_symbol = fn_name
+            for attr in preceding:
+                link_match = LINK_NAME_ATTR_RE.match(attr)
+                if link_match is not None:
+                    link_symbol = (
+                        link_match.group(1)
+                        if link_match.group(1) is not None
+                        else link_match.group(3)
+                    )
+            result.setdefault(fn_name, set()).add(link_symbol)
     return result
 
 
+def _strip_asm_comments(asm_text: str) -> str:
+    """Strip C-style /*...*/, //..., and #... assembly comments while preserving newlines."""
+    no_block = re.sub(
+        r"/\*.*?\*/",
+        lambda m: "\n" * m.group(0).count("\n"),
+        asm_text,
+        flags=re.DOTALL,
+    )
+    no_slash = re.sub(r"//[^\n]*", "", no_block)
+    return re.sub(r"(?<!\$)#[^\n]*", "", no_slash)
+
+
+def _extract_asm_defined_symbols_from_text(asm_text: str) -> set[str]:
+    """Return non-local symbols both defined (label/.set/.equ) and declared visible in asm."""
+    cleaned = _strip_asm_comments(asm_text)
+    defined_names: set[str] = set()
+    declared_vis: set[str] = set()
+    for line in cleaned.splitlines():
+        for stmt in line.split(";"):
+            s = stmt.strip()
+            if not s:
+                continue
+            vis_match = ASM_VIS_DECL_RE.match(s)
+            if vis_match is not None:
+                for raw_sym in vis_match.group(1).split(","):
+                    sym = raw_sym.strip()
+                    if sym and not sym.startswith(".L"):
+                        declared_vis.add(sym)
+                continue
+            set_match = ASM_DEFINED_SET_RE.match(s)
+            if set_match is not None:
+                sym = set_match.group(1)
+                if not sym.startswith(".L") and not sym.isdigit():
+                    defined_names.add(sym)
+                continue
+            # A statement may carry multiple labels before an instruction: `a: b: ret`
+            rem = s
+            while True:
+                lbl_match = ASM_DEFINED_LABEL_RE.match(rem)
+                if lbl_match is None:
+                    break
+                sym = lbl_match.group(1)
+                if not sym.startswith(".L") and not sym.isdigit():
+                    defined_names.add(sym)
+                rem = rem[lbl_match.end() :].lstrip()
+    return defined_names & declared_vis
+
+
 def parse_global_asm_defined_symbols(path: Path, text: str) -> set[str]:
-    """Return symbol names actually defined by labels or .set/.equ in active global_asm!."""
+    """Return symbol names actually defined and declared visible in active global_asm!."""
     comment_free = rust_strip_comments_only(text)
     mask = rust_code_mask(text)
     macro_spans = _macro_rules_spans(mask)
@@ -2694,16 +2950,126 @@ def parse_global_asm_defined_symbols(path: Path, text: str) -> set[str]:
         if close_pos is None:
             continue
         asm_src = comment_free[open_pos:close_pos]
-        for lit_body in _extract_rust_string_literals(asm_src):
-            defined.update(ASM_DEFINED_LABEL_RE.findall(lit_body))
-            defined.update(ASM_DEFINED_SET_RE.findall(lit_body))
+        parts: list[str] = _extract_rust_string_literals(asm_src)
         for inc in INCLUDE_STR_RE.finditer(asm_src):
             inc_path = path.parent / inc.group(1)
             if inc_path.is_file():
-                inc_text = inc_path.read_text(encoding="utf-8")
-                defined.update(ASM_DEFINED_LABEL_RE.findall(inc_text))
-                defined.update(ASM_DEFINED_SET_RE.findall(inc_text))
+                parts.append(inc_path.read_text(encoding="utf-8"))
+        if parts:
+            defined.update(_extract_asm_defined_symbols_from_text("\n".join(parts)))
     return defined
+
+
+def _is_libc_type_or_const_context(line: str, match_start: int, match_end: int, symbol: str) -> bool:
+    """Return True if a `libc::<symbol>` non-call reference is a type or constant, not a fn ptr."""
+    if symbol in LIBC_NON_FN_VALUE_NAMES:
+        return True
+    if (
+        symbol.isupper()
+        or symbol.endswith("_t")
+        or symbol.startswith(("c_", "Elf", "SYS_", "__NR_"))
+    ):
+        return True
+    after = line[match_end:].lstrip()
+    if after.startswith(("{", "::")):
+        return True
+    before = line[:match_start].rstrip()
+    # Type annotations (`: libc::stat`, `-> libc::stat`, `as *const libc::stat`, generics `<libc::stat>`, `offset_of!(libc::T, ...)`)
+    if before.endswith(("->", "<")):
+        return True
+    if before.endswith(":") and not before.endswith("::"):
+        return True
+    if re.search(r"(?:\bas|\*const|\*mut|&mut|&|offset_of\s*!\s*\()\s*$", before):
+        return True
+    return False
+
+
+def parse_module_host_statics(
+    text: str,
+    module_name: str,
+    *,
+    module_imports: dict[str, str],
+    all_module_imports: dict[str, dict[str, str]],
+    known_modules: set[str],
+    module_aliases: dict[str, str | None] | None,
+    module_extern_fns: dict[str, set[str]],
+    all_extern_fns: dict[str, dict[str, set[str]]],
+    crate_defined_symbols: set[str],
+) -> dict[str, list[tuple[str, str]]]:
+    """Map module-level static/const names initialized with host/extern fn refs to [(kind, sym)]."""
+    mask = rust_code_mask(text)
+    raw_no_comments = rust_strip_comments_only(text)
+    result: dict[str, list[tuple[str, str]]] = {}
+    item_re = re.compile(
+        r"(?m)^(?:\s*pub(?:\s*\([^)]*\))?\s+)?(?:static(?:\s+mut)?|const)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:"
+    )
+    for m in item_re.finditer(mask):
+        name = m.group(1)
+        # Skip function-local items (deeply indented inside fn bodies).
+        line_start = mask.rfind("\n", 0, m.start()) + 1
+        if m.start() - line_start > 0:
+            continue
+        eq_pos = mask.find("=", m.end())
+        semi_pos = mask.find(";", m.end())
+        if eq_pos < 0 or semi_pos < 0 or eq_pos > semi_pos:
+            continue
+        # Only inspect top-level semicolon (skip braces/parens).
+        idx = eq_pos + 1
+        depth = 0
+        while idx < len(mask):
+            ch = mask[idx]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+            elif ch == ";" and depth == 0:
+                semi_pos = idx
+                break
+            idx += 1
+        rhs_mask = mask[eq_pos + 1 : semi_pos]
+        rhs_raw = raw_no_comments[eq_pos + 1 : semi_pos]
+        hits: list[tuple[str, str]] = []
+        for resolver_name, _ in RESOLVER_VALUE_REF_RES:
+            if re.search(rf"(?<![\w.]){resolver_name}\b", rhs_mask):
+                hits.append(("static_host_fn_ref", "<dynamic>"))
+        for needle, host_symbol, kind, needle_re in STATIC_HOST_NEEDLE_RES:
+            if needle in rhs_mask and needle_re.search(rhs_mask):
+                hits.append((kind, host_symbol))
+        for ext_name, ext_links in module_extern_fns.items():
+            unbacked = sorted(sym for sym in ext_links if sym not in crate_defined_symbols)
+            if unbacked and re.search(rf"(?<![\w.]){re.escape(ext_name)}\b", rhs_mask):
+                for sym in unbacked:
+                    hits.append(("static_extern_c_fn_ref", sym))
+        for qhit in QUALIFIED_VALUE_REF_RE.finditer(rhs_mask):
+            qnorm = re.sub(r"\s*::\s*", "::", qhit.group(1))
+            parts = qnorm.lstrip(":").split("::")
+            if len(parts) >= 2 and parts[0] == "libc":
+                sym = parts[-1]
+                if not _is_libc_type_or_const_context(rhs_mask, qhit.start(), qhit.end(), sym):
+                    hits.append(("static_libc_extern_ref", sym))
+                continue
+            eff_mod, expanded_parts = expand_qualified_imports(
+                module_name,
+                parts,
+                known_modules,
+                module_aliases,
+                all_module_imports,
+            )
+            if len(expanded_parts) >= 2 and expanded_parts[0] == "libc":
+                sym = expanded_parts[-1]
+                if not _is_libc_type_or_const_context(rhs_mask, qhit.start(), qhit.end(), sym):
+                    hits.append(("static_libc_extern_ref", sym))
+            elif len(expanded_parts) >= 2:
+                ext_mod, ext_local = qualified_target_module(
+                    eff_mod, expanded_parts, known_modules, module_aliases
+                )
+                if ext_local and ext_mod is not None:
+                    for sym in sorted(all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1], set())):
+                        if sym not in crate_defined_symbols:
+                            hits.append(("static_extern_c_fn_ref", sym))
+        if hits:
+            result[name] = sorted(set(hits))
+    return result
 
 
 def detect_host_calls(
@@ -2713,24 +3079,83 @@ def detect_host_calls(
     include_libc_calls: bool = False,
     module_imports: dict[str, str] | None = None,
     all_module_imports: dict[str, dict[str, str]] | None = None,
+    module_glob_imports: list[str] | None = None,
     known_modules: set[str] | None = None,
     module_aliases: dict[str, str | None] | None = None,
-    module_extern_fns: dict[str, str] | None = None,
-    all_extern_fns: dict[str, dict[str, str]] | None = None,
+    module_extern_fns: dict[str, set[str]] | None = None,
+    all_extern_fns: dict[str, dict[str, set[str]]] | None = None,
     crate_defined_symbols: set[str] | None = None,
+    module_host_statics: dict[str, list[tuple[str, str]]] | None = None,
 ) -> list[HostCall]:
     calls: list[HostCall] = []
     path = rel(root, function.path)
     call_paths = scoped_call_paths(function)
     defined_syms = crate_defined_symbols or set()
+    # Combine locally declared extern fns, explicitly imported extern fns, and
+    # glob-imported extern fns into one exact lookup map {local_name: {link_syms}}.
+    effective_local_externs: dict[str, set[str]] = {}
+    for ext_name, ext_links in (module_extern_fns or {}).items():
+        unbacked = {s for s in ext_links if s not in defined_syms}
+        if unbacked:
+            effective_local_externs.setdefault(ext_name, set()).update(unbacked)
+    if all_extern_fns and known_modules is not None:
+        for local_alias, import_target in (module_imports or {}).items():
+            eff_mod, expanded_parts = expand_qualified_imports(
+                function.module,
+                import_target.lstrip(":").split("::"),
+                known_modules,
+                module_aliases,
+                all_module_imports,
+            )
+            if len(expanded_parts) >= 2:
+                ext_mod, ext_local = qualified_target_module(
+                    eff_mod, expanded_parts, known_modules, module_aliases
+                )
+                if ext_local and ext_mod is not None:
+                    ext_links = all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1], set())
+                    unbacked = {s for s in ext_links if s not in defined_syms}
+                    if unbacked:
+                        effective_local_externs.setdefault(local_alias, set()).update(unbacked)
+        for glob_path in module_glob_imports or []:
+            eff_mod, expanded_parts = expand_qualified_imports(
+                function.module,
+                glob_path.lstrip(":").split("::") + ["_"],
+                known_modules,
+                module_aliases,
+                all_module_imports,
+            )
+            ext_mod, ext_local = qualified_target_module(
+                eff_mod, expanded_parts, known_modules, module_aliases
+            )
+            if ext_local and ext_mod is not None:
+                for ext_name, ext_links in all_extern_fns.get(ext_mod, {}).items():
+                    unbacked = {s for s in ext_links if s not in defined_syms}
+                    if unbacked:
+                        effective_local_externs.setdefault(ext_name, set()).update(unbacked)
     unbacked_local_externs = [
-        (ext_name, ext_link, re.compile(rf"(?<![\w.]){re.escape(ext_name)}\b(?!\s*\()"))
-        for ext_name, ext_link in (module_extern_fns or {}).items()
-        if ext_link not in defined_syms
+        (ext_name, sorted(ext_links), re.compile(rf"(?<![\w.]){re.escape(ext_name)}\b(?!\s*\()"))
+        for ext_name, ext_links in sorted(effective_local_externs.items())
+    ]
+    host_static_patterns = [
+        (static_name, hits, re.compile(rf"(?<![\w.]){re.escape(static_name)}\b"))
+        for static_name, hits in sorted((module_host_statics or {}).items())
     ]
     body_lines = function_body_lines(function)
+    in_use_stmt = False
     for line_idx, (line_no, raw_line, line) in enumerate(body_lines):
         if not line.strip():
+            continue
+        stripped_line = line.lstrip()
+        if in_use_stmt:
+            semi = line.find(";")
+            if semi < 0:
+                continue
+            in_use_stmt = False
+            line = (" " * (semi + 1)) + line[semi + 1 :]
+            if not line.strip():
+                continue
+        elif USE_STMT_PREFIX_RE.match(stripped_line) and ";" not in line:
+            in_use_stmt = True
             continue
         expression = raw_line.strip()
         lookahead_raw: str | None = None
@@ -2739,15 +3164,15 @@ def detect_host_calls(
             nonlocal lookahead_raw
             if lookahead_raw is None:
                 lookahead_raw = "\n".join(
-                    row_raw for _, row_raw, _ in body_lines[line_idx : line_idx + 4]
+                    row_raw for _, row_raw, _ in body_lines[line_idx : line_idx + 8]
                 )
             return lookahead_raw
 
         for resolver in RAW_CALL_RE.finditer(line):
-            literal = RAW_LITERAL_RE.match(raw_line, resolver.start())
-            if literal is None:
-                literal = RAW_LITERAL_RE.match(raw_window(), resolver.start())
-            if literal is not None:
+            literal_sym = _extract_resolver_call_literal(raw_line, resolver.start(), 0)
+            if literal_sym is None:
+                literal_sym = _extract_resolver_call_literal(raw_window(), resolver.start(), 0)
+            if literal_sym is not None:
                 calls.append(
                     HostCall(
                         path=path,
@@ -2755,7 +3180,7 @@ def detect_host_calls(
                         function=function.name,
                         function_id=function.identity,
                         delegation_kind="resolve_host_symbol_raw_literal",
-                        host_symbol=literal.group(1),
+                        host_symbol=literal_sym,
                         expression=expression,
                         evidence=f"{path}:{line_no}",
                     )
@@ -2774,10 +3199,10 @@ def detect_host_calls(
                     )
                 )
         for resolver in CACHED_CALL_RE.finditer(line):
-            literal = CACHED_LITERAL_RE.match(raw_line, resolver.start())
-            if literal is None:
-                literal = CACHED_LITERAL_RE.match(raw_window(), resolver.start())
-            if literal is not None:
+            literal_sym = _extract_resolver_call_literal(raw_line, resolver.start(), 1)
+            if literal_sym is None:
+                literal_sym = _extract_resolver_call_literal(raw_window(), resolver.start(), 1)
+            if literal_sym is not None:
                 calls.append(
                     HostCall(
                         path=path,
@@ -2785,7 +3210,7 @@ def detect_host_calls(
                         function=function.name,
                         function_id=function.identity,
                         delegation_kind="resolve_host_symbol_cached_literal",
-                        host_symbol=literal.group(1),
+                        host_symbol=literal_sym,
                         expression=expression,
                         evidence=f"{path}:{line_no}",
                     )
@@ -2835,9 +3260,8 @@ def detect_host_calls(
             for target_expression, shadowed in call_paths.get(line_no, []):
                 if shadowed or target_expression.lstrip(":").startswith("libc::"):
                     continue
-                if "::" not in target_expression and module_extern_fns:
-                    ext_link = module_extern_fns.get(target_expression)
-                    if ext_link is not None and ext_link not in defined_syms:
+                if "::" not in target_expression and target_expression in effective_local_externs:
+                    for ext_link in sorted(effective_local_externs[target_expression]):
                         calls.append(
                             HostCall(
                                 path=path,
@@ -2850,7 +3274,7 @@ def detect_host_calls(
                                 evidence=f"{path}:{line_no}",
                             )
                         )
-                        continue
+                    continue
                 imported_expression = resolve_import_target(
                     module_imports or {}, target_expression
                 )
@@ -2876,20 +3300,25 @@ def detect_host_calls(
                             module_aliases,
                         )
                         if ext_local and ext_mod is not None:
-                            ext_link = all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1])
-                            if ext_link is not None and ext_link not in defined_syms:
-                                calls.append(
-                                    HostCall(
-                                        path=path,
-                                        line=line_no,
-                                        function=function.name,
-                                        function_id=function.identity,
-                                        delegation_kind="extern_c_fn_call",
-                                        host_symbol=ext_link,
-                                        expression=expression,
-                                        evidence=f"{path}:{line_no}",
+                            ext_links = sorted(
+                                sym
+                                for sym in all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1], set())
+                                if sym not in defined_syms
+                            )
+                            if ext_links:
+                                for ext_link in ext_links:
+                                    calls.append(
+                                        HostCall(
+                                            path=path,
+                                            line=line_no,
+                                            function=function.name,
+                                            function_id=function.identity,
+                                            delegation_kind="extern_c_fn_call",
+                                            host_symbol=ext_link,
+                                            expression=expression,
+                                            evidence=f"{path}:{line_no}",
+                                        )
                                     )
-                                )
                                 continue
                 if (
                     imported_expression is None
@@ -2911,40 +3340,77 @@ def detect_host_calls(
                         evidence=f"{path}:{line_no}",
                     )
                 )
-            for ext_name, ext_link, ext_val_re in unbacked_local_externs:
+            for ext_name, ext_links, ext_val_re in unbacked_local_externs:
                 if ext_name not in line:
                     continue
                 for hit in ext_val_re.finditer(line):
                     if _is_use_statement_prefix(line, hit.start()):
                         continue
                     before = line[: hit.start()].rstrip()
-                    if before.endswith(("::", "fn")):
+                    if before.endswith(("::", "fn", "let", "mut")):
                         continue
-                    calls.append(
-                        HostCall(
-                            path=path,
-                            line=line_no,
-                            function=function.name,
-                            function_id=function.identity,
-                            delegation_kind="extern_c_fn_value_ref",
-                            host_symbol=ext_link,
-                            expression=expression,
-                            evidence=f"{path}:{line_no}",
+                    after = line[hit.end() :].lstrip()
+                    if after.startswith(":") and not after.startswith("::"):
+                        continue
+                    for ext_link in ext_links:
+                        calls.append(
+                            HostCall(
+                                path=path,
+                                line=line_no,
+                                function=function.name,
+                                function_id=function.identity,
+                                delegation_kind="extern_c_fn_value_ref",
+                                host_symbol=ext_link,
+                                expression=expression,
+                                evidence=f"{path}:{line_no}",
+                            )
                         )
-                    )
                     break
-            if all_extern_fns and "::" in line and known_modules is not None:
+            if "::" in line and known_modules is not None:
                 for qhit in QUALIFIED_VALUE_REF_RE.finditer(line):
                     if _is_use_statement_prefix(line, qhit.start()):
                         continue
+                    qnorm = re.sub(r"\s*::\s*", "::", qhit.group(1))
+                    parts = qnorm.lstrip(":").split("::")
+                    if len(parts) >= 2 and parts[0] == "libc":
+                        sym = parts[-1]
+                        if not _is_libc_type_or_const_context(line, qhit.start(), qhit.end(), sym):
+                            calls.append(
+                                HostCall(
+                                    path=path,
+                                    line=line_no,
+                                    function=function.name,
+                                    function_id=function.identity,
+                                    delegation_kind="libc_crate_extern_value_ref",
+                                    host_symbol=sym,
+                                    expression=expression,
+                                    evidence=f"{path}:{line_no}",
+                                )
+                            )
+                        continue
                     eff_mod, expanded_parts = expand_qualified_imports(
                         function.module,
-                        qhit.group(1).lstrip(":").split("::"),
+                        parts,
                         known_modules,
                         module_aliases,
                         all_module_imports,
                     )
-                    if len(expanded_parts) >= 2:
+                    if len(expanded_parts) >= 2 and expanded_parts[0] == "libc":
+                        sym = expanded_parts[-1]
+                        if not _is_libc_type_or_const_context(line, qhit.start(), qhit.end(), sym):
+                            calls.append(
+                                HostCall(
+                                    path=path,
+                                    line=line_no,
+                                    function=function.name,
+                                    function_id=function.identity,
+                                    delegation_kind="libc_crate_extern_value_ref",
+                                    host_symbol=sym,
+                                    expression=expression,
+                                    evidence=f"{path}:{line_no}",
+                                )
+                            )
+                    elif all_extern_fns and len(expanded_parts) >= 2:
                         ext_mod, ext_local = qualified_target_module(
                             eff_mod,
                             expanded_parts,
@@ -2952,8 +3418,11 @@ def detect_host_calls(
                             module_aliases,
                         )
                         if ext_local and ext_mod is not None:
-                            ext_link = all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1])
-                            if ext_link is not None and ext_link not in defined_syms:
+                            for ext_link in sorted(
+                                sym
+                                for sym in all_extern_fns.get(ext_mod, {}).get(expanded_parts[-1], set())
+                                if sym not in defined_syms
+                            ):
                                 calls.append(
                                     HostCall(
                                         path=path,
@@ -2966,6 +3435,23 @@ def detect_host_calls(
                                         evidence=f"{path}:{line_no}",
                                     )
                                 )
+            for static_name, static_hits, static_re in host_static_patterns:
+                if static_name not in line:
+                    continue
+                if static_re.search(line):
+                    for skind, ssym in static_hits:
+                        calls.append(
+                            HostCall(
+                                path=path,
+                                line=line_no,
+                                function=function.name,
+                                function_id=function.identity,
+                                delegation_kind=skind,
+                                host_symbol=ssym,
+                                expression=expression,
+                                evidence=f"{path}:{line_no}",
+                            )
+                        )
         for resolver_name, val_ref_re in RESOLVER_VALUE_REF_RES:
             if function.name == resolver_name or resolver_name not in line:
                 continue
@@ -3470,9 +3956,12 @@ def resolve_function_calls(
                                 )
                             )
                     if not candidates:
-                        if target_module is not None and target_name in (
-                            extern_fns_by_module or {}
-                        ).get(target_module, {}):
+                        if (
+                            not is_type_assoc
+                            and target_module is not None
+                            and target_name
+                            in (extern_fns_by_module or {}).get(target_module, {})
+                        ):
                             continue
                         nonlocal_candidates = functions_by_name.get(target_name, [])
                         if conservative_nonlocal_unknown:
@@ -3596,12 +4085,14 @@ def analyze_host_dependencies(
     callsite_namespace: str = "",
     module_aliases: dict[str, str | None] | None = None,
     module_imports: dict[str, dict[str, str]] | None = None,
+    module_glob_imports: dict[str, list[str]] | None = None,
     declared_types_by_module: dict[str, set[str]] | None = None,
     enum_constructors: set[tuple[str, str, str]] | None = None,
     generated_associated_leaves: set[tuple[str, str, str]] | None = None,
     conservative_nonlocal_unknown: bool = False,
-    extern_fns_by_module: dict[str, dict[str, str]] | None = None,
+    extern_fns_by_module: dict[str, dict[str, set[str]]] | None = None,
     crate_defined_symbols: set[str] | None = None,
+    host_statics_by_module: dict[str, dict[str, list[tuple[str, str]]]] | None = None,
 ) -> dict[str, Any]:
     """Build either the legacy downgrade view or a full dependency view."""
 
@@ -3626,11 +4117,13 @@ def analyze_host_dependencies(
             include_libc_calls=include_libc_calls,
             module_imports=(module_imports or {}).get(function.module),
             all_module_imports=module_imports,
+            module_glob_imports=(module_glob_imports or {}).get(function.module),
             known_modules=known_modules,
             module_aliases=module_aliases,
             module_extern_fns=(extern_fns_by_module or {}).get(function.module),
             all_extern_fns=extern_fns_by_module,
             crate_defined_symbols=effective_defined_symbols,
+            module_host_statics=(host_statics_by_module or {}).get(function.module),
         )
         for function in functions
     }
@@ -4020,6 +4513,9 @@ def build_profile_census(
     module_imports = {
         path.stem: parse_module_imports(text) for path, text in filtered.items()
     }
+    module_glob_imports = {
+        path.stem: parse_module_glob_imports(text) for path, text in filtered.items()
+    }
     declared_types_by_module = {
         path.stem: parse_declared_types(text) for path, text in filtered.items()
     }
@@ -4041,6 +4537,24 @@ def build_profile_census(
         for path, text in filtered.items()
         for symbol in parse_global_asm_defined_symbols(path, text)
     }
+    exported_symbol_set = {
+        fn.exported_symbol for fn in functions if fn.is_exported_abi
+    }
+    known_profile_modules = {fn.module for fn in functions} | set(module_imports.keys())
+    host_statics_by_module = {
+        path.stem: parse_module_host_statics(
+            text,
+            path.stem,
+            module_imports=module_imports.get(path.stem, {}),
+            all_module_imports=module_imports,
+            known_modules=known_profile_modules,
+            module_aliases=module_aliases,
+            module_extern_fns=extern_fns_by_module.get(path.stem, {}),
+            all_extern_fns=extern_fns_by_module,
+            crate_defined_symbols=exported_symbol_set | crate_defined_symbols,
+        )
+        for path, text in filtered.items()
+    }
     exported_data_symbols = [
         symbol
         for path, text in filtered.items()
@@ -4054,12 +4568,14 @@ def build_profile_census(
         callsite_namespace=f"{profile.name}:",
         module_aliases=module_aliases,
         module_imports=module_imports,
+        module_glob_imports=module_glob_imports,
         declared_types_by_module=declared_types_by_module,
         enum_constructors=enum_constructors,
         generated_associated_leaves=generated_associated_leaves,
         conservative_nonlocal_unknown=True,
         extern_fns_by_module=extern_fns_by_module,
         crate_defined_symbols=crate_defined_symbols,
+        host_statics_by_module=host_statics_by_module,
     )
     coverage = support_matrix_coverage(
         root, analysis["exported_functions"], exported_data_symbols
@@ -5777,7 +6293,7 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     v25_p2_src = (
         'macro_rules! fake_asm { () => { core::arch::global_asm!("forged_sym:\nret"); }; }\n'
         'core::arch::global_asm!(".globl ext_only_globl");\n'
-        'core::arch::global_asm!{ r#".section ".text"\nraw_defined:\nret"# }\n'
+        'core::arch::global_asm!{ r#".section ".text"\n.globl raw_defined\nraw_defined:\nret"# }\n'
         "unsafe extern {\n"
         "    fn ext_only_globl();\n"
         "    fn raw_defined();\n"
@@ -5876,6 +6392,155 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     require(
         v25_shadow_syms.get("exported_submod_assoc_call") == {"__register_frame"},
         f"v25 pass-2 free fn shadowed Type::assoc_fn: {v25_shadow_syms}",
+    )
+    # v26 soundness self-tests:
+    # 1. cfg_target_end must NOT treat `<` or `<<` in comma-separated args as generics
+    #    and must stop cleanly on unmatched `)` / `]`.
+    v26_cfg_src = (
+        "#[unsafe(no_mangle)]\n"
+        "pub unsafe extern \"C\" fn v26_cfg_cmp_survives(a: i32, b: i32) -> u32 {\n"
+        "    let _ = helper(\n"
+        "        #[cfg(feature = \"disabled_v26\")] a < b,\n"
+        "        #[cfg(feature = \"disabled_v26\")] a << b,\n"
+        "        1,\n"
+        "    );\n"
+        "    let _ = (\n"
+        "        1,\n"
+        "        #[cfg(feature = \"disabled_v26\")] a < b\n"
+        "    );\n"
+        "    unsafe { libc::getuid() }\n"
+        "}\n"
+    )
+    v26_cfg_path = root / "crates/frankenlibc-abi/src/v26_cfg_cmp.rs"
+    v26_cfg_out, v26_cfg_diags = apply_cfg_profile(v26_cfg_src, v26_cfg_path, root, CFG_PROFILES[1])
+    require(
+        not v26_cfg_diags and "libc::getuid()" in v26_cfg_out and "a < b" not in v26_cfg_out,
+        f"v26 cfg_target_end comparison/<</unmatched-) regression: {v26_cfg_out!r}",
+    )
+    # 2. Balanced resolver literal extraction rejects comma-in-arg0 and trailing method calls.
+    v26_res_path = root / "crates/frankenlibc-abi/src/v26_resolver.rs"
+    v26_res_src = (
+        "#[unsafe(no_mangle)]\n"
+        "pub unsafe extern \"C\" fn v26_resolver_spoof(sym: &str) {\n"
+        "    let _ = resolve_host_symbol_cached(slot_for(0, \"benign\"), sym);\n"
+        "    let _ = resolve_host_symbol_raw(\"benign\".strip_prefix(\"b\").unwrap());\n"
+        "}\n"
+    )
+    v26_res_analysis = analyze_host_dependencies(
+        parse_functions(v26_res_path, v26_res_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+    )
+    v26_res_syms = {
+        row["symbol"]: set(row["host_symbols"]) for row in v26_res_analysis["symbol_rows"]
+    }
+    require(
+        v26_res_syms.get("v26_resolver_spoof") == {"<dynamic>"},
+        f"v26 resolver spoof must classify as <dynamic>, got {v26_res_syms}",
+    )
+    # 3. global_asm! char literal `'"'` and asm comments cannot spoof defined symbols;
+    #    duplicate extern fn decls & doc-attribute link_name spoofing are blocked.
+    v26_asm_path = root / "crates/frankenlibc-abi/src/v26_asm.rs"
+    v26_asm_src = (
+        "core::arch::global_asm!(\n"
+        "    \"# fake_comment_sym:\",\n"
+        "    \"/* fake_block_sym: */\",\n"
+        "    \"local_unexported:\",\n"
+        "    \".globl real_exported_sym\",\n"
+        "    \"real_exported_sym: ret\",\n"
+        ");\n"
+        "unsafe extern \"C\" {\n"
+        "    #[doc = \"link_name = \\\"real_exported_sym\\\"\"]\n"
+        "    fn doc_spoofed_host();\n"
+        "}\n"
+        "unsafe extern \"C\" {\n"
+        "    #[link_name = \"first_host_sym\"]\n"
+        "    fn dup_extern();\n"
+        "}\n"
+        "unsafe extern \"C\" {\n"
+        "    #[link_name = \"real_exported_sym\"]\n"
+        "    fn dup_extern();\n"
+        "}\n"
+    )
+    v26_defined = parse_global_asm_defined_symbols(v26_asm_path, v26_asm_src)
+    v26_externs = parse_extern_fn_decls(v26_asm_src)
+    require(
+        v26_defined == {"real_exported_sym"},
+        f"v26 global_asm defined symbols mismatch: {v26_defined}",
+    )
+    require(
+        v26_externs.get("doc_spoofed_host") == {"doc_spoofed_host"}
+        and v26_externs.get("dup_extern") == {"first_host_sym", "real_exported_sym"},
+        f"v26 parse_extern_fn_decls mismatch: {v26_externs}",
+    )
+    # 4. Imported extern value ref, glob-imported extern call, libc:: fn value ref,
+    #    and module-level static host fn pointer are all caught.
+    v26_imp_mod = root / "crates/frankenlibc-abi/src/v26_imp_mod.rs"
+    v26_imp_mod_src = (
+        "unsafe extern \"C\" { pub fn foreign_imp_fn(); pub fn foreign_glob_fn(); }\n"
+    )
+    v26_imp_caller = root / "crates/frankenlibc-abi/src/v26_imp_caller.rs"
+    v26_imp_caller_src = (
+        "use crate::v26_imp_mod::foreign_imp_fn;\n"
+        "use crate::v26_imp_mod::*;\n"
+        "static STATIC_HOST_PTR: unsafe extern \"C\" fn() -> u32 = libc::getuid;\n"
+        "#[unsafe(no_mangle)]\n"
+        "pub unsafe extern \"C\" fn v26_imp_val_ref() -> usize { foreign_imp_fn as usize }\n"
+        "#[unsafe(no_mangle)]\n"
+        "pub unsafe extern \"C\" fn v26_glob_call() { unsafe { foreign_glob_fn(); } }\n"
+        "#[unsafe(no_mangle)]\n"
+        "pub unsafe extern \"C\" fn v26_libc_val_ref() -> usize { libc::getgid as usize }\n"
+        "#[unsafe(no_mangle)]\n"
+        "pub unsafe extern \"C\" fn v26_static_ref() -> u32 { unsafe { STATIC_HOST_PTR() } }\n"
+    )
+    v26_imp_imports = {
+        "v26_imp_mod": parse_module_imports(v26_imp_mod_src),
+        "v26_imp_caller": parse_module_imports(v26_imp_caller_src),
+    }
+    v26_imp_globs = {
+        "v26_imp_mod": parse_module_glob_imports(v26_imp_mod_src),
+        "v26_imp_caller": parse_module_glob_imports(v26_imp_caller_src),
+    }
+    v26_imp_externs = {
+        "v26_imp_mod": parse_extern_fn_decls(v26_imp_mod_src),
+        "v26_imp_caller": parse_extern_fn_decls(v26_imp_caller_src),
+    }
+    v26_imp_statics = {
+        "v26_imp_caller": parse_module_host_statics(
+            v26_imp_caller_src,
+            "v26_imp_caller",
+            module_imports=v26_imp_imports["v26_imp_caller"],
+            all_module_imports=v26_imp_imports,
+            known_modules={"v26_imp_mod", "v26_imp_caller"},
+            module_aliases=None,
+            module_extern_fns=v26_imp_externs["v26_imp_caller"],
+            all_extern_fns=v26_imp_externs,
+            crate_defined_symbols=set(),
+        )
+    }
+    v26_imp_analysis = analyze_host_dependencies(
+        parse_functions(v26_imp_mod, v26_imp_mod_src)
+        + parse_functions(v26_imp_caller, v26_imp_caller_src),
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        conservative_nonlocal_unknown=True,
+        module_imports=v26_imp_imports,
+        module_glob_imports=v26_imp_globs,
+        extern_fns_by_module=v26_imp_externs,
+        host_statics_by_module=v26_imp_statics,
+    )
+    v26_imp_syms = {
+        row["symbol"]: set(row["host_symbols"]) for row in v26_imp_analysis["symbol_rows"]
+    }
+    require(
+        v26_imp_syms.get("v26_imp_val_ref") == {"foreign_imp_fn"}
+        and v26_imp_syms.get("v26_glob_call") == {"foreign_glob_fn"}
+        and v26_imp_syms.get("v26_libc_val_ref") == {"getgid"}
+        and v26_imp_syms.get("v26_static_ref") == {"getuid"},
+        f"v26 imported/glob/libc-val/static host detection failed: {v26_imp_syms}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

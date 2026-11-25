@@ -1321,6 +1321,18 @@ fn frame_slot_index(fde: usize) -> Option<usize> {
     frame_registry().iter().position(|slot| slot.fde == fde)
 }
 
+pub(crate) struct UnwindForkGuard {
+    _registry: MutexGuard<'static, [FrameRegistration; FRAME_REGISTRY_SLOTS]>,
+}
+
+/// Hold `FRAME_REGISTRY` across `fork()` so a concurrent `__register_frame`,
+/// `__deregister_frame`, or unwind snapshot cannot strand the lock in the child.
+pub(crate) fn unwind_fork_prepare() -> UnwindForkGuard {
+    UnwindForkGuard {
+        _registry: frame_registry(),
+    }
+}
+
 fn frame_registry() -> MutexGuard<'static, [FrameRegistration; FRAME_REGISTRY_SLOTS]> {
     FRAME_REGISTRY
         .lock()
@@ -2572,13 +2584,23 @@ struct RegisteredFdeRecord {
 fn find_registered_fde_record_for_ip(
     ip: usize,
 ) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
-    // First search explicitly registered frames (__register_frame)
-    let registry = *frame_registry();
-    for slot in registry.iter().filter(|slot| slot.fde != 0) {
-        let Ok(eh_frame) = copy_registered_eh_frame(slot.fde) else {
-            continue;
-        };
-        if let Ok(Some(fde)) = find_fde_for_ip(&eh_frame, slot.fde, ip, true) {
+    // First search explicitly registered frames (__register_frame).
+    // Hold `FRAME_REGISTRY` while copying registered `.eh_frame` bytes so a
+    // concurrent `dlclose` -> `__deregister_frame` -> `munmap` cannot unmap a
+    // slot's `.eh_frame` while we copy it, then release before DWARF parsing or
+    // `dl_iterate_phdr`.
+    let snapshots = {
+        let registry = frame_registry();
+        let mut snapshots = Vec::new();
+        for slot in registry.iter().filter(|slot| slot.fde != 0) {
+            if let Ok(eh_frame) = copy_registered_eh_frame(slot.fde) {
+                snapshots.push((slot.fde, eh_frame));
+            }
+        }
+        snapshots
+    };
+    for (fde_base, eh_frame) in snapshots {
+        if let Ok(Some(fde)) = find_fde_for_ip(&eh_frame, fde_base, ip, true) {
             return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
         }
     }
@@ -4640,15 +4662,15 @@ mod tests {
         // SAFETY: this mapping belongs only to this test. No Rust reference is
         // formed to its inaccessible contents, and it is released afterward.
         unsafe {
-            let mapping = libc::mmap(
+            let mapping = frankenlibc_core::syscall::sys_mmap(
                 core::ptr::null_mut(),
                 4096,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
                 -1,
                 0,
-            );
-            assert_ne!(mapping, libc::MAP_FAILED);
+            )
+            .expect("raw mmap PROT_NONE in owned_unwind_abi test");
             assert_eq!(read_word(mapping as usize), None);
             assert_eq!(
                 read_stack_word(
@@ -4660,7 +4682,7 @@ mod tests {
                 ),
                 Err(OwnedUnwindDecodeError::InvalidStackAddress),
             );
-            assert_eq!(libc::munmap(mapping, 4096), 0);
+            assert_eq!(frankenlibc_core::syscall::sys_munmap(mapping, 4096), Ok(()));
         }
     }
 

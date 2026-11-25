@@ -10,7 +10,8 @@ use frankenlibc_abi::malloc_abi::{
     __libc_freeres, aligned_alloc, calloc, cfree, export_alloc_stats_snapshot_jsonl,
     fallback_insert_sized_for_bench, fallback_remove_sized_for_bench, fallback_size_for_bench,
     free, mallinfo, mallinfo2, malloc, malloc_bump_allocation_size_for_tests,
-    malloc_bump_overflow_alloc_for_tests, malloc_bump_overflow_header_valid_for_tests,
+    malloc_bump_mmap_bucket_for_tests, malloc_bump_overflow_alloc_for_tests,
+    malloc_bump_overflow_header_valid_for_tests,
     malloc_bump_overflow_stats, malloc_current_reentry_slot_index_for_tests,
     malloc_fallback_range_for_tests, malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests,
     malloc_info, malloc_is_bump_ptr_for_tests, malloc_known_remaining_for_tests,
@@ -1878,6 +1879,43 @@ fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
     assert_eq!(after.mappings_released - before.mappings_released, expected);
     assert_eq!(after.live_mappings, before.live_mappings);
     assert_eq!(after.failures, before.failures);
+}
+
+/// Overflow user pointers are page-base + 32 for alignment <= 32. Hashing must
+/// distribute live mappings across the 131,072-slot table (not collapse into
+/// 512 buckets on low bits) and interior `known_remaining` lookups must stay
+/// exact while mappings are live and return `None` once freed.
+#[test]
+fn bump_overflow_hash_distributes_across_buckets_and_interior_lookup() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+    const COUNT: usize = 1024;
+    let mut ptrs = Vec::with_capacity(COUNT);
+    let mut buckets = std::collections::HashSet::with_capacity(COUNT);
+    for i in 0..COUNT {
+        let req = 2048 + (i & 127);
+        // SAFETY: direct test hook for one live overflow mapping.
+        let p = unsafe { malloc_bump_overflow_alloc_for_tests(req, 16) };
+        assert!(!p.is_null(), "overflow allocation {i} returned NULL");
+        buckets.insert(malloc_bump_mmap_bucket_for_tests(p));
+        let interior = (p as usize) + 512;
+        assert_eq!(
+            malloc_known_remaining_for_tests(interior),
+            Some(req - 512),
+            "interior overflow lookup mismatch at i={i}"
+        );
+        ptrs.push((p, req));
+    }
+    assert!(
+        buckets.len() > 800,
+        "expected > 800 distinct buckets for {COUNT} overflow mappings, got {}",
+        buckets.len()
+    );
+    for (p, _) in ptrs {
+        // SAFETY: `p` was allocated above.
+        unsafe { free(p) };
+        assert_eq!(malloc_known_remaining_for_tests(p as usize), None);
+    }
 }
 
 /// A pointer that is not allocator-owned must never be captured by the mmap

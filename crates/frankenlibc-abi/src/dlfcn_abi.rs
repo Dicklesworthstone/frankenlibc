@@ -1600,10 +1600,13 @@ fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
         .filter_map(frankenlibc_core::proc_maps::parse_maps_line)
         .collect::<Vec<_>>();
     // Auxv identifies the executable and vDSO independently of their names
-    // and the continued existence of their backing files.
-    let main_phdr = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHDR) } as usize;
-    let main_count = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHNUM) } as usize;
-    let vdso = unsafe { crate::stdlib_abi::getauxval(libc::AT_SYSINFO_EHDR) } as usize;
+    // and the continued existence of their backing files. Preserve caller errno
+    // when an optional auxv entry such as `AT_SYSINFO_EHDR` is absent.
+    let main_phdr = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHDR) } as usize;
+    let main_count =
+        unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHNUM) } as usize;
+    let vdso =
+        unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_SYSINFO_EHDR) } as usize;
     let mut objects = Vec::<StandalonePhdrObject>::new();
     if let Some(main) = standalone_main_phdr_object(&entries, main_phdr, main_count) {
         objects.push(main);
@@ -1613,15 +1616,16 @@ fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
     // executable and vDSO, even when many file-backed images are present.
     for entry in entries
         .iter()
-        .filter(|entry| entry.start == vdso)
-        .chain(entries.iter().filter(|entry| entry.start != vdso))
+        .filter(|entry| vdso != 0 && entry.start == vdso)
+        .chain(entries.iter().filter(|entry| vdso == 0 || entry.start != vdso))
     {
         if objects.len() == STANDALONE_DL_ITERATE_MAX_OBJECTS {
             break;
         }
         if entry.offset != 0
             || !entry.perms.contains('r')
-            || !(entry.inode != 0 || (entry.start == vdso && entry.path == Some("[vdso]")))
+            || !(entry.inode != 0
+                || (vdso != 0 && entry.start == vdso && entry.path == Some("[vdso]")))
         {
             continue;
         }
@@ -1639,7 +1643,7 @@ fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
             // dl_iterate_phdr(3): the executable is first with an empty name.
             object.name = vec![0];
             objects.insert(0, object);
-        } else if entry.start == vdso {
+        } else if vdso != 0 && entry.start == vdso {
             // Both supported Linux ABIs (x86_64 and aarch64) use this name.
             object.name = b"linux-vdso.so.1\0".to_vec();
             let after_main = usize::from(objects.first().is_some_and(|first| first.name == [0]));
@@ -1658,7 +1662,7 @@ fn standalone_main_phdr_object(
     table: usize,
     count: usize,
 ) -> Option<StandalonePhdrObject> {
-    let stride = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHENT) } as usize;
+    let stride = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHENT) } as usize;
     if table == 0
         || count == 0
         || count > STANDALONE_DL_ITERATE_MAX_PHDRS
@@ -1685,7 +1689,7 @@ fn standalone_main_phdr_object(
         .iter()
         .map(libc_phdr_from_clean_room_header)
         .collect::<Vec<_>>();
-    let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_ENTRY) } as usize;
+    let entry = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_ENTRY) } as usize;
     // The executable's ELF header need not itself be mapped. The shared
     // startup helper derives bias from PT_PHDR, or proves fixed ET_EXEC when
     // PT_PHDR is absent. The published program headers always come from the

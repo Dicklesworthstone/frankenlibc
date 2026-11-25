@@ -2279,6 +2279,12 @@ pub unsafe extern "C" fn __frankenlibc_is_runtime_math_enabled() -> c_int {
 /// the address of an exported function also reads the GOT. The test is
 /// whether the reached `malloc` lies inside fl's own loaded image.
 pub(crate) fn process_malloc_is_ours() -> bool {
+    // In release builds `crate::malloc_abi::malloc` is the exported, preemptible
+    // `malloc` symbol (`-Wl,--export-dynamic-symbol=malloc`), so taking its
+    // address reads the same `malloc@GOTPCREL` slot without importing `libc::malloc`.
+    #[cfg(not(debug_assertions))]
+    let reached = crate::malloc_abi::malloc as *const () as usize;
+    #[cfg(debug_assertions)]
     let reached = libc::malloc as *const () as usize;
     own_image_range().is_none_or(|(start, end)| (start..end).contains(&reached))
 }

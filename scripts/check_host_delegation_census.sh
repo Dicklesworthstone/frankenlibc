@@ -46,7 +46,7 @@ if artifact.get("schema_version") != "host_delegation_census.v1":
     errors.append("schema_version_mismatch")
 if artifact.get("bead") != "bd-smp21.1":
     errors.append("bead_mismatch")
-if artifact.get("detector", {}).get("version") != 25:
+if artifact.get("detector", {}).get("version") != 26:
     errors.append("detector_version_mismatch")
 
 summary = artifact.get("summary", {})
@@ -122,7 +122,13 @@ for profile_name, profile in profiles.items():
                 full_path.read_text(encoding="utf-8")
             ).splitlines()
         text_lines = comment_free_cache[rel_path]
-        if line > len(text_lines) or site.get("expression") not in text_lines[line - 1]:
+        expr = site.get("expression")
+        if (
+            line > len(text_lines)
+            or not isinstance(expr, str)
+            or not expr
+            or expr not in text_lines[line - 1]
+        ):
             errors.append(f"{profile_name}:terminal_site_bad_line:{rel_path}:{line}")
 
 missing_anchors = sorted(row.get("symbol") for row in anchors if not row.get("present"))

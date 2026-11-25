@@ -224,6 +224,13 @@
       "primary_oracle": "frankenlibc_contract",
       "claim_effect": "blocks_full_parity_claim",
       "required_followup": "Cover process-exit or fail-stop behavior with isolated subprocess fixtures before compatibility claims mention the surface."
+    },
+    {
+      "semantic_class": "proof_gap",
+      "divergence_class": "proof_gap",
+      "primary_oracle": "posix_text",
+      "claim_effect": "blocks_claim_until_evidence_exists",
+      "required_followup": "Add executable fixture and differential oracle evidence for the observed behavior before advertising replacement support."
     }
   ],
   "scenarios": [
@@ -513,7 +520,7 @@
     "oracle_kind_count": 6,
     "divergence_class_count": 6,
     "decision_rule_count": 5,
-    "semantic_class_mapping_count": 5,
+    "semantic_class_mapping_count": 6,
     "scenario_count": 7,
     "replay_case_count": 4,
     "negative_claim_test_count": 14,
@@ -539,6 +546,7 @@
       "compat_noop",
       "deterministic_fallback",
       "limited_bootstrap",
+      "proof_gap",
       "unsupported_platform_contract"
     ]
   }

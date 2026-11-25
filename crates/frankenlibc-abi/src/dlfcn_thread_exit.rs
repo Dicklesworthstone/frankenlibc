@@ -112,9 +112,10 @@ thread_local! {
 fn executable_image() -> Option<ProcessImage> {
     // The startup auxv cache is seeded from the real kernel vector. This runs
     // on a hosted creator (or initial standalone thread), never on a clone.
-    let phdr = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHDR) } as usize;
-    let count = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHNUM) } as usize;
-    let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHENT) } as usize;
+    // Preserve caller errno when an auxv key is absent.
+    let phdr = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHDR) } as usize;
+    let count = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHNUM) } as usize;
+    let entry = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHENT) } as usize;
     if phdr == 0
         || count == 0
         || count > 4096
@@ -129,7 +130,7 @@ fn executable_image() -> Option<ProcessImage> {
     // Use exactly the startup admission rule. Otherwise a fixed executable
     // without the optional PT_PHDR starts successfully but loses every native
     // C++ TLS callback because its executable owner/provider is unrecognized.
-    let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_ENTRY) } as usize;
+    let entry = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_ENTRY) } as usize;
     let base = crate::startup_abi::executable_load_bias(phdr, headers, Some(entry)).ok()?;
     ProcessImage::from_phdrs(base, headers)
 }

@@ -7168,48 +7168,15 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
 // strcpy
 // ---------------------------------------------------------------------------
 
-/// POSIX `strcpy` -- copies the null-terminated string `src` into `dst`.
-///
-/// # Safety
-///
-/// Caller must ensure `dst` is large enough to hold `src` including the null terminator,
-/// and that the buffers do not overlap.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-/// Shared single-scan core for `strcpy`/`stpcpy`. Scans the source length once,
-/// copies the payload, writes the terminator, and returns the END pointer (the
-/// written NUL position, `dst + copied_payload` — the `stpcpy` result) wrapped in
-/// `Some`. Returns `None` only when the membrane denies the call. `strcpy` then
-/// returns the original `dst`; `stpcpy` returns the end pointer directly, so it no
-/// longer re-scans the just-copied string with a second `strlen` pass.
-unsafe fn strcpy_core(
+/// Shared validating/hardened single-scan core for `strcpy`/`stpcpy`.
+/// Kept cold/out-of-line so deployed strict `strcpy`/`stpcpy` stay frameless.
+#[cold]
+#[inline(never)]
+unsafe fn strcpy_core_validating(
     symbol: &'static str,
     dst: *mut c_char,
     src: *const c_char,
 ) -> Option<*mut c_char> {
-    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
-    // decide() Allow with no clamp and heals off, so this is byte-identical to the
-    // full body's non-repair branch — scan src, bulk-copy the payload, append the NUL,
-    // return the terminator position (the stpcpy result). Skips stage_context_two +
-    // decide + observe + record_string_stage_outcome, whose combined fixed cost made
-    // deployed strcpy/stpcpy ~7-10x glibc at small/medium sizes (~30ns flat regardless
-    // of length). Mirrors the shipped wcscpy/strncpy strict fast paths. Hardened/test
-    // mode falls through to the full validating path below.
-    if runtime_policy::strict_passthrough_active() {
-        if dst.is_null() || src.is_null() {
-            return Some(dst);
-        }
-        // Single-pass fused copy-through-NUL: reads `src` ONCE (vs the old
-        // `scan_c_string` + `raw_memcpy_bytes`, which read `src` twice — ~2x the src
-        // traffic, the measured 2.5-2.7x-vs-glibc gap). Byte-identical: `dst` receives
-        // `src[0..=len]` incl. the terminator, and the returned NUL index gives the same
-        // `stpcpy` end pointer. Same-process A/B (strcpy_fused_ab): fused/two-pass
-        // 0.58-0.90 across n=8..256, uniform win.
-        // SAFETY: strict follows raw libc strcpy semantics — `src` is a valid
-        // NUL-terminated string and `dst` has room for its length + terminator.
-        let end = unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
-        return Some(unsafe { dst.add(end) });
-    }
-
     if dst.is_null() || src.is_null() {
         let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
         record_string_stage_outcome(
@@ -7411,17 +7378,46 @@ unsafe fn strcpy_core(
     Some(unsafe { dst.add(copied_len.saturating_sub(1)) })
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
-    match unsafe { strcpy_core("strcpy", dst, src) } {
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strcpy_validating(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    match unsafe { strcpy_core_validating("strcpy", dst, src) } {
         Some(_) => dst,
         None => std::ptr::null_mut(),
     }
 }
 
+/// POSIX `strcpy` -- copies the NUL-terminated string `src` to `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is large enough to hold `src` including the null terminator,
+/// and that the buffers do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    if runtime_policy::strict_passthrough_active() {
+        if !dst.is_null() && !src.is_null() {
+            // SAFETY: strict follows raw libc strcpy semantics — `src` is a valid
+            // NUL-terminated string and `dst` has room for its length + terminator.
+            unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
+        }
+        return dst;
+    }
+    unsafe { strcpy_validating(dst, src) }
+}
+
 // ---------------------------------------------------------------------------
 // stpcpy
 // ---------------------------------------------------------------------------
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn stpcpy_validating(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    match unsafe { strcpy_core_validating("stpcpy", dst, src) } {
+        Some(end) => end,
+        None => std::ptr::null_mut(),
+    }
+}
 
 /// POSIX `stpcpy` -- copies `src` to `dst` and returns a pointer to the
 /// trailing NUL byte in `dst`.
@@ -7432,65 +7428,30 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// both pointers are valid.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
-    // Single shared scan: `strcpy_core` already knows where it wrote the NUL, so
-    // stpcpy no longer re-scans the copied string with a second strlen pass.
-    match unsafe { strcpy_core("stpcpy", dst, src) } {
-        Some(end) => end,
-        None => std::ptr::null_mut(),
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() {
+            return dst;
+        }
+        let end = unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
+        return unsafe { dst.add(end) };
     }
+    unsafe { stpcpy_validating(dst, src) }
 }
 
 // ---------------------------------------------------------------------------
 // strncpy
 // ---------------------------------------------------------------------------
 
-/// POSIX `strncpy` -- copies at most `n` bytes from `src` to `dst`.
-///
-/// If `src` is shorter than `n`, the remainder of `dst` is filled with null bytes.
-///
-/// # Safety
-///
-/// Caller must ensure `dst` is at least `n` bytes and `src` is a valid string.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-/// Shared single-scan core for `strncpy`/`stpncpy`. Runs the membrane bookkeeping
-/// and the source scan/copy/pad once and returns `Some(offset)`, where `offset` is
-/// the index of the terminating NUL within the written region (== `strnlen(dst,n)`
-/// in the common path) — the `stpncpy` result. Returns `None` only on membrane
-/// deny. `strncpy` returns the original `dst`; `stpncpy` returns `dst + offset`, so
-/// it no longer re-scans the just-written destination with a second `strnlen` pass.
-unsafe fn strncpy_core(
+/// Shared validating/hardened single-scan core for `strncpy`/`stpncpy`.
+/// Kept cold/out-of-line so deployed strict `strncpy`/`stpncpy` stay frameless.
+#[cold]
+#[inline(never)]
+unsafe fn strncpy_core_validating(
     symbol: &'static str,
     dst: *mut c_char,
     src: *const c_char,
     n: usize,
 ) -> Option<usize> {
-    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
-    // `decide()` Allow with no clamp (`safe_dst_len == safe_src_len == n`), so this
-    // is byte-identical to the strict full body — scan src (bounded by `n`), bulk
-    // copy the prefix, NUL-pad the remainder. Skips stage_context + decide + observe
-    // + stage-trace bookkeeping. Bounded-`n` write (caller-controlled extent), the
-    // analog of the shipped `wcsncpy`/`memmove` fast paths and the deployed `memcpy`
-    // one — NOT the unbounded strcpy/strcat builder class. Hardened mode falls through.
-    if runtime_policy::strict_passthrough_active() {
-        if dst.is_null() || src.is_null() || n == 0 {
-            return Some(0);
-        }
-        let copy_len = unsafe {
-            // Single-pass fused prefix copy (copy-through-NUL-or-`n`) instead of
-            // `scan_c_string(src, Some(n))` + `raw_memcpy_bytes`, which read the copied
-            // prefix TWICE. Same strncpy semantics: `copy_len = min(strnlen(src,n), n)`
-            // bytes copied, then zero-pad `dst[copy_len..n]`. A/B (strncpy_fused_ab,
-            // prefix-only p10): fused/two-pass 0.70-0.99, uniform win; 166,320
-            // (align×slen×n) combos byte-identical incl. every 32-byte-window edge.
-            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
-            if copy_len < n {
-                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
-            }
-            copy_len
-        };
-        return Some(copy_len);
-    }
-
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {
             let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
@@ -7737,17 +7698,60 @@ unsafe fn strncpy_core(
     Some(copy_len)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
-    match unsafe { strncpy_core("strncpy", dst, src, n) } {
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strncpy_validating(
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+) -> *mut c_char {
+    match unsafe { strncpy_core_validating("strncpy", dst, src, n) } {
         Some(_) => dst,
         None => std::ptr::null_mut(),
     }
 }
 
+/// POSIX `strncpy` -- copies at most `n` bytes from `src` to `dst`.
+///
+/// If `src` is shorter than `n`, the remainder of `dst` is filled with null bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is at least `n` bytes and `src` is a valid string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() || n == 0 {
+            return dst;
+        }
+        unsafe {
+            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
+            if copy_len < n {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
+            }
+        }
+        return dst;
+    }
+    unsafe { strncpy_validating(dst, src, n) }
+}
+
 // ---------------------------------------------------------------------------
 // stpncpy
 // ---------------------------------------------------------------------------
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn stpncpy_validating(
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+) -> *mut c_char {
+    match unsafe { strncpy_core_validating("stpncpy", dst, src, n) } {
+        // SAFETY: offset is bounded by `n` (and any clamped membrane bound).
+        Some(offset) => unsafe { dst.add(offset) },
+        None => std::ptr::null_mut(),
+    }
+}
 
 /// POSIX `stpncpy` -- copies at most `n` bytes from `src` to `dst` and returns
 /// the end pointer according to C `stpncpy` semantics.
@@ -7758,20 +7762,20 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
 /// for reads as required by `n`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
-    if dst.is_null() || src.is_null() {
+    if dst.is_null() || src.is_null() || n == 0 {
         return dst;
     }
-    if n == 0 {
-        return dst;
+    if runtime_policy::strict_passthrough_active() {
+        let offset = unsafe {
+            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
+            if copy_len < n {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
+            }
+            copy_len
+        };
+        return unsafe { dst.add(offset) };
     }
-
-    // Single shared scan: `strncpy_core` returns the terminating-NUL offset it
-    // just wrote, so stpncpy no longer re-scans the destination with strnlen.
-    match unsafe { strncpy_core("stpncpy", dst, src, n) } {
-        // SAFETY: offset is bounded by `n` (and any clamped membrane bound).
-        Some(offset) => unsafe { dst.add(offset) },
-        None => std::ptr::null_mut(),
-    }
+    unsafe { stpncpy_validating(dst, src, n) }
 }
 
 // ---------------------------------------------------------------------------
@@ -7787,24 +7791,25 @@ pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_char {
     // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict (non-repair)
-    // full body — scan dst for its NUL, then a fused byte-by-byte copy of src onto the
-    // end of dst until NUL. Skips stage_context + decide + observe + stage-trace AND the
-    // redundant `scan_c_string(src)` the full body computes but never uses on the
-    // non-repair branch. Strict = glibc semantics (no clamp), so the write is unchanged;
-    // hardened mode keeps the full membrane (bounds/heal) below.
-    if !dst.is_null() && !src.is_null() && runtime_policy::strict_passthrough_active() {
+    // full body — scan dst for its NUL, then a fused copy of src onto the end of dst
+    // until NUL. Cold validating tail is split out so deployed calls stay frameless.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() {
+            return dst;
+        }
         return unsafe {
-            // dst-end scan is inherent to strcat. The src side is then a SINGLE fused
-            // copy-through-NUL (`fused_strcpy_bytes`) instead of scan_c_string(src) +
-            // raw_memcpy — which read `src` TWICE (the same double-read the strcpy strict
-            // path shed in c80c2f5ed). Byte-identical: dst[dst_len..] receives
-            // src[0..=src_len] incl. the terminator (fused copies through the NUL).
             let (dst_len, _) = scan_c_string(dst.cast_const(), None);
             fused_strcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>());
             dst
         };
     }
 
+    unsafe { strcat_validating(dst, src) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strcat_validating(dst: *mut c_char, src: *const c_char) -> *mut c_char {
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
         record_string_stage_outcome(
@@ -7997,7 +8002,11 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
 
 #[cold]
 #[inline(never)]
-unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+unsafe extern "C" fn strncat_validating(
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+) -> *mut c_char {
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {
@@ -8151,47 +8160,15 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
 // strchr
 // ---------------------------------------------------------------------------
 
-/// POSIX `strchr` -- locates the first occurrence of `c` in the string `s`.
-///
-/// Returns pointer to the first occurrence, or null if not found.
-/// If `c` is '\0', returns pointer to the terminating null byte.
-///
-/// # Safety
-///
-/// Caller must ensure `s` is a valid null-terminated string.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-/// Shared single-scan core for `strchr`/`strchrnul`. Runs the membrane
-/// bookkeeping and the `target`-or-NUL scan exactly once and returns
-/// `Some((located, found))`:
-///   * `located` points at the first `target` byte, or at the terminating NUL
-///     (or the bounded-truncation point) — i.e. the `strchrnul` result;
-///   * `found` is true iff `located` is a real `target` byte (not the NUL/limit),
-///     i.e. `strchr` returns `located` when `found`, else NULL.
-///
-/// Returns `None` only when `s` is NULL or the membrane denies the call (the
-/// caller picks the fallback). Folding both entry points onto this eliminates
-/// strchrnul's old strchr()+strlen() double scan on a miss.
-unsafe fn strchr_locate(
+/// Shared validating/hardened single-scan core for `strchr`/`strchrnul`.
+/// Kept cold/out-of-line so deployed strict `strchr`/`strchrnul` stay frameless.
+#[cold]
+#[inline(never)]
+unsafe fn strchr_locate_validating(
     symbol: &'static str,
     s: *const c_char,
     c: c_int,
 ) -> Option<(*mut c_char, bool)> {
-    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
-    // `decide()` Allow with no repair, so `bound` is `None` and the result is exactly the
-    // page-safe raw `target`-or-NUL scan below. Skip the stage context + decide + observe +
-    // record machinery (byte-identical to the strict full path), like the inet_strict family.
-    // Hardened mode (`strict_passthrough_active() == false`) keeps the full validating path.
-    if runtime_policy::strict_passthrough_active() {
-        if s.is_null() {
-            return None;
-        }
-        let target = c as c_char;
-        // SAFETY: `scan_c_string_for_byte` with no bound is the page-safe SIMD scan; this is
-        // the identical call the strict full path makes (bound == None).
-        let (i, found_target, _) = unsafe { scan_c_string_for_byte(s, target as u8, None) };
-        return Some((unsafe { s.add(i) } as *mut c_char, found_target));
-    }
-
     if s.is_null() {
         let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
         record_string_stage_outcome(
@@ -8303,17 +8280,51 @@ unsafe fn strchr_locate(
     Some((located, found))
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
-    match unsafe { strchr_locate("strchr", s, c) } {
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strchr_validating(s: *const c_char, c: c_int) -> *mut c_char {
+    match unsafe { strchr_locate_validating("strchr", s, c) } {
         Some((located, true)) => located,
         _ => std::ptr::null_mut(),
     }
 }
 
+/// POSIX `strchr` -- locates the first occurrence of `c` in the NUL-terminated
+/// string `s`.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return std::ptr::null_mut();
+        }
+        let (i, found_target, _) = unsafe { scan_c_string_for_byte(s, c as u8, None) };
+        return if found_target {
+            unsafe { s.add(i) as *mut c_char }
+        } else {
+            std::ptr::null_mut()
+        };
+    }
+    unsafe { strchr_validating(s, c) }
+}
+
 // ---------------------------------------------------------------------------
 // strchrnul
 // ---------------------------------------------------------------------------
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn strchrnul_validating(s: *const c_char, c: c_int) -> *mut c_char {
+    match unsafe { strchr_locate_validating("strchrnul", s, c) } {
+        Some((located, _found)) => located,
+        // Membrane-denied: preserve the previous degraded-mode result (the old
+        // strchr()=>NULL then strlen()=>0 path returned `s`).
+        None => s as *mut c_char,
+    }
+}
 
 /// GNU `strchrnul` -- locates the first occurrence of `c` in `s`, returning
 /// the string terminator when `c` is absent.
@@ -8326,15 +8337,11 @@ pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
     if s.is_null() {
         return std::ptr::null_mut();
     }
-
-    // Single shared scan: `strchr_locate` returns the target-or-NUL position
-    // directly, so a miss no longer re-scans the whole string with strlen.
-    match unsafe { strchr_locate("strchrnul", s, c) } {
-        Some((located, _found)) => located,
-        // Membrane-denied: preserve the previous degraded-mode result (the old
-        // strchr()=>NULL then strlen()=>0 path returned `s`).
-        None => s as *mut c_char,
+    if runtime_policy::strict_passthrough_active() {
+        let (i, _, _) = unsafe { scan_c_string_for_byte(s, c as u8, None) };
+        return unsafe { s.add(i) as *mut c_char };
     }
+    unsafe { strchrnul_validating(s, c) }
 }
 
 /// glibc reserved-namespace alias for [`strchrnul`]. Some headers
@@ -10759,8 +10766,8 @@ pub unsafe extern "C" fn memmem(
 pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // `decide()` Allow with no clamp, so the result is exactly the raw copy with the
-    // end pointer `dst + n` (byte-identical to the full path). Skip the membrane
-    // guard + decide + stage-trace + observe machinery, mirroring `memcpy`/`memmove`.
+    // end pointer `dst + n` (byte-identical to the full path). Cold validating tail
+    // is split out so deployed strict calls stay frameless.
     if runtime_policy::strict_passthrough_active() {
         if n == 0 {
             return dst;
@@ -10772,6 +10779,16 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
         return unsafe { (dst as *mut u8).add(n).cast() };
     }
 
+    unsafe { mempcpy_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn mempcpy_validating(
+    dst: *mut c_void,
+    src: *const c_void,
+    n: usize,
+) -> *mut c_void {
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if n == 0 {
             return dst;

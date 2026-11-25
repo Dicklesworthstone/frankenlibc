@@ -330,6 +330,11 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // forks; stacks captured 2026-09-28).
     // Guard carries the parent owner key across clone for adopt_in_fork_child.
     let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    // Hold owned-unwind `FRAME_REGISTRY` and resolver `OWNED` after loader/env
+    // and before the membrane pipeline / malloc guards (both allocate under
+    // lock, and neither acquires loader, stdio, or environ locks).
+    let _unwind_guard = crate::owned_unwind_abi::unwind_fork_prepare();
+    let _resolv_guard = crate::resolv_state::lock_for_fork();
     // `ready_pipeline`, not `try_global_pipeline`: only a pipeline that exists
     // has locks to hold across the fork, and building one here gave every
     // strict process that forks the whole hardened pipeline (8 MB bloom
@@ -338,6 +343,8 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         Some(pipeline) => match pipeline.try_atfork_prepare() {
             Some(guard) => Some(guard),
             None => {
+                drop(_resolv_guard);
+                drop(_unwind_guard);
                 drop(_environ_guard);
                 stdio_guard.release_in_parent();
                 loader_guard.release_in_parent();
@@ -366,6 +373,8 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
             drop(policy_tls_guard);
             drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
+            drop(_resolv_guard);
+            drop(_unwind_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
             loader_guard.release_in_parent();
@@ -398,6 +407,8 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
             // can resume normal env operations.
             drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
+            drop(_resolv_guard);
+            drop(_unwind_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
             loader_guard.release_in_parent();
@@ -426,6 +437,8 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
     drop(_native_tls_heap_guard);
     drop(_pipeline_guard);
+    drop(_resolv_guard);
+    drop(_unwind_guard);
     drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {

@@ -2491,7 +2491,8 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
     // (`copy_len == n`), byte-identical to the strict full path; skips the decide +
-    // observe membrane tax (~9-10ns/call, see wcscmp).
+    // observe membrane tax (~9-10ns/call, see wcscmp). Cold validating tail is split
+    // out so strict calls stay 0-push frameless.
     if runtime_policy::strict_passthrough_active() {
         // Inline SIMD copy instead of std::ptr::copy (which for a wide u32 copy lowers to
         // the interposed memmove symbol — measured ~34x glibc, 1408ns at n=1024). wmemcpy's
@@ -2500,6 +2501,12 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         return dst;
     }
 
+    unsafe { wmemcpy_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn wmemcpy_validating(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -2586,6 +2593,12 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
         return dst;
     }
 
+    unsafe { wmemmove_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn wmemmove_validating(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -2660,12 +2673,19 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
     // (`fill_len == n`), byte-identical to the strict full path; skips the decide +
-    // observe membrane tax.
+    // observe membrane tax. Cold validating tail is split out so strict calls stay
+    // frameless.
     if runtime_policy::strict_passthrough_active() {
         unsafe { std::slice::from_raw_parts_mut(dst, n).fill(c) };
         return dst;
     }
 
+    unsafe { wmemset_validating(dst, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn wmemset_validating(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -4152,15 +4172,43 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
             }
         };
     }
-    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
-    match codec::mbstowcs(dst_slice, src_slice) {
-        Some(count) => count,
-        None => {
-            // An invalid or unrepresentable character: EILSEQ, as glibc.
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            usize::MAX
+    // Avoid `from_raw_parts_mut(dst, n)` with unchecked `n` (e.g., `SIZE_MAX`):
+    // widen only exact leading ASCII prefixes via `dst_window` sized strictly to
+    // the bytes actually converted, and write multibyte/NUL outputs via raw pointers.
+    let mut i = 0usize;
+    let mut written = 0usize;
+    while i < src_slice.len() && written < n {
+        let ascii_len = codec::mbs_decoded_len_prefix(&src_slice[i..]).0;
+        let chunk = (n - written).min(ascii_len);
+        if chunk > 0 {
+            // SAFETY: `chunk <= ascii_len` guarantees every element in `0..chunk`
+            // is written by `mbs_decode_prefix` within the caller's `n`-element buffer.
+            let dst_window = unsafe { std::slice::from_raw_parts_mut(dst.add(written), chunk) };
+            let (chars, bytes) = codec::mbs_decode_prefix(dst_window, &src_slice[i..i + chunk]);
+            i += bytes;
+            written += chars;
+            continue;
+        }
+        if src_slice[i] == 0 {
+            // SAFETY: `written < n` by loop guard.
+            unsafe { *dst.add(written) = 0 };
+            return written;
+        }
+        match codec::mbtowc(&src_slice[i..]) {
+            Some((wc, used)) => {
+                // SAFETY: `written < n` by loop guard.
+                unsafe { *dst.add(written) = wc };
+                written += 1;
+                i += used;
+            }
+            None => {
+                // An invalid or unrepresentable character: EILSEQ, as glibc.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return usize::MAX;
+            }
         }
     }
+    written
 }
 
 // ---------------------------------------------------------------------------
@@ -4207,15 +4255,42 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
             }
         };
     }
-    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
-    match codec::wcstombs(dst_slice, src_slice) {
-        Some(count) => count,
-        None => {
+    // Avoid `from_raw_parts_mut(dst, n)` with unchecked `n` (e.g., `SIZE_MAX`):
+    // narrow only exact leading ASCII prefixes sized to the bytes actually
+    // written, and copy multibyte/NUL bytes via raw pointer ops.
+    let mut idx = 0usize;
+    let mut written = 0usize;
+    let mut tmp = [0u8; 6];
+    while idx < wlen && written < n {
+        let ascii_len = codec::wcs_ascii_prefix_len(&src_slice[idx..wlen]);
+        let chunk = (n - written).min(ascii_len);
+        if chunk > 0 {
+            // SAFETY: `chunk <= ascii_len` guarantees every byte in `0..chunk`
+            // is written by `wcs_simd_prefix` within the caller's `n`-byte buffer.
+            let dst_window = unsafe { std::slice::from_raw_parts_mut(dst.add(written), chunk) };
+            let (chars, bytes) = codec::wcs_simd_prefix(dst_window, &src_slice[idx..idx + chunk]);
+            idx += chars;
+            written += bytes;
+            continue;
+        }
+        let Some(bytes) = codec::wctomb(src_slice[idx], &mut tmp) else {
             // An invalid or unrepresentable character: EILSEQ, as glibc.
             unsafe { set_abi_errno(libc::EILSEQ) };
-            usize::MAX
+            return usize::MAX;
+        };
+        if bytes > n - written {
+            return written;
         }
+        // SAFETY: `written + bytes <= n` and `dst` is writable for converted bytes.
+        unsafe { std::ptr::copy_nonoverlapping(tmp.as_ptr(), dst.add(written), bytes) };
+        written += bytes;
+        idx += 1;
     }
+    if idx == wlen && written < n {
+        // SAFETY: `written < n` leaves room for the terminating NUL.
+        unsafe { *dst.add(written) = 0 };
+    }
+    written
 }
 
 // ===========================================================================
@@ -4898,44 +4973,44 @@ pub unsafe extern "C" fn mbsrtowcs(
         };
     }
 
-    // SAFETY: caller guarantees writable destination of at least `len` wchar_t elements.
-    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u32, len) };
+    // Avoid `from_raw_parts_mut(dst, len)` with unchecked `len` (e.g., `SIZE_MAX`):
+    // widen only exact leading ASCII prefixes via `dst_window` sized strictly to
+    // the elements actually converted, and write scalar outputs via raw pointers.
     let mut i = 0usize;
     let mut written = 0usize;
     while i < src_bytes.len() {
-        // SIMD fast-forward: widen the leading clean run (ASCII + contiguous
-        // 2/3/4-byte, contiguity-gated) straight into `dst`, then resolve the
-        // NUL / dest-full / multibyte boundary with the unchanged scalar logic
-        // below. `chars` (wide chars written) and `bytes` (source bytes consumed)
-        // differ for multibyte; the helper only emits whole validated windows
-        // bounded by the source and `dst_slice[written..]`, so this stays
-        // byte-for-byte identical to a per-char `mbtowc` widen — was ASCII-only
-        // (`mbs_ascii_prefix`), leaving every contiguous non-Latin run scalar
-        // (~3.6-4.9x LOSS vs glibc).
-        let (chars, bytes) = codec::mbs_decode_prefix(&mut dst_slice[written..], &src_bytes[i..]);
-        i += bytes;
-        written += chars;
+        let ascii_len = codec::mbs_decoded_len_prefix(&src_bytes[i..]).0;
+        let chunk = (len - written).min(ascii_len);
+        if chunk > 0 {
+            // SAFETY: `chunk <= ascii_len` and `written + chunk <= len`; every
+            // element in `dst_window` is written within the caller's destination.
+            let dst_window =
+                unsafe { std::slice::from_raw_parts_mut((dst as *mut u32).add(written), chunk) };
+            let (chars, bytes) = codec::mbs_decode_prefix(dst_window, &src_bytes[i..i + chunk]);
+            i += bytes;
+            written += chars;
+        }
         // Destination-full is checked BEFORE the terminating NUL: when exactly
         // `len` wide chars have been produced and the next source byte is the
         // NUL, glibc treats the stop as len-limited — it returns the count and
         // leaves *src pointing AT the NUL (one more call needed), rather than
         // consuming the NUL and nulling *src. Checking NUL first would wrongly
         // report completion. (bd-2g7oyh.185)
-        if written >= dst_slice.len() {
+        if written >= len {
             // SAFETY: src is non-null and points to caller-owned pointer storage.
             unsafe { *src = src_ptr.add(i) };
             return written;
         }
         if src_bytes[i] == 0 {
             // Room is guaranteed here (written < len), so store the terminator.
-            dst_slice[written] = 0;
+            unsafe { *(dst as *mut u32).add(written) = 0 };
             // SAFETY: src is non-null and points to caller-owned pointer storage.
             unsafe { *src = std::ptr::null() };
             return written;
         }
         match codec::mbtowc(&src_bytes[i..]) {
             Some((wc, used)) => {
-                dst_slice[written] = wc;
+                unsafe { *(dst as *mut u32).add(written) = wc };
                 written += 1;
                 i += used;
             }
@@ -5013,32 +5088,32 @@ pub unsafe extern "C" fn wcsrtombs(
         };
     }
 
-    // SAFETY: caller guarantees writable destination of at least `len` bytes.
-    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, len) };
+    // Avoid `from_raw_parts_mut(dst, len)` with unchecked `len` (e.g., `SIZE_MAX`):
+    // narrow only exact leading ASCII prefixes sized strictly to bytes actually
+    // written, and copy multibyte/NUL outputs via raw pointer ops.
+    let dst_u8 = dst as *mut u8;
     let mut written = 0usize;
     let mut idx = 0usize;
     while idx < src_len {
-        // SIMD fast-forward: encode the leading run of whole clean windows (ASCII
-        // + 2/3/4-byte, gated) straight into `dst`, then resolve the dst-full /
-        // multibyte boundary with the unchanged scalar logic below. `chars` (wide
-        // chars consumed) and `bytes` (output bytes written) differ for multibyte,
-        // so advance the two cursors independently. Bounded to `src_len` so the
-        // terminating NUL is never consumed here. The helper only emits whole
-        // validated windows, so this stays byte-for-byte identical to a per-char
-        // `wctomb` loop — the same lever `wcstombs` uses — now vectorising
-        // multibyte runs, not just the ASCII prefix.
-        let (chars, bytes) =
-            codec::wcs_simd_prefix(&mut dst_slice[written..], &src_slice[idx..src_len]);
-        idx += chars;
-        written += bytes;
-        if idx >= src_len {
-            break;
+        let ascii_len = codec::wcs_ascii_prefix_len(&src_slice[idx..src_len]);
+        let chunk = (len - written).min(ascii_len);
+        if chunk > 0 {
+            // SAFETY: `chunk <= ascii_len` and `written + chunk <= len`; every
+            // byte in `dst_window` is written within the caller's destination.
+            let dst_window = unsafe { std::slice::from_raw_parts_mut(dst_u8.add(written), chunk) };
+            let (chars, bytes) =
+                codec::wcs_simd_prefix(dst_window, &src_slice[idx..idx + chunk]);
+            idx += chars;
+            written += bytes;
+            if idx >= src_len {
+                break;
+            }
         }
         // Stop when the destination is already full BEFORE evaluating the next
         // character: glibc reports the len-limit (return count, *src at the next
         // char) rather than an EILSEQ from a subsequent un-encodable wchar that
         // would never have been written anyway. (bd-2g7oyh.185)
-        if written >= dst_slice.len() {
+        if written >= len {
             // SAFETY: src is non-null and points to caller-owned pointer storage.
             unsafe { *src = src_ptr.add(idx) };
             return written;
@@ -5055,18 +5130,19 @@ pub unsafe extern "C" fn wcsrtombs(
                 return usize::MAX;
             }
         };
-        if written + n > dst_slice.len() {
+        if n > len - written {
             // SAFETY: src is non-null and points to caller-owned pointer storage.
             unsafe { *src = src_ptr.add(idx) };
             return written;
         }
-        dst_slice[written..written + n].copy_from_slice(&tmp[..n]);
+        // SAFETY: `written + n <= len` and `dst_u8` is writable for converted bytes.
+        unsafe { std::ptr::copy_nonoverlapping(tmp.as_ptr(), dst_u8.add(written), n) };
         written += n;
         idx += 1;
     }
 
-    if written < dst_slice.len() {
-        dst_slice[written] = 0;
+    if written < len {
+        unsafe { *dst_u8.add(written) = 0 };
         // SAFETY: src is non-null and points to caller-owned pointer storage.
         unsafe { *src = std::ptr::null() };
     } else {
@@ -10253,27 +10329,26 @@ unsafe fn mbsnrtowcs_convert(
             // path, distinct for the count path which also fast-forwards contiguous
             // multibyte runs.
             let (chars, bytes) = if dst.is_null() {
-                // Count mode: SIMD-count the leading clean run (ASCII + contiguous
-                // 2/3/4-byte) within the nms window; the scalar `mbrtowc` below
-                // resolves NUL / MB_INCOMPLETE / EILSEQ and any sequence straddling
-                // the nms or page boundary.
+                // Count mode: SIMD-count the leading ASCII run within the nms window;
+                // the scalar `mbrtowc` below resolves NUL / MB_INCOMPLETE / EILSEQ
+                // and any sequence straddling the nms or page boundary.
                 codec::mbs_decoded_len_prefix(src_window)
             } else {
-                // SAFETY: `dst` has >= `len` wchar_t slots (`written < len`),
-                // and every input byte decodes to at most one wide char, so
-                // clamping to `window_bytes` (<= 4096) keeps `dst_window`
-                // strictly within `isize::MAX / 4` even when `len == usize::MAX`.
-                let dst_cap = (len - written).min(window_bytes);
-                let dst_window = unsafe {
-                    std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, dst_cap)
-                };
-                // Write mode: SIMD-widen the leading clean run (ASCII + contiguous
-                // 2/3/4-byte) within the nms window straight into `dst`; the scalar
-                // `mbrtowc` below resolves NUL / MB_INCOMPLETE / EILSEQ / dst-full
-                // and any sequence straddling the nms or page boundary.
-                // `chars` != `bytes` for multibyte, so advance the two cursors
-                // independently below.
-                codec::mbs_decode_prefix(dst_window, src_window)
+                // Size `dst_window` strictly to the leading ASCII run we are actually
+                // about to write so `from_raw_parts_mut` never forms an oversized
+                // `&mut [u32]` past a small caller buffer when `len == usize::MAX`.
+                let ascii_len = codec::mbs_decoded_len_prefix(src_window).0;
+                let dst_cap = (len - written).min(ascii_len);
+                if dst_cap > 0 {
+                    // SAFETY: `dst_cap <= ascii_len` and `written + dst_cap <= len`,
+                    // so every element in `dst_window` is written by `mbs_decode_prefix`.
+                    let dst_window = unsafe {
+                        std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, dst_cap)
+                    };
+                    codec::mbs_decode_prefix(dst_window, &src_window[..dst_cap])
+                } else {
+                    (0, 0)
+                }
             };
             if chars > 0 {
                 consumed += bytes;
@@ -10452,21 +10527,23 @@ pub unsafe extern "C" fn wcsnrtombs(
             // page, so `window_wc <= page_rem_wc` stays strictly inside that
             // mapped page (and `<= 1024 <= isize::MAX / 4`).
             let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, window_wc) };
-            // SAFETY: `dst` is non-null (`dst.is_null()` returned above),
-            // `written < len`, and each wide char encodes to at most 6 UTF-8
-            // bytes (`MB_CUR_MAX`), so clamping to `window_wc * 6` (<= 6144)
-            // prevents `slice::from_raw_parts_mut` UB when `len == usize::MAX`.
-            let dst_cap = (len - written).min(window_wc.saturating_mul(6));
-            let dst_window =
-                unsafe { std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, dst_cap) };
-            // Encode the leading run of whole clean windows via the shared SIMD
-            // lever `wcstombs`/`wcsrtombs` use.
-            let (chars, bytes) = codec::wcs_simd_prefix(dst_window, src_window);
-            if chars > 0 {
-                written += bytes; // one byte per ASCII wchar; 2/3/4 for multibyte
-                wchars_consumed += chars;
-                s = unsafe { s.add(chars) };
-                continue;
+            // Size `dst_window` strictly to the leading ASCII run actually written
+            // so `from_raw_parts_mut` never spans past a small caller buffer when
+            // `len == usize::MAX`.
+            let ascii_len = codec::wcs_ascii_prefix_len(src_window);
+            let dst_cap = (len - written).min(ascii_len);
+            if dst_cap > 0 {
+                // SAFETY: `dst_cap <= ascii_len` and `written + dst_cap <= len`,
+                // so every byte in `dst_window` is written by `wcs_simd_prefix`.
+                let dst_window =
+                    unsafe { std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, dst_cap) };
+                let (chars, bytes) = codec::wcs_simd_prefix(dst_window, &src_window[..dst_cap]);
+                if chars > 0 {
+                    written += bytes;
+                    wchars_consumed += chars;
+                    s = unsafe { s.add(chars) };
+                    continue;
+                }
             }
         }
 

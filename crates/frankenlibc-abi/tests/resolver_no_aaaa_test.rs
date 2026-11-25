@@ -297,16 +297,22 @@ fn no_aaaa_configuration_controls_dns_without_disabling_local_ipv6() {
         };
         let mut candidate = State::zeroed();
         let mut host = State::zeroed();
-        // Stateful initialization reads /etc/resolv.conf like glibc; the
-        // native address path also supports the isolated test config path.
+        // Stateful initialization honors `FRANKENLIBC_RESOLV_CONF` consistently
+        // with native host lookups; compare against host glibc's `__res_ninit`
+        // only when no isolated override path is configured (glibc ignores
+        // `FRANKENLIBC_RESOLV_CONF` and always reads `/etc/resolv.conf`).
         // SAFETY: distinct aligned caller-owned states, paired with each
         // provider's own initialization and close routines.
         unsafe {
             assert_eq!(abi::__res_ninit((&mut candidate as *mut State).cast()), 0);
-            assert_eq!(host_init((&mut host as *mut State).cast()), 0);
-            assert_eq!(candidate.options & RES_NOAAAA, host.options & RES_NOAAAA);
+            if std::env::var_os("FRANKENLIBC_RESOLV_CONF").is_some() {
+                assert_eq!((candidate.options & RES_NOAAAA) != 0, enabled);
+            } else {
+                assert_eq!(host_init((&mut host as *mut State).cast()), 0);
+                assert_eq!(candidate.options & RES_NOAAAA, host.options & RES_NOAAAA);
+                host_close((&mut host as *mut State).cast());
+            }
             abi::__res_nclose((&mut candidate as *mut State).cast());
-            host_close((&mut host as *mut State).cast());
         }
         let ipv4 = "192.0.2.55".to_owned();
         let ipv6 = "2001:db8::55".to_owned();

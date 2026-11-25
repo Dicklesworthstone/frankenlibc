@@ -21,28 +21,107 @@ use frankenlibc_core::float128::{
 };
 use frankenlibc_core::{errno, stdlib::conversion::ConversionStatus};
 
-/// Length of a NUL-terminated numeric argument for the strto*/ato* family.
+/// Token-bounded length of an integer conversion prefix for `strto*`/`ato*`.
 ///
-/// In deployed (non-test) builds this is a plain NUL scan — matching glibc's
-/// "read until NUL/non-digit" model. `scan_c_string` unconditionally consults
-/// `allocation_bound` → `malloc_abi::known_remaining` (deployed `fallback_remaining`
-/// bookkeeping) on every call, which — together with the parse-time membrane —
-/// dominates the deployed strtol cost (measured ~28 ns vs glibc ~6 ns for "42"
-/// via the cdylib-equivalent `strtol_glibc_bench`, which builds the lib WITHOUT
-/// cfg(test); a `--test` bench would instead route through validate_ptr and
-/// overstate this). Unit-test builds keep the bounded scan so the allocation-bound
-/// clamping stays exercised.
+/// Stops at the first byte that cannot continue the integer token (whitespace ->
+/// optional sign -> optional `0x`/`0b` prefix -> base-`effective_base` digits),
+/// never reading past a non-digit delimiter into an adjacent `PROT_NONE` guard
+/// page and avoiding O(N) whole-string NUL scans on large buffers. Respects
+/// `bound` in hardened/test modes.
 #[inline]
-unsafe fn scan_numeric_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
-    if runtime_policy::stdlib_membrane_fastpath() {
-        let mut i = 0usize;
-        while unsafe { *ptr.add(i) } != 0 {
-            i += 1;
-        }
-        (i, true)
-    } else {
-        unsafe { scan_c_string(ptr, bound) }
+unsafe fn scan_integer_token(
+    ptr: *const c_char,
+    base: c_int,
+    allow_binary_prefix: bool,
+    bound: Option<usize>,
+) -> usize {
+    if base != 0 && !(2..=36).contains(&base) {
+        return 0;
     }
+    let limit = bound.unwrap_or(usize::MAX);
+    let mut i = 0usize;
+    while i < limit {
+        let byte = unsafe { *(ptr.add(i) as *const u8) };
+        if !atoi_is_c_space(byte) {
+            break;
+        }
+        i += 1;
+    }
+    if i >= limit {
+        return i;
+    }
+    let mut byte = unsafe { *(ptr.add(i) as *const u8) };
+    if byte == b'-' || byte == b'+' {
+        i += 1;
+        if i >= limit {
+            return i;
+        }
+        byte = unsafe { *(ptr.add(i) as *const u8) };
+    }
+    let effective_base: u8 = if byte == b'0' {
+        if base == 0 {
+            if i + 1 < limit {
+                let next = unsafe { *(ptr.add(i + 1) as *const u8) };
+                if (next == b'x' || next == b'X') && i + 2 < limit {
+                    let after = unsafe { *(ptr.add(i + 2) as *const u8) };
+                    if after.is_ascii_hexdigit() {
+                        i += 2;
+                        16
+                    } else {
+                        8
+                    }
+                } else if allow_binary_prefix && (next == b'b' || next == b'B') && i + 2 < limit {
+                    let after = unsafe { *(ptr.add(i + 2) as *const u8) };
+                    if after == b'0' || after == b'1' {
+                        i += 2;
+                        2
+                    } else {
+                        8
+                    }
+                } else {
+                    8
+                }
+            } else {
+                8
+            }
+        } else if base == 16 {
+            if i + 1 < limit {
+                let next = unsafe { *(ptr.add(i + 1) as *const u8) };
+                if (next == b'x' || next == b'X') && i + 2 < limit {
+                    let after = unsafe { *(ptr.add(i + 2) as *const u8) };
+                    if after.is_ascii_hexdigit() {
+                        i += 2;
+                    }
+                }
+            }
+            16
+        } else if base == 2 && allow_binary_prefix {
+            if i + 1 < limit {
+                let next = unsafe { *(ptr.add(i + 1) as *const u8) };
+                if (next == b'b' || next == b'B') && i + 2 < limit {
+                    let after = unsafe { *(ptr.add(i + 2) as *const u8) };
+                    if after == b'0' || after == b'1' {
+                        i += 2;
+                    }
+                }
+            }
+            2
+        } else {
+            base as u8
+        }
+    } else if base == 0 {
+        10
+    } else {
+        base as u8
+    };
+    while i < limit {
+        let b = unsafe { *(ptr.add(i) as *const u8) };
+        match strtol_digit_value(b) {
+            Some(d) if d < effective_base => i += 1,
+            _ => break,
+        }
+    }
+    i
 }
 
 #[inline]
@@ -383,6 +462,89 @@ unsafe fn parse_strtol_c_string_fast(
     } else {
         acc as i64
     };
+    Some((value, consumed, ConversionStatus::Success))
+}
+
+/// Deployed `strtoul`/`strtoull`/`strtoumax` specialization for base 10 and 16.
+/// Fuses token scanning and parsing in one pass so `endptr` comes from the first
+/// non-digit without scanning to NUL.
+#[inline]
+unsafe fn parse_strtoul_c_string_fast(
+    ptr: *const c_char,
+    base: c_int,
+) -> Option<(u64, usize, ConversionStatus)> {
+    if base != 10 && base != 16 {
+        return None;
+    }
+
+    let start = ptr.cast::<u8>();
+    let mut cursor = start;
+    loop {
+        let byte = unsafe { *cursor };
+        if !atoi_is_c_space(byte) {
+            break;
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    let mut byte = unsafe { *cursor };
+    let negative = if byte == b'-' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        true
+    } else if byte == b'+' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        false
+    } else {
+        false
+    };
+
+    let radix = base as u64;
+    if base == 16 && byte == b'0' {
+        let next = unsafe { *cursor.add(1) };
+        if next == b'x' || next == b'X' {
+            let after_prefix = unsafe { *cursor.add(2) };
+            if matches!(strtol_digit_value(after_prefix), Some(digit) if digit < 16) {
+                cursor = unsafe { cursor.add(2) };
+                byte = after_prefix;
+            }
+        }
+    }
+
+    let cutoff = u64::MAX / radix;
+    let cutlim = u64::MAX % radix;
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+
+    while let Some(digit) = strtol_digit_value(byte) {
+        let digit = digit as u64;
+        if digit >= radix {
+            break;
+        }
+        any_digits = true;
+        if !overflow {
+            if acc > cutoff || (acc == cutoff && digit > cutlim) {
+                overflow = true;
+            } else {
+                acc = acc * radix + digit;
+            }
+        }
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+    }
+
+    if !any_digits {
+        return Some((0, 0, ConversionStatus::Success));
+    }
+
+    let consumed = unsafe { cursor.offset_from(start) as usize };
+    if overflow {
+        return Some((u64::MAX, consumed, ConversionStatus::Overflow));
+    }
+
+    let value = if negative { acc.wrapping_neg() } else { acc };
     Some((value, consumed, ConversionStatus::Success))
 }
 
@@ -1767,6 +1929,12 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
         return unsafe { parse_ato_decimal_i64(nptr) } as c_int;
     }
 
+    unsafe { atoi_validating(nptr) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn atoi_validating(nptr: *const c_char) -> c_int {
     let known = known_remaining(nptr as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
@@ -1787,7 +1955,7 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
         None
     };
 
-    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
+    let len = unsafe { scan_integer_token(nptr, 10, false, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atoi(slice);
 
@@ -1814,6 +1982,12 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
         return unsafe { parse_ato_decimal_i64(nptr) } as c_long;
     }
 
+    unsafe { atol_validating(nptr) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn atol_validating(nptr: *const c_char) -> c_long {
     let known = known_remaining(nptr as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
@@ -1834,7 +2008,7 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
         None
     };
 
-    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
+    let len = unsafe { scan_integer_token(nptr, 10, false, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atol(slice);
 
@@ -1948,7 +2122,7 @@ pub(crate) unsafe fn strtol_with_binary_prefix(
         return val as c_long;
     }
 
-    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
+    let len = unsafe { scan_integer_token(nptr, base, allow_binary_prefix, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) =
@@ -2055,7 +2229,29 @@ pub(crate) unsafe fn strtoimax_with_binary_prefix(
         (Some(decision.profile), bound)
     };
 
-    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
+    if profile.is_none()
+        && let Some((val, consumed, status)) = unsafe { parse_strtol_c_string_fast(nptr, base) }
+    {
+        match status {
+            ConversionStatus::Overflow | ConversionStatus::Underflow => unsafe {
+                set_abi_errno(libc::ERANGE)
+            },
+            ConversionStatus::InvalidBase => unsafe {
+                set_abi_errno(libc::EINVAL);
+                return 0;
+            },
+            ConversionStatus::Success => {}
+        }
+
+        if !endptr.is_null() {
+            unsafe {
+                *endptr = (nptr as *mut c_char).add(consumed);
+            }
+        }
+        return val as intmax_t;
+    }
+
+    let len = unsafe { scan_integer_token(nptr, base, allow_binary_prefix, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) =
@@ -2174,7 +2370,29 @@ pub(crate) unsafe fn strtoul_with_binary_prefix(
         (Some(decision.profile), bound)
     };
 
-    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
+    if profile.is_none()
+        && let Some((val, consumed, status)) = unsafe { parse_strtoul_c_string_fast(nptr, base) }
+    {
+        match status {
+            ConversionStatus::Overflow | ConversionStatus::Underflow => unsafe {
+                set_abi_errno(libc::ERANGE)
+            },
+            ConversionStatus::InvalidBase => unsafe {
+                set_abi_errno(libc::EINVAL);
+                return 0;
+            },
+            ConversionStatus::Success => {}
+        }
+
+        if !endptr.is_null() {
+            unsafe {
+                *endptr = (nptr as *mut c_char).add(consumed);
+            }
+        }
+        return val as _;
+    }
+
+    let len = unsafe { scan_integer_token(nptr, base, allow_binary_prefix, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) =
@@ -2280,7 +2498,29 @@ pub(crate) unsafe fn strtoumax_with_binary_prefix(
         (Some(decision.profile), bound)
     };
 
-    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
+    if profile.is_none()
+        && let Some((val, consumed, status)) = unsafe { parse_strtoul_c_string_fast(nptr, base) }
+    {
+        match status {
+            ConversionStatus::Overflow | ConversionStatus::Underflow => unsafe {
+                set_abi_errno(libc::ERANGE)
+            },
+            ConversionStatus::InvalidBase => unsafe {
+                set_abi_errno(libc::EINVAL);
+                return 0;
+            },
+            ConversionStatus::Success => {}
+        }
+
+        if !endptr.is_null() {
+            unsafe {
+                *endptr = (nptr as *mut c_char).add(consumed);
+            }
+        }
+        return val as _;
+    }
+
+    let len = unsafe { scan_integer_token(nptr, base, allow_binary_prefix, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) =
@@ -2376,17 +2616,25 @@ pub unsafe extern "C" fn strtoi(
         }
         return 0;
     }
-    let (len, terminated) = unsafe { scan_c_string(nptr, known_remaining(nptr as usize)) };
-    if !terminated {
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr as *mut c_char };
+    let slice = match known_remaining(nptr as usize) {
+        Some(bound) => {
+            let (len, terminated) = unsafe { scan_c_string(nptr, Some(bound)) };
+            if !terminated {
+                if !endptr.is_null() {
+                    unsafe { *endptr = nptr as *mut c_char };
+                }
+                if !rstatus.is_null() {
+                    unsafe { *rstatus = libc::EINVAL };
+                }
+                return 0;
+            }
+            unsafe { std::slice::from_raw_parts(nptr as *const u8, len) }
         }
-        if !rstatus.is_null() {
-            unsafe { *rstatus = libc::EINVAL };
+        None => {
+            let len = unsafe { scan_integer_token(nptr, base, false, None) };
+            unsafe { std::slice::from_raw_parts(nptr as *const u8, len) }
         }
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
+    };
     let (val, consumed, status) =
         frankenlibc_core::stdlib::conversion::strtoi_impl(slice, base, lo, hi);
     if !endptr.is_null() {
@@ -2421,17 +2669,25 @@ pub unsafe extern "C" fn strtou(
         }
         return 0;
     }
-    let (len, terminated) = unsafe { scan_c_string(nptr, known_remaining(nptr as usize)) };
-    if !terminated {
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr as *mut c_char };
+    let slice = match known_remaining(nptr as usize) {
+        Some(bound) => {
+            let (len, terminated) = unsafe { scan_c_string(nptr, Some(bound)) };
+            if !terminated {
+                if !endptr.is_null() {
+                    unsafe { *endptr = nptr as *mut c_char };
+                }
+                if !rstatus.is_null() {
+                    unsafe { *rstatus = libc::EINVAL };
+                }
+                return 0;
+            }
+            unsafe { std::slice::from_raw_parts(nptr as *const u8, len) }
         }
-        if !rstatus.is_null() {
-            unsafe { *rstatus = libc::EINVAL };
+        None => {
+            let len = unsafe { scan_integer_token(nptr, base, false, None) };
+            unsafe { std::slice::from_raw_parts(nptr as *const u8, len) }
         }
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
+    };
     let (val, consumed, status) =
         frankenlibc_core::stdlib::conversion::strtou_impl(slice, base, lo, hi);
     if !endptr.is_null() {
@@ -3534,6 +3790,12 @@ pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
 /// `endptr`, if non-null, will be set to point past the last parsed character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        return 0.0;
+    }
     unsafe { strtod_in(nptr, endptr, NumericLocale::current()) }
 }
 
@@ -6460,6 +6722,16 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
             _ => return unsafe { getauxval_uncached(type_) },
         }
     }
+}
+
+/// Internal `getauxval` lookup that preserves caller `errno` when the
+/// requested key (such as optional `AT_SYSINFO_EHDR` under `vdso=0` or QEMU)
+/// is absent.
+pub(crate) unsafe fn getauxval_preserving_errno(type_: c_ulong) -> c_ulong {
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let value = unsafe { getauxval(type_) };
+    unsafe { *crate::errno_abi::__errno_location() = saved_errno };
+    value
 }
 
 /// Model one startup-security auxiliary-vector entry for conformance tests.

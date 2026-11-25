@@ -121,6 +121,18 @@ struct OwnedState {
 
 static OWNED: Mutex<BTreeMap<usize, OwnedState>> = Mutex::new(BTreeMap::new());
 
+pub(crate) struct ForkGuard {
+    _owned: std::sync::MutexGuard<'static, BTreeMap<usize, OwnedState>>,
+}
+
+/// Hold `OWNED` across `fork()` so a concurrent DNS lookup or thread teardown
+/// cannot strand the mutex in the child process.
+pub(crate) fn lock_for_fork() -> ForkGuard {
+    ForkGuard {
+        _owned: OWNED.lock().unwrap_or_else(|p| p.into_inner()),
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct ConfigSource {
     content: Vec<u8>,

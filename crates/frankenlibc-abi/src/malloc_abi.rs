@@ -405,7 +405,8 @@ pub mod demand_storage_tests {
         table.get(0).unwrap().store(0x1234, Ordering::Release);
         // SAFETY: the child executes only raw demand-storage operations and
         // exits without running Rust destructors or acquiring inherited locks.
-        let child = unsafe { libc::fork() };
+        let child = raw_syscall::sys_clone_fork(libc::SIGCHLD as usize)
+            .expect("raw clone fork in demand_zero_tests");
         assert!(child >= 0);
         if child == 0 {
             let inherited = table.load(0, Ordering::Acquire) == 0x1234;
@@ -418,7 +419,10 @@ pub mod demand_storage_tests {
         }
         let mut status = 0;
         // SAFETY: this test owns the child and its writable wait-status cell.
-        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert_eq!(
+            unsafe { raw_syscall::sys_wait4(child, &mut status, 0, std::ptr::null_mut()) },
+            Ok(child)
+        );
         assert_eq!(status, 0);
         assert_eq!(table.load(0, Ordering::Acquire), 0x1234);
         assert!(table.get_existing(WORDS).is_none());
@@ -3591,6 +3595,51 @@ static BUMP_MMAP_MAPPINGS_CREATED: AtomicUsize = AtomicUsize::new(0);
 static BUMP_MMAP_MAPPINGS_RELEASED: AtomicUsize = AtomicUsize::new(0);
 static BUMP_MMAP_LIVE: AtomicUsize = AtomicUsize::new(0);
 static BUMP_OVERFLOW_FAILURES: AtomicUsize = AtomicUsize::new(0);
+static BUMP_MMAP_MIN_ADDR: AtomicUsize = AtomicUsize::new(usize::MAX);
+static BUMP_MMAP_MAX_ADDR: AtomicUsize = AtomicUsize::new(0);
+const BUMP_MMAP_CHUNK_SHIFT: usize = 16;
+const BUMP_MMAP_CHUNK_FILTER_WORDS: usize = 64;
+static BUMP_MMAP_CHUNK_FILTER: [AtomicU64; BUMP_MMAP_CHUNK_FILTER_WORDS] =
+    [const { AtomicU64::new(0) }; BUMP_MMAP_CHUNK_FILTER_WORDS];
+
+#[inline(always)]
+fn bump_mmap_chunk_bit(chunk: usize) -> (usize, u64) {
+    let h = chunk.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_right(26);
+    let word = (h >> 6) & (BUMP_MMAP_CHUNK_FILTER_WORDS - 1);
+    let bit = 1u64 << (h & 63);
+    (word, bit)
+}
+
+#[inline(always)]
+fn bump_mmap_chunk_may_contain(addr: usize) -> bool {
+    let (word, bit) = bump_mmap_chunk_bit(addr >> BUMP_MMAP_CHUNK_SHIFT);
+    BUMP_MMAP_CHUNK_FILTER[word].load(Ordering::Acquire) & bit != 0
+}
+
+#[inline]
+fn publish_bump_mmap_range(key: usize, size: usize) {
+    let end = key.saturating_add(size.max(1));
+    if key < BUMP_MMAP_MIN_ADDR.load(Ordering::Acquire) {
+        BUMP_MMAP_MIN_ADDR.fetch_min(key, Ordering::AcqRel);
+    }
+    if end > BUMP_MMAP_MAX_ADDR.load(Ordering::Acquire) {
+        BUMP_MMAP_MAX_ADDR.fetch_max(end, Ordering::AcqRel);
+    }
+    let first_chunk = key >> BUMP_MMAP_CHUNK_SHIFT;
+    let last_chunk = end.saturating_sub(1) >> BUMP_MMAP_CHUNK_SHIFT;
+    if last_chunk.saturating_sub(first_chunk) >= BUMP_MMAP_CHUNK_FILTER_WORDS * 64 {
+        for word in &BUMP_MMAP_CHUNK_FILTER {
+            word.store(u64::MAX, Ordering::Release);
+        }
+        return;
+    }
+    for chunk in first_chunk..=last_chunk {
+        let (word, bit) = bump_mmap_chunk_bit(chunk);
+        if BUMP_MMAP_CHUNK_FILTER[word].load(Ordering::Relaxed) & bit == 0 {
+            BUMP_MMAP_CHUNK_FILTER[word].fetch_or(bit, Ordering::Release);
+        }
+    }
+}
 
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3669,16 +3718,29 @@ unsafe fn bump_alloc_overflow(request: usize, alignment: usize) -> *mut c_void {
 
 #[inline]
 fn bump_mmap_record_start(key: usize) -> usize {
-    (key >> BUMP_ALIGN.trailing_zeros()).wrapping_mul(0x9e37_79b9_7f4a_7c15) & BUMP_MMAP_RECORD_MASK
+    // Overflow user pointers are `page_base + header_offset` (`mapping_base + 32`
+    // for alignment <= 32), so bits below bit 12 are constant across 4 KiB-aligned
+    // mappings. Hash the page number with a Fibonacci multiplier and select the
+    // upper `log2(BUMP_MMAP_RECORD_SLOTS)` bits so distinct mappings distribute
+    // across all 131,072 slots instead of clustering into 512 buckets.
+    let shift = usize::BITS - BUMP_MMAP_RECORD_SLOTS.trailing_zeros();
+    ((key >> 12).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> shift) & BUMP_MMAP_RECORD_MASK
+}
+
+/// Test hook exposing the overflow hash bucket for dispersion checks.
+#[doc(hidden)]
+#[must_use]
+pub fn malloc_bump_mmap_bucket_for_tests(ptr: *const c_void) -> usize {
+    bump_mmap_record_start(ptr as usize)
 }
 
 /// Publish a complete record under the exact user pointer.
 ///
 /// The key has three states. A writer first CASes an EMPTY/TOMBSTONE slot to
-/// BUSY, writes all metadata, sets the one-way active gate, then release-stores
-/// the user key. This claim-before-metadata order is load-bearing: publishing
-/// metadata before claiming lets two writers cross-wire mappings and unmap the
-/// region described by the winning slot.
+/// BUSY, writes all metadata, publishes the address range/live count/active
+/// gate, then release-stores the user key. This claim-before-metadata order is
+/// load-bearing: publishing metadata before claiming lets two writers cross-wire
+/// mappings and unmap the region described by the winning slot.
 #[cold]
 fn bump_mmap_register(
     user_key: usize,
@@ -3716,10 +3778,11 @@ fn bump_mmap_register(
         slot.mapping_base.store(mapping_base, Ordering::Relaxed);
         slot.mapping_len.store(mapping_len, Ordering::Relaxed);
         slot.requested.store(requested, Ordering::Relaxed);
+        publish_bump_mmap_range(user_key, requested);
+        BUMP_MMAP_LIVE.fetch_add(1, Ordering::AcqRel);
         BUMP_OVERFLOW_ACTIVE.store(true, Ordering::Release);
         slot.key.store(user_key, Ordering::Release);
         BUMP_MMAP_MAPPINGS_CREATED.fetch_add(1, Ordering::Relaxed);
-        BUMP_MMAP_LIVE.fetch_add(1, Ordering::Relaxed);
         return true;
     }
     false
@@ -3727,11 +3790,17 @@ fn bump_mmap_register(
 
 #[inline]
 fn bump_mmap_record(ptr: *mut c_void) -> Option<BumpMmapRecord> {
-    if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) {
+    if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) || BUMP_MMAP_LIVE.load(Ordering::Acquire) == 0 {
         return None;
     }
     let key = ptr as usize;
     if key <= BUMP_MMAP_RECORD_TOMBSTONE {
+        return None;
+    }
+    if key < BUMP_MMAP_MIN_ADDR.load(Ordering::Acquire)
+        || key >= BUMP_MMAP_MAX_ADDR.load(Ordering::Acquire)
+        || !bump_mmap_chunk_may_contain(key)
+    {
         return None;
     }
     let start = bump_mmap_record_start(key);
@@ -3740,11 +3809,18 @@ fn bump_mmap_record(ptr: *mut c_void) -> Option<BumpMmapRecord> {
         let slot = bump_mmap_slot_if_ready(index)?;
         let observed = slot.key.load(Ordering::Acquire);
         if observed == key {
+            let mapping_base = slot.mapping_base.load(Ordering::Relaxed);
+            let mapping_len = slot.mapping_len.load(Ordering::Relaxed);
+            let requested = slot.requested.load(Ordering::Relaxed);
+            core::sync::atomic::fence(Ordering::Acquire);
+            if slot.key.load(Ordering::Acquire) != key {
+                continue;
+            }
             return Some(BumpMmapRecord {
                 index,
-                mapping_base: slot.mapping_base.load(Ordering::Relaxed),
-                mapping_len: slot.mapping_len.load(Ordering::Relaxed),
-                requested: slot.requested.load(Ordering::Relaxed),
+                mapping_base,
+                mapping_len,
+                requested,
             });
         }
         if observed == BUMP_MMAP_RECORD_EMPTY {
@@ -3760,25 +3836,43 @@ fn bump_mmap_record(ptr: *mut c_void) -> Option<BumpMmapRecord> {
 /// Return remaining bytes for an exact or interior overflow address.
 #[inline]
 fn bump_mmap_remaining(addr: usize) -> Option<usize> {
-    if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) {
+    if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) || BUMP_MMAP_LIVE.load(Ordering::Acquire) == 0 {
         return None;
     }
-    let slots_per_granule = segment_mapping::GRANULE / std::mem::size_of::<BumpMmapRecordSlot>();
+    if addr < BUMP_MMAP_MIN_ADDR.load(Ordering::Acquire)
+        || addr >= BUMP_MMAP_MAX_ADDR.load(Ordering::Acquire)
+        || !bump_mmap_chunk_may_contain(addr)
+    {
+        return None;
+    }
+    let slot_size = std::mem::size_of::<BumpMmapRecordSlot>();
+    let slots_per_granule = segment_mapping::GRANULE / slot_size;
     for chunk_base in (0..BUMP_MMAP_RECORD_SLOTS).step_by(slots_per_granule) {
         let chunk_end = (chunk_base + slots_per_granule).min(BUMP_MMAP_RECORD_SLOTS);
-        if bump_mmap_slot_if_ready(chunk_base).is_none() {
+        let byte_start = chunk_base * slot_size;
+        let byte_end = chunk_end * slot_size;
+        let Some(slab_base) = BUMP_MMAP_RECORDS_SLAB.writable_base_if_ready(byte_start, byte_end)
+        else {
             continue;
-        }
-        for index in chunk_base..chunk_end {
-            let Some(slot) = bump_mmap_slot_if_ready(index) else {
-                break;
-            };
+        };
+        let chunk_ptr = (slab_base + byte_start) as *const BumpMmapRecordSlot;
+        for offset in 0..(chunk_end - chunk_base) {
+            // SAFETY: `byte_start..byte_end` is verified writable in our immortal slab.
+            let slot = unsafe { &*chunk_ptr.add(offset) };
             let base = slot.key.load(Ordering::Acquire);
             if base <= BUMP_MMAP_RECORD_TOMBSTONE {
                 continue;
             }
             let requested = slot.requested.load(Ordering::Relaxed);
-            let end = base.checked_add(requested)?;
+            // Re-check `slot.key` after reading `requested` so concurrent slot
+            // reuse cannot pair a stale `base` with another mapping's size.
+            core::sync::atomic::fence(Ordering::Acquire);
+            if slot.key.load(Ordering::Acquire) != base {
+                continue;
+            }
+            let Some(end) = base.checked_add(requested) else {
+                continue;
+            };
             if base <= addr && addr < end {
                 return Some(end - addr);
             }
@@ -3829,7 +3923,7 @@ unsafe fn bump_mmap_release_claimed(
     slot.key
         .store(BUMP_MMAP_RECORD_TOMBSTONE, Ordering::Release);
     BUMP_MMAP_MAPPINGS_RELEASED.fetch_add(1, Ordering::Relaxed);
-    BUMP_MMAP_LIVE.fetch_sub(1, Ordering::Relaxed);
+    BUMP_MMAP_LIVE.fetch_sub(1, Ordering::Release);
     record.requested
 }
 

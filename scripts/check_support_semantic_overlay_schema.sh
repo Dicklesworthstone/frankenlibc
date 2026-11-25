@@ -19,6 +19,7 @@ mkdir -p "${OUT_DIR}"
 python3 - "${ROOT}" "${SCHEMA}" "${OVERLAY}" "${SUPPORT_MATRIX}" "${REPLACEMENT_LEVELS}" "${REPORT}" "${LOG}" <<'PY'
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
