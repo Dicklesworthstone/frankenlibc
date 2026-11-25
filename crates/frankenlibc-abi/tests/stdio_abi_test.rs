@@ -7422,6 +7422,114 @@ fn funopen_round_trips_write_seek_read() {
 // fcloseall must not unregister the standard streams (bd-0ftdgt)
 // ---------------------------------------------------------------------------
 
+#[test]
+fn fcloseall_reports_failed_flush_and_closes_remaining_streams() {
+    if run_alone_in_child("fcloseall_reports_failed_flush_and_closes_remaining_streams") {
+        return;
+    }
+    use frankenlibc_abi::{errno_abi, stdio_abi};
+
+    #[derive(Default)]
+    struct Cookie {
+        fail: bool,
+        writes: usize,
+        closes: usize,
+        invalid: bool,
+    }
+
+    unsafe extern "C-unwind" fn write_cookie(
+        opaque: *mut c_void,
+        bytes: *const c_char,
+        count: usize,
+    ) -> isize {
+        // SAFETY: the test keeps each cookie and the callback span alive.
+        let cookie = unsafe { &mut *opaque.cast::<Cookie>() };
+        cookie.writes += 1;
+        cookie.invalid |= count != 1 || unsafe { *bytes.cast::<u8>() } != b'!';
+        if cookie.fail {
+            // SAFETY: this is the calling thread's canonical errno slot.
+            unsafe { *errno_abi::__errno_location() = libc::ENOSPC };
+            0
+        } else {
+            count as isize
+        }
+    }
+
+    unsafe extern "C-unwind" fn close_cookie(opaque: *mut c_void) -> c_int {
+        // SAFETY: fcloseall invokes this before the stack cookie is dropped.
+        let cookie = unsafe { &mut *opaque.cast::<Cookie>() };
+        cookie.closes += 1;
+        // A successful callback may change errno; cleanup must not erase the
+        // earlier flush failure that determines fcloseall's return value.
+        unsafe { *errno_abi::__errno_location() = libc::ERANGE };
+        0
+    }
+
+    let hooks = stdio_abi::CookieIoFuncs {
+        write: Some(write_cookie),
+        close: Some(close_cookie),
+        ..Default::default()
+    };
+    let mut failed = Cookie {
+        fail: true,
+        ..Default::default()
+    };
+    let mut healthy = Cookie::default();
+    for cookie in [&mut failed, &mut healthy] {
+        // SAFETY: cookie remains alive until fcloseall; mode is NUL terminated.
+        let stream = unsafe {
+            stdio_abi::fopencookie(std::ptr::from_mut(cookie).cast(), c"w".as_ptr(), hooks)
+        };
+        assert!(!stream.is_null());
+        // SAFETY: stream is live and accepts byte output.
+        assert_eq!(
+            unsafe { stdio_abi::fputc(b'!' as c_int, stream) },
+            b'!' as c_int
+        );
+        assert_eq!(
+            cookie.writes, 0,
+            "output must remain buffered until fcloseall"
+        );
+    }
+    let result = stdio_abi::fcloseall();
+    // SAFETY: this reads only the calling thread's canonical errno slot.
+    let saved_errno = unsafe { *errno_abi::__errno_location() };
+    assert_eq!((result, saved_errno), (libc::EOF, libc::ENOSPC));
+    assert_eq!(
+        (failed.writes, failed.closes, failed.invalid),
+        (1, 1, false)
+    );
+    assert_eq!(
+        (healthy.writes, healthy.closes, healthy.invalid),
+        (1, 1, false)
+    );
+
+    // A later successful close-all starts a fresh result and does not replay
+    // the bytes or close callbacks of streams retired by the failed call.
+    let mut subsequent = Cookie::default();
+    // SAFETY: subsequent remains alive until fcloseall; mode is NUL terminated.
+    let stream = unsafe {
+        stdio_abi::fopencookie(
+            std::ptr::from_mut(&mut subsequent).cast(),
+            c"w".as_ptr(),
+            hooks,
+        )
+    };
+    assert!(!stream.is_null());
+    // SAFETY: stream is live and accepts byte output.
+    assert_eq!(
+        unsafe { stdio_abi::fputc(b'!' as c_int, stream) },
+        b'!' as c_int
+    );
+    assert_eq!(stdio_abi::fcloseall(), 0);
+    assert_eq!(
+        (subsequent.writes, subsequent.closes, subsequent.invalid),
+        (1, 1, false)
+    );
+    assert_eq!((failed.writes, failed.closes), (1, 1));
+    assert_eq!((healthy.writes, healthy.closes), (1, 1));
+}
+
 /// `fcloseall` used to remove `stdin`/`stdout`/`stderr` from the stream
 /// registry. Every stdio entry point maps those three to a SENTINEL id
 /// (`0x1000_0001..=0x1000_0003`) and falls back to HOST stdio for any id the

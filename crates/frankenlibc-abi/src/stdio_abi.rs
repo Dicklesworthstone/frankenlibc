@@ -21825,15 +21825,16 @@ fn is_standard_sentinel_id(id: usize) -> bool {
 /// safe, i.e. glibc does not leave a dangling standard handle behind either.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn fcloseall() -> c_int {
-    // Flush all open streams by passing NULL to fflush (POSIX semantics).
-    unsafe { fflush(std::ptr::null_mut()) };
+    // A failed flush can consume its pending bytes. Later closes may succeed,
+    // so retain its result and errno while still retiring every owned stream.
+    let flushed = unsafe { fflush(std::ptr::null_mut()) };
+    let mut error = (flushed != 0).then(|| unsafe { *crate::errno_abi::__errno_location() });
 
     let ids: Vec<usize> = {
         let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
         sorted_stream_ids(&reg)
     };
 
-    let mut overall_rc = 0;
     for id in ids {
         // Already flushed above, and unregistering one would turn its sentinel
         // into a fake `FILE *` for every later standard-stream call.
@@ -21845,10 +21846,16 @@ pub extern "C" fn fcloseall() -> c_int {
         // not round-trip are skipped above.
         let rc = unsafe { fclose(id as *mut c_void) };
         if rc != 0 {
-            overall_rc = libc::EOF;
+            let close_error = unsafe { *crate::errno_abi::__errno_location() };
+            error.get_or_insert(close_error);
         }
     }
-    overall_rc
+    if let Some(error) = error {
+        unsafe { set_abi_errno(error) };
+        libc::EOF
+    } else {
+        0
+    }
 }
 
 // ===========================================================================
