@@ -385,63 +385,26 @@ pub unsafe extern "C" fn iconv(
         }
     };
 
-    // Reset mode permits omitting both output arguments entirely, but partially
-    // specified output state is still a caller bug and must not be treated as a
-    // successful no-op.
-    if input_opt.is_none() {
-        let output_args_mixed = outbuf.is_null() != outbytesleft.is_null();
-        let output_ptr_missing = !outbuf.is_null() && unsafe { (*outbuf).is_null() };
-        if output_args_mixed || output_ptr_missing {
-            // SAFETY: sets thread-local errno.
-            unsafe { set_abi_errno(errno::EFAULT) };
-            runtime_policy::observe(
-                ApiFamily::Locale,
-                decision.profile,
-                runtime_policy::scaled_cost(8, requested),
-                true,
-            );
-            return iconv_error_return();
-        }
+    // A reset without an output pointer discards the old shift sequence.
+    // A non-null pointer with zero capacity requests emission and can get E2BIG.
+    if input_opt.is_none() && (outbuf.is_null() || unsafe { (*outbuf).is_null() }) {
+        lock_descriptor(&handle).reset_without_output();
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 10, false);
+        return 0;
     }
 
-    // outbuf and outbytesleft can only be null if inbuf or *inbuf is null (reset path).
-    // If both are null, we pass an empty slice to the core, which will skip BOM emission.
-    let mut out_dummy = [0u8; 0];
-    let output = if outbuf.is_null() || outbytesleft.is_null() {
-        if input_opt.is_some() {
-            // Mandatory for conversion path.
-            // SAFETY: sets thread-local errno.
-            unsafe { set_abi_errno(errno::EFAULT) };
-            runtime_policy::observe(
-                ApiFamily::Locale,
-                decision.profile,
-                runtime_policy::scaled_cost(8, requested),
-                true,
-            );
-            return iconv_error_return();
-        }
-        &mut out_dummy[..]
-    } else {
-        // SAFETY: guarded by null checks above.
-        let out_ptr = unsafe { *outbuf };
-        if out_ptr.is_null() {
-            if input_opt.is_some() {
-                // SAFETY: sets thread-local errno.
-                unsafe { set_abi_errno(errno::EFAULT) };
-                runtime_policy::observe(
-                    ApiFamily::Locale,
-                    decision.profile,
-                    runtime_policy::scaled_cost(8, requested),
-                    true,
-                );
-                return iconv_error_return();
-            }
-            &mut out_dummy[..]
-        } else {
-            let out_left = unsafe { *outbytesleft };
-            unsafe { slice::from_raw_parts_mut(out_ptr.cast::<u8>(), out_left) }
-        }
-    };
+    if outbuf.is_null() || outbytesleft.is_null() || unsafe { (*outbuf).is_null() } {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Locale,
+            decision.profile,
+            runtime_policy::scaled_cost(8, requested),
+            true,
+        );
+        return iconv_error_return();
+    }
+    // SAFETY: the caller supplies a writable buffer of *outbytesleft bytes.
+    let output = unsafe { slice::from_raw_parts_mut((*outbuf).cast::<u8>(), *outbytesleft) };
 
     let mut descriptor = lock_descriptor(&handle);
     // glibc takes //TRANSLIT replacements from the locale current at conversion.

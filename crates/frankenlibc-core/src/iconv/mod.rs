@@ -3428,6 +3428,47 @@ impl SingleByteReverse {
 }
 
 impl IconvDescriptor {
+    /// Start a fresh conversion segment with the same codecs and options.
+    /// A caller that omits the output buffer discards the previous shift sequence.
+    pub fn reset_without_output(&mut self) {
+        self.emit_bom = matches!(self.to, Encoding::Utf32 | Encoding::Utf16 | Encoding::Unicode);
+        // glibc inspects a new segment's BOM but retains a previously selected
+        // byte swap. A native-order BOM is consumed without clearing that swap.
+        self.from_bom_pending = matches!(self.from, Encoding::Utf32 | Encoding::Utf16 | Encoding::Unicode);
+        self.utf7_active = false;
+        self.utf7_bits = 0;
+        self.utf7_nbits = 0;
+        self.utf7_hi = -1;
+        self.utf7_shift_empty = false;
+        self.utf7_pending = -1;
+        self.iso2022kr_designated = false;
+        self.iso2022kr_in_ksc = false;
+        self.iso2022kr_out_ksc = false;
+        self.iso2022jp_in_set = 0;
+        self.iso2022jp_out_set = 0;
+        self.iso2022jp3_in_set = 0;
+        self.iso2022jp3_out_set = 0;
+        self.iso2022jp2_in_g0 = 0;
+        self.iso2022jp2_in_g2 = 0;
+        self.iso2022jp2_out_g0 = 0;
+        self.iso2022jp2_out_g2 = 0;
+        self.iso2022cn_in_g1 = 1;
+        self.iso2022cn_in_shifted = false;
+        self.iso2022cn_out_g1 = 0;
+        self.iso2022cn_out_g2 = false;
+        self.iso2022cn_out_shifted = false;
+        self.iso2022cnext_in_g1 = 0;
+        self.iso2022cnext_in_g1act = 0;
+        self.iso2022cnext_in_g3 = 0;
+        self.iso2022cnext_in_shifted = false;
+        self.iso2022cnext_out_set = 0;
+        self.iso2022cnext_out_ann_so = 0;
+        self.iso2022cnext_out_ann_ss2 = false;
+        self.iso2022cnext_out_ann_ss3 = 0;
+        self.ibm930_in_shifted = false;
+        self.ibm930_out_shifted = false;
+    }
+
     /// Whether `tocode` asked for `//IGNORE` (skipped input is reported by
     /// glibc through the descriptor's "encountered illegal input" flag).
     #[must_use]
@@ -49166,227 +49207,46 @@ fn iconv_core(
     let mut out_pos = 0usize;
     let non_reversible = 0usize;
 
-    // Standard iconv reset behavior: if inbuf is None, return the destination to
-    // its initial state, emitting whatever escape/shift sequence that takes. A
-    // pending Byte Order Mark is NOT such a sequence — it is held back for the
-    // first conversion, which is what glibc does (bd-xh08pf); see the fall-through
-    // at the end of this arm.
-    let input = match inbuf {
-        Some(b) => b,
-        None => {
-            // UTF-7 SOURCE: finalize any persisted decode shift state (bd-s41n4a).
-            if cd.from == Encoding::Utf7 || cd.from == Encoding::Utf7Imap {
-                return utf7_decode_flush(cd, outbuf);
+    let Some(input) = inbuf else {
+        // Preserve the state on E2BIG so a caller can retry the flush.
+        if matches!(cd.from, Encoding::Utf7 | Encoding::Utf7Imap) {
+            let result = utf7_decode_flush(cd, outbuf)?;
+            cd.reset_without_output();
+            return Ok(result);
+        }
+        let sequence: &[u8] = match cd.to {
+            Encoding::Iso2022Jp if cd.iso2022jp_out_set != 0 => b"\x1b(B",
+            Encoding::Iso2022Jp3 if cd.iso2022jp3_out_set != 0 => b"\x1b(B",
+            Encoding::Iso2022Jp2 if cd.iso2022jp2_out_g0 != 0 => b"\x1b(B",
+            Encoding::Iso2022Kr if cd.iso2022kr_out_ksc => b"\x0f",
+            Encoding::Iso2022Cn
+                if cd.iso2022cn_out_g1 != 0 || cd.iso2022cn_out_g2 || cd.iso2022cn_out_shifted =>
+            {
+                b"\x0f"
             }
-            // ISO-2022-KR DEST: a reset returns the stream to ASCII — glibc
-            // emits a trailing SI (0x0F) if still in the SO (KSC) shift mode.
-            if cd.to == Encoding::Iso2022Kr {
-                if cd.iso2022kr_out_ksc {
-                    if outbuf.is_empty() {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[0] = 0x0F;
-                    cd.iso2022kr_out_ksc = false;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 1,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
-            }
-            // IBM EBCDIC DBCS DEST: a reset emits SI (0x0F) if still shifted.
-            if ebcdic_tables_for(cd.to).is_some() {
-                if cd.ibm930_out_shifted {
-                    if outbuf.is_empty() {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[0] = 0x0F;
-                    cd.ibm930_out_shifted = false;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 1,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
-            }
-            // ISO-2022-JP DEST: a reset returns G0 to ASCII — glibc emits a
-            // trailing `ESC ( B` if the current designation is not ASCII.
-            if cd.to == Encoding::Iso2022Jp {
-                if cd.iso2022jp_out_set != 0 {
-                    if outbuf.len() < 3 {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
-                    cd.iso2022jp_out_set = 0;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 3,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
-            }
-            // ISO-2022-JP-3 DEST: a reset returns the designation to ASCII.
-            if cd.to == Encoding::Iso2022Jp3 {
-                if cd.iso2022jp3_out_set != 0 {
-                    if outbuf.len() < 3 {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
-                    cd.iso2022jp3_out_set = 0;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 3,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
-            }
-            // ISO-2022-JP-2 DEST: a reset returns G0 to ASCII (G2 needs no reset).
-            if cd.to == Encoding::Iso2022Jp2 {
-                if cd.iso2022jp2_out_g0 != 0 {
-                    if outbuf.len() < 3 {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
-                    cd.iso2022jp2_out_g0 = 0;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 3,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
-            }
-            // ISO-2022-CN DEST: a reset emits SI if any G1/G2 designation is
-            // active (matching glibc's reset-to-initial), then clears the state.
-            if cd.to == Encoding::Iso2022Cn {
-                if cd.iso2022cn_out_g1 != 0 || cd.iso2022cn_out_g2 || cd.iso2022cn_out_shifted {
-                    if outbuf.is_empty() {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[0] = 0x0F;
-                    cd.iso2022cn_out_g1 = 0;
-                    cd.iso2022cn_out_g2 = false;
-                    cd.iso2022cn_out_shifted = false;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 1,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
-            }
-            // ISO-2022-CN-EXT DEST: glibc resets to ASCII at end of input, emitting
-            // SI whenever the current `set` is non-ASCII (the announcements are
-            // already cleared lazily); then clears all encode state.
-            if cd.to == Encoding::Iso2022CnExt {
+            Encoding::Iso2022CnExt
                 if cd.iso2022cnext_out_set != 0
                     || cd.iso2022cnext_out_ann_so != 0
                     || cd.iso2022cnext_out_ann_ss2
-                    || cd.iso2022cnext_out_ann_ss3 != 0
-                {
-                    if outbuf.is_empty() {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[0] = 0x0F;
-                    cd.iso2022cnext_out_set = 0;
-                    cd.iso2022cnext_out_ann_so = 0;
-                    cd.iso2022cnext_out_ann_ss2 = false;
-                    cd.iso2022cnext_out_ann_ss3 = 0;
-                    return Ok(IconvResult {
-                        non_reversible: 0,
-                        in_consumed: 0,
-                        out_written: 1,
-                    });
-                }
-                return Ok(IconvResult {
-                    non_reversible: 0,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
+                    || cd.iso2022cnext_out_ann_ss3 != 0 =>
+            {
+                b"\x0f"
             }
-            // A reset writes NOTHING for the BOM-carrying Unicode targets, and
-            // `emit_bom` is deliberately left set so the pending BOM lands on the
-            // next real conversion instead. This is measured glibc behaviour, not
-            // an inference from POSIX (bd-xh08pf, host glibc 2.42 via ctypes):
-            //
-            //   iconv_open("UTF-32","UTF-8"); iconv(cd, NULL, NULL, &out, &n)
-            //     glibc -> rc 0, 0 bytes written, n unchanged      (any n, incl. 0 and 3)
-            //     then   iconv(cd, "AB", ...) -> ff fe 00 00 41 .. 42 ..
-            //
-            // fl used to emit the 4-byte BOM here, and to fail the reset with
-            // E2BIG when fewer than 4 bytes were free — two divergences on a call
-            // glibc treats as a pure no-op for these encodings. The concatenated
-            // byte stream came out identical, so only `*outbytesleft` after the
-            // reset told them apart, which is exactly what a caller sizing its
-            // buffer reads. Verified the same for UTF-16, UCS-2 and a reset issued
-            // twice before any conversion.
-            //
-            // The stateful destinations above (ISO-2022-*, EBCDIC DBCS, UTF-7)
-            // return earlier and are UNAFFECTED: glibc does emit their
-            // return-to-initial-state sequence on reset, and
-            // conformance_diff_iconv_reset_bom pins both halves of that split.
-            return Ok(IconvResult {
-                non_reversible,
-                in_consumed: 0,
-                out_written: out_pos,
-            });
-        }
+            _ if cd.ibm930_out_shifted => b"\x0f",
+            _ => b"",
+        };
+        let dest = outbuf.get_mut(..sequence.len()).ok_or(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        })?;
+        dest.copy_from_slice(sequence);
+        cd.reset_without_output();
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: 0,
+            out_written: sequence.len(),
+        });
     };
 
     // UTF-7 / UTF-7-IMAP (either side) are stateful shift codecs handled by a
@@ -49511,28 +49371,26 @@ fn iconv_core(
             Encoding::Utf32 if input.len() - in_pos >= 4 => {
                 match input[in_pos..in_pos + 4] {
                     [0xFF, 0xFE, 0x00, 0x00] => {
-                        cd.from_unmarked_be = false;
                         in_pos += 4;
                     }
                     [0x00, 0x00, 0xFE, 0xFF] => {
                         cd.from_unmarked_be = true;
                         in_pos += 4;
                     }
-                    _ => {} // no BOM: keep the native LE default
+                    _ => {} // No BOM: retain the current byte order.
                 }
                 cd.from_bom_pending = false;
             }
             Encoding::Utf16 | Encoding::Unicode if input.len() - in_pos >= 2 => {
                 match input[in_pos..in_pos + 2] {
                     [0xFF, 0xFE] => {
-                        cd.from_unmarked_be = false;
                         in_pos += 2;
                     }
                     [0xFE, 0xFF] => {
                         cd.from_unmarked_be = true;
                         in_pos += 2;
                     }
-                    _ => {} // no BOM: keep the native LE default
+                    _ => {} // No BOM: retain the current byte order.
                 }
                 cd.from_bom_pending = false;
             }

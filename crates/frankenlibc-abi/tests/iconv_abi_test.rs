@@ -440,7 +440,7 @@ fn iconv_reset_with_output_pointer_but_no_length_fails() {
 }
 
 #[test]
-fn iconv_reset_with_length_but_null_output_pointer_fails() {
+fn iconv_reset_with_null_output_discards_shift_sequence() {
     unsafe {
         let cd = iconv_open(c_str(b"UTF-32\0"), c_str(b"UTF-8\0"));
         assert_ne!(cd, iconv_error_handle());
@@ -455,7 +455,8 @@ fn iconv_reset_with_length_but_null_output_pointer_fails() {
             &mut out_ptr,
             &mut out_left,
         );
-        assert_eq!(rc, ICONV_ERROR);
+        assert_eq!(rc, 0);
+        assert_eq!(out_left, 8);
 
         assert_eq!(iconv_close(cd), 0);
     }

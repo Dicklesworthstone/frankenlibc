@@ -99,6 +99,10 @@ fn glibc_arm() -> Arm {
 enum Step {
     /// `iconv(cd, NULL, NULL, &out, &out_left)` — the reset call under test.
     Reset,
+    /// Limit the output view for one flush, then restore the unused capacity.
+    ResetLimited(usize),
+    /// Reset without storing a shift sequence.
+    Discard,
     /// An ordinary conversion of a byte slice.
     Convert(&'static [u8]),
 }
@@ -150,18 +154,36 @@ fn run(
         // SAFETY: the errno slot belongs to the same implementation as `convert`.
         unsafe { *(arm.errno_location)() = 0 };
         let (rc, in_left) = match step {
-            Step::Reset => {
-                // SAFETY: a NULL inbuf is the documented reset form; the output
-                // pointers address `out`, which outlives the call.
+            Step::Discard => {
+                // SAFETY: all-null arguments request a reset without output.
+                let rc = unsafe {
+                    (arm.convert)(
+                        cd,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    )
+                };
+                (rc, 0)
+            }
+            Step::Reset | Step::ResetLimited(_) => {
+                let capacity = match step {
+                    Step::ResetLimited(limit) => out_left.min(*limit),
+                    _ => out_left,
+                };
+                let mut left = capacity;
+                // SAFETY: the output view is bounded by the space remaining in out.
                 let rc = unsafe {
                     (arm.convert)(
                         cd,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         &mut out_ptr,
-                        &mut out_left,
+                        &mut left,
                     )
                 };
+                out_left -= capacity - left;
                 (rc, 0)
             }
             Step::Convert(src) => {
@@ -221,6 +243,32 @@ const CONVERT_KANA_THEN_RESET: &[Step] = &[Step::Convert("\u{3042}".as_bytes()),
 /// whatever the output buffer looks like, and the BOM must survive to the first
 /// conversion.
 const UNICODE_CASES: &[Case] = &[
+    Case {
+        tocode: "UTF-8",
+        fromcode: "UTF-16",
+        out_len: 16,
+        steps: &[
+            Step::Convert(b"\xff\xfeA\0"),
+            Step::Reset,
+            Step::Convert(b"\xfe\xff\0B"),
+        ],
+    },
+    Case {
+        tocode: "UTF-8",
+        fromcode: "UTF-16",
+        out_len: 16,
+        steps: &[
+            Step::Convert(b"\xfe\xff\0A"),
+            Step::Discard,
+            Step::Convert(b"\xff\xfeB\0"),
+        ],
+    },
+    Case {
+        tocode: "UTF-16",
+        fromcode: "UTF-8",
+        out_len: 16,
+        steps: &[Step::Convert(b"A"), Step::Reset, Step::Convert(b"B")],
+    },
     Case {
         tocode: "UTF-32",
         fromcode: "UTF-8",
@@ -298,6 +346,59 @@ const UNICODE_CASES: &[Case] = &[
 /// the control group — a fix that turned every reset into a no-op would pass
 /// `reset_on_unicode_targets_matches_glibc` and fail here.
 const STATEFUL_CASES: &[Case] = &[
+    Case {
+        tocode: "ISO-2022-JP",
+        fromcode: "UTF-8",
+        out_len: 32,
+        steps: &[
+            Step::Convert("あ".as_bytes()),
+            Step::ResetLimited(2),
+            Step::Reset,
+            Step::Convert("あ".as_bytes()),
+        ],
+    },
+    Case {
+        tocode: "ISO-2022-JP",
+        fromcode: "UTF-8",
+        out_len: 32,
+        steps: &[
+            Step::Convert("あ".as_bytes()),
+            Step::Discard,
+            Step::Convert("あ".as_bytes()),
+            Step::Reset,
+        ],
+    },
+    Case {
+        tocode: "ISO-2022-KR",
+        fromcode: "UTF-8",
+        out_len: 32,
+        steps: &[
+            Step::Convert("한".as_bytes()),
+            Step::Reset,
+            Step::Convert("한".as_bytes()),
+        ],
+    },
+    // After resetting JIS X 0208, AB is two ASCII bytes.
+    Case {
+        tocode: "UTF-8",
+        fromcode: "ISO-2022-JP",
+        out_len: 32,
+        steps: &[
+            Step::Convert(b"\x1b$B\x24\x22"),
+            Step::Reset,
+            Step::Convert(b"AB"),
+        ],
+    },
+    Case {
+        tocode: "UTF-8",
+        fromcode: "ISO-2022-JP",
+        out_len: 32,
+        steps: &[
+            Step::Convert(b"\x1b$B\x24\x22"),
+            Step::Discard,
+            Step::Convert(b"AB"),
+        ],
+    },
     Case {
         tocode: "ISO-2022-JP",
         fromcode: "UTF-8",
