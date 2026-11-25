@@ -184,6 +184,24 @@ jobs:
               2>&1 | tee "$log"
             grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"
           done
+      - name: Preserve byte conversion across native FILE backends
+        if: always()
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/cookie-callbacks
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          for mode in strict hardened; do
+            log="artifacts/cookie-callbacks/character-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_stdio_eof character_ \
+              -- --test-threads=1 --nocapture 2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' "$log"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

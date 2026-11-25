@@ -19,8 +19,13 @@ struct StdioArm {
     fopen: unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void,
     fdopen: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void,
     fmemopen: unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void,
+    open_memstream: unsafe extern "C" fn(*mut *mut c_char, *mut usize) -> *mut c_void,
     fopencookie: unsafe extern "C" fn(*mut c_void, *const c_char, fl::CookieIoFuncs) -> *mut c_void,
     fgetc: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    fputc: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
+    putc: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
+    fputc_unlocked: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
+    putc_unlocked: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
     ungetc: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
     fgets: unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char,
     fscanf: unsafe extern "C-unwind" fn(*mut c_void, *const c_char, ...) -> c_int,
@@ -44,8 +49,13 @@ fn candidate() -> StdioArm {
         fopen: fl::fopen,
         fdopen: fl::fdopen,
         fmemopen: fl::fmemopen,
+        open_memstream: fl::open_memstream,
         fopencookie: fl::fopencookie,
         fgetc: fl::fgetc,
+        fputc: fl::fputc,
+        putc: fl::putc,
+        fputc_unlocked: fl::fputc_unlocked,
+        putc_unlocked: fl::putc_unlocked,
         ungetc: fl::ungetc,
         fgets: fl::fgets,
         fscanf: fl::fscanf,
@@ -73,8 +83,19 @@ fn host() -> StdioArm {
             fopen: dlsym_oracle::host_fn(c"fopen", fl::fopen as *const ()),
             fdopen: dlsym_oracle::host_fn(c"fdopen", fl::fdopen as *const ()),
             fmemopen: dlsym_oracle::host_fn(c"fmemopen", fl::fmemopen as *const ()),
+            open_memstream: dlsym_oracle::host_fn(
+                c"open_memstream",
+                fl::open_memstream as *const (),
+            ),
             fopencookie: dlsym_oracle::host_fn(c"fopencookie", fl::fopencookie as *const ()),
             fgetc: dlsym_oracle::host_fn(c"fgetc", fl::fgetc as *const ()),
+            fputc: dlsym_oracle::host_fn(c"fputc", fl::fputc as *const ()),
+            putc: dlsym_oracle::host_fn(c"putc", fl::putc as *const ()),
+            fputc_unlocked: dlsym_oracle::host_fn(
+                c"fputc_unlocked",
+                fl::fputc_unlocked as *const (),
+            ),
+            putc_unlocked: dlsym_oracle::host_fn(c"putc_unlocked", fl::putc_unlocked as *const ()),
             ungetc: dlsym_oracle::host_fn(c"ungetc", fl::ungetc as *const ()),
             fgets: dlsym_oracle::host_fn(c"fgets", fl::fgets as *const ()),
             fscanf: dlsym_oracle::host_fn(c"fscanf", fl::fscanf as *const ()),
@@ -1191,6 +1212,318 @@ fn ungetc_preserves_scanner_rollback_ahead_of_pending_input() {
                 "GNU {backend:?} mode={mode}"
             );
             assert_eq!(observe(&candidate()), oracle, "{backend:?} mode={mode}");
+        }
+    }
+}
+
+#[test]
+fn character_pushback_returns_unsigned_bytes_except_eof() {
+    let oracle = host();
+    let implementation = candidate();
+    let payload = b"ab";
+    let inputs = [
+        c_int::MIN,
+        -257,
+        -256,
+        -255,
+        -129,
+        -128,
+        -2,
+        0,
+        127,
+        128,
+        255,
+        256,
+        321,
+        c_int::MAX,
+    ];
+
+    for backend in [
+        PushbackBackend::Descriptor,
+        PushbackBackend::Memory,
+        PushbackBackend::Cookie,
+    ] {
+        for mode in [libc::_IOFBF, libc::_IONBF] {
+            for consumed in 0..=payload.len() {
+                let observe = |arm: &StdioArm| {
+                    with_pushback_stream(arm, backend, mode, payload, |stream| {
+                        // SAFETY: the fixture owns the live stream and all
+                        // backing/context storage until the closing guard runs.
+                        unsafe {
+                            for &byte in &payload[..consumed] {
+                                assert_eq!((arm.fgetc)(stream), c_int::from(byte));
+                            }
+                            if consumed == payload.len() {
+                                assert_eq!((arm.fgetc)(stream), libc::EOF);
+                                assert_ne!((arm.feof)(stream), 0);
+                            }
+
+                            let eof_before = (arm.feof)(stream) != 0;
+                            let rejected = (arm.ungetc)(libc::EOF, stream);
+                            let eof_after_rejection = (arm.feof)(stream) != 0;
+                            let mut observations = Vec::new();
+                            for input in inputs {
+                                let pushed = (arm.ungetc)(input, stream);
+                                let eof_after_push = (arm.feof)(stream) != 0;
+                                let byte = (arm.fgetc)(stream);
+                                observations.push((pushed, byte, eof_after_push));
+                            }
+
+                            let mut tail = [0xa5u8; 4];
+                            let count =
+                                (arm.fread)(tail.as_mut_ptr().cast(), 1, tail.len(), stream);
+                            assert!(count <= tail.len());
+                            (
+                                rejected,
+                                eof_before,
+                                eof_after_rejection,
+                                observations,
+                                tail[..count].to_vec(),
+                                (arm.feof)(stream) != 0,
+                                (arm.ferror)(stream) != 0,
+                            )
+                        }
+                    })
+                };
+                let reference = observe(&oracle);
+                let expected: Vec<_> = inputs
+                    .iter()
+                    .map(|&input| {
+                        let byte = c_int::from(input as u8);
+                        (byte, byte, false)
+                    })
+                    .collect();
+                assert_eq!(
+                    reference,
+                    (
+                        libc::EOF,
+                        consumed == payload.len(),
+                        consumed == payload.len(),
+                        expected,
+                        payload[consumed..].to_vec(),
+                        true,
+                        false,
+                    ),
+                    "GNU {backend:?} mode={mode} consumed={consumed}"
+                );
+                assert_eq!(
+                    observe(&implementation),
+                    reference,
+                    "{backend:?} mode={mode} consumed={consumed}"
+                );
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CharacterOutputBackend {
+    Descriptor,
+    Cookie,
+    FixedMemory,
+    DynamicMemory,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CharacterOutputObservation {
+    results: Vec<c_int>,
+    bytes: Vec<u8>,
+    error_before_flush: bool,
+    flush_result: c_int,
+    error_after_flush: bool,
+    close_result: c_int,
+}
+
+unsafe extern "C-unwind" fn character_cookie_write(
+    cookie: *mut c_void,
+    bytes: *const c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: the fixture retains its descriptor slot until fclose and
+    // the FILE supplies count readable bytes for this callback invocation.
+    unsafe { libc::write(*cookie.cast::<c_int>(), bytes.cast(), count) }
+}
+
+fn observe_character_output(
+    arm: &StdioArm,
+    backend: CharacterOutputBackend,
+    mode: c_int,
+    writer: unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int,
+    inputs: &[c_int],
+) -> CharacterOutputObservation {
+    let mut descriptor = -1;
+    let mut fixed = [0xa5u8; 64];
+    let mut storage = [0u8; 8];
+    let mut published: *mut c_char = std::ptr::null_mut();
+    let mut published_len = 0usize;
+    assert!(inputs.len() < fixed.len());
+
+    // SAFETY: all FILE backing storage, callback context, buffer storage and
+    // open_memstream publication slots outlive the closing guard. Each arm
+    // creates, operates on, and closes its own independent stream.
+    unsafe {
+        let stream = match backend {
+            CharacterOutputBackend::Descriptor | CharacterOutputBackend::Cookie => {
+                descriptor = libc::memfd_create(c"stdio-character-output".as_ptr(), 0);
+                assert!(descriptor >= 0);
+                if matches!(backend, CharacterOutputBackend::Cookie) {
+                    (arm.fopencookie)(
+                        (&raw mut descriptor).cast(),
+                        c"w".as_ptr(),
+                        fl::CookieIoFuncs {
+                            write: Some(character_cookie_write),
+                            close: Some(pipe_cookie_close),
+                            ..Default::default()
+                        },
+                    )
+                } else {
+                    (arm.fdopen)(descriptor, c"w".as_ptr())
+                }
+            }
+            CharacterOutputBackend::FixedMemory => {
+                (arm.fmemopen)(fixed.as_mut_ptr().cast(), fixed.len(), c"w".as_ptr())
+            }
+            CharacterOutputBackend::DynamicMemory => {
+                (arm.open_memstream)(&mut published, &mut published_len)
+            }
+        };
+        assert!(!stream.is_null(), "{}: {backend:?}", arm.name);
+        let mut close = PushbackStreamGuard { arm, stream };
+        if arm.name == "fl" {
+            assert!(!fl::stdio_may_delegate_to_host_for_tests(stream));
+        }
+
+        // open_memstream has its own growing-memory buffering contract.
+        // Retain its default instead of asking GNU to replace that storage.
+        if !matches!(backend, CharacterOutputBackend::DynamicMemory) {
+            assert_eq!(
+                (arm.setvbuf)(stream, storage.as_mut_ptr().cast(), mode, storage.len()),
+                0
+            );
+        }
+
+        let results = inputs.iter().map(|&input| writer(input, stream)).collect();
+        let error_before_flush = (arm.ferror)(stream) != 0;
+        let flush_result = (arm.fflush)(stream);
+        let error_after_flush = (arm.ferror)(stream) != 0;
+        let bytes = match backend {
+            CharacterOutputBackend::Descriptor | CharacterOutputBackend::Cookie => {
+                assert_eq!(libc::lseek(descriptor, 0, libc::SEEK_SET), 0);
+                let mut bytes = vec![0xa5u8; inputs.len() + 1];
+                let count = libc::read(descriptor, bytes.as_mut_ptr().cast(), bytes.len());
+                assert!(count >= 0);
+                bytes.truncate(count as usize);
+                bytes
+            }
+            CharacterOutputBackend::FixedMemory => {
+                assert_eq!(fixed[inputs.len()], 0);
+                fixed[..inputs.len()].to_vec()
+            }
+            CharacterOutputBackend::DynamicMemory => {
+                assert!(!published.is_null());
+                assert_eq!(published_len, inputs.len());
+                assert_eq!(*published.add(published_len), 0);
+                std::slice::from_raw_parts(published.cast::<u8>(), published_len).to_vec()
+            }
+        };
+
+        let close_result = (arm.fclose)(stream);
+        close.stream = std::ptr::null_mut();
+        if matches!(backend, CharacterOutputBackend::DynamicMemory) {
+            // fclose transfers the final buffer to the caller; release it
+            // through the allocator belonging to the stream's provider.
+            if arm.name == "fl" {
+                frankenlibc_abi::malloc_abi::free(published.cast());
+            } else {
+                libc::free(published.cast());
+            }
+        }
+
+        CharacterOutputObservation {
+            results,
+            bytes,
+            error_before_flush,
+            flush_result,
+            error_after_flush,
+            close_result,
+        }
+    }
+}
+
+#[test]
+fn character_output_returns_unsigned_bytes_including_eof_input() {
+    let oracle = host();
+    let implementation = candidate();
+    // EOF is an ordinary int argument to output: it writes byte 255 and
+    // succeeds. Repetition crosses the eight-byte buffer and exercises used
+    // streams as well as the cold first call.
+    let inputs = [
+        libc::EOF,
+        -257,
+        -256,
+        -2,
+        0,
+        127,
+        128,
+        255,
+        256,
+        321,
+        c_int::MIN,
+        c_int::MAX,
+    ]
+    .repeat(2);
+    let expected = CharacterOutputObservation {
+        results: inputs
+            .iter()
+            .map(|&input| c_int::from(input as u8))
+            .collect(),
+        bytes: inputs.iter().map(|&input| input as u8).collect(),
+        error_before_flush: false,
+        flush_result: 0,
+        error_after_flush: false,
+        close_result: 0,
+    };
+    let writers = [
+        ("fputc", oracle.fputc, implementation.fputc),
+        ("putc", oracle.putc, implementation.putc),
+        (
+            "fputc_unlocked",
+            oracle.fputc_unlocked,
+            implementation.fputc_unlocked,
+        ),
+        (
+            "putc_unlocked",
+            oracle.putc_unlocked,
+            implementation.putc_unlocked,
+        ),
+    ];
+
+    for backend in [
+        CharacterOutputBackend::Descriptor,
+        CharacterOutputBackend::Cookie,
+        CharacterOutputBackend::FixedMemory,
+        CharacterOutputBackend::DynamicMemory,
+    ] {
+        for mode in [libc::_IOFBF, libc::_IONBF] {
+            if matches!(backend, CharacterOutputBackend::DynamicMemory) && mode != libc::_IOFBF {
+                continue;
+            }
+            for (name, host_writer, candidate_writer) in writers {
+                let reference =
+                    observe_character_output(&oracle, backend, mode, host_writer, &inputs);
+                assert_eq!(reference, expected, "GNU {name} {backend:?} mode={mode}");
+                assert_eq!(
+                    observe_character_output(
+                        &implementation,
+                        backend,
+                        mode,
+                        candidate_writer,
+                        &inputs,
+                    ),
+                    reference,
+                    "{name} {backend:?} mode={mode}"
+                );
+            }
         }
     }
 }

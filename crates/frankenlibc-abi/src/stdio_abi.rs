@@ -6414,7 +6414,7 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
         }
         if unsafe { cookie_buffer_write(id, &mut s_guard, &[byte]) } == 1 {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-            return c;
+            return byte as c_int;
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
@@ -6458,7 +6458,7 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
             return libc::EOF;
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-        return c;
+        return byte as c_int;
     }
 
     // Cache this resolved non-cookie, non-mem fd stream so subsequent single-threaded
@@ -8552,6 +8552,9 @@ pub(crate) unsafe fn ungetc_without_lock(c: c_int, stream: *mut c_void) -> c_int
     if c == libc::EOF {
         return libc::EOF;
     }
+    // Except for EOF, ungetc converts its input to unsigned char and returns
+    // that value on success, including on cached native paths.
+    let c = c as u8 as c_int;
     // ST fast path: a cache hit is a non-cookie non-mem fd stream, so the slow path's
     // sync_and_unregister_fast_fixed_mem_read is a no-op (fast_fixed_mem_read(id)==None) —
     // reduce to s.ungetc() directly, skipping 4 per-call locks (native + registry_contains +
