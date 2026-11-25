@@ -187,6 +187,11 @@ impl From<io::Error> for QueryError {
 pub struct QueryReply {
     pub records: Vec<DnsRecord>,
     pub rcode: u8,
+    /// Application hostname selected from the query and its CNAME chain.
+    /// DNS permits binary labels (RFC 2181 section 11); a DNS-valid target
+    /// can bind an address without becoming a hostname-valid canonical name.
+    /// Keep this separate from the records' original decoded wire owners.
+    pub canonical_name: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,10 +201,9 @@ pub enum ResolveError {
     Failure,
 }
 
-/// Addresses and the owner of the first accepted address RR. The owner is
-/// supplied by the validated CNAME chain, not the original search input or an
-/// unrelated additional-section record. Its DNS presentation escapes are
-/// preserved by the decoder.
+/// Addresses and the last hostname-valid name in the accepted CNAME chain,
+/// starting from the successful query name. Address-owner spelling and binary
+/// DNS labels do not replace that application hostname.
 #[derive(Debug)]
 pub struct NameResolution {
     pub addresses: DnsResolution,
@@ -485,6 +489,7 @@ fn address_answer(
     record_type: u16,
     visited: &mut Vec<WireName>,
     ttl_limit: &mut u32,
+    canonical_name: &mut Vec<u8>,
 ) -> Result<AddressAnswer, QueryError> {
     if !response_matches(sent, packet) {
         return Err(QueryError::InvalidResponse);
@@ -503,6 +508,7 @@ fn address_answer(
             return Ok(AddressAnswer::Complete(QueryReply {
                 records: Vec::new(),
                 rcode: rcode::NXDOMAIN,
+                canonical_name: None,
             }));
         }
         code => return Err(QueryError::ResponseCode(code)),
@@ -602,12 +608,25 @@ fn address_answer(
             }
             visited.push(next);
             *ttl_limit = (*ttl_limit).min(alias_ttl);
+            // A validated DNS name can contain binary label data that GNU
+            // hostname APIs do not publish as h_name/ai_canonname. Retain the
+            // previous application name while still following the exact wire
+            // identity. A later hostname-valid alias may replace it again.
+            let mut end = 0;
+            while next[end] != 0 {
+                end += usize::from(next[end]) + 1;
+            }
+            if let Some(hostname) = ptr_hostname(&next[..=end]) {
+                *canonical_name = hostname;
+            }
             owner = next;
             followed = true;
         } else if !addresses.is_empty() || !followed {
             return Ok(AddressAnswer::Complete(QueryReply {
                 records: addresses,
                 rcode: rcode::NOERROR,
+                canonical_name: matches!(record_type, qtype::A | qtype::AAAA)
+                    .then(|| canonical_name.clone()),
             }));
         } else {
             return Ok(AddressAnswer::Follow(Box::new(owner)));
@@ -675,6 +694,8 @@ where
     initial[..message.questions[0].qname.len()].copy_from_slice(&message.questions[0].qname);
     let mut visited = vec![initial];
     let mut ttl_limit = u32::MAX;
+    let mut canonical_name =
+        ptr_hostname(&message.questions[0].qname).unwrap_or_else(|| hostname.to_vec());
     loop {
         remaining(deadline)?;
         message.header.id = entropy::query_id(deadline)?;
@@ -703,7 +724,14 @@ where
             // The answer parser still rejects incomplete RR/name spans.
             packet[2] &= !0x02;
         }
-        match address_answer(sent, &packet, record_type, &mut visited, &mut ttl_limit)? {
+        match address_answer(
+            sent,
+            &packet,
+            record_type,
+            &mut visited,
+            &mut ttl_limit,
+            &mut canonical_name,
+        )? {
             AddressAnswer::Complete(reply) => return Ok(reply),
             AddressAnswer::Follow(next) => {
                 // Already validated, uncompressed wire name. Re-encode without
@@ -865,14 +893,25 @@ where
                                         if let Some(address) = record.as_ipv4()
                                             && !result.ipv4.contains(&address)
                                         {
-                                            canonical_name
-                                                .get_or_insert_with(|| record.name.clone());
+                                            canonical_name.get_or_insert_with(|| {
+                                                reply
+                                                    .canonical_name
+                                                    .as_ref()
+                                                    .unwrap_or(&record.name)
+                                                    .clone()
+                                            });
                                             result.ipv4.push(address);
                                         }
                                     } else if let Some(address) = record.as_ipv6()
                                         && !result.ipv6.contains(&address)
                                     {
-                                        canonical_name.get_or_insert_with(|| record.name.clone());
+                                        canonical_name.get_or_insert_with(|| {
+                                            reply
+                                                .canonical_name
+                                                .as_ref()
+                                                .unwrap_or(&record.name)
+                                                .clone()
+                                        });
                                         result.ipv6.push(address);
                                     }
                                 }
@@ -991,7 +1030,7 @@ pub fn reverse_name(address: IpAddr) -> Vec<u8> {
     }
 }
 
-/// Convert a normalized PTR wire name to an application hostname. DNS labels
+/// Convert a normalized wire name to an application hostname. DNS labels
 /// allow binary data; hostnames do not. Validate bytes before presentation
 /// conversion so an embedded dot or NUL cannot masquerade as a label boundary.
 /// The root is the valid presentation ".". A leading hyphen is rejected at the
@@ -1348,6 +1387,7 @@ mod tests {
                 Ok(QueryReply {
                     records: vec![],
                     rcode: rcode::NXDOMAIN,
+                    canonical_name: None,
                 })
             },
         );
@@ -1376,7 +1416,8 @@ mod tests {
         assert_eq!(
             reverse_with(ip, &config, |_, _, _, _, _, _| Ok(QueryReply {
                 records: vec![],
-                rcode: rcode::NOERROR
+                rcode: rcode::NOERROR,
+                canonical_name: None,
             }))
             .unwrap_err(),
             ResolveError::NotFound
@@ -1655,6 +1696,7 @@ mod tests {
         QueryReply {
             records: DnsMessage::decode(&answer(&query_wire())).unwrap().answers,
             rcode: 0,
+            canonical_name: None,
         }
     }
 
@@ -1719,6 +1761,7 @@ mod tests {
                             rdata: name(b"reverse.test"),
                         }],
                         rcode: 0,
+                        canonical_name: None,
                     })
                 }
             },
@@ -1743,6 +1786,7 @@ mod tests {
                     Ok(QueryReply {
                         records: vec![],
                         rcode: rcode::NXDOMAIN,
+                        canonical_name: None,
                     })
                 });
             assert!(matches!(result, Err(ResolveError::NotFound)));
@@ -1762,6 +1806,7 @@ mod tests {
                         Ok(QueryReply {
                             records: vec![],
                             rcode: rcode::NXDOMAIN,
+                            canonical_name: None,
                         })
                     }
                 });
@@ -1872,6 +1917,7 @@ mod tests {
                 Ok(QueryReply {
                     records: vec![],
                     rcode: rcode::NXDOMAIN,
+                    canonical_name: None,
                 })
             } else if calls.len() == 2 {
                 Err(QueryError::RetryableResponse(rcode::SERVFAIL))
@@ -1917,6 +1963,7 @@ mod tests {
                         Ok(QueryReply {
                             records: vec![],
                             rcode: rcode::NOERROR,
+                            canonical_name: None,
                         })
                     }
                 },
@@ -1951,6 +1998,7 @@ mod tests {
                     return Ok(QueryReply {
                         records: vec![],
                         rcode: 0,
+                        canonical_name: None,
                     });
                 }
                 a_attempts += 1;
@@ -1987,6 +2035,7 @@ mod tests {
                 Ok(QueryReply {
                     records: vec![],
                     rcode: rcode::NXDOMAIN,
+                    canonical_name: None,
                 })
             } else {
                 Ok(address_reply())
@@ -2020,6 +2069,7 @@ mod tests {
                 Ok(QueryReply {
                     records: vec![],
                     rcode: rcode::NXDOMAIN,
+                    canonical_name: None,
                 })
             },
         );
@@ -2034,6 +2084,7 @@ mod tests {
             Ok(QueryReply {
                 records: vec![],
                 rcode: rcode::NXDOMAIN,
+                canonical_name: None,
             })
         }
         fn timed_out() -> Result<QueryReply, QueryError> {
@@ -2559,12 +2610,18 @@ mod tests {
     fn bound_answer(sent: &[u8], packet: &[u8]) -> Result<AddressAnswer, QueryError> {
         let (owner, fields) = question(sent).unwrap();
         let mut min_ttl = u32::MAX;
+        let mut end = 0;
+        while owner[end] != 0 {
+            end += usize::from(owner[end]) + 1;
+        }
+        let mut canonical_name = ptr_hostname(&owner[..=end]).unwrap();
         address_answer(
             sent,
             packet,
             u16::from_be_bytes([fields[0], fields[1]]),
             &mut vec![owner],
             &mut min_ttl,
+            &mut canonical_name,
         )
     }
 
@@ -2824,6 +2881,7 @@ mod tests {
                     Ok(QueryReply {
                         records: vec![],
                         rcode: rcode::NXDOMAIN,
+                        canonical_name: None,
                     })
                 }
             },

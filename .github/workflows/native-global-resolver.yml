@@ -57,9 +57,9 @@ jobs:
           cargo test --locked -p frankenlibc-core --lib dns_transport::tests:: -- --nocapture 2>&1 | tee artifacts/global-resolver/transport.log
           grep -Eq 'test result: ok\. 49 passed; 0 failed; 0 ignored;' artifacts/global-resolver/transport.log
           cargo test --locked -p frankenlibc-abi --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global.log
-          grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global.log
+          grep -Eq 'test result: ok\. 15 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global.log
           cargo test --locked -p frankenlibc-abi --features owned-tls-cache --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global-owned-tls.log
-          grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global-owned-tls.log
+          grep -Eq 'test result: ok\. 15 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global-owned-tls.log
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/state.log
           grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/state.log
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_edns_test -- --nocapture 2>&1 | tee artifacts/global-resolver/edns.log

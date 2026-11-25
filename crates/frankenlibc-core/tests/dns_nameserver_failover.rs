@@ -11,6 +11,172 @@ use frankenlibc_core::dns_transport::{
 use frankenlibc_core::resolv::ResolverConfig;
 use frankenlibc_core::resolv::dns::{DnsRecord, qclass, qtype, rcode};
 
+fn cname_response(query: &[u8], targets: &[Vec<u8>], address: bool) -> Vec<u8> {
+    use frankenlibc_core::resolv::dns::{decode_domain_name, encode_domain_name};
+    let (_, consumed) = decode_domain_name(&query[12..], query).unwrap();
+    let end = 12 + consumed + 4;
+    let kind = u16::from_be_bytes([query[end - 4], query[end - 3]]);
+    let mut response = query[..end].to_vec();
+    response[2..4].copy_from_slice(&[0x81, 0x80]);
+    response[6..12].fill(0);
+    response[6..8].copy_from_slice(&((targets.len() + usize::from(address)) as u16).to_be_bytes());
+    let mut owner = if !targets.is_empty() || !address {
+        vec![0xc0, 12]
+    } else {
+        let (queried, _) = decode_domain_name(&query[12..], query).unwrap();
+        encode_domain_name(&queried).unwrap()
+    };
+    for target in targets {
+        let target = encode_domain_name(target).unwrap();
+        response.extend_from_slice(&owner);
+        response.extend_from_slice(&[0, 5, 0, 1, 0, 0, 0, 60]);
+        response.extend_from_slice(&(target.len() as u16).to_be_bytes());
+        response.extend_from_slice(&target);
+        owner = target;
+    }
+    if address {
+        owner.make_ascii_uppercase();
+        let data = if kind == qtype::A {
+            vec![192, 0, 2, 7]
+        } else {
+            Ipv6Addr::LOCALHOST.octets().to_vec()
+        };
+        response.extend_from_slice(&owner);
+        response.extend_from_slice(&kind.to_be_bytes());
+        response.extend_from_slice(&[0, 1, 0, 0, 0, 60]);
+        response.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        response.extend_from_slice(&data);
+    }
+    response
+}
+
+fn canonical_lookup(targets: Vec<Vec<u8>>, kind: u16, separate_packets: bool) -> Vec<u8> {
+    use frankenlibc_core::dns_transport::{QueryOptions, query};
+    use frankenlibc_core::resolv::dns::{decode_domain_name, encode_domain_name};
+    let terminal = targets
+        .last()
+        .map(Vec::as_slice)
+        .unwrap_or(b"origin.hostname.invalid");
+    let mut terminal_wire = encode_domain_name(terminal).unwrap();
+    terminal_wire.make_ascii_uppercase();
+    let expected_owner = decode_domain_name(&terminal_wire, &terminal_wire)
+        .unwrap()
+        .0;
+    let server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let endpoint = server.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let count = if separate_packets {
+            targets.len() + 1
+        } else {
+            1
+        };
+        for index in 0..count {
+            let mut sent = [0u8; 512];
+            let (n, peer) = server.recv_from(&mut sent).unwrap();
+            let answer = if separate_packets {
+                let next = targets
+                    .get(index)
+                    .map(std::slice::from_ref)
+                    .unwrap_or(&[]);
+                cname_response(&sent[..n], next, next.is_empty())
+            } else {
+                cname_response(&sent[..n], &targets, true)
+            };
+            server.send_to(&answer, peer).unwrap();
+        }
+    });
+    let result = resolve_with_canonical(
+        b"origin.hostname.invalid.",
+        kind == qtype::A,
+        kind == qtype::AAAA,
+        &ResolverConfig::default(),
+        |owner, kind, _, timeout, _, _| {
+            let reply = query(owner, kind, endpoint, timeout, QueryOptions::default())?;
+            assert_eq!(reply.records.len(), 1);
+            assert_eq!(
+                reply.records[0].name, expected_owner,
+                "wire owner must remain unchanged"
+            );
+            Ok(reply)
+        },
+    );
+    worker.join().unwrap();
+    let result = result.unwrap();
+    if kind == qtype::A {
+        assert_eq!(result.addresses.ipv4, [Ipv4Addr::new(192, 0, 2, 7)]);
+        assert!(result.addresses.ipv6.is_empty());
+    } else {
+        assert_eq!(result.addresses.ipv6, [Ipv6Addr::LOCALHOST]);
+        assert!(result.addresses.ipv4.is_empty());
+    }
+    result.canonical_name
+}
+
+#[test]
+fn canonical_name_retains_last_hostname_valid_cname_target() {
+    // Executed GNU controls retain addresses bound to binary DNS names, while
+    // keeping the previous hostname-valid canonical name. RFC 2181 section 11
+    // separates DNS label syntax from application hostname requirements.
+    for kind in [qtype::A, qtype::AAAA] {
+        for invalid in [
+            br"edge\.test".as_slice(),
+            br"zero.a\000b",
+            b"bad.x y",
+            b"-bad.test",
+            br"high.\255test",
+        ] {
+            for (targets, expected) in [
+                (vec![invalid], b"origin.hostname.invalid".as_slice()),
+                (
+                    vec![b"Middle.test".as_slice(), invalid],
+                    b"Middle.test".as_slice(),
+                ),
+                (
+                    vec![invalid, b"Final.test".as_slice()],
+                    b"Final.test".as_slice(),
+                ),
+            ] {
+                let owned = targets.iter().map(|target| target.to_vec()).collect();
+                assert_eq!(
+                    canonical_lookup(owned, kind, false),
+                    expected,
+                    "targets={targets:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn canonical_name_keeps_query_and_alias_case_and_valid_root() {
+    for kind in [qtype::A, qtype::AAAA] {
+        for target in [
+            None,
+            Some(b"Middle.test".as_slice()),
+            Some(b".".as_slice()),
+            Some(b"good.-part".as_slice()),
+            Some(b"good._part".as_slice()),
+        ] {
+            let targets = target.into_iter().map(<[u8]>::to_vec).collect();
+            assert_eq!(
+                canonical_lookup(targets, kind, false),
+                target.unwrap_or(b"origin.hostname.invalid")
+            );
+        }
+    }
+}
+
+#[test]
+fn canonical_name_survives_invalid_cross_packet_alias_target() {
+    for kind in [qtype::A, qtype::AAAA] {
+        let targets = vec![b"Middle.test".to_vec(), br"edge\.test".to_vec()];
+        assert_eq!(canonical_lookup(targets, kind, true), b"Middle.test");
+    }
+}
+
 fn config() -> ResolverConfig {
     ResolverConfig {
         nameservers: vec![
@@ -41,6 +207,7 @@ fn positive(owner: &[u8], kind: u16) -> QueryReply {
             rdata,
         }],
         rcode: rcode::NOERROR,
+        canonical_name: Some(owner.to_vec()),
     }
 }
 
@@ -203,6 +370,7 @@ fn fallback_definitive_negative_supersedes_primary_refusal() {
                     Ok(QueryReply {
                         records: vec![],
                         rcode: code,
+                        canonical_name: None,
                     })
                 }
             },
@@ -231,6 +399,7 @@ fn refusal_state_does_not_leak_to_the_next_search_candidate() {
                     Ok(QueryReply {
                         records: vec![],
                         rcode: rcode::NXDOMAIN,
+                        canonical_name: None,
                     })
                 }
             } else {

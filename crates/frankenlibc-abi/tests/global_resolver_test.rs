@@ -889,3 +889,98 @@ fn global_host_lookup_preserves_timing_selected_before_implicit_init() {
     assert!(!seen.is_empty());
     assert!(seen.iter().all(|owner| owner == b"preinit.first.invalid"));
 }
+
+#[test]
+fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
+    if host_lookup_child("global_host_canonical_names_match_gnu_for_binary_cname_labels") {
+        return;
+    }
+    use frankenlibc_core::resolv::dns::encode_domain_name;
+    let origin = c"origin.hostname.invalid.";
+    let cases: Vec<(Vec<&[u8]>, &[u8])> = vec![
+        (vec![], b"origin.hostname.invalid"),
+        (vec![b"Canonical.test"], b"Canonical.test"),
+        (vec![br"edge\.test"], b"origin.hostname.invalid"),
+        (vec![br"zero.a\000b"], b"origin.hostname.invalid"),
+        (vec![b"bad.x y"], b"origin.hostname.invalid"),
+        (vec![b"-bad.test"], b"origin.hostname.invalid"),
+        (vec![br"high.\255test"], b"origin.hostname.invalid"),
+        (vec![b"Middle.test", br"edge\.test"], b"Middle.test"),
+        (vec![br"edge\.test", b"Final.test"], b"Final.test"),
+        (vec![b"good.-part"], b"good.-part"),
+        (vec![b"good._part"], b"good._part"),
+        (vec![b"."], b"."),
+    ];
+    for (targets, expected) in cases {
+        let mut observations = Vec::new();
+        for api in host_apis() {
+            let targets: Vec<Vec<u8>> = targets.iter().map(|name| name.to_vec()).collect();
+            let server = HostServer::new(move |query| {
+                let message = DnsMessage::decode(query).unwrap();
+                let kind = message.questions[0].qtype;
+                assert_eq!(kind, 1);
+                let mut response = host_reply(query, 3, 0);
+                response[3] = 0x80;
+                response[6..8].copy_from_slice(&((targets.len() + 1) as u16).to_be_bytes());
+                let mut owner = vec![0xc0, 12];
+                for target in &targets {
+                    let target = encode_domain_name(target).unwrap();
+                    response.extend_from_slice(&owner);
+                    response.extend_from_slice(&[0, 5, 0, 1, 0, 0, 0, 60]);
+                    response.extend_from_slice(&(target.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&target);
+                    owner = target;
+                }
+                // Address-owner case is not a new canonical-name decision.
+                owner.make_ascii_uppercase();
+                response.extend_from_slice(&owner);
+                response.extend_from_slice(&[0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 7]);
+                response
+            });
+            let _cleanup = configure_host(api, server.endpoint);
+            // SAFETY: provider-specific state and deallocation, initialized
+            // output, and results copied before another call reuses storage.
+            unsafe {
+                let mut hints: libc::addrinfo = std::mem::zeroed();
+                hints.ai_family = libc::AF_INET;
+                hints.ai_socktype = libc::SOCK_STREAM;
+                hints.ai_flags = libc::AI_CANONNAME;
+                let mut result = std::ptr::null_mut();
+                assert_eq!(
+                    (api.lookup)(origin.as_ptr(), c"80".as_ptr(), &hints, &mut result),
+                    0
+                );
+                assert!(!result.is_null());
+                assert!(!(*result).ai_canonname.is_null());
+                let canonical = std::ffi::CStr::from_ptr((*result).ai_canonname)
+                    .to_bytes()
+                    .to_vec();
+                assert!(!(*result).ai_addr.is_null());
+                let address = (*(*result).ai_addr.cast::<libc::sockaddr_in>())
+                    .sin_addr
+                    .s_addr;
+                assert_eq!(address.to_ne_bytes(), [192, 0, 2, 7]);
+                (api.free)(result);
+
+                let legacy = (api.legacy)(origin.as_ptr()).cast::<libc::hostent>();
+                assert!(!legacy.is_null());
+                assert!(!(*legacy).h_name.is_null());
+                let legacy_name = std::ffi::CStr::from_ptr((*legacy).h_name)
+                    .to_bytes()
+                    .to_vec();
+                assert_eq!((*legacy).h_length, 4);
+                assert!(!(*legacy).h_addr_list.is_null());
+                let first_address = (*(*legacy).h_addr_list).cast::<u8>();
+                assert!(!first_address.is_null());
+                assert_eq!(std::slice::from_raw_parts(first_address, 4), [192, 0, 2, 7]);
+                observations.push((canonical, legacy_name));
+            }
+            assert!(
+                !server.finish().is_empty(),
+                "the lookup must execute a DNS exchange"
+            );
+        }
+        assert_eq!(observations[0], observations[1], "targets={targets:?}");
+        assert_eq!(observations[1], (expected.to_vec(), expected.to_vec()));
+    }
+}
