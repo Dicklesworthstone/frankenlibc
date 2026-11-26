@@ -141,7 +141,9 @@ fn ungetc_memory_line_readers_advance_through_queued_bytes() {
         } else {
             let mut output = Vec::new();
             assert_eq!(
-                stream.read_until_delim(b'\n', &mut output),
+                stream
+                    .read_until_delim(b'\n', &mut output)
+                    .expect("line buffer allocation"),
                 ReadUntil::Found
             );
             assert_eq!(output, b"A\n");
@@ -225,7 +227,9 @@ fn memory_delimited_reads_set_eof_only_after_a_failed_read() {
     for bytes in [b"".as_slice(), b"tail", b"a\0b", b"last\n"] {
         let mut stream = memory_input(bytes);
         let mut output = Vec::new();
-        let result = stream.read_until_delim(b'\n', &mut output);
+        let result = stream
+            .read_until_delim(b'\n', &mut output)
+            .expect("line buffer allocation");
         assert_eq!(output, bytes);
         assert_eq!(stream.offset(), bytes.len() as i64);
         assert!(!stream.is_error());
@@ -236,7 +240,12 @@ fn memory_delimited_reads_set_eof_only_after_a_failed_read() {
                 "a delimiter at the end does not probe EOF"
             );
             output.clear();
-            assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+            assert_eq!(
+                stream
+                    .read_until_delim(b'\n', &mut output)
+                    .expect("line buffer allocation"),
+                ReadUntil::Eof
+            );
             assert!(output.is_empty());
         } else {
             assert_eq!(result, ReadUntil::Eof);
@@ -245,7 +254,12 @@ fn memory_delimited_reads_set_eof_only_after_a_failed_read() {
         stream.clear_err();
         assert!(!stream.is_eof());
         output.clear();
-        assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+        assert_eq!(
+            stream
+                .read_until_delim(b'\n', &mut output)
+                .expect("line buffer allocation"),
+            ReadUntil::Eof
+        );
         assert!(stream.is_eof() && output.is_empty());
     }
 }
@@ -302,7 +316,12 @@ fn memory_eof_recovers_through_pushback_and_seek_for_both_readers() {
     for bounded in [false, true] {
         let mut stream = memory_input(b"abc");
         let mut output = Vec::new();
-        assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+        assert_eq!(
+            stream
+                .read_until_delim(b'\n', &mut output)
+                .expect("line buffer allocation"),
+            ReadUntil::Eof
+        );
         assert!(stream.is_eof());
         assert!(stream.ungetc(b'\n'));
         assert!(!stream.is_eof());
@@ -316,14 +335,21 @@ fn memory_eof_recovers_through_pushback_and_seek_for_both_readers() {
         } else {
             output.clear();
             assert_eq!(
-                stream.read_until_delim(b'\n', &mut output),
+                stream
+                    .read_until_delim(b'\n', &mut output)
+                    .expect("line buffer allocation"),
                 ReadUntil::Found
             );
             assert_eq!(output, b"\n");
         }
         assert!(!stream.is_eof());
         output.clear();
-        assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+        assert_eq!(
+            stream
+                .read_until_delim(b'\n', &mut output)
+                .expect("line buffer allocation"),
+            ReadUntil::Eof
+        );
         assert!(stream.is_eof());
         assert_eq!(stream.mem_seek(0, 0), 0);
         assert!(!stream.is_eof());
@@ -346,7 +372,12 @@ fn delimited_read_error_and_descriptor_refill_are_not_eof_observations() {
             ..Default::default()
         },
     );
-    assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+    assert_eq!(
+        stream
+            .read_until_delim(b'\n', &mut output)
+            .expect("line buffer allocation"),
+        ReadUntil::Eof
+    );
     assert!(stream.is_error());
     assert!(!stream.is_eof());
     let mut stream = StdioStream::new(
@@ -358,7 +389,9 @@ fn delimited_read_error_and_descriptor_refill_are_not_eof_observations() {
     );
     assert_eq!(stream.fill_read_buffer(b"abc"), 3);
     assert_eq!(
-        stream.read_until_delim(b'\n', &mut output),
+        stream
+            .read_until_delim(b'\n', &mut output)
+            .expect("line buffer allocation"),
         ReadUntil::NeedRefill
     );
     assert_eq!(output, b"abc");

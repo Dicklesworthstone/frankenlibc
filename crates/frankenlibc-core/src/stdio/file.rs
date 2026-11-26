@@ -1611,28 +1611,38 @@ impl StdioStream {
     /// allocation) per character. Refilling fd-backed streams from the
     /// descriptor is left to the caller (signalled by [`ReadUntil::NeedRefill`]),
     /// because that path lives in the ABI layer alongside the membrane policy.
-    pub fn read_until_delim(&mut self, delim: u8, out: &mut Vec<u8>) -> ReadUntil {
+    /// On allocation failure, the bytes that did not fit remain unread.
+    pub fn read_until_delim(
+        &mut self,
+        delim: u8,
+        out: &mut Vec<u8>,
+    ) -> Result<ReadUntil, std::collections::TryReserveError> {
         if !self.open_flags.readable {
             self.flags.error = true;
-            return ReadUntil::Eof;
+            return Ok(ReadUntil::Eof);
         }
         self.flags.io_started = true;
         self.flags.last_write = false;
 
-        // A pending ungetc byte is logically first (mirrors buffered_read/mem_read).
-        if let Some(b) = self.ungetc_byte.take() {
+        // Reserve before consuming any source, including pushback: a failed
+        // allocation must not silently discard the next unread byte.
+        if let Some(b) = self.ungetc_byte {
+            out.try_reserve(1)?;
+            self.ungetc_byte = None;
             out.push(b);
             self.advance_offset(1);
             if b == delim {
-                return ReadUntil::Found;
+                return Ok(ReadUntil::Found);
             }
         }
 
-        while let Some(b) = self.read_pushback.pop_front() {
+        while let Some(&b) = self.read_pushback.front() {
+            out.try_reserve(1)?;
+            let _ = self.read_pushback.pop_front();
             out.push(b);
             self.advance_offset(1);
             if b == delim {
-                return ReadUntil::Found;
+                return Ok(ReadUntil::Found);
             }
         }
 
@@ -1640,16 +1650,18 @@ impl StdioStream {
             let rem = backing.peek();
             if rem.is_empty() {
                 self.flags.eof = true;
-                return ReadUntil::Eof;
+                return Ok(ReadUntil::Eof);
             }
             let outcome = match crate::string::mem::memchr(rem, delim, rem.len()) {
                 Some(k) => {
+                    out.try_reserve(k + 1)?;
                     out.extend_from_slice(&rem[..=k]);
                     backing.consume(k + 1);
                     ReadUntil::Found
                 }
                 None => {
                     let n = rem.len();
+                    out.try_reserve(n)?;
                     out.extend_from_slice(rem);
                     backing.consume(n);
                     // Unlike a bounded read, getdelim keeps looking until
@@ -1660,14 +1672,15 @@ impl StdioStream {
                 }
             };
             self.offset = backing.position() as i64;
-            outcome
+            Ok(outcome)
         } else {
             let buffered = self.buffer.peek();
             if buffered.is_empty() {
-                return ReadUntil::NeedRefill;
+                return Ok(ReadUntil::NeedRefill);
             }
-            match crate::string::mem::memchr(buffered, delim, buffered.len()) {
+            let outcome = match crate::string::mem::memchr(buffered, delim, buffered.len()) {
                 Some(k) => {
+                    out.try_reserve(k + 1)?;
                     out.extend_from_slice(&buffered[..=k]);
                     self.buffer.consume(k + 1);
                     self.advance_offset(k + 1);
@@ -1675,12 +1688,14 @@ impl StdioStream {
                 }
                 None => {
                     let n = buffered.len();
+                    out.try_reserve(n)?;
                     out.extend_from_slice(buffered);
                     self.buffer.consume(n);
                     self.advance_offset(n);
                     ReadUntil::NeedRefill
                 }
-            }
+            };
+            Ok(outcome)
         }
     }
 

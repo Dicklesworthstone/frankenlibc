@@ -23,6 +23,8 @@ on:
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_dprintf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_getline.rs'
+      - 'crates/frankenlibc-core/tests/stdio_read_window_regression_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
@@ -156,6 +158,30 @@ jobs:
               --test conformance_diff_wide_stdio_write -- --test-threads=1 --nocapture \
               2>&1 | tee "$log"
             grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' "$log"
+          done
+      - name: Recover from line-input allocation failure under real memory pressure
+        if: always()
+        env:
+          CACHE: ${{ matrix.cache }}
+          FRANKENLIBC_RUNTIME_MATH: 'off'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-regressions
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          cargo test -p frankenlibc-core "${features[@]}" \
+            --test stdio_read_window_regression_test -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/stdio-regressions/read-window.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' \
+            artifacts/stdio-regressions/read-window.log
+          for mode in strict hardened; do
+            log="artifacts/stdio-regressions/getline-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_getline -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
           done
       - uses: actions/upload-artifact@v4
         if: always()

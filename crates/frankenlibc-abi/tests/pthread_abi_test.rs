@@ -2400,8 +2400,15 @@ fn sigqueue_live_thread_preserves_queued_value() {
         let send_rc = pthread_sigqueue(thr, libc::SIGUSR1, value);
         let send_errno = *errno_ptr;
         *errno_ptr = saved_errno;
-        assert_eq!(send_rc, 0, "pthread_sigqueue should succeed for a live thread");
-        assert_eq!(send_errno, libc::E2BIG, "pthread_sigqueue must preserve errno");
+        assert_eq!(
+            send_rc, 0,
+            "pthread_sigqueue should succeed for a live thread"
+        );
+        assert_eq!(
+            send_errno,
+            libc::E2BIG,
+            "pthread_sigqueue must preserve errno"
+        );
         assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
         assert_eq!(
             ctx.wait_rc.load(Ordering::Acquire),

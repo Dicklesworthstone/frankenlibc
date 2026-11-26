@@ -13888,25 +13888,25 @@ unsafe fn nss_parse_netdb_line(
 macro_rules! nss_files_parse_netdb {
     ($name:ident, $kind:ident) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-                pub unsafe extern "C" fn $name(
-                    line: *mut c_char,
-                    result: *mut c_void,
-                    data: *mut c_void,
-                    buflen: usize,
-                    errnop: *mut c_int,
-                ) -> c_int {
-                    // SAFETY: forward the NSS parser's mutable line/output contract.
-                    unsafe {
-                        nss_parse_netdb_line(
-                            frankenlibc_core::resolv::NssNetdbKind::$kind,
-                            line,
-                            result,
-                            data,
-                            buflen,
-                            errnop,
-                        )
-                    }
-                }
+        pub unsafe extern "C" fn $name(
+            line: *mut c_char,
+            result: *mut c_void,
+            data: *mut c_void,
+            buflen: usize,
+            errnop: *mut c_int,
+        ) -> c_int {
+            // SAFETY: forward the NSS parser's mutable line/output contract.
+            unsafe {
+                nss_parse_netdb_line(
+                    frankenlibc_core::resolv::NssNetdbKind::$kind,
+                    line,
+                    result,
+                    data,
+                    buflen,
+                    errnop,
+                )
+            }
+        }
     };
 }
 
@@ -28217,7 +28217,9 @@ struct RpcLookupBuffer(Vec<u8>);
 
 impl RpcLookupBuffer {
     fn take() -> Self {
-        Self(with_rpc_entry_state(|state| std::mem::take(&mut state.buffer)))
+        Self(with_rpc_entry_state(|state| {
+            std::mem::take(&mut state.buffer)
+        }))
     }
 }
 
@@ -28416,14 +28418,17 @@ unsafe fn rpc_configured_lookup_r(
             unsafe {
                 if source.name() != b"files" {
                     return crate::nss_module::rpc_entry_r(
-                        source.name(), key, result_buf.cast(), buffer, capacity,
+                        source.name(),
+                        key,
+                        result_buf.cast(),
+                        buffer,
+                        capacity,
                     );
                 }
                 let saved_errno = current_abi_errno();
                 let mut files_result = std::ptr::null_mut();
-                let outcome = rpc_lookup_result(
-                    key, result_buf, buffer, capacity, &mut files_result,
-                );
+                let outcome =
+                    rpc_lookup_result(key, result_buf, buffer, capacity, &mut files_result);
                 let status = rpc_nss_status(
                     outcome,
                     crate::errno_abi::__errno_location(),
@@ -28728,11 +28733,7 @@ pub unsafe extern "C" fn getrpcbyname_r(
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
     };
-    unsafe {
-        rpc_configured_lookup_r(
-            RpcLookup::Name(&name), result_buf, buffer, buflen, result,
-        )
-    }
+    unsafe { rpc_configured_lookup_r(RpcLookup::Name(&name), result_buf, buffer, buflen, result) }
 }
 
 /// Find a configured RPC program number without truncating long aliases.
@@ -28753,7 +28754,11 @@ pub unsafe extern "C" fn getrpcbynumber_r(
     // SAFETY: the shared dispatcher validates all caller output objects.
     unsafe {
         rpc_configured_lookup_r(
-            RpcLookup::Number(number), result_buf, buffer, buflen, result,
+            RpcLookup::Number(number),
+            result_buf,
+            buffer,
+            buflen,
+            result,
         )
     }
 }

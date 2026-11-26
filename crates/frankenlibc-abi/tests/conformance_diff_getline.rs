@@ -604,6 +604,292 @@ fn fwide_preserves_foreign_stream_orientation() {
 }
 
 #[test]
+fn getline_allocation_failure_is_a_stream_error() {
+    use frankenlibc_abi::{malloc_abi as malloc, stdio_abi as fl};
+
+    const CHILD_ENV: &str = "FRANKENLIBC_GETLINE_ALLOCATION_CHILD";
+    const TEST_NAME: &str = "getline_allocation_failure_is_a_stream_error";
+
+    unsafe extern "C" {
+        #[link_name = "fopencookie"]
+        fn host_cookie_open(
+            cookie: *mut c_void,
+            mode: *const c_char,
+            funcs: fl::CookieIoFuncs,
+        ) -> *mut c_void;
+    }
+
+    unsafe extern "C-unwind" fn zero_cookie_read(
+        cookie: *mut c_void,
+        output: *mut c_char,
+        capacity: usize,
+    ) -> isize {
+        // SAFETY: the child retains this counter until fclose, and both
+        // providers supply capacity writable bytes to the read callback.
+        let remaining = unsafe { &mut *cookie.cast::<usize>() };
+        let count = capacity.min(*remaining);
+        unsafe { std::ptr::write_bytes(output.cast::<u8>(), 0, count) };
+        *remaining -= count;
+        count as isize
+    }
+
+    let Ok(case) = std::env::var(CHILD_ENV) else {
+        // Direct ABI calls exercise the candidate's own FILE implementation.
+        // The extern reference must remain an independent GNU libc provider.
+        for function in [getline as *const c_void, getdelim as *const c_void] {
+            // SAFETY: these are live function addresses and dladdr initializes
+            // its result on success. libc stays loaded for the entire test.
+            unsafe {
+                let mut info: libc::Dl_info = std::mem::zeroed();
+                assert_ne!(libc::dladdr(function, &mut info), 0);
+                assert!(!info.dli_fname.is_null());
+                let path = std::ffi::CStr::from_ptr(info.dli_fname).to_bytes();
+                assert_eq!(
+                    path.rsplit(|&byte| byte == b'/').next(),
+                    Some(&b"libc.so.6"[..])
+                );
+            }
+        }
+
+        let executable = std::env::current_exe().expect("current test executable");
+        let mut executed = 0;
+        for provider in ["host", "native"] {
+            for kind in ["buffered", "cached", "unbuffered", "cookie"] {
+                let child_case = format!("{provider}:{kind}");
+                let output = std::process::Command::new(&executable)
+                    .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
+                    .env(CHILD_ENV, &child_case)
+                    .output()
+                    .expect("start isolated allocation-failure child");
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    output.status.success(),
+                    "{child_case}: child failed with {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                    output.status
+                );
+                assert!(
+                    stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                    "{child_case}: the requested child test did not execute\n{stdout}\n{stderr}"
+                );
+                executed += 1;
+            }
+        }
+        assert_eq!(executed, 8);
+        return;
+    };
+
+    let (provider, kind) = case.split_once(':').expect("provider:stream child case");
+    assert!(matches!(provider, "host" | "native"));
+    assert!(matches!(
+        kind,
+        "buffered" | "cached" | "unbuffered" | "cookie"
+    ));
+    let native = provider == "native";
+    let use_getline = matches!(kind, "cached" | "unbuffered");
+    malloc::signal_runtime_ready_for_tests();
+
+    // The child has its own address space, timer, and resource limits. An
+    // allocation loop that never reports failure must not hang the test.
+    unsafe { libc::alarm(45) };
+
+    let mut remaining = 128 * 1024 * 1024usize;
+    let stream = if kind == "cookie" {
+        let funcs = fl::CookieIoFuncs {
+            read: Some(zero_cookie_read),
+            ..Default::default()
+        };
+        // SAFETY: remaining outlives the stream and the read callback writes
+        // only the destination range supplied by the active provider.
+        unsafe {
+            if native {
+                fl::fopencookie((&mut remaining as *mut usize).cast(), c"r".as_ptr(), funcs)
+            } else {
+                host_cookie_open((&mut remaining as *mut usize).cast(), c"r".as_ptr(), funcs)
+            }
+        }
+    } else {
+        // An actual descriptor supplies an arbitrarily long line without
+        // allocating an equally large input fixture in the test process.
+        let fd = unsafe { libc::open(c"/dev/zero".as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0);
+        // SAFETY: the selected fdopen takes ownership of this live descriptor.
+        unsafe {
+            if native {
+                fl::fdopen(fd, c"r".as_ptr())
+            } else {
+                libc::fdopen(fd, c"r".as_ptr()).cast()
+            }
+        }
+    };
+    assert!(!stream.is_null());
+
+    if kind == "cookie" {
+        // Allocate the callback reader's own buffer before applying pressure,
+        // so the tested failure comes after real line-input growth.
+        let first = unsafe {
+            if native {
+                fl::fgetc(stream)
+            } else {
+                libc::fgetc(stream.cast())
+            }
+        };
+        assert_eq!(first, 0);
+    }
+
+    if kind == "unbuffered" {
+        // SAFETY: no I/O has occurred on this live stream.
+        let result = unsafe {
+            if native {
+                fl::setvbuf(stream, std::ptr::null_mut(), libc::_IONBF, 0)
+            } else {
+                libc::setvbuf(stream.cast(), std::ptr::null_mut(), libc::_IONBF, 0)
+            }
+        };
+        assert_eq!(result, 0);
+    }
+
+    let mut line = std::ptr::null_mut();
+    let mut capacity = 0usize;
+    let scan = |lineptr, size| unsafe {
+        match (native, use_getline) {
+            (true, true) => fl::getline(lineptr, size, stream),
+            (true, false) => fl::getdelim(lineptr, size, b'\n' as c_int, stream),
+            (false, true) => getline(lineptr, size, stream.cast()),
+            (false, false) => getdelim(lineptr, size, b'\n' as c_int, stream.cast()),
+        }
+    };
+
+    if kind == "cached" {
+        // A real successful line warms both the reusable scratch buffer and
+        // descriptor-stream cache before the allocation-failure call.
+        let pushed = unsafe {
+            if native {
+                fl::ungetc(b'\n' as c_int, stream)
+            } else {
+                libc::ungetc(b'\n' as c_int, stream.cast())
+            }
+        };
+        assert_eq!(pushed, b'\n' as c_int);
+        assert_eq!(scan(&mut line, &mut capacity), 1);
+        assert!(capacity >= 2);
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(line.cast::<u8>(), 2) },
+            b"\n\0"
+        );
+    }
+
+    // Resolve errno and prepare all test bookkeeping before constraining
+    // allocations. Failure assertions and formatted output wait until the
+    // original address-space limit has been restored.
+    let errno_slot = unsafe {
+        if native {
+            frankenlibc_abi::errno_abi::__errno_location()
+        } else {
+            libc::__errno_location()
+        }
+    };
+    let mut original: libc::rlimit = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut original) },
+        0
+    );
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0);
+    let statm = std::fs::read_to_string("/proc/self/statm").expect("read mapped size");
+    let pages = statm
+        .split_whitespace()
+        .next()
+        .expect("mapped page count")
+        .parse::<u64>()
+        .expect("numeric mapped page count");
+    let mapped = pages
+        .checked_mul(page_size as u64)
+        .expect("mapped address-space size");
+    let limited = libc::rlimit {
+        rlim_cur: mapped
+            // A small headroom keeps per-byte debug cookie reads bounded
+            // while still requiring real scratch growth before ENOMEM.
+            .checked_add(512 * 1024)
+            .expect("bounded test limit")
+            .min(original.rlim_cur),
+        rlim_max: original.rlim_max,
+    };
+    assert!(limited.rlim_cur > mapped);
+    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &limited) }, 0);
+
+    // SAFETY: the FILE and output slots remain live. Capture each observation
+    // before restoring the limit, with no test-side heap growth.
+    let (result, saved_errno, error, eof, repeated, repeated_errno, restored) = unsafe {
+        *errno_slot = 0;
+        let result = scan(&mut line, &mut capacity);
+        let saved_errno = *errno_slot;
+        let (error, eof) = if native {
+            (fl::ferror(stream), fl::feof(stream))
+        } else {
+            (libc::ferror(stream.cast()), libc::feof(stream.cast()))
+        };
+        *errno_slot = 0x5EED;
+        let repeated = scan(&mut line, &mut capacity);
+        let repeated_errno = *errno_slot;
+        let restored = libc::setrlimit(libc::RLIMIT_AS, &original);
+        libc::alarm(0);
+        (
+            result,
+            saved_errno,
+            error,
+            eof,
+            repeated,
+            repeated_errno,
+            restored,
+        )
+    };
+    assert_eq!(restored, 0, "restore child address-space limit");
+    assert_eq!(
+        result, -1,
+        "{case}: allocation failure must not report a partial line"
+    );
+    assert_eq!(saved_errno, libc::ENOMEM, "{case}: allocation errno");
+    if kind == "cookie" {
+        assert!(
+            128 * 1024 * 1024usize - remaining >= 16 * 1024,
+            "{case}: exercise line growth beyond callback-buffer setup"
+        );
+    }
+    assert_ne!(error, 0, "{case}: allocation failure must set ferror");
+    assert_eq!(eof, 0, "{case}: allocation failure is not EOF");
+    assert_eq!(
+        repeated, -1,
+        "{case}: sticky error must stop subsequent input"
+    );
+    assert_eq!(
+        repeated_errno, 0x5EED,
+        "{case}: sticky error preserves errno"
+    );
+
+    // Clear the sticky error only after restoring the real resource limit.
+    // Further source bytes must remain available and FILE locks must have
+    // been released even when the failed read used the cached cell path.
+    let (next, closed) = unsafe {
+        if native {
+            fl::clearerr(stream);
+            let next = fl::fgetc(stream);
+            let closed = fl::fclose(stream);
+            malloc::free(line.cast());
+            (next, closed)
+        } else {
+            libc::clearerr(stream.cast());
+            let next = libc::fgetc(stream.cast());
+            let closed = libc::fclose(stream.cast());
+            libc::free(line.cast());
+            (next, closed)
+        }
+    };
+    assert_eq!(next, 0, "{case}: recover unread input after clearerr");
+    assert_eq!(closed, 0);
+}
+
+#[test]
 fn getline_diff_coverage_report() {
     eprintln!(
         "{{\"family\":\"libc getline + getdelim\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",

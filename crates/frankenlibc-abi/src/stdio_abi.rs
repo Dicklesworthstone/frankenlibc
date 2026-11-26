@@ -6230,7 +6230,11 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
         let mut byte = [0u8; 1];
         let read = unsafe { cookie_read_into(id, &mut s_guard, &mut byte) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, read == 0);
-        return if read == 1 { byte[0] as c_int } else { libc::EOF };
+        return if read == 1 {
+            byte[0] as c_int
+        } else {
+            libc::EOF
+        };
     }
 
     let Some(cell) = stream_cell(id) else {
@@ -18819,22 +18823,25 @@ unsafe fn getdelim_fill_stream(
     delim_byte: u8,
     buf: &mut Vec<u8>,
     caller: usize,
-) {
+) -> Result<(), std::collections::TryReserveError> {
     // GNU line input stops on an existing error, even when ungetc or scanf
     // left readable bytes. Check before read_until_delim consumes that input;
     // clearerr must leave it available to the next successful read.
     if s.is_error() {
-        return;
+        return Ok(());
     }
     let io_caller = stream_io_caller(s, caller);
     loop {
-        match s.read_until_delim(delim_byte, &mut *buf) {
+        match s.read_until_delim(delim_byte, &mut *buf)? {
             ReadUntil::Found | ReadUntil::Eof => break,
             ReadUntil::NeedRefill => {
                 if s.is_eof() || s.is_error() {
                     break;
                 }
                 if s.buffer_capacity() == 0 {
+                    // Reserve before the syscall so ENOMEM does not consume
+                    // a byte that cannot be retained in the partial line.
+                    buf.try_reserve(1)?;
                     // Unbuffered fd stream: read a byte directly.
                     let mut b = [0u8; 1];
                     let fd = s.fd();
@@ -18859,6 +18866,7 @@ unsafe fn getdelim_fill_stream(
             }
         }
     }
+    Ok(())
 }
 
 /// The capacity is an input only when the caller supplied a buffer. In the
@@ -18875,14 +18883,34 @@ unsafe fn getdelim_capacity(buffer: *mut c_char, capacity: *const usize) -> usiz
     }
 }
 
+/// Report allocation failure without turning a partial line into success.
+///
+/// # Safety
+/// `stream` is live and its explicit FILE lock is held; no StreamCell lock
+/// may be held because set_stream_error acquires that lock itself.
+unsafe fn getdelim_alloc_failed(stream: *mut c_void) -> isize {
+    // SAFETY: the caller holds the live stream's explicit lock.
+    unsafe {
+        set_stream_error(stream);
+        set_abi_errno(errno::ENOMEM);
+    }
+    -1
+}
+
 /// Shared getdelim tail: (re)allocate `*lineptr` to fit `buf` + NUL, copy, NUL-terminate.
 /// Returns the line length, or -1 (empty read / ENOMEM). No observe/membrane — the caller
 /// handles telemetry (the fast path skips it).
 ///
 /// # Safety
 /// `lineptr`/`n` are valid getdelim out-params; `*lineptr` (if non-null) was
-/// returned by a compatible allocator entrypoint.
-unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) -> isize {
+/// returned by a compatible allocator entrypoint. The live stream's explicit
+/// FILE lock is held, and no StreamCell lock is held.
+unsafe fn getdelim_finish(
+    buf: &[u8],
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+) -> isize {
     if buf.is_empty() {
         return -1;
     }
@@ -18897,8 +18925,8 @@ unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) 
         // and unknown host pointers through their matching ownership path.
         let new_buf = unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) };
         if new_buf.is_null() {
-            unsafe { set_abi_errno(errno::ENOMEM) };
-            return -1;
+            // SAFETY: the caller holds only the explicit FILE lock.
+            return unsafe { getdelim_alloc_failed(stream) };
         }
         unsafe { *lineptr = new_buf.cast() };
         unsafe { *n = new_size };
@@ -18954,9 +18982,12 @@ pub(crate) unsafe fn getdelim_for_caller(
         let buf = &mut scratch.0;
         buf.clear();
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
-        unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf, caller) };
+        if unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf, caller) }.is_err() {
+            // SAFETY: the explicit FILE lock is held, with no StreamCell lock.
+            return unsafe { getdelim_alloc_failed(stream) };
+        }
         mirror_raw_cached(stream, p);
-        return unsafe { getdelim_finish(buf, lineptr, n) };
+        return unsafe { getdelim_finish(buf, lineptr, n, stream) };
     }
     // MT-safe cell-cache fast path (see fgets): the ST cache above is `__libc_single_threaded`-
     // gated, so a threaded getline/getdelim loop otherwise pays the registry map lock +
@@ -18970,8 +19001,15 @@ pub(crate) unsafe fn getdelim_for_caller(
             let buf = &mut scratch.0;
             buf.clear();
             // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
-            unsafe { getdelim_fill_stream(&mut s, delim_byte, buf, caller) };
-            return unsafe { getdelim_finish(buf, lineptr, n) };
+            let filled = unsafe { getdelim_fill_stream(&mut s, delim_byte, buf, caller) };
+            // The error path reacquires the cell to publish the FILE error
+            // flag. Retain the explicit FILE lock, but release this borrow.
+            drop(s);
+            if filled.is_err() {
+                // SAFETY: the explicit FILE lock is still held.
+                return unsafe { getdelim_alloc_failed(stream) };
+            }
+            return unsafe { getdelim_finish(buf, lineptr, n, stream) };
         }
     }
 
@@ -19055,6 +19093,13 @@ pub(crate) unsafe fn getdelim_for_caller(
             return -1;
         }
         loop {
+            // Reserve before invoking the callback-aware reader: allocation
+            // failure must leave its next byte and pushback state unread.
+            if buf.try_reserve(1).is_err() {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                // SAFETY: no StreamCell lock is held; the FILE lock is live.
+                return unsafe { getdelim_alloc_failed(stream) };
+            }
             let byte = unsafe { fgetc_for_caller(stream, caller) };
             if byte == libc::EOF {
                 break;
@@ -19064,12 +19109,12 @@ pub(crate) unsafe fn getdelim_for_caller(
                 break;
             }
         }
-        return unsafe { getdelim_finish(buf, lineptr, n) };
+        return unsafe { getdelim_finish(buf, lineptr, n, stream) };
     }
 
     // Read the whole line under the stream's OWN lock + the policy decision above (bulk
     // read_until_delim, not per-char fgetc; the ABI layer owns descriptor refill).
-    {
+    let filled = {
         let Some(cell) = stream_cell(id) else {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return -1;
@@ -19095,10 +19140,15 @@ pub(crate) unsafe fn getdelim_for_caller(
             stream_cell_cache_store(stream, &cell);
         }
         // SAFETY: `s` uniquely borrowed under the stream lock.
-        unsafe { getdelim_fill_stream(s, delim_byte, buf, caller) };
+        unsafe { getdelim_fill_stream(s, delim_byte, buf, caller) }
+    };
+    if filled.is_err() {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        // SAFETY: the StreamCell guard was dropped; the FILE lock is held.
+        return unsafe { getdelim_alloc_failed(stream) };
     }
 
-    let r = unsafe { getdelim_finish(buf, lineptr, n) };
+    let r = unsafe { getdelim_finish(buf, lineptr, n, stream) };
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, r < 0);
     r
 }
@@ -20371,9 +20421,7 @@ unsafe fn cookie_read_into(id: usize, stream: &mut StreamGuard<'_>, dst: &mut [u
             }
             // SAFETY: this owned scratch span remains writable for the full
             // configured request even if the callback reenters stream APIs.
-            stream.with_callback(|| unsafe {
-                cookie_stream_read(id, tmp.as_mut_ptr(), requested)
-            })
+            stream.with_callback(|| unsafe { cookie_stream_read(id, tmp.as_mut_ptr(), requested) })
         };
 
         if result <= 0 {
