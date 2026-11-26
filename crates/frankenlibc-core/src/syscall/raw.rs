@@ -449,6 +449,18 @@ pub fn reset_native_cancel_syscalls_after_fork() {
 #[inline(never)]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn try_cancelable_syscall(args: &CancelSyscallArgs) -> Option<usize> {
+    // Replacing or terminating the process is not a cancellation point.
+    // These calls can also escape from a signal handler that interrupted an
+    // armed cancellation window. Do not consume its slot or turn the syscall
+    // into EINTR: exit_group must not return, and a failed exec must retain
+    // the kernel's errno and leave cancellation pending for its proper point.
+    if matches!(
+        args.nr,
+        super::SYS_EXECVE | super::SYS_EXECVEAT | super::SYS_EXIT_GROUP
+    ) {
+        return None;
+    }
+
     let sp = current_stack_pointer();
     let tid = raw_gettid_nocancel();
     if tid <= 0 {
@@ -1257,6 +1269,100 @@ mod tests {
             super::sys_getrandom_slice(&mut [], u32::MAX),
             Err(crate::errno::EINVAL)
         );
+    }
+
+    #[test]
+    fn process_syscalls_ignore_pending_native_cancellation() {
+        use core::sync::atomic::AtomicU32;
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        const CHILD_CASE: &str = "FRANKENLIBC_TEST_PENDING_PROCESS_SYSCALL";
+        if let Ok(case) = std::env::var(CHILD_CASE) {
+            // A live cancellation window models a process operation invoked
+            // while a blocking cancellation point is interrupted. The word
+            // remains valid until the window is disarmed or the process ends.
+            static PENDING: AtomicU32 = AtomicU32::new(1);
+            let tid = super::raw_gettid_nocancel();
+            let token = super::arm_native_cancel_syscall(
+                tid,
+                PENDING.as_ptr(),
+                super::current_stack_pointer(),
+            );
+            assert_eq!(token, super::NativeCancelWindowToken::Fresh);
+
+            let failure = case.ends_with("failure");
+            let path = if failure {
+                c"/dev/null/no-executable"
+            } else {
+                c"/bin/true"
+            };
+            let argv = [c"true".as_ptr().cast::<u8>(), core::ptr::null()];
+            let envp = [core::ptr::null::<u8>()];
+            let result = match case.as_str() {
+                "execve-failure" | "execve-success" => unsafe {
+                    super::super::sys_execve(path.as_ptr().cast(), argv.as_ptr(), envp.as_ptr())
+                },
+                "execveat-failure" | "execveat-success" => unsafe {
+                    super::super::sys_execveat(
+                        -100,
+                        path.as_ptr().cast(),
+                        argv.as_ptr(),
+                        envp.as_ptr(),
+                        0,
+                    )
+                },
+                "exit-group" => super::super::sys_exit_group(43),
+                _ => panic!("unknown process syscall probe: {case}"),
+            };
+
+            // A failed exec must leave the pending slot for the next real
+            // cancellation point. Without interception, this read would fail
+            // with EBADF; an intact armed slot returns EINTR instead.
+            let read_result =
+                unsafe { super::syscall3(super::super::SYS_READ, usize::MAX, 0, 0) as isize };
+            let interrupted = super::disarm_native_cancel_syscall(tid, token);
+            assert!(failure, "{case} unexpectedly returned: {result:?}");
+            assert_eq!(result, Err(crate::errno::ENOTDIR), "{case}");
+            assert_eq!(read_result, -(crate::errno::EINTR as isize), "{case}");
+            assert!(interrupted, "{case} consumed the pending cancellation slot");
+            return;
+        }
+
+        // Each probe gets its own process because successful exec and exit
+        // cannot return. A deadline also turns a suppressed exit_group's
+        // nonreturning fallback loop into a bounded regression failure.
+        let name = concat!(
+            module_path!(),
+            "::process_syscalls_ignore_pending_native_cancellation"
+        );
+        let name = name.split_once("::").unwrap().1;
+        for (case, expected) in [
+            ("execve-failure", 0),
+            ("execveat-failure", 0),
+            ("execve-success", 0),
+            ("execveat-success", 0),
+            ("exit-group", 43),
+        ] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env(CHILD_CASE, case)
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("{case} did not complete while cancellation was pending");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert_eq!(status.code(), Some(expected), "{case}: {status}");
+        }
     }
 }
 

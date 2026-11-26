@@ -205,6 +205,22 @@ jobs:
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
               "artifacts/signal-waits/exec/named-null-$mode.log"
           done
+      - name: Preserve process syscalls while native cancellation is pending
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/signal-waits/exec
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo test --release -p frankenlibc-core --lib "${args[@]}" \
+            syscall::raw::tests::process_syscalls_ignore_pending_native_cancellation \
+            -- --exact --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/signal-waits/exec/pending-cancellation.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/signal-waits/exec/pending-cancellation.log
       - name: Verify public native TLS destructors and recovery after loader errors
         if: always()
         shell: bash

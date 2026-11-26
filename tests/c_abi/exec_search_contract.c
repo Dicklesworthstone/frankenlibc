@@ -12,6 +12,151 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef FRANKENLIBC_ASYNC_ALLOCATOR_PROBE
+#include <dlfcn.h>
+#include <stdint.h>
+#include <sys/syscall.h>
+
+/* Build this translation unit separately: an application-owned allocator
+ * prevents constructor-time policy prewarming, and turns allocator reentry
+ * into a deterministic exit instead of an occasionally reproduced deadlock.
+ * No fixture setup below enters the candidate's policy before the armed call. */
+static _Alignas(16) unsigned char app_heap[4 * 1024 * 1024];
+static size_t app_used;
+static volatile sig_atomic_t allocator_armed, interrupt_allocator, operation;
+static int *error_slot;
+
+static long raw_call4(long number, long a, long b, long c, long d) {
+#if defined(__x86_64__)
+    register long r10 __asm__("r10") = d;
+    long result;
+    __asm__ volatile("syscall" : "=a"(result)
+                     : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10)
+                     : "rcx", "r11", "memory");
+    return result;
+#elif defined(__aarch64__)
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x8 __asm__("x8") = number;
+    __asm__ volatile("svc 0" : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x3), "r"(x8) : "memory", "cc");
+    return x0;
+#else
+#error This fixture requires Linux x86-64 or AArch64.
+#endif
+}
+
+__attribute__((noreturn)) static void raw_exit(int status) {
+    raw_call4(SYS_exit_group, status, 0, 0, 0);
+    for (;;) {}
+}
+
+void *malloc(size_t length) {
+    if (allocator_armed) raw_exit(91);
+    if (interrupt_allocator) {
+        interrupt_allocator = 0;
+        allocator_armed = 1;
+        long pid = raw_call4(SYS_getpid, 0, 0, 0, 0);
+        long tid = raw_call4(SYS_gettid, 0, 0, 0, 0);
+        raw_call4(SYS_tgkill, pid, tid, SIGUSR1, 0);
+        raw_exit(93); /* Every handler either execs or terminates. */
+    }
+    if (!length) length = 1;
+    if (length > sizeof app_heap - 31) return NULL;
+    size_t amount = ((length + 15) & ~(size_t)15) + 16;
+    if (app_used > sizeof app_heap - amount) return NULL;
+    unsigned char *result = app_heap + app_used + 16;
+    app_used += amount;
+    ((size_t *)result)[-1] = length;
+    return result;
+}
+
+void free(void *pointer) {
+    (void)pointer;
+    if (allocator_armed) raw_exit(91);
+}
+
+void *calloc(size_t count, size_t size) {
+    if (size && count > SIZE_MAX / size) return NULL;
+    size_t length = count * size;
+    volatile unsigned char *result = malloc(length);
+    if (result) for (size_t i = 0; i < length; ++i) result[i] = 0;
+    return (void *)result;
+}
+
+void *realloc(void *pointer, size_t length) {
+    volatile unsigned char *result = malloc(length);
+    if (result && pointer) {
+        size_t old = ((size_t *)pointer)[-1];
+        for (size_t i = 0; i < old && i < length; ++i)
+            result[i] = ((volatile unsigned char *)pointer)[i];
+    }
+    return (void *)result;
+}
+
+__attribute__((noreturn)) static void exercise_boundary(int signal_number) {
+    (void)signal_number;
+    if (operation == 'x') _exit(0x12b);
+    if (operation == 'X') _Exit(-213);
+    char *args[] = {"async-process-probe", NULL};
+    char *env[] = {NULL};
+    const char *path = operation == 'e' ? "/bin/true" : "/dev/null/no-executable";
+    int result = execve(path, args, env);
+    raw_exit(operation == 'f' && result == -1 && *error_slot == ENOTDIR ? 43 : 94);
+}
+
+#if defined(__x86_64__)
+__attribute__((naked)) static void signal_restorer(void) {
+    __asm__ volatile("mov $15, %rax\nsyscall");
+}
+#endif
+
+int main(int argc, char **argv) {
+    if (argc == 3 && argv[1][0] == 'p') {
+        /* Ownership is checked in a separate fresh process: dladdr here may
+         * initialize policy and must never warm the armed execution cases. */
+        void *symbols[] = {(void *)execve, (void *)_exit, (void *)_Exit};
+        for (size_t i = 0; i < sizeof symbols / sizeof symbols[0]; ++i) {
+            Dl_info info;
+            if (!dladdr(symbols[i], &info) || !info.dli_fname ||
+                strcmp(info.dli_fname, argv[2])) return 92;
+        }
+        return 0;
+    }
+    if (argc != 3) return 95;
+    operation = argv[1][0];
+    if (operation != 'x' && operation != 'X' && operation != 'e' &&
+        operation != 'f' && operation != 'a') return 95;
+    error_slot = &errno;
+    if (argv[2][0] == 's') {
+        struct {
+            void (*handler)(int);
+            unsigned long flags;
+            void (*restorer)(void);
+            unsigned long mask;
+        } action = {exercise_boundary, 0, NULL, 0};
+#if defined(__x86_64__)
+        action.flags = 0x04000000; /* Linux SA_RESTORER. */
+        action.restorer = signal_restorer;
+#endif
+        if (raw_call4(SYS_rt_sigaction, SIGUSR1, (long)&action, 0,
+                      sizeof action.mask) != 0) return 96;
+        interrupt_allocator = 1;
+    } else {
+        allocator_armed = 1;
+        if (operation != 'a') exercise_boundary(0);
+    }
+    /* A volatile call prevents the compiler deleting the allocation. The
+     * 'a' control must exit 91, proving that the reentry detector is armed. */
+    void *(*volatile allocate)(size_t) = malloc;
+    (void)allocate(1);
+    raw_exit(97);
+}
+
+#else
+
 /* Black-box launch tests. Scripts only use shell builtins. No caller-provided
  * argument is interpreted as a command string. All fixtures are private. */
 extern char **environ;
@@ -292,3 +437,5 @@ int main(int argc, char **argv) {
     printf("SUMMARY passed=%u failed=%u\n", passed, failed);
     return failed ? 1 : 0;
 }
+
+#endif /* FRANKENLIBC_ASYNC_ALLOCATOR_PROBE */

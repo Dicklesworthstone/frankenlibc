@@ -1,8 +1,9 @@
 //! ABI layer for process control functions.
 //!
 //! Provides the POSIX process-control surface: fork, _exit, execve, execvp,
-//! waitpid, wait. All functions route through the membrane RuntimeMathKernel
-//! under `ApiFamily::Process`.
+//! waitpid, wait. Ordinary process operations route through the membrane
+//! RuntimeMathKernel under `ApiFamily::Process`. Async-signal-safe termination
+//! and direct exec entrypoints use only raw syscalls and the leaf errno setter.
 
 #[path = "spawn_protocol.rs"]
 mod spawn_protocol;
@@ -478,28 +479,12 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 /// POSIX `_exit` — terminate the calling process immediately.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _exit(status: c_int) -> ! {
-    let (mode, decision) = runtime_policy::decide(ApiFamily::Process, 0, 0, false, false, 0);
-
-    let clamped = if mode.heals_enabled() {
-        let c = process::clamp_exit_status(status);
-        if c != status {
-            global_healing_policy().record(
-                "process",
-                "_exit",
-                &HealingAction::ClampSize {
-                    requested: status as usize,
-                    clamped: c as usize,
-                },
-                RepairLogContext::new(0, None),
-            );
-        }
-        c
-    } else {
-        status
-    };
-
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 5, false);
-    raw_syscall::sys_exit_group(clamped)
+    // This is also the escape hatch from a signal handler or a child of
+    // _Fork: no mode resolution, telemetry, allocator, TLS initialization or
+    // lock may precede exit_group. The kernel already exposes only status's
+    // low eight bits to waiters, including for negative and large integers;
+    // there is no invalid status for a hardened policy to repair.
+    raw_syscall::sys_exit_group(status)
 }
 
 /// C99 `_Exit(status)` — capital-E spelling of POSIX `_exit`.
@@ -522,6 +507,11 @@ pub unsafe extern "C" fn _Exit(status: c_int) -> ! {
 // ---------------------------------------------------------------------------
 
 /// POSIX `execve` — execute a program.
+///
+/// Must remain async-signal-safe in both modes. The kernel checks the caller's
+/// pathname and vectors; policy decisions and post-failure telemetry can take
+/// locks inherited from vanished threads after _Fork, or interrupted by a
+/// signal. execv/execl/execle share this boundary.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn execve(
     pathname: *const c_char,
@@ -529,30 +519,14 @@ pub unsafe extern "C" fn execve(
     envp: *const *const c_char,
 ) -> c_int {
     if pathname.is_null() || argv.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
+        unsafe { crate::errno_abi::set_abi_errno_local(libc::EFAULT) };
         return -1;
     }
 
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Process, pathname as usize, 0, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        unsafe { set_abi_errno(libc::EPERM) };
-        return -1;
-    }
-
-    // execve only returns on failure.
-    let e = unsafe {
-        raw_syscall::sys_execve(
-            pathname as *const u8,
-            argv as *const *const u8,
-            envp as *const *const u8,
-        )
-    }
-    .err()
-    .unwrap_or(libc::ENOENT);
-    unsafe { set_abi_errno(e) };
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
+    // No userspace dereference or allocation is needed to submit execve.
+    // On failure publish exactly its errno, without entering the controller.
+    let error = unsafe { execve_error(pathname, argv, envp) };
+    unsafe { crate::errno_abi::set_abi_errno_local(error) };
     -1
 }
 
