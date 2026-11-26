@@ -382,9 +382,9 @@ unsafe extern "C-unwind" fn thread_trampoline(args_raw: usize) -> usize {
     // Register TLS storage before signals can run application handlers or the
     // user routine can query its native handle. This path allocates nothing.
     // SAFETY: handle_ptr is live and this thread exclusively owns tls_values.
-    if !super::tls::register_thread_tls(current_tid, unsafe {
-        (*handle_ptr).tls_values.as_mut_ptr()
-    }) {
+    if !unsafe {
+        super::tls::register_thread_tls(current_tid, (*handle_ptr).tls_values.as_mut_ptr())
+    } {
         // Exhausting the fixed identity table must not start a thread whose
         // errno, key values or cancellation settings alias its creator.
         handle.state.store(THREAD_FINISHED, Ordering::Release);
@@ -1584,6 +1584,36 @@ pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
     handle_for_tid(syscall::sys_gettid())
 }
 
+/// Restore the native survivor's kernel exit notification after fork.
+///
+/// Raw fork clears clear_child_tid; host fork points it at the host TCB.
+/// Neither address can release joiners waiting on the owned handle. Hosted
+/// and TLS-only registrations have no native handle and require no change.
+///
+/// # Safety
+/// The TLS table has been rekeyed to child_tid in a newly forked process, and
+/// this is its sole surviving thread. Its handle remains mapped until the
+/// kernel clears tid on exit, or detached exit explicitly unregisters it.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) unsafe fn rebind_native_thread_after_fork(child_tid: i32) -> Result<(), i32> {
+    let Some(handle_ptr) = handle_for_tid(child_tid) else {
+        return Ok(());
+    };
+    // SAFETY: native_table_lookup admits only the surviving native handle.
+    let handle = unsafe { &*handle_ptr };
+    let registered_tid = syscall::sys_set_tid_address(handle.tid.as_ptr() as usize);
+    if registered_tid < 0 {
+        return Err(-registered_tid);
+    }
+    if registered_tid != child_tid {
+        return Err(5); // EIO: the kernel did not identify this child.
+    }
+    handle.self_tid.store(child_tid, Ordering::Release);
+    handle.tid.store(child_tid, Ordering::Release);
+    Ok(())
+}
+
 /// Formatting must never interpret a failed owner lookup as permission to use
 /// compiler TLS, which a native child may share with its creator.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1752,12 +1782,12 @@ pub fn take_current_cancellation() -> bool {
 /// Returns `None` if the TID is not registered or the handle is invalid.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn handle_for_tid(tid: i32) -> Option<*mut ThreadHandle> {
-    let values_ptr = super::tls::table_lookup(tid);
+    let values_ptr = super::tls::native_table_lookup(tid);
     if values_ptr.is_null() {
         return None;
     }
 
-    // SAFETY: ThreadHandle contains the tls_values array. We use offset_of
+    // SAFETY: the registration proves ThreadHandle contains the tls_values array. We use offset_of
     // to find the base of the handle from the pointer to that array.
     let offset = core::mem::offset_of!(ThreadHandle, tls_values);
     let handle_ptr = unsafe { (values_ptr as *mut u8).sub(offset).cast::<ThreadHandle>() };

@@ -54,6 +54,7 @@ on:
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
       - 'tests/integration/fixture_pthread_cancel.c'
+      - 'tests/integration/fixture_pthread_fork_join.c'
       - 'scripts/check_pthread_cancel_native_parity.sh'
       - 'tests/integration/fixture_pthread_once_unwind.cpp'
       - 'scripts/check_pthread_once_unwind.sh'
@@ -209,6 +210,28 @@ jobs:
               grep -qx "PASS native-sigcancel-setup $setup" "$output.out"
               test ! -s "$output.err"
             done
+          done
+      - name: Join the surviving native thread after fork
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=artifacts/signal-waits/fork-survivor
+          mkdir -p "$out"
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/integration/fixture_pthread_fork_join.c -ldl -o "$out/fixture"
+          timeout --kill-after=2s 35s env -u LD_PRELOAD -u FRANKENLIBC_TEST_LIBRARY \
+            "$out/fixture" > "$out/gnu.out" 2> "$out/gnu.err"
+          grep -qx 'PASS fork survivor join: 4 cases' "$out/gnu.out"
+          test ! -s "$out/gnu.err"
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          for mode in strict hardened; do
+            timeout --kill-after=2s 35s env LD_PRELOAD="$library" \
+              FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=1 \
+              FRANKENLIBC_TEST_LIBRARY="$library" \
+              "$out/fixture" > "$out/$mode.out" 2> "$out/$mode.err"
+            grep -qx 'PASS fork survivor join: 4 cases' "$out/$mode.out"
+            test ! -s "$out/$mode.err"
           done
       - name: Preserve variadic exec arguments and failure cleanup
         if: always()
@@ -604,7 +627,7 @@ jobs:
                     '--test', 'pthread_cancel_wait_test', 'cancel_poll::tests::'], 'strict', 4)]
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                  *features, 'pthread::tls::tests::'], 'strict', 51))
+                  *features, 'pthread::tls::tests::'], 'strict', 52))
               for mode in ['strict', 'hardened']:
                   cases.append((f'policy-{label}-{mode}', ['cargo', 'test', '-p', 'frankenlibc-abi',
                       *features, '--test', 'pthread_thread_lifecycle_test',

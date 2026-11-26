@@ -196,6 +196,11 @@ static TLS_CANCEL_FLAGS: [AtomicU32; TLS_TABLE_SLOTS] =
 static NEXT_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(2);
 const CANCEL_PENDING: u64 = 1;
 
+// Registration ownership, not a cancellation setting. Only the native clone
+// trampoline may publish this bit, before publishing the positive TID. TLS-only
+// registrations must never be interpreted as an enclosing ThreadHandle.
+const TLS_FLAG_NATIVE_HANDLE: u32 = 1 << 31;
+
 /// Per-registration cancellation state flags observed by `pthread_cancel` to
 /// decide whether `NATIVE_SIGCANCEL` should interrupt a kernel wait or async loop.
 pub const CANCEL_FLAG_DISABLED: u32 = 1 << 0;
@@ -269,9 +274,14 @@ fn cancellation_word_address(word: &AtomicU64) -> *const u32 {
     address
 }
 
-fn publish_tls_slot(index: usize, values_ptr: *mut TlsEntry, generation: u64) {
+fn publish_tls_slot(
+    index: usize,
+    values_ptr: *mut TlsEntry,
+    generation: u64,
+    registration_flags: u32,
+) {
     TLS_CANCEL_WORDS[index].store(0, Ordering::Release);
-    TLS_CANCEL_FLAGS[index].store(0, Ordering::Release);
+    TLS_CANCEL_FLAGS[index].store(registration_flags, Ordering::Release);
     TLS_PTRS[index].store(values_ptr as usize, Ordering::Release);
     TLS_CANCEL_WORDS[index].store(generation, Ordering::Release);
 }
@@ -579,7 +589,16 @@ fn fallback_table_remove(tid: i32) -> *mut TlsEntry {
 /// Register a TID → values-pointer mapping in the global table.
 ///
 /// This function is **allocation-free** and safe to call from clone-based threads.
+#[cfg(test)]
 fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
+    table_register_with_flags(tid, values_ptr, 0)
+}
+
+fn table_register_with_flags(
+    tid: i32,
+    values_ptr: *mut TlsEntry,
+    registration_flags: u32,
+) -> bool {
     if tid <= 0 {
         return false;
     }
@@ -608,8 +627,16 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
                 current = TLS_TIDS[idx].load(Ordering::Acquire);
             }
             if current == tid {
-                // Already registered (shouldn't happen, but handle gracefully).
-                publish_tls_slot(idx, values_ptr, generation);
+                // Changing ownership kind requires retirement first: a live
+                // positive TID must never pair a native tag with a TLS-only
+                // pointer while this replacement is being published.
+                if (TLS_CANCEL_FLAGS[idx].load(Ordering::Acquire) ^ registration_flags)
+                    & TLS_FLAG_NATIVE_HANDLE
+                    != 0
+                {
+                    return false;
+                }
+                publish_tls_slot(idx, values_ptr, generation, registration_flags);
                 return true;
             }
 
@@ -629,7 +656,7 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
                     .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
-                    publish_tls_slot(target, values_ptr, generation);
+                    publish_tls_slot(target, values_ptr, generation, registration_flags);
                     TLS_TIDS[target].store(tid, Ordering::Release);
                     return true;
                 }
@@ -646,7 +673,7 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
                 )
                 .is_ok()
             {
-                publish_tls_slot(tomb_idx, values_ptr, generation);
+                publish_tls_slot(tomb_idx, values_ptr, generation, registration_flags);
                 TLS_TIDS[tomb_idx].store(tid, Ordering::Release);
                 return true;
             }
@@ -675,6 +702,31 @@ pub(crate) fn table_lookup(tid: i32) -> *mut TlsEntry {
         }
         if stored_tid == TLS_SLOT_EMPTY {
             return core::ptr::null_mut();
+        }
+    }
+    core::ptr::null_mut()
+}
+
+/// Look up values only when their registration proves native handle ownership.
+///
+/// A generic TLS array may begin at a mapping boundary. Test ownership before
+/// any caller subtracts ThreadHandle's tls_values offset from this pointer.
+pub(crate) fn native_table_lookup(tid: i32) -> *mut TlsEntry {
+    if tid <= 0 {
+        return core::ptr::null_mut();
+    }
+    let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    for offset in 0..TLS_TABLE_SLOTS {
+        let index = (start + offset) % TLS_TABLE_SLOTS;
+        let stored_tid = TLS_TIDS[index].load(Ordering::Acquire);
+        if stored_tid == tid {
+            if TLS_CANCEL_FLAGS[index].load(Ordering::Acquire) & TLS_FLAG_NATIVE_HANDLE == 0 {
+                return core::ptr::null_mut();
+            }
+            return TLS_PTRS[index].load(Ordering::Acquire) as *mut TlsEntry;
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            break;
         }
     }
     core::ptr::null_mut()
@@ -749,7 +801,8 @@ pub(crate) fn request_thread_cancellation_with_info(
             let tid = TLS_TIDS[index].load(Ordering::Acquire);
             prepare()?;
             if request_cancel_generation(index, observed) {
-                let flags = TLS_CANCEL_FLAGS[index].load(Ordering::SeqCst);
+                let flags =
+                    TLS_CANCEL_FLAGS[index].load(Ordering::SeqCst) & !TLS_FLAG_NATIVE_HANDLE;
                 return Ok(Some((tid, flags)));
             }
             return Ok(None);
@@ -1237,11 +1290,12 @@ fn rekey_fork_child_table(
             // slot. Native tables were cleared above and never enter here.
             pointers[source].store(spare, Ordering::Release);
         }
-        tids[destination].store(child_tid, Ordering::Release);
         if let Some((words, flags)) = cancellation {
             flags[destination].store(survivor_flags, Ordering::Release);
             words[destination].store(survivor_cancel, Ordering::Release);
         }
+        // Publish ownership and cancellation state before the new positive TID.
+        tids[destination].store(child_tid, Ordering::Release);
     }
 }
 
@@ -1309,6 +1363,17 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
         );
     }
     TID_CACHE_EPOCH.fetch_add(1, Ordering::AcqRel);
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    // SAFETY: the native ownership bit survived rekeying, and this thread is
+    // the sole survivor. Hosted and TLS-only owners are left untouched.
+    if unsafe { super::thread::rebind_native_thread_after_fork(child_tid) }.is_err() {
+        // A sandbox can reject set_tid_address. Returning would advertise a
+        // joinable owner whose stack can never be safely reclaimed; faking a
+        // userspace clear before SYS_exit lets a joiner unmap a live stack.
+        // The parent has already forked successfully, so only this child can
+        // fail. Exit directly while its inherited runtime locks remain held.
+        syscall::sys_exit_group(127);
+    }
 }
 
 /// Call before cloning a thread that shares its creator's TLS.
@@ -1566,16 +1631,15 @@ fn set_specific_entry(id: usize, expected_seq: u32, value: u64) -> i32 {
 // Thread lifecycle integration (called from thread.rs trampoline)
 // ---------------------------------------------------------------------------
 
-/// Register a thread's TLS values pointer in the global table.
+/// Register one native thread's embedded TLS values without allocating.
 ///
-/// `values_ptr` must point to a `[TlsEntry; TLS_KEY_SLOTS]` array that lives
-/// at least as long as the thread. For clone-based threads, this is the
-/// `tls_values` field in `ThreadHandle`.
-///
-/// **Allocation-free** — safe to call from clone-based threads.
+/// # Safety
+/// `values_ptr` must name the tls_values field of this thread's live
+/// ThreadHandle, retained until native teardown withdraws the registration.
+/// The trampoline keeps application signals blocked until publication ends.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
-    table_register(tid, values_ptr)
+pub(crate) unsafe fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
+    table_register_with_flags(tid, values_ptr, TLS_FLAG_NATIVE_HANDLE)
 }
 
 static NATIVE_POST_TEARDOWN_HOOK: std::sync::OnceLock<fn(i32)> = std::sync::OnceLock::new();
@@ -2031,6 +2095,91 @@ mod tests {
         let key = create_key(None);
         assert_eq!(pthread_setspecific(key, 0xDEAD_BEEF), 0);
         assert_eq!(pthread_getspecific(key), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn native_handle_registration_is_distinct_from_tls_only_values() {
+        let _guard = lock_and_reset();
+        // Keep metadata-only native tags away from live test-runner TIDs.
+        let parent_tid = i32::MAX - 3;
+        let child_tid = i32::MAX - 4;
+        // A readable array starts immediately after inaccessible pages. An
+        // accidental enclosing-handle probe would fault instead of silently
+        // reading some unrelated heap allocation's prefix. 64 KiB boundaries
+        // accommodate the supported Linux base page sizes on both targets.
+        const REGION: usize = 64 * 1024;
+        let prefix = core::mem::offset_of!(super::super::thread::ThreadHandle, tls_values)
+            .div_ceil(REGION)
+            .max(1)
+            * REGION;
+        let values_size = core::mem::size_of::<[TlsEntry; TLS_KEY_SLOTS]>()
+            .div_ceil(REGION)
+            * REGION;
+        let mapping_size = prefix + values_size;
+        let mapping = unsafe {
+            syscall::sys_mmap(core::ptr::null_mut(), mapping_size, 0, 0x22, -1, 0)
+        }
+        .unwrap();
+        let pointer = unsafe { mapping.add(prefix).cast::<TlsEntry>() };
+        unsafe { syscall::sys_mprotect(pointer.cast::<u8>(), values_size, 3) }.unwrap();
+
+        assert!(table_register(parent_tid, pointer));
+        assert_eq!(table_lookup(parent_tid), pointer);
+        assert!(native_table_lookup(parent_tid).is_null());
+        assert!(super::super::thread::handle_for_tid(parent_tid).is_none());
+        // An existing TLS-only record cannot acquire a native tag before its
+        // pointer has been withdrawn. No prefix before this array is readable
+        // by the handle lookup, irrespective of its allocation layout.
+        assert!(!table_register_with_flags(
+            parent_tid,
+            pointer,
+            TLS_FLAG_NATIVE_HANDLE,
+        ));
+        assert!(native_table_lookup(parent_tid).is_null());
+        assert_eq!(table_remove(parent_tid), pointer);
+
+        // Metadata-only native registration: never interpret this synthetic
+        // backing as a ThreadHandle. Exercise publication, flag updates, fork
+        // rekey and retirement using the exact production table operations.
+        assert!(table_register_with_flags(
+            parent_tid,
+            pointer,
+            TLS_FLAG_NATIVE_HANDLE,
+        ));
+        assert_eq!(native_table_lookup(parent_tid), pointer);
+        set_native_cancel_disabled(parent_tid, true);
+        set_native_cancel_async(parent_tid, true);
+        set_native_cancel_point_active(parent_tid, true);
+        assert_eq!(
+            request_thread_cancellation_with_info(pointer as usize, || Ok(())),
+            Ok(Some((
+                parent_tid,
+                CANCEL_FLAG_DISABLED | CANCEL_FLAG_ASYNC | CANCEL_FLAG_IN_POINT,
+            )))
+        );
+        rekey_fork_child_table(
+            &TLS_TIDS,
+            &TLS_PTRS,
+            Some((&TLS_CANCEL_WORDS, &TLS_CANCEL_FLAGS)),
+            parent_tid,
+            child_tid,
+            false,
+        );
+        assert!(native_table_lookup(parent_tid).is_null());
+        assert_eq!(native_table_lookup(child_tid), pointer);
+        assert_eq!(
+            request_thread_cancellation_with_info(pointer as usize, || Ok(())),
+            Ok(Some((child_tid, CANCEL_FLAG_DISABLED | CANCEL_FLAG_ASYNC)))
+        );
+        assert!(!table_register(child_tid, pointer));
+        assert_eq!(table_remove(child_tid), pointer);
+        assert!(native_table_lookup(child_tid).is_null());
+        assert!(table_register(child_tid, pointer));
+        assert!(native_table_lookup(child_tid).is_null());
+        assert!(super::super::thread::handle_for_tid(child_tid).is_none());
+        assert_eq!(table_remove(child_tid), pointer);
+        unsafe { syscall::sys_munmap(mapping, mapping_size) }.unwrap();
     }
 
     #[test]
