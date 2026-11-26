@@ -7,6 +7,7 @@
 //! - `nameserver <ip>`: DNS server address (up to 3)
 //! - `domain <name>`: Local domain name
 //! - `search <name>...`: Search list for hostname lookup
+//! - `sortlist <network>[/<mask>]...`: IPv4 DNS result preferences
 //! - `options <opt>...`: Various options (ndots, timeout, attempts, rotate,
 //!   use-vc, trust-ad, no-aaaa, edns0, no-tld-query, no-reload)
 //!
@@ -14,7 +15,7 @@
 //!
 //! If no nameservers are specified, defaults to 127.0.0.1.
 
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 // ---------------------------------------------------------------------------
 // Configuration Limits
@@ -29,6 +30,48 @@ pub const MAX_NAMESERVERS: usize = 3;
 /// Modern glibc's resolver searches beyond these slots; this is not a limit
 /// on the native configuration's dynamically allocated search list.
 pub const MAX_SEARCH_DOMAINS: usize = 6;
+
+/// IPv4 network preference slots in the public resolver state.
+pub const MAX_SORT_RULES: usize = 10;
+
+/// Address and mask in the order supplied by resolv.conf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SortRule {
+    pub address: Ipv4Addr,
+    pub mask: Ipv4Addr,
+}
+
+impl SortRule {
+    fn parse(token: &[u8]) -> Option<Self> {
+        let mut fields = token.splitn(2, |&b| b == b'/' || b == b'&');
+        let address = Ipv4Addr::from(crate::inet::parse_ipv4_bsd(fields.next()?)?);
+        let mask = fields.next().and_then(crate::inet::parse_ipv4_bsd);
+        let mask = mask.unwrap_or_else(|| match address.octets()[0] {
+            0..=127 => [255, 0, 0, 0],
+            128..=191 => [255, 255, 0, 0],
+            _ => [255, 255, 255, 0],
+        });
+        Some(Self {
+            address,
+            mask: Ipv4Addr::from(mask),
+        })
+    }
+}
+
+/// Put addresses matching the earliest configured network first. DNS wire
+/// order breaks ties, including between addresses outside every listed net.
+pub fn sort_ipv4_addresses(addresses: &mut [Ipv4Addr], rules: &[SortRule]) {
+    if !rules.is_empty() && addresses.len() > 1 {
+        addresses.sort_by_key(|address| {
+            rules
+                .iter()
+                .position(|rule| {
+                    u32::from(*address) & u32::from(rule.mask) == u32::from(rule.address)
+                })
+                .unwrap_or(rules.len())
+        });
+    }
+}
 
 /// Default DNS port
 pub const DNS_PORT: u16 = 53;
@@ -60,6 +103,8 @@ pub struct ResolverConfig {
     pub domain: Option<String>,
     /// Search list for hostname lookup
     pub search: Vec<String>,
+    /// Preferred networks for IPv4 DNS results, in declared order.
+    pub sort_list: Vec<SortRule>,
     /// ndots threshold: queries with >= ndots dots are tried as absolute first
     pub ndots: u32,
     /// Timeout for each query attempt in seconds
@@ -102,6 +147,7 @@ impl Default for ResolverConfig {
             nameserver_scopes: Vec::new(),
             domain: None,
             search: Vec::new(),
+            sort_list: Vec::new(),
             ndots: DEFAULT_NDOTS,
             timeout: DEFAULT_TIMEOUT_SECS,
             attempts: DEFAULT_ATTEMPTS,
@@ -124,6 +170,7 @@ impl ResolverConfig {
             nameserver_scopes: Vec::new(),
             domain: None,
             search: Vec::new(),
+            sort_list: Vec::new(),
             ndots: DEFAULT_NDOTS,
             timeout: DEFAULT_TIMEOUT_SECS,
             attempts: DEFAULT_ATTEMPTS,
@@ -255,6 +302,19 @@ impl ResolverConfig {
                 if !search.is_empty() {
                     self.search = search;
                 }
+            }
+            b"sortlist" => {
+                // A semicolon ends this directive even inside a token.
+                // A hash in the list is an invalid address; later tokens
+                // on the same line remain eligible. Both match GNU res_init.
+                let items = line[keyword.len()..]
+                    .split(|&b| b == b';')
+                    .next()
+                    .unwrap_or_default();
+                self.sort_list.extend(
+                    items.split(u8::is_ascii_whitespace)
+                        .filter_map(SortRule::parse),
+                );
             }
             b"options" => {
                 for opt in parts {
@@ -419,6 +479,26 @@ fn trim_whitespace(bytes: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sortlist_parses_networks_and_stably_ranks_dns_addresses() {
+        let config = ResolverConfig::parse(
+            b"sortlist bad 10.2.0.0/255.255.0.0 10.0.0.0\nsortlist 172.16.0.0 # 192.0.2.0; 127.0.0.0\n",
+        );
+        assert_eq!(
+            config.sort_list.iter().map(|rule| rule.mask.octets()).collect::<Vec<_>>(),
+            [[255, 255, 0, 0], [255, 0, 0, 0], [255, 255, 0, 0], [255, 255, 255, 0]],
+        );
+        let mut addresses = [
+            [203, 0, 113, 3], [10, 3, 1, 1], [10, 2, 1, 9],
+            [203, 0, 113, 2], [10, 2, 1, 7], [192, 0, 2, 1],
+        ].map(Ipv4Addr::from);
+        sort_ipv4_addresses(&mut addresses, &config.sort_list);
+        assert_eq!(addresses.map(|a| a.octets()), [
+            [10, 2, 1, 9], [10, 2, 1, 7], [10, 3, 1, 1], [192, 0, 2, 1],
+            [203, 0, 113, 3], [203, 0, 113, 2],
+        ]);
+    }
 
     #[test]
     fn test_default_config() {

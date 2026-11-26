@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use frankenlibc_core::dns_transport::{LookupConfig, QueryError, QueryOptions, raw};
-use frankenlibc_core::resolv::config::ResolverConfig;
+use frankenlibc_core::resolv::config::{MAX_SORT_RULES, ResolverConfig, SortRule};
 use frankenlibc_core::resolv::dns::{DNS_HEADER_SIZE, encode_domain_name};
 use frankenlibc_core::resolv::dns_name::NS_MAXDNAME;
 
@@ -86,7 +86,7 @@ pub struct State {
     pub defdname: [c_char; 256],
     pub pfcode: c_ulong,
     pub ndots_nsort: u32,
-    pub sort_list: [SortEntry; 10],
+    pub sort_list: [SortEntry; MAX_SORT_RULES],
     pub unused_qhook: *mut c_void,
     pub unused_rhook: *mut c_void,
     pub res_h_errno: c_int,
@@ -101,6 +101,30 @@ impl State {
         unsafe { std::mem::zeroed() }
     }
 
+    fn sort_rules(&self) -> Vec<SortRule> {
+        let shift = if cfg!(target_endian = "little") { 4 } else { 24 };
+        let count = ((self.ndots_nsort >> shift) & 15) as usize;
+        let mut rules: Vec<_> = self.sort_list
+            .iter()
+            .take(count)
+            .map(|entry| SortRule {
+                address: Ipv4Addr::from(entry.addr.s_addr.to_ne_bytes()),
+                mask: Ipv4Addr::from(entry.mask.to_ne_bytes()),
+            })
+            .collect();
+        // The public ABI only exposes ten preferences. Recover a longer
+        // configured list while the caller still uses its published prefix.
+        if count == MAX_SORT_RULES {
+            let registry = OWNED.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(owned) = registry.get(&(self as *const Self as usize))
+                && owned.sort_list.starts_with(&rules)
+            {
+                rules.extend_from_slice(&owned.sort_list[MAX_SORT_RULES..]);
+            }
+        }
+        rules
+    }
+
     fn ndots(&self) -> usize {
         if cfg!(target_endian = "little") {
             (self.ndots_nsort & 15) as usize
@@ -111,6 +135,7 @@ impl State {
 }
 
 struct OwnedState {
+    sort_list: Vec<SortRule>,
     search: Vec<Box<[u8]>>,
     ipv6: Vec<(usize, Box<libc::sockaddr_in6>)>,
     published_search: [usize; MAXDNSRCH + 1],
@@ -181,6 +206,7 @@ struct PublishedConfig {
     options: c_ulong,
     nscount: c_int,
     ndots_nsort: u32,
+    sort_list: [(u32, u32); MAX_SORT_RULES],
     ipv4: [(libc::sa_family_t, u16, u32); MAXNS],
     search_ptrs: [usize; MAXDNSRCH + 1],
     search_values: Vec<Vec<u8>>,
@@ -196,6 +222,7 @@ impl PublishedConfig {
             options: state.options,
             nscount: state.nscount,
             ndots_nsort: state.ndots_nsort,
+            sort_list: state.sort_list.map(|entry| (entry.addr.s_addr, entry.mask)),
             ipv4: state.nsaddr_list.map(|address| {
                 (
                     address.sin_family,
@@ -232,6 +259,7 @@ impl PublishedConfig {
             || self.options != state.options
             || self.nscount != state.nscount
             || self.ndots_nsort != state.ndots_nsort
+            || self.sort_list != state.sort_list.map(|entry| (entry.addr.s_addr, entry.mask))
             || self.ipv4
                 != state.nsaddr_list.map(|address| {
                     (
@@ -649,10 +677,15 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
     if config.no_aaaa {
         next.options |= RES_NOAAAA;
     }
+    for (entry, rule) in next.sort_list.iter_mut().zip(&config.sort_list) {
+        entry.addr.s_addr = u32::from_ne_bytes(rule.address.octets());
+        entry.mask = u32::from_ne_bytes(rule.mask.octets());
+    }
+    let nsort = config.sort_list.len().min(MAX_SORT_RULES) as u32;
     next.ndots_nsort = if cfg!(target_endian = "little") {
-        config.ndots.min(15)
+        config.ndots.min(15) | (nsort << 4)
     } else {
-        config.ndots.min(15) << 28
+        (config.ndots.min(15) << 28) | (nsort << 24)
     };
     next.vcsock = -1;
     let mut extension = Extension {
@@ -665,6 +698,7 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
         reserved: [0; 2],
     };
     let mut owned = OwnedState {
+        sort_list: Vec::new(),
         search: Vec::new(),
         ipv6: Vec::new(),
         published_search: [0; MAXDNSRCH + 1],
@@ -693,6 +727,7 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
             }
         }
     }
+    owned.sort_list = config.sort_list;
     for domain in &config.search {
         let mut bytes = domain.as_bytes().to_vec();
         if bytes.contains(&0) {
@@ -780,13 +815,14 @@ pub(crate) struct HostLookup {
     pub config: LookupConfig,
     pub options: QueryOptions,
     pub alias: Option<Vec<u8>>,
+    pub sort_list: Vec<SortRule>,
 }
 
 unsafe fn host_lookup(pointer: *mut c_void, name: Option<&[u8]>) -> Result<HostLookup, c_int> {
-    let (options, ndots) = {
+    let (options, ndots, sort_list) = {
         // SAFETY: the global wrapper supplies this thread's live state.
         let state = unsafe { checked_state(pointer)? };
-        (state.options, state.ndots() as u32)
+        (state.options, state.ndots() as u32, state.sort_rules())
     };
     // SAFETY: validate and copy complete endpoints before network I/O.
     let transport = unsafe { transport_config(pointer)? };
@@ -821,6 +857,7 @@ unsafe fn host_lookup(pointer: *mut c_void, name: Option<&[u8]>) -> Result<HostL
         },
         options: query_options,
         alias,
+        sort_list,
     })
 }
 

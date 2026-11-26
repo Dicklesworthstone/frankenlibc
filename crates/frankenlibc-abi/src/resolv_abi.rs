@@ -3455,7 +3455,7 @@ fn native_dns_resolve(
     let mut canonical_name = None;
     policy
         .resolve_dns_with(|want_v4, want_v6| {
-            let result = frankenlibc_core::dns_transport::resolve_with_config(
+            let mut result = frankenlibc_core::dns_transport::resolve_with_config(
                 hostname,
                 want_v4,
                 want_v6,
@@ -3471,6 +3471,14 @@ fn native_dns_resolve(
                     )
                 },
             )?;
+            // The IPv4 hostent path applies sortlist. The dual-stack tuple
+            // path retains DNS order before getaddrinfo destination selection.
+            if want_v4 && !want_v6 {
+                frankenlibc_core::resolv::config::sort_ipv4_addresses(
+                    &mut result.addresses.ipv4,
+                    &lookup.sort_list,
+                );
+            }
             // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
             // canonical owner when both families succeed, as glibc does.
             if canonical_name.is_none() {

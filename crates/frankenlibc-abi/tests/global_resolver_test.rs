@@ -1319,3 +1319,89 @@ fn check_direct_dns_negative_answers(api: HostApi) {
     assert!(queries.iter().filter(|q| q.as_slice() == b"absent.provider.invalid").count() >= 2);
     assert!(queries.iter().any(|q| q.as_slice() == b"18.2.0.192.in-addr.arpa"));
 }
+
+#[test]
+fn ipv4_dns_answers_follow_public_sortlist_in_stable_order() {
+    if host_lookup_child("ipv4_dns_answers_follow_public_sortlist_in_stable_order") {
+        return;
+    }
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-sortlist-{}.conf",
+        std::process::id(),
+    ));
+    let mut file = std::fs::File::create_new(&path).unwrap();
+    std::io::Write::write_all(
+        &mut file,
+        b"sortlist 172.16.0.0 192.0.2.0/255.255.255.128\noptions ndots:5\n",
+    ).unwrap();
+    drop(file);
+    let native = host_apis()[0];
+    // SAFETY: only this child changes its environment, before starting any
+    // server threads. The initialized state belongs to this thread.
+    unsafe {
+        std::env::set_var("FRANKENLIBC_RESOLV_CONF", &path);
+        assert_eq!((native.init)(), 0);
+        let pointer = (native.state)();
+        let state = &*pointer.cast::<State>();
+        let fields = if cfg!(target_endian = "little") { 0x25 } else { 0x5200_0000 };
+        assert_eq!(state.ndots_nsort, fields);
+        assert_eq!(state.sort_list[0].addr.s_addr.to_ne_bytes(), [172, 16, 0, 0]);
+        assert_eq!(state.sort_list[0].mask.to_ne_bytes(), [255, 255, 0, 0]);
+        assert_eq!(state.sort_list[1].addr.s_addr.to_ne_bytes(), [192, 0, 2, 0]);
+        assert_eq!(state.sort_list[1].mask.to_ne_bytes(), [255, 255, 255, 128]);
+        (native.close)(pointer);
+        std::env::set_var("FRANKENLIBC_RESOLV_CONF", "/dev/null");
+    }
+    std::fs::remove_file(path).unwrap();
+
+    let wire = [
+        [192u8, 0, 2, 99], [198, 51, 100, 7], [203, 0, 113, 8],
+        [198, 51, 100, 3], [192, 0, 2, 11],
+    ];
+    for api in host_apis() {
+        let server = HostServer::new(move |query| {
+            let mut response = host_reply(query, 3, 0);
+            response[3] = 0x80;
+            response[7] = wire.len() as u8;
+            for address in wire {
+                response.extend_from_slice(&[0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4]);
+                response.extend_from_slice(&address);
+            }
+            response
+        });
+        let _cleanup = configure_host(api, server.endpoint);
+        for (prefix, order) in [
+            (None, [0, 1, 2, 3, 4]),
+            (Some([198u8, 51, 100, 0]), [1, 3, 0, 2, 4]),
+            (Some([192, 0, 2, 0]), [0, 4, 1, 2, 3]),
+        ] {
+            // SAFETY: this child owns the provider's initialized thread state.
+            // No reference to it survives the lookup. Copy each address while
+            // the provider still owns the same successful hostent result.
+            unsafe {
+                let state = &mut *(api.state)().cast::<State>();
+                let count = u32::from(prefix.is_some());
+                state.ndots_nsort = if cfg!(target_endian = "little") {
+                    1 | (count << 4)
+                } else {
+                    (1 << 28) | (count << 24)
+                };
+                if let Some(network) = prefix {
+                    state.sort_list[0].addr.s_addr = u32::from_ne_bytes(network);
+                    state.sort_list[0].mask = u32::from_ne_bytes([255, 255, 255, 0]);
+                }
+                let host = (api.legacy)(c"sorted.example.invalid.".as_ptr()).cast::<libc::hostent>();
+                assert!(!host.is_null());
+                assert_eq!(((*host).h_addrtype, (*host).h_length), (libc::AF_INET, 4));
+                assert!(!(*host).h_addr_list.is_null());
+                for (position, index) in order.into_iter().enumerate() {
+                    let address = *(*host).h_addr_list.add(position);
+                    assert!(!address.is_null());
+                    assert_eq!(*address.cast::<[u8; 4]>(), wire[index]);
+                }
+                assert!((*(*host).h_addr_list.add(wire.len())).is_null());
+            }
+        }
+        assert_eq!(server.finish().len(), 3);
+    }
+}
