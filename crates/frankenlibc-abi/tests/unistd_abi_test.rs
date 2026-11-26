@@ -15522,7 +15522,7 @@ fn nss_files_parsers_reject_null_result_without_changing_error() {
 }
 
 // ---------------------------------------------------------------------------
-// _nss_dns_* NSS DNS plugin lookup stubs
+// _nss_dns_* provider contracts
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -15549,7 +15549,7 @@ fn nss_dns_getcanonname_returns_notfound_with_h_errnop() {
 }
 
 #[test]
-fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
+fn nss_dns_gethostbyname_family_rejects_missing_output_objects() {
     use frankenlibc_abi::unistd_abi::{
         _nss_dns_gethostbyname_r, _nss_dns_gethostbyname2_r, _nss_dns_gethostbyname3_r,
         _nss_dns_gethostbyname4_r,
@@ -15569,9 +15569,7 @@ fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
             &mut h_errnop,
         )
     };
-    assert_eq!(rc, 0);
-    assert_eq!(errnop, libc::ENOENT);
-    assert_eq!(h_errnop, 1);
+    assert_eq!((rc, errnop, h_errnop), (-1, libc::EINVAL, -1));
 
     h_errnop = 0;
     let rc = unsafe {
@@ -15585,8 +15583,7 @@ fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
             &mut h_errnop,
         )
     };
-    assert_eq!(rc, 0);
-    assert_eq!(h_errnop, 1);
+    assert_eq!((rc, errnop, h_errnop), (-1, libc::EINVAL, -1));
 
     h_errnop = 0;
     let mut ttl: i32 = 0;
@@ -15604,15 +15601,13 @@ fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
             &mut canon,
         )
     };
-    assert_eq!(rc, 0);
-    assert_eq!(h_errnop, 1);
+    assert_eq!((rc, errnop, h_errnop), (-1, libc::EINVAL, -1));
 
     h_errnop = 0;
-    let mut pat: *mut c_void = std::ptr::null_mut();
     let rc = unsafe {
         _nss_dns_gethostbyname4_r(
             name.as_ptr(),
-            &mut pat,
+            std::ptr::null_mut(),
             buf.as_mut_ptr() as *mut c_char,
             buf.len(),
             &mut errnop,
@@ -15620,12 +15615,11 @@ fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
             &mut ttl,
         )
     };
-    assert_eq!(rc, 0);
-    assert_eq!(h_errnop, 1);
+    assert_eq!((rc, errnop, h_errnop), (-1, libc::EINVAL, -1));
 }
 
 #[test]
-fn nss_dns_gethostbyaddr_family_returns_notfound_and_sets_h_errnop() {
+fn nss_dns_gethostbyaddr_family_rejects_missing_output_objects() {
     use frankenlibc_abi::unistd_abi::{_nss_dns_gethostbyaddr_r, _nss_dns_gethostbyaddr2_r};
     let addr = [127u8, 0, 0, 1];
     let mut errnop: c_int = 0;
@@ -15644,9 +15638,7 @@ fn nss_dns_gethostbyaddr_family_returns_notfound_and_sets_h_errnop() {
             &mut h_errnop,
         )
     };
-    assert_eq!(rc, 0);
-    assert_eq!(errnop, libc::ENOENT);
-    assert_eq!(h_errnop, 1);
+    assert_eq!((rc, errnop, h_errnop), (-1, libc::EINVAL, -1));
 
     h_errnop = 0;
     let mut ttl: i32 = 0;
@@ -15663,8 +15655,7 @@ fn nss_dns_gethostbyaddr_family_returns_notfound_and_sets_h_errnop() {
             &mut ttl,
         )
     };
-    assert_eq!(rc, 0);
-    assert_eq!(h_errnop, 1);
+    assert_eq!((rc, errnop, h_errnop), (-1, libc::EINVAL, -1));
 }
 
 #[test]

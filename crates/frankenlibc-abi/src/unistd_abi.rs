@@ -14342,11 +14342,19 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname3_r(
         if !canonp.is_null() {
             *canonp = (*resolved.cast::<libc::hostent>()).h_name;
         }
-        if !ttlp.is_null() {
-            *ttlp = (*ttlp).min(i32::try_from(answer.metadata.ttl).unwrap_or(0));
-        }
+        nss_dns_limit_ttl(ttlp, answer.metadata.ttl);
     }
     NSS_STATUS_SUCCESS
+}
+
+/// The optional NSS TTL slot is an in/out ceiling. DNS compares it as an
+/// unsigned lifetime, including when the caller supplies -1 for no limit.
+unsafe fn nss_dns_limit_ttl(slot: *mut i32, ttl: u32) {
+    let ttl = i32::try_from(ttl).unwrap_or(0);
+    // SAFETY: each caller checked the optional slot before its DNS exchange.
+    if !slot.is_null() && unsafe { *slot as u32 } > ttl as u32 {
+        unsafe { *slot = ttl };
+    }
 }
 
 unsafe fn nss_dns_lookup_error(code: c_int, errnop: *mut c_int, h_errnop: *mut c_int) -> c_int {
@@ -14408,9 +14416,7 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname4_r(
     match unsafe { nss_write_gaih_addrtuples(&answer.name, &addresses, pat, buffer, buflen) } {
         Ok(true) => {
             unsafe {
-                if !ttlp.is_null() {
-                    *ttlp = (*ttlp).min(answer.metadata.ttl as i32);
-                }
+                nss_dns_limit_ttl(ttlp, answer.metadata.ttl);
                 nss_set_herr(h_errnop, 0);
             }
             NSS_STATUS_SUCCESS
@@ -14463,15 +14469,28 @@ pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
     {
         return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     }
-    if !matches!(af, libc::AF_INET | libc::AF_INET6) {
-        return unsafe { nss_files_host_status(Err(libc::EAFNOSUPPORT), errnop, h_errnop) };
+    // Even an empty answer needs two aligned address-list slots. Detect a
+    // size-only retry before starting a DNS exchange.
+    let buflen = tracked_output_capacity(buffer, buflen);
+    let padding = buffer.align_offset(core::mem::align_of::<*mut c_char>());
+    if buflen.saturating_sub(padding) < core::mem::size_of::<[*mut c_char; 2]>() {
+        return unsafe { nss_files_host_status(Err(libc::ERANGE), errnop, h_errnop) };
+    }
+    match af {
+        libc::AF_INET if len >= 4 => {}
+        libc::AF_INET6 if len >= 16 => {}
+        _ => return unsafe { nss_files_host_status(Err(libc::EAFNOSUPPORT), errnop, h_errnop) },
     }
     // Copy before writing: a caller can reuse the input space for its answer.
     let Ok(address) = (unsafe { crate::resolv_abi::read_reverse_host_address(addr, len, af) }) else {
         return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     };
     let address = match address {
-        std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(address),
+        // The DNS module treats both mapped and compatible IPv6 addresses
+        // as IPv4. ::1 remains a native IPv6 loopback lookup.
+        std::net::IpAddr::V6(ip) if len == 16 && !ip.is_loopback() => {
+            ip.to_ipv4().map(std::net::IpAddr::V4).unwrap_or(address)
+        }
         address => address,
     };
     // An NSS provider must query its own backend directly, even when the
@@ -14489,9 +14508,9 @@ pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
     } {
         return unsafe { nss_files_host_status(Err(code), errnop, h_errnop) };
     }
-    if !ttlp.is_null() {
-        // RFC 2181 section 8: TTLs with the high bit set are treated as zero.
-        unsafe { *ttlp = i32::try_from(ttl).unwrap_or(0) };
+    unsafe {
+        nss_dns_limit_ttl(ttlp, ttl);
+        nss_set_herr(h_errnop, 0);
     }
     NSS_STATUS_SUCCESS
 }

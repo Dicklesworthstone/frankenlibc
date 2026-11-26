@@ -1048,6 +1048,7 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
         assert_eq!(observations[1], (expected.to_vec(), expected.to_vec()));
     }
     check_direct_dns_forward_provider(host_apis()[0]);
+    check_direct_dns_negative_answers(host_apis()[0]);
     for (index, api) in host_apis().into_iter().enumerate() {
         check_direct_dns_tuple_provider(api, index == 0);
     }
@@ -1057,17 +1058,34 @@ fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
     use frankenlibc_abi::unistd_abi::{_nss_dns_gethostbyaddr_r, _nss_dns_gethostbyaddr2_r};
 
     type Reverse = unsafe extern "C" fn(
-        *const c_void, libc::socklen_t, libc::c_int, *mut c_void, *mut libc::c_char,
-        usize, *mut libc::c_int, *mut libc::c_int, *mut i32,
+        *const c_void,
+        libc::socklen_t,
+        libc::c_int,
+        *mut c_void,
+        *mut libc::c_char,
+        usize,
+        *mut libc::c_int,
+        *mut libc::c_int,
+        *mut i32,
     ) -> libc::c_int;
-    let reverse: Reverse = if candidate {
-        _nss_dns_gethostbyaddr2_r
+    type Legacy = unsafe extern "C" fn(
+        *const c_void,
+        libc::socklen_t,
+        libc::c_int,
+        *mut c_void,
+        *mut libc::c_char,
+        usize,
+        *mut libc::c_int,
+        *mut libc::c_int,
+    ) -> libc::c_int;
+    let (reverse, legacy): (Reverse, Legacy) = if candidate {
+        (_nss_dns_gethostbyaddr2_r, _nss_dns_gethostbyaddr_r)
     } else {
-        // SAFETY: the direct GNU DNS provider has this same C signature.
+        // SAFETY: the direct GNU DNS providers have these same C signatures.
         unsafe {
-            dlsym_oracle::host_fn(
-                c"_nss_dns_gethostbyaddr2_r",
-                _nss_dns_gethostbyaddr2_r as *const (),
+            (
+                dlsym_oracle::host_fn(c"_nss_dns_gethostbyaddr2_r", _nss_dns_gethostbyaddr2_r as *const ()),
+                dlsym_oracle::host_fn(c"_nss_dns_gethostbyaddr_r", _nss_dns_gethostbyaddr_r as *const ()),
             )
         }
     };
@@ -1077,47 +1095,63 @@ fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
     assert_eq!(unsafe { (api.select)(c"hosts".as_ptr(), c"files".as_ptr()) }, 0);
     let ipv4 = [203u8, 0, 113, 77];
     let ipv6 = "2001:db8::77".parse::<std::net::Ipv6Addr>().unwrap().octets();
-    for (af, addr) in [(libc::AF_INET, &ipv4[..]), (libc::AF_INET6, &ipv6[..])] {
+    let loopback = std::net::Ipv6Addr::LOCALHOST.octets();
+    let mut compatible = [0u8; 16];
+    compatible[12..].copy_from_slice(&ipv4);
+    let mapped = std::net::Ipv4Addr::from(ipv4).to_ipv6_mapped().octets();
+    for (af, input, family, address, ceiling) in [
+        (libc::AF_INET, &ipv4[..], libc::AF_INET, &ipv4[..], i32::MAX),
+        (libc::AF_INET6, &ipv6[..], libc::AF_INET6, &ipv6[..], 5),
+        (libc::AF_INET6, &mapped[..], libc::AF_INET, &ipv4[..], -1),
+        (libc::AF_INET6, &compatible[..], libc::AF_INET, &ipv4[..], 5),
+        (libc::AF_INET6, &loopback[..], libc::AF_INET6, &loopback[..], i32::MAX),
+    ] {
         let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
-        let mut scratch = [0u8; 512];
-        let (mut error, mut host_error, mut ttl) = (0, 0, -1);
-        // SAFETY: all caller objects are live. The hostent is read only upon success.
+        let mut scratch = [0u8; 4096];
+        let (mut error, mut host_error, mut ttl) = (0, -1, ceiling);
+        // SAFETY: all caller objects are live. Read the hostent only on success.
         unsafe {
             let status = reverse(
-                addr.as_ptr().cast(), addr.len() as _, af, entry.as_mut_ptr().cast(),
+                input.as_ptr().cast(), input.len() as _, af, entry.as_mut_ptr().cast(),
                 scratch.as_mut_ptr().cast(), scratch.len(), &mut error, &mut host_error, &mut ttl,
             );
-            assert_eq!(status, 1);
-            if candidate {
-                assert_eq!(ttl, 60);
-            }
+            let expected_ttl = (ceiling as u32).min(60) as i32;
+            assert_eq!((status, host_error, ttl), (1, 0, expected_ttl));
             let entry = entry.assume_init();
             assert_eq!(std::ffi::CStr::from_ptr(entry.h_name).to_bytes(), b"reverse.caller.invalid");
-            assert_eq!((entry.h_addrtype, entry.h_length), (af, addr.len() as i32));
+            assert_eq!((entry.h_addrtype, entry.h_length), (family, address.len() as i32));
             assert!((*entry.h_aliases).is_null());
-            assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), addr.len()), addr);
+            assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), address.len()), address);
             assert!((*entry.h_addr_list.add(1)).is_null());
         }
     }
-    if !candidate {
-        assert_eq!(server.finish().len(), 2);
-        return;
+    for (af, len, capacity, expected) in [
+        (libc::AF_INET, 4, 1, (-2, libc::ERANGE, -1)),
+        (libc::AF_INET, 3, 4096, (-1, libc::EAFNOSUPPORT, -1)),
+        (libc::AF_INET6, 15, 4096, (-1, libc::EAFNOSUPPORT, -1)),
+    ] {
+        let mut scratch = [0xa5u8; 4096];
+        let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
+        let (mut error, mut host_error) = (0, 0);
+        // SAFETY: input and output objects are live and cover their supplied lengths.
+        let status = unsafe {
+            legacy(
+                ipv6.as_ptr().cast(), len, af, entry.as_mut_ptr().cast(),
+                scratch.as_mut_ptr().cast(), capacity, &mut error, &mut host_error,
+            )
+        };
+        assert_eq!((status, error, host_error), expected);
+        if capacity == 1 {
+            assert_eq!(scratch, [0xa5; 4096]);
+        }
     }
-    let mut scratch = [0xa5u8; 1];
-    let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
-    let (mut error, mut host_error) = (0, 0);
-    let status = unsafe {
-        _nss_dns_gethostbyaddr_r(
-            ipv4.as_ptr().cast(), 4, libc::AF_INET, entry.as_mut_ptr().cast(),
-            scratch.as_mut_ptr().cast(), scratch.len(), &mut error, &mut host_error,
-        )
-    };
-    assert_eq!((status, error, host_error), (-2, libc::ERANGE, -1));
-    assert_eq!(scratch, [0xa5]);
     let queries = server.finish();
+    assert_eq!(queries.len(), 5, "preflight failures must not issue PTR queries");
     assert_eq!(queries[0], b"77.113.0.203.in-addr.arpa");
     assert!(queries[1].ends_with(b".ip6.arpa"));
     assert_eq!(queries[2], queries[0]);
+    assert_eq!(queries[3], queries[0]);
+    assert!(queries[4].ends_with(b".ip6.arpa"));
 }
 
 fn dual_stack_reply(query: &[u8]) -> Vec<u8> {
@@ -1145,7 +1179,7 @@ fn check_direct_dns_forward_provider(api: HostApi) {
     let _cleanup = configure_host(api, server.endpoint);
     assert_eq!(unsafe { (api.select)(c"hosts".as_ptr(), c"files".as_ptr()) }, 0);
     for (family, expected, initial_ttl) in [
-        (libc::AF_INET, vec![192u8, 0, 2, 17], 100),
+        (libc::AF_INET, vec![192u8, 0, 2, 17], -1),
         (libc::AF_INET6, std::net::Ipv6Addr::LOCALHOST.octets().to_vec(), 7),
     ] {
         let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
@@ -1173,7 +1207,7 @@ fn check_direct_dns_forward_provider(api: HostApi) {
             assert!((*entry.h_addr_list.add(1)).is_null());
             assert!((*entry.h_aliases).is_null());
             let record_ttl = if family == libc::AF_INET { 19 } else { 31 };
-            assert_eq!((ttl, host_error), (record_ttl.min(initial_ttl), 0));
+            assert_eq!((ttl, host_error), ((initial_ttl as u32).min(record_ttl) as i32, 0));
         }
     }
     assert_eq!(server.finish(), vec![b"forward.provider.invalid".to_vec(); 2]);
@@ -1245,4 +1279,43 @@ fn check_direct_dns_tuple_provider(api: HostApi, candidate: bool) {
         }
     }
     assert_eq!(server.finish(), vec![b"tuples.provider.invalid".to_vec(); 4]);
+}
+
+fn check_direct_dns_negative_answers(api: HostApi) {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_dns_gethostbyaddr_r, _nss_dns_gethostbyname_r, _nss_dns_gethostbyname4_r,
+    };
+    let server = HostServer::new(|query| host_reply(query, 3, 0));
+    let _cleanup = configure_host(api, server.endpoint);
+    let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
+    let mut buffer = [0u8; 4096];
+    let name = c"absent.provider.invalid.";
+    let address = [192u8, 0, 2, 18];
+    let mut head = std::ptr::null_mut();
+    for operation in 0..3 {
+        let (mut error, mut host_error) = (0, 0);
+        // SAFETY: each operation has valid caller-owned output and scratch
+        // space, so its failure must come from the loopback server's NXDOMAIN.
+        let status = unsafe {
+            match operation {
+                0 => _nss_dns_gethostbyname_r(
+                    name.as_ptr(), entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(),
+                    buffer.len(), &mut error, &mut host_error,
+                ),
+                1 => _nss_dns_gethostbyname4_r(
+                    name.as_ptr(), &mut head, buffer.as_mut_ptr().cast(), buffer.len(),
+                    &mut error, &mut host_error, std::ptr::null_mut(),
+                ),
+                _ => _nss_dns_gethostbyaddr_r(
+                    address.as_ptr().cast(), 4, libc::AF_INET, entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(), buffer.len(), &mut error, &mut host_error,
+                ),
+            }
+        };
+        assert_eq!((status, error, host_error), (0, libc::ENOENT, 1));
+    }
+    assert!(head.is_null());
+    let queries = server.finish();
+    assert!(queries.iter().filter(|q| q.as_slice() == b"absent.provider.invalid").count() >= 2);
+    assert!(queries.iter().any(|q| q.as_slice() == b"18.2.0.192.in-addr.arpa"));
 }
