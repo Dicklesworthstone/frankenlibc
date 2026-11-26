@@ -14,6 +14,7 @@
 #include <stdio_ext.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -1180,6 +1181,131 @@ static int test_cookie_write_results(void) {
     return failed;
 }
 
+struct pressure_write_cookie {
+    FILE *stream;
+    const unsigned char *expected;
+    size_t length, position, calls;
+    int failed;
+};
+
+static ssize_t write_cookie_under_pressure(void *opaque, const char *bytes, size_t count) {
+    struct pressure_write_cookie *cookie = opaque;
+    ++cookie->calls;
+    if (count > cookie->length - cookie->position) {
+        cookie->failed = 1;
+        return 0;
+    }
+    cookie->failed |= memcmp(bytes, cookie->expected + cookie->position, count) != 0;
+    cookie->position += count;
+    /* These queries reacquire the provider's private stream state, and the
+     * public lock must support recursion through a live write callback. No
+     * callback allocation is needed while the address-space limit is active. */
+    int saved_errno = errno;
+    int locked = ftrylockfile(cookie->stream) == 0;
+    cookie->failed |= !locked;
+    if (locked) {
+        cookie->failed |= ferror(cookie->stream) != 0 || feof(cookie->stream) != 0;
+        funlockfile(cookie->stream);
+    }
+    errno = saved_errno;
+    return (ssize_t)count;
+}
+
+/* A direct cookie write already has caller-owned bytes. GNU delivers them
+ * even when allocating another complete payload would fail. Exercise real
+ * exported functions and real allocation pressure, not a mock allocator. */
+static int test_cookie_write_pressure(int buffering, int unlocked) {
+    const size_t length = 64u * 1024u * 1024u;
+    const int modes[] = {_IONBF, _IOFBF, _IOLBF};
+    const char *names[] = {"none", "full", "line"};
+    const char *api = unlocked ? "fwrite_unlocked" : "fwrite";
+    size_t (*write_bytes)(const void *, size_t, size_t, FILE *) = dlsym(RTLD_DEFAULT, api);
+    struct pressure_write_cookie cookie = {0};
+    unsigned char *payload = MAP_FAILED;
+    void *duplicate = NULL;
+    FILE *stream = NULL;
+    int failed = 0, limit_active = 0, exhausted = 0, statm_fd = -1;
+    size_t written = 0;
+    struct rlimit previous = {0};
+    if (!write_bytes) { failed = 1; goto cleanup; }
+    payload = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (payload == MAP_FAILED) { failed = 1; goto cleanup; }
+    memset(payload, 0xa5, length);
+    for (size_t offset = 0; offset < length; offset += 4096)
+        payload[offset] = (unsigned char)((offset / 4096) % 251);
+    payload[length - 1] = '\n';
+    stream = fopencookie(&cookie, "w",
+                        (cookie_io_functions_t){.write = write_cookie_under_pressure});
+    if (!stream) { failed = 1; goto cleanup; }
+    cookie.stream = stream;
+    char storage[8192];
+    if (setvbuf(stream, buffering ? storage : NULL, modes[buffering],
+                buffering ? sizeof(storage) : 0)) { failed = 1; goto cleanup; }
+    cookie.expected = (const unsigned char *)"!\n";
+    cookie.length = 2;
+    /* Warm stream storage, provider state and recursive callback locks, then
+     * empty the buffer. The measured full/line write has no pending prefix. */
+    if (write_bytes("!\n", 1, 2, stream) != 2 || fflush(stream) ||
+        cookie.position != 2 || cookie.failed) { failed = 1; goto cleanup; }
+    cookie.expected = payload;
+    cookie.length = length;
+    cookie.position = cookie.calls = 0;
+
+    char statm[128];
+    statm_fd = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+    if (statm_fd < 0) { failed = 1; goto cleanup; }
+    ssize_t count = read(statm_fd, statm, sizeof(statm) - 1);
+    if (close(statm_fd)) failed = 1;
+    statm_fd = -1;
+    if (failed || count <= 0) { failed = 1; goto cleanup; }
+    statm[count] = 0;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long pages = strtoull(statm, &end, 10);
+    int parse_errno = errno;
+    long page_size = sysconf(_SC_PAGESIZE);
+    const rlim_t headroom = 512u * 1024u;
+    if (parse_errno || end == statm || *end != ' ' || page_size <= 0 ||
+        pages > (RLIM_INFINITY - headroom) / (rlim_t)page_size ||
+        getrlimit(RLIMIT_AS, &previous)) { failed = 1; goto cleanup; }
+    struct rlimit restricted = previous;
+    restricted.rlim_cur = (rlim_t)pages * (rlim_t)page_size + headroom;
+    if (restricted.rlim_cur > previous.rlim_cur || setrlimit(RLIMIT_AS, &restricted)) {
+        failed = 1;
+        goto cleanup;
+    }
+    limit_active = 1;
+
+    /* This control must actually fail before crediting the write. If an
+     * allocator has a reusable large block, that is a failed fixture setup,
+     * not evidence that a payload-sized copy was avoided. */
+    errno = 0;
+    duplicate = malloc(length);
+    exhausted = duplicate == NULL && errno == ENOMEM;
+    if (exhausted) {
+        written = write_bytes(payload, 1, length, stream);
+        failed |= written != length || fflush(stream) != 0 || ferror(stream) != 0 ||
+                  __fpending(stream) != 0 || cookie.position != length ||
+                  cookie.calls == 0 || cookie.failed;
+    } else {
+        failed = 1;
+    }
+
+cleanup:
+    /* Restore before diagnostics, FILE destruction or any other test work. */
+    if (limit_active && setrlimit(RLIMIT_AS, &previous)) failed = 1;
+    if (statm_fd >= 0 && close(statm_fd)) failed = 1;
+    free(duplicate);
+    if (stream && fclose(stream)) failed = 1;
+    if (payload != MAP_FAILED && munmap(payload, length)) failed = 1;
+    if (failed) fprintf(stderr,
+        "FAIL cookie write pressure api=%s mode=%s exhausted=%d written=%zu bytes=%zu calls=%zu callback=%d\n",
+        api, names[buffering], exhausted, written, cookie.position, cookie.calls, cookie.failed);
+    printf("cookie-write-pressure:api=%s mode=%s bytes=%zu result=%s\n",
+           api, names[buffering], cookie.position, failed ? "FAIL" : "PASS");
+    return failed != 0;
+}
+
 /* A failed reposition must not consume the ordinary read-ahead buffer or
  * clear an existing EOF indicator. Invalid whence must also leave pushback
  * untouched. Check both the regular and LP64 large-file frontends against
@@ -1367,6 +1493,11 @@ static int test_fd_write_errors(void) {
     cases += 16;
     failed += test_cookie_write_results();
     cases += 9;
+    for (int buffering = 0; buffering < 3; ++buffering)
+        for (int unlocked = 0; unlocked < 2; ++unlocked) {
+            failed += test_cookie_write_pressure(buffering, unlocked);
+            ++cases;
+        }
     for (int api = 0; api < 2; ++api)
         for (int kind = 0; kind < 3; ++kind)
             for (int at_eof = 0; at_eof < 2; ++at_eof) {
@@ -2920,7 +3051,8 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "write-errors") == 0) {
         const char *symbols[] = {"fdopen", "fwrite", "fputs", "fputs_unlocked", "fputc", "fputc_unlocked",
                                  "putc", "putc_unlocked", "fprintf", "vfprintf", "fflush", "ftell", "fseek", "fseeko", "setvbuf",
-                                 "fread", "fgetc", "ungetc", "clearerr", "ferror", "feof", "fclose", "fopencookie", "__fpending"};
+                                 "fread", "fgetc", "ungetc", "clearerr", "ferror", "feof", "fclose", "fopencookie", "__fpending",
+                                 "fwrite_unlocked", "ftrylockfile", "funlockfile", "malloc", "free"};
         if (argc == 3 && check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_fd_write_errors();

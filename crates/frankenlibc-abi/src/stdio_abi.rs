@@ -20894,18 +20894,19 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StreamGuard<'_>, bytes: &[
         return bytes.len();
     }
 
-    // Only the private snprintf hook can receive a borrowed span. It copies
-    // into the bounded destination synchronously and invokes no user code, so
-    // even a huge callback fwrite needs no full-size intermediate allocation.
+    // The private snprintf hook invokes no user code, so it can keep the
+    // private stream lock while copying into its bounded destination.
     let (flush_length, flushed) = if bounded_printf {
         let flush_data = result.flush_data;
         let length = flush_data.len();
         let written = unsafe { cookie_write_once(id, &flush_data) };
         (length, written)
     } else {
-        // End the mutable stream borrow before releasing its mutex. The
-        // callback owns a stable input span even if it reenters this FILE.
-        let flush_data = result.flush_data.into_owned();
+        // WriteResult borrows only the caller's input, never the stream's
+        // private buffer. An owned combined prefix is already independent.
+        // Either span stays live across callback reentry without duplicating
+        // a potentially huge direct write solely to release the stream lock.
+        let flush_data = result.flush_data;
         let length = flush_data.len();
         let written = stream.with_callback(|| unsafe { cookie_write_once(id, &flush_data) });
         (length, written)
