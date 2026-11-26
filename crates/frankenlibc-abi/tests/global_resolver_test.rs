@@ -562,6 +562,9 @@ fn global_host_lookup_legacy_and_reverse_share_public_state() {
             ]
         );
     }
+    for (index, api) in host_apis().into_iter().enumerate() {
+        check_direct_dns_ptr_provider(api, index == 0);
+    }
 }
 
 #[test]
@@ -1033,4 +1036,71 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
         assert_eq!(observations[0], observations[1], "targets={targets:?}");
         assert_eq!(observations[1], (expected.to_vec(), expected.to_vec()));
     }
+}
+
+fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
+    use frankenlibc_abi::unistd_abi::{_nss_dns_gethostbyaddr_r, _nss_dns_gethostbyaddr2_r};
+
+    type Reverse = unsafe extern "C" fn(
+        *const c_void, libc::socklen_t, libc::c_int, *mut c_void, *mut libc::c_char,
+        usize, *mut libc::c_int, *mut libc::c_int, *mut i32,
+    ) -> libc::c_int;
+    let reverse: Reverse = if candidate {
+        _nss_dns_gethostbyaddr2_r
+    } else {
+        // SAFETY: the direct GNU DNS provider has this same C signature.
+        unsafe {
+            dlsym_oracle::host_fn(
+                c"_nss_dns_gethostbyaddr2_r",
+                _nss_dns_gethostbyaddr2_r as *const (),
+            )
+        }
+    };
+    let server = HostServer::new(|query| host_reply(query, 0, 0));
+    let _cleanup = configure_host(api, server.endpoint);
+    // A direct provider call must bypass the process's normal hosts policy.
+    assert_eq!(unsafe { (api.select)(c"hosts".as_ptr(), c"files".as_ptr()) }, 0);
+    let ipv4 = [203u8, 0, 113, 77];
+    let ipv6 = "2001:db8::77".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    for (af, addr) in [(libc::AF_INET, &ipv4[..]), (libc::AF_INET6, &ipv6[..])] {
+        let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
+        let mut scratch = [0u8; 512];
+        let (mut error, mut host_error, mut ttl) = (0, 0, -1);
+        // SAFETY: all caller objects are live. The hostent is read only upon success.
+        unsafe {
+            let status = reverse(
+                addr.as_ptr().cast(), addr.len() as _, af, entry.as_mut_ptr().cast(),
+                scratch.as_mut_ptr().cast(), scratch.len(), &mut error, &mut host_error, &mut ttl,
+            );
+            assert_eq!(status, 1);
+            if candidate {
+                assert_eq!(ttl, 60);
+            }
+            let entry = entry.assume_init();
+            assert_eq!(std::ffi::CStr::from_ptr(entry.h_name).to_bytes(), b"reverse.caller.invalid");
+            assert_eq!((entry.h_addrtype, entry.h_length), (af, addr.len() as i32));
+            assert!((*entry.h_aliases).is_null());
+            assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), addr.len()), addr);
+            assert!((*entry.h_addr_list.add(1)).is_null());
+        }
+    }
+    if !candidate {
+        assert_eq!(server.finish().len(), 2);
+        return;
+    }
+    let mut scratch = [0xa5u8; 1];
+    let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
+    let (mut error, mut host_error) = (0, 0);
+    let status = unsafe {
+        _nss_dns_gethostbyaddr_r(
+            ipv4.as_ptr().cast(), 4, libc::AF_INET, entry.as_mut_ptr().cast(),
+            scratch.as_mut_ptr().cast(), scratch.len(), &mut error, &mut host_error,
+        )
+    };
+    assert_eq!((status, error, host_error), (-2, libc::ERANGE, -1));
+    assert_eq!(scratch, [0xa5]);
+    let queries = server.finish();
+    assert_eq!(queries[0], b"77.113.0.203.in-addr.arpa");
+    assert!(queries[1].ends_with(b".ip6.arpa"));
+    assert_eq!(queries[2], queries[0]);
 }

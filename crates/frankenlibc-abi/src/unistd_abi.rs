@@ -14203,13 +14203,11 @@ nss_files_parse_account!(_nss_files_parse_spent, Shadow);
 nss_files_parse_account!(_nss_files_parse_sgent, Gshadow);
 
 // ---------------------------------------------------------------------------
-// _nss_dns_* NSS DNS plugin lookup stubs
+// _nss_dns_* NSS DNS provider entry points
 // ---------------------------------------------------------------------------
 //
-// Each returns NSS_STATUS_NOTFOUND (= 0) and sets *errnop = ENOENT
-// + *h_errnop = HOST_NOT_FOUND (= 1) when non-NULL, so the NSS
-// dispatch layer falls through to the next module. Without a real
-// resolver-backed NSS_DNS module we never claim to have an answer.
+// The reverse host provider uses the native PTR transport. The remaining
+// fallback entry points report NOTFOUND to the NSS dispatcher.
 
 #[inline]
 unsafe fn nss_set_h_errnop_host_not_found(h_errnop: *mut c_int) {
@@ -14301,36 +14299,94 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname4_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_dns_gethostbyaddr_r(
-    _addr: *const c_void,
-    _len: usize,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    // SAFETY: the legacy provider has the same caller objects and omits TTL.
+    unsafe {
+        _nss_dns_gethostbyaddr2_r(
+            addr, len, af, result, buffer, buflen, errnop, h_errnop, std::ptr::null_mut(),
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
-    _addr: *const c_void,
-    _len: usize,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    _ttlp: *mut i32,
+    ttlp: *mut i32,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if (!errnop.is_null() && !tracked_object_fits(errnop))
+        || (!h_errnop.is_null() && !tracked_object_fits(h_errnop))
+    {
+        return NSS_STATUS_UNAVAIL;
+    }
+    if !tracked_object_fits(result.cast::<libc::hostent>())
+        || buffer.is_null()
+        || (!ttlp.is_null() && !tracked_object_fits(ttlp))
+    {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    }
+    if !matches!(af, libc::AF_INET | libc::AF_INET6) {
+        return unsafe { nss_files_host_status(Err(libc::EAFNOSUPPORT), errnop, h_errnop) };
+    }
+    // Copy before writing: a caller can reuse the input space for its answer.
+    let Ok(address) = (unsafe { crate::resolv_abi::read_reverse_host_address(addr, len, af) }) else {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    };
+    let address = match address {
+        std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(address),
+        address => address,
+    };
+    // An NSS provider must query its own backend directly, even when the
+    // process has configured files or another module as its only hosts source.
+    let (name, ttl) = match crate::resolv_abi::native_dns_ptr(address) {
+        Ok(answer) => answer,
+        Err(code) if code == libc::EAI_NONAME => {
+            return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+        }
+        Err(code) if code == libc::EAI_AGAIN => {
+            unsafe {
+                nss_set_errnop(errnop, libc::EAGAIN);
+                nss_set_herr(h_errnop, 2); // TRY_AGAIN
+            }
+            return NSS_STATUS_TRYAGAIN;
+        }
+        Err(_) => {
+            unsafe {
+                nss_set_errnop(errnop, libc::EIO);
+                nss_set_herr(h_errnop, NSS_NO_RECOVERY);
+            }
+            return NSS_STATUS_UNAVAIL;
+        }
+    };
+    let mut resolved = std::ptr::null_mut();
+    // SAFETY: the hostent fits, and the writer bounds each scratch-buffer access.
+    if let Err(code) = unsafe {
+        crate::resolv_abi::write_reentrant_reverse_hostent(
+            &name, address, result, buffer, buflen, &mut resolved,
+        )
+    } {
+        return unsafe { nss_files_host_status(Err(code), errnop, h_errnop) };
+    }
+    if !ttlp.is_null() {
+        // RFC 2181 section 8: TTLs with the high bit set are treated as zero.
+        unsafe { *ttlp = i32::try_from(ttl).unwrap_or(0) };
+    }
+    NSS_STATUS_SUCCESS
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

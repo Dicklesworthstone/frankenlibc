@@ -2552,13 +2552,17 @@ unsafe fn write_reentrant_hostent(
         *addr_list_ptr.add(1) = ptr::null_mut();
     }
 
-    // SAFETY: result_buf points to caller-owned hostent storage.
-    let hostent = unsafe { &mut *result_buf.cast::<libc::hostent>() };
-    hostent.h_name = name_ptr;
-    hostent.h_aliases = aliases_ptr;
-    hostent.h_addrtype = libc::AF_INET;
-    hostent.h_length = 4;
-    hostent.h_addr_list = addr_list_ptr;
+    // SAFETY: the caller may supply uninitialized hostent storage. Publish
+    // the complete value only after its pointers have all been packed.
+    unsafe {
+        result_buf.cast::<libc::hostent>().write(libc::hostent {
+            h_name: name_ptr,
+            h_aliases: aliases_ptr,
+            h_addrtype: libc::AF_INET,
+            h_length: 4,
+            h_addr_list: addr_list_ptr,
+        });
+    }
 
     // SAFETY: result pointer is valid and writable by caller contract.
     unsafe { *result = result_buf };
@@ -3231,13 +3235,17 @@ fn reverse_hosts_lookup<T>(
 
 /// Resolve a files-only reverse miss through the validated native PTR engine.
 fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
+    native_dns_ptr(address).map(|(name, _)| name)
+}
+
+pub(crate) fn native_dns_ptr(address: std::net::IpAddr) -> Result<(Vec<u8>, u32), c_int> {
     use frankenlibc_core::dns_transport::ResolveError;
     let lookup = crate::resolv_state::global::host_lookup(None).map_err(|error| {
         // SAFETY: report malformed state in the calling thread.
         unsafe { set_abi_errno(error) };
         libc::EAI_FAIL
     })?;
-    frankenlibc_core::dns_transport::reverse_with_config(
+    frankenlibc_core::dns_transport::reverse_with_ttl(
         address,
         &lookup.config.transport,
         |name, kind, server, timeout, _, _| {
@@ -5411,7 +5419,7 @@ pub(crate) unsafe fn gethostbyname_r_impl(
 
 /// Copy a legacy reverse-lookup address without imposing alignment on the
 /// caller's byte buffer. Errors are h_errno values, not errno values.
-unsafe fn read_reverse_host_address(
+pub(crate) unsafe fn read_reverse_host_address(
     addr: *const c_void,
     len: libc::socklen_t,
     af: c_int,
@@ -5616,7 +5624,7 @@ unsafe fn write_reentrant_module_hostent(
     }
 }
 
-unsafe fn write_reentrant_reverse_hostent(
+pub(crate) unsafe fn write_reentrant_reverse_hostent(
     name: &[u8],
     address: std::net::IpAddr,
     result_buf: *mut c_void,

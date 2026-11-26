@@ -1095,8 +1095,21 @@ where
 pub fn reverse_with_config<F>(
     address: IpAddr,
     config: &raw::Config,
-    mut query: F,
+    query: F,
 ) -> Result<Vec<u8>, ResolveError>
+where
+    F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
+{
+    reverse_with_ttl(address, config, query).map(|(name, _)| name)
+}
+
+/// The validated PTR target and its TTL, bounded by any CNAMEs followed
+/// to reach it. NSS cache consumers need both from the same DNS exchange.
+pub fn reverse_with_ttl<F>(
+    address: IpAddr,
+    config: &raw::Config,
+    mut query: F,
+) -> Result<(Vec<u8>, u32), ResolveError>
 where
     F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
 {
@@ -1131,7 +1144,9 @@ where
                         // The first owner-bound IN/PTR is authoritative for
                         // this result. Do not salvage an invalid first target
                         // by accepting a later one: glibc reports no name.
-                        return ptr_hostname(&record.rdata).ok_or(ResolveError::NotFound);
+                        return ptr_hostname(&record.rdata)
+                            .map(|name| (name, record.ttl))
+                            .ok_or(ResolveError::NotFound);
                     }
                     return Err(ResolveError::NotFound);
                 }
