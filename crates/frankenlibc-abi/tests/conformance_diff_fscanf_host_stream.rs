@@ -1950,6 +1950,79 @@ mod streaming_narrow {
     }
 
     #[test]
+    fn sscanf_wide_fields_match_glibc_on_unnumbered_destinations() {
+        type Scan = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
+        // All formats below have the same meaning in the legacy, C99 and C23 dialects.
+        let oracle: Scan = unsafe { host_fn(c"sscanf", fl::sscanf as *const ()) };
+        let (native, host) = (Api::native(), Api::host());
+        for locale in [c"C", c"C.UTF-8"] {
+            let _locale = Utf8Locale::select_named(locale, libc::LC_ALL_MASK);
+            for (name, scan) in [
+                ("sscanf", fl::sscanf as Scan),
+                ("__isoc99_sscanf", fl::__isoc99_sscanf as Scan),
+                ("__isoc23_sscanf", isoc_abi::__isoc23_sscanf as Scan),
+            ] {
+                for (input, format) in [
+                    (c"Az!", c"%2lc%n%c"),
+                    (c"é中!", c"%2lc%n%c"),
+                    (c"é中!", c"%2ls%n%c"),
+                    (c"é中!", c"%l[^!]%n%c"),
+                    (c"é!", c"%C%n%c"),
+                    (c"é中!", c"%2S%n%c"),
+                    (c"a\xff!", c"%2lc%n%c"),
+                    (c"a\xc3", c"%2ls%n%c"),
+                    (c"", c"%ls%n%c"),
+                ] {
+                    let observe = |api: &Api, scan: Scan| {
+                        let (mut wide, mut count, mut tail) = ([-777i32; 4], -1i32, 0x5au8);
+                        // SAFETY: at most two wchar_t elements plus a terminator
+                        // can be stored, and each later destination has the exact type.
+                        unsafe {
+                            *(api.errno)() = 0;
+                            let rc = scan(
+                                input.as_ptr(),
+                                format.as_ptr(),
+                                wide.as_mut_ptr(),
+                                &mut count,
+                                &mut tail,
+                            );
+                            (rc, wide, count, tail, *(api.errno)())
+                        }
+                    };
+                    assert_eq!(
+                        observe(&native, scan),
+                        observe(&host, oracle),
+                        "{locale:?} {name} {input:?} {format:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sscanf_allocated_and_suppressed_wide_fields_count_input_bytes() {
+        let _locale = Utf8Locale::select();
+        let mut wide: *mut libc::wchar_t = std::ptr::null_mut();
+        let (mut byte_count, mut final_count) = (-1isize, -1isize);
+        // The suppressed field must consume the entire multibyte character.
+        // The allocated field must hold two wchar_t elements plus a terminator.
+        unsafe {
+            let rc = fl::__isoc99_sscanf(
+                c"é中文!".as_ptr(),
+                c"%*lc%zn%2mls%tn".as_ptr(),
+                &mut byte_count,
+                &mut wide,
+                &mut final_count,
+            );
+            assert_eq!((rc, byte_count, final_count), (1, 2, 8));
+            assert!(!wide.is_null());
+            let result = [*wide, *wide.add(1), *wide.add(2)];
+            malloc_abi::free(wide.cast());
+            assert_eq!(result, ['中' as i32, '文' as i32, 0]);
+        }
+    }
+
+    #[test]
     fn byte_stream_wide_fields_decode_characters_but_count_and_restore_bytes() {
         let _locale = Utf8Locale::select();
         let (native, host) = (Api::native(), Api::host());

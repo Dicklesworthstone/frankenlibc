@@ -17578,17 +17578,23 @@ fn scanf_core(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
     }
 }
 
-/// Numbered buffer formats share the FILE scanner's lazy destination resolver,
-/// immediate stores, allocation cleanup, and multibyte destination codec.
-/// The ordinary buffer and strict fast paths retain their existing engine.
-unsafe fn scan_narrow_positional_buffer(
+/// Numbered fields need lazy argument lookup. Wide text fields need the
+/// locale decoder even when assignment is suppressed: their widths count
+/// decoded characters while `%n` counts the external bytes consumed.
+unsafe fn scan_narrow_buffer_with_session(
     input: &[u8],
     directives: &[ScanDirective],
     ap: *mut c_void,
 ) -> Option<c_int> {
-    if !directives.iter().any(
-        |directive| matches!(directive, ScanDirective::Spec(spec) if spec.argument_index.is_some()),
-    ) {
+    let needs_session = directives.iter().any(|directive| {
+        let ScanDirective::Spec(spec) = directive else {
+            return false;
+        };
+        spec.argument_index.is_some()
+            || (spec.length == LengthMod::L
+                && (spec.writes_char_buffer() || spec.writes_string_buffer()))
+    });
+    if !needs_session {
         return None;
     }
 
@@ -17898,7 +17904,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
     // SAFETY: the untouched Rust variadic state has the C va_list layout used
     // by the FILE path; all scanf destination arguments are pointers.
     if let Some(result) = unsafe {
-        scan_narrow_positional_buffer(
+        scan_narrow_buffer_with_session(
             input,
             directives.as_slice(),
             std::ptr::addr_of_mut!(args).cast(),
@@ -18129,7 +18135,7 @@ pub(crate) unsafe fn vsscanf_with_dialect(
         return libc::EOF;
     };
     // SAFETY: `ap` is the caller's live, unconsumed va_list.
-    if let Some(result) = unsafe { scan_narrow_positional_buffer(input, directives.as_slice(), ap) }
+    if let Some(result) = unsafe { scan_narrow_buffer_with_session(input, directives.as_slice(), ap) }
     {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
         return result;
@@ -18422,6 +18428,7 @@ pub(crate) unsafe fn vscanf_write_one(
             LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe {
                 *(dest as *mut i64) = *n as i64;
             },
+            LengthMod::Z | LengthMod::T => unsafe { *(dest as *mut isize) = *n as isize },
             _ => unsafe { *(dest as *mut c_int) = *n as c_int },
         },
         ScanValue::Pointer(v) => unsafe {
