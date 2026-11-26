@@ -26829,31 +26829,10 @@ pub(crate) const fn clone_tail_arity(flags: c_int) -> usize {
     }
 }
 
-type HostCloneFn = unsafe extern "C" fn(
-    Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
-    *mut c_void,
-    c_int,
-    *mut c_void,
-    ...
-) -> c_int;
-
-fn host_clone() -> Option<HostCloneFn> {
-    static FUNC: std::sync::LazyLock<Option<HostCloneFn>> = std::sync::LazyLock::new(|| {
-        let symbol = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
-        if symbol.is_null() {
-            None
-        } else {
-            // SAFETY: RTLD_NEXT resolved glibc's GNU clone entry point.
-            Some(unsafe { std::mem::transmute::<*mut c_void, HostCloneFn>(symbol) })
-        }
-    });
-    *FUNC
-}
-
-/// Call the host clone entry with exactly the tail arity represented by
-/// `tail_count`. The child never returns through this Rust frame: glibc's clone
-/// trampoline invokes `fn_ptr` on the caller-provided stack and exits with its
-/// result.
+/// Run GNU clone through the same native kernel trampoline as pthread_create.
+/// The child calls `fn_ptr` on its supplied stack and exits directly; it never
+/// returns through this Rust frame. Positional tail slots retain the public
+/// `(parent_tid, tls, child_tid)` ABI independently of the kernel's ordering.
 pub(crate) unsafe fn clone_with_tail(
     fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
     stack: *mut c_void,
@@ -26862,10 +26841,25 @@ pub(crate) unsafe fn clone_with_tail(
     tail: [*mut c_void; 3],
     tail_count: usize,
 ) -> c_int {
-    let Some(host_clone) = host_clone() else {
-        unsafe { set_abi_errno(libc::ENOSYS) };
+    let Some(fn_ptr) = fn_ptr else {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     };
+    debug_assert!(tail_count <= tail.len());
+    // Both supported Linux ABIs require a 16-byte aligned callback stack.
+    // The existing trampoline consumes these two words before calling it.
+    let frame_size = 2 * core::mem::size_of::<usize>();
+    let Some(child_sp) = ((stack as usize) & !15usize)
+        .checked_sub(frame_size)
+        .filter(|&address| address != 0)
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if !tracked_region_fits(child_sp, frame_size) {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
     let shares_address_space = (flags & libc::CLONE_THREAD) != 0
         || ((flags & libc::CLONE_VM) != 0 && (flags & libc::CLONE_VFORK) == 0);
     if shares_address_space {
@@ -26875,17 +26869,35 @@ pub(crate) unsafe fn clone_with_tail(
             crate::malloc_abi::note_raw_shared_tls_clone();
         }
     }
-    match tail_count {
-        0 => unsafe { host_clone(fn_ptr, stack, flags, arg) },
-        1 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0]) },
-        2 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0], tail[1]) },
-        3 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0], tail[1], tail[2]) },
-        _ => unreachable!("GNU clone has exactly three optional tail slots"),
+    // SAFETY: the caller provides a live stack with room for its callback.
+    // The frame extent is admitted above; no Rust reference into this stack
+    // survives clone. The raw trampoline invokes the C callback directly and
+    // SYS_exit consumes the low 32 bits of its return value.
+    unsafe {
+        let frame = child_sp as *mut usize;
+        frame.write(fn_ptr as usize);
+        frame.add(1).write(arg as usize);
+    }
+    // SAFETY: optional pointers have exactly the caller's flag-selected
+    // meanings. The core wrapper supplies each architecture's register order.
+    match unsafe {
+        syscall::sys_clone_thread(
+            flags as u32 as usize,
+            child_sp,
+            tail[0].cast::<i32>(),
+            tail[2].cast::<i32>(),
+            tail[1] as usize,
+        )
+    } {
+        Ok(pid) => pid,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     }
 }
 
-/// GNU `clone` — create a child through the host's architecture-specific
-/// stack-switching trampoline.
+/// GNU `clone` — invoke the callback through the native Linux clone trampoline.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clone(
     fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,

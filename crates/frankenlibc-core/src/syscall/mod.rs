@@ -3177,7 +3177,7 @@ pub fn sys_exit_thread(status: i32) -> ! {
     }
 }
 
-/// Create a new thread via `clone` syscall with a child trampoline.
+/// Create a child via `clone` syscall with a callback trampoline.
 ///
 /// The child stack must be pre-populated:
 /// - `[child_sp + 0]`: function pointer (`unsafe extern "C" fn(usize) -> usize`)
@@ -3197,8 +3197,10 @@ pub fn sys_exit_thread(status: i32) -> ! {
 /// - The stack region must be valid and have sufficient space.
 /// - `parent_tid` and `child_tid` must be valid pointers if the corresponding
 ///   `CLONE_PARENT_SETTID` / `CLONE_CHILD_CLEARTID` flags are set.
-/// - The function pointer at `[child_sp]` must be a valid, callable function
-///   that accepts a `usize` argument and returns a `usize`.
+/// - The function pointer at `[child_sp]` must use the C ABI, accept one
+///   pointer-sized argument, and return an integer. Both the native thread's
+///   `usize` callback and GNU clone's `int (*)(void *)` callback are supported:
+///   the raw exit syscall consumes only the low 32 bits of the result.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_clone_thread(

@@ -55,6 +55,7 @@ on:
       - 'tests/integration/fixture_pthread.c'
       - 'tests/integration/fixture_pthread_cancel.c'
       - 'tests/integration/fixture_pthread_fork_join.c'
+      - 'tests/integration/fixture_clone_native.c'
       - 'scripts/check_pthread_cancel_native_parity.sh'
       - 'tests/integration/fixture_pthread_once_unwind.cpp'
       - 'scripts/check_pthread_once_unwind.sh'
@@ -232,6 +233,65 @@ jobs:
               "$out/fixture" > "$out/$mode.out" 2> "$out/$mode.err"
             grep -qx 'PASS fork survivor join: 4 cases' "$out/$mode.out"
             test ! -s "$out/$mode.err"
+          done
+      - name: Execute public clone callbacks without a host clone provider
+        if: always()
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$PWD/artifacts/signal-waits/clone"
+          mkdir -p "$out"
+          fixture_source=tests/integration/fixture_clone_native.c
+          cflags=(-std=c11 -O2 -Wall -Wextra -Werror -fno-builtin -fno-stack-protector -pthread -Wl,-z,now)
+          cc "${cflags[@]}" "$fixture_source" -ldl -o "$out/fixture"
+          cc "${cflags[@]}" -fPIC -shared -DFRANKENLIBC_CLONE_HOST_TRAP \
+            "$fixture_source" -o "$out/host-trap.so"
+          cases=(basic unaligned bad_fn bad_stack bad_flags shared vfork parent_tid \
+            pidfd tls child_tid clear_tid all_tail thread)
+          for symbol in clone __clone; do
+            for case in "${cases[@]}"; do
+              log="$out/gnu-$symbol-$case"
+              timeout --kill-after=2s 10s env -u LD_PRELOAD -u FRANKENLIBC_TEST_LIBRARY \
+                "$out/fixture" "$symbol" "$case" > "$log.out" 2> "$log.err"
+              grep -qx "PASS $symbol $case" "$log.out"
+              test ! -s "$log.err"
+            done
+            status=0
+            timeout --kill-after=2s 10s env -u FRANKENLIBC_TEST_LIBRARY \
+              LD_PRELOAD="$out/host-trap.so" "$out/fixture" "$symbol" basic \
+              > "$out/trap-$symbol.out" 2> "$out/trap-$symbol.err" || status=$?
+            test "$status" -eq 91
+            test ! -s "$out/trap-$symbol.out"
+            test ! -s "$out/trap-$symbol.err"
+          done
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$library"
+          status=0
+          timeout --kill-after=2s 10s env -u LD_PRELOAD FRANKENLIBC_TEST_LIBRARY="$library" \
+            "$out/fixture" clone basic > "$out/wrong-provider.out" \
+            2> "$out/wrong-provider.err" || status=$?
+          test "$status" -eq 1
+          grep -q 'clone provider mismatch' "$out/wrong-provider.err"
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          for mode in strict hardened; do
+            for symbol in clone __clone; do
+              for case in "${cases[@]}"; do
+                log="$out/$mode-$symbol-$case"
+                timeout --kill-after=2s 10s env LD_PRELOAD="$library:$out/host-trap.so" \
+                  FRANKENLIBC_TEST_LIBRARY="$library" FRANKENLIBC_MODE="$mode" \
+                  FRANKENLIBC_THREAD_NATIVE=1 \
+                  "$out/fixture" "$symbol" "$case" > "$log.out" 2> "$log.err"
+                grep -qx "PASS $symbol $case" "$log.out"
+                test ! -s "$log.err"
+              done
+            done
+            FRANKENLIBC_MODE="$mode" cargo test --release -p frankenlibc-abi "${args[@]}" \
+              --test unistd_abi_test clone_exports_ -- --nocapture --test-threads=1 \
+              2>&1 | tee "$out/rust-$mode.log"
+            grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' "$out/rust-$mode.log"
           done
       - name: Preserve variadic exec arguments and failure cleanup
         if: always()
