@@ -11,6 +11,8 @@
  * Environment:
  *   FLTEST_STATUS=unavail|notfound|tryagain   force every lookup's status
  *   FLTEST_TRACE=1                            log each call to fd 2
+ *   FLTEST_ACCOUNT_SCRATCH=<service>          require 4096 bytes for account lookups
+ *   FLTEST_ACCOUNT_ERRNO=1                    verify errno across account sources
  */
 #include <errno.h>
 #include <grp.h>
@@ -862,6 +864,35 @@ static enum nss_status fill_user(const struct user *u, struct passwd *pw, char *
   return NSS_STATUS_SUCCESS;
 }
 
+/* A provider may need scratch space beyond the size of its returned entry.
+ * Reentrant libc callers must pass their actual capacity, rather than retry
+ * privately and squeeze a successful record back into the caller's buffer. */
+static int account_scratch_too_small(size_t len, int *errnop) {
+  const char *service = getenv("FLTEST_ACCOUNT_SCRATCH");
+  if (service && !strcmp(service, STR(SERVICE)) && len < 4096) {
+    *errnop = ERANGE;
+    return 1;
+  }
+  return 0;
+}
+
+/* GNU passes the caller's errno to the first provider, then preserves a
+ * provider's error for the next source. The public function clears it only
+ * after SUCCESS/NOTFOUND. Reject a libc that clears it before either call. */
+static int account_errno_failure(int *errnop) {
+  const char *probe = getenv("FLTEST_ACCOUNT_ERRNO");
+  if (!probe || *probe != '1') return 0;
+  if (!strcmp(STR(SERVICE), "fltest")) {
+    *errnop = *errnop == 619 ? EIO : EINVAL;
+    return 1;
+  }
+  if (*errnop != EIO) {
+    *errnop = EINVAL;
+    return 1;
+  }
+  return 0;
+}
+
 static enum nss_status fill_group(const struct grp *g, struct group *gr, char *buf, size_t len,
                                   int *errnop) {
   size_t nmem = 0;
@@ -892,6 +923,8 @@ enum nss_status FN(getpwnam_r)(const char *name, struct passwd *pw, char *buf, s
                                int *errnop) {
   enum nss_status st;
   trace("getpwnam_r", name);
+  if (account_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
+  if (account_errno_failure(errnop)) return NSS_STATUS_UNAVAIL;
   if (forced(&st, errnop)) return st;
   for (size_t i = 0; i < COUNT(users); i++)
     if (strcmp(users[i].name, name) == 0) return fill_user(&users[i], pw, buf, len, errnop);
@@ -902,6 +935,8 @@ enum nss_status FN(getpwnam_r)(const char *name, struct passwd *pw, char *buf, s
 enum nss_status FN(getpwuid_r)(uid_t uid, struct passwd *pw, char *buf, size_t len, int *errnop) {
   enum nss_status st;
   trace("getpwuid_r", NULL);
+  if (account_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
+  if (account_errno_failure(errnop)) return NSS_STATUS_UNAVAIL;
   if (forced(&st, errnop)) return st;
   for (size_t i = 0; i < COUNT(users); i++)
     if (users[i].uid == uid) return fill_user(&users[i], pw, buf, len, errnop);
@@ -939,6 +974,8 @@ enum nss_status FN(getgrnam_r)(const char *name, struct group *gr, char *buf, si
                                int *errnop) {
   enum nss_status st;
   trace("getgrnam_r", name);
+  if (account_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
+  if (account_errno_failure(errnop)) return NSS_STATUS_UNAVAIL;
   if (forced(&st, errnop)) return st;
   for (size_t i = 0; i < COUNT(groups); i++)
     if (strcmp(groups[i].name, name) == 0) return fill_group(&groups[i], gr, buf, len, errnop);
@@ -949,6 +986,8 @@ enum nss_status FN(getgrnam_r)(const char *name, struct group *gr, char *buf, si
 enum nss_status FN(getgrgid_r)(gid_t gid, struct group *gr, char *buf, size_t len, int *errnop) {
   enum nss_status st;
   trace("getgrgid_r", NULL);
+  if (account_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
+  if (account_errno_failure(errnop)) return NSS_STATUS_UNAVAIL;
   if (forced(&st, errnop)) return st;
   for (size_t i = 0; i < COUNT(groups); i++)
     if (groups[i].gid == gid) return fill_group(&groups[i], gr, buf, len, errnop);
@@ -1003,6 +1042,8 @@ enum nss_status FN(getspnam_r)(const char *name, struct spwd *sp, char *buf, siz
                                int *errnop) {
   enum nss_status st;
   trace("getspnam_r", name);
+  if (account_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
+  if (account_errno_failure(errnop)) return NSS_STATUS_UNAVAIL;
   if (forced(&st, errnop)) return st;
   for (size_t i = 0; i < COUNT(users); i++)
     if (strcmp(users[i].name, name) == 0 && users[i].uid != 0)

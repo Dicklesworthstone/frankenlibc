@@ -643,21 +643,64 @@ fn static_passwd(
 /// # Safety
 /// As for [`fill_passwd_r`].
 unsafe fn reentrant_passwd(
-    answer: Answer<frankenlibc_core::pwd::Passwd>,
+    key: PwKey<'_>,
+    files_only: bool,
     pwd: *mut libc::passwd,
     buf: *mut c_char,
     buflen: libc::size_t,
     result: *mut *mut libc::passwd,
 ) -> c_int {
-    match answer {
-        // SAFETY: forwarded caller contract.
-        Answer::Found(entry) => unsafe {
-            fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result)
-        },
-        Answer::NotFound => 0,
-        Answer::Unavailable(err) | Answer::TryAgain(err) => err,
-        Answer::BufferTooSmall => libc::ERANGE,
-    }
+    let capacity = effective_buffer_len(buf, buflen);
+    let files = || {
+        nss_module::write_account_answer(files_passwd_answer(key, Some(capacity)), |entry| {
+            let mut written = ptr::null_mut();
+            // SAFETY: retain the validated caller storage but publish its
+            // result pointer only after the source-selection policy finishes.
+            unsafe { fill_passwd_r(&entry, pwd, buf, capacity, &mut written) }
+        })
+    };
+    let answer = if files_only {
+        files()
+    } else {
+        let services = nss_module::services(Database::Passwd);
+        frankenlibc_core::nss::lookup(
+            &services,
+            |service| match service.kind() {
+                SourceKind::Files => files(),
+                // SAFETY: the callback signature matches the selected passwd
+                // key and receives the exact writable output object/buffer.
+                SourceKind::Module => unsafe {
+                    match key {
+                        PwKey::Name(name) => {
+                            nss_module::account_by_name_r(
+                                service.name(),
+                                "getpwnam_r",
+                                name,
+                                pwd,
+                                buf,
+                                capacity,
+                            )
+                            .answer
+                        }
+                        PwKey::Uid(uid) => {
+                            nss_module::account_by_id_r(
+                                service.name(),
+                                "getpwuid_r",
+                                uid,
+                                pwd,
+                                buf,
+                                capacity,
+                            )
+                            .answer
+                        }
+                    }
+                },
+            },
+            None,
+        )
+    };
+    // SAFETY: SUCCESS has already written pwd; result was validated by entry.
+    unsafe { nss_module::finish_account_r(answer, pwd, result) }
 }
 
 impl PwdStorage {
@@ -980,13 +1023,7 @@ unsafe fn getpwnam_r_impl(
 
     // A miss leaves *result NULL and returns 0.
     let key = PwKey::Name(name_bytes);
-    let capacity = Some(effective_buffer_len(buf, buflen));
-    let answer = if files_only {
-        files_passwd_answer(key, capacity)
-    } else {
-        passwd_answer(key, capacity)
-    };
-    let rc = unsafe { reentrant_passwd(answer, pwd, buf, buflen, result) };
+    let rc = unsafe { reentrant_passwd(key, files_only, pwd, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -1043,13 +1080,7 @@ unsafe fn getpwuid_r_impl(
         return libc::EACCES;
     }
 
-    let capacity = Some(effective_buffer_len(buf, buflen));
-    let answer = if files_only {
-        files_passwd_answer(PwKey::Uid(uid), capacity)
-    } else {
-        passwd_answer(PwKey::Uid(uid), capacity)
-    };
-    let rc = unsafe { reentrant_passwd(answer, pwd, buf, buflen, result) };
+    let rc = unsafe { reentrant_passwd(PwKey::Uid(uid), files_only, pwd, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -1546,31 +1577,42 @@ unsafe fn getspnam_r_impl(
     };
 
     let capacity = effective_buffer_len(buf, buflen);
-    let answer = if files_only {
-        files_shadow_answer(name_bytes, Some(capacity))
-    } else {
-        shadow_answer(name_bytes, Some(capacity))
+    let files = || {
+        nss_module::write_account_answer(
+            files_shadow_answer(name_bytes, Some(capacity)),
+            // SAFETY: the native writer receives the validated caller storage.
+            |entry| unsafe {
+                fill_shadow_parsed_caller(&entry, spbuf.cast::<SpwdEntry>(), buf, capacity)
+            },
+        )
     };
-    match answer {
-        Answer::Found(entry) => {
-            let rc = unsafe {
-                fill_shadow_parsed_caller(
-                    &entry,
-                    spbuf as *mut SpwdEntry,
-                    buf,
-                    effective_buffer_len(buf, buflen),
-                )
-            };
-            if rc == 0 {
-                unsafe { *result = spbuf };
-            }
-            rc
-        }
-        // glibc: a miss is 0 with *result NULL, not ENOENT.
-        Answer::NotFound => 0,
-        Answer::Unavailable(err) | Answer::TryAgain(err) => err,
-        Answer::BufferTooSmall => libc::ERANGE,
-    }
+    let answer = if files_only {
+        files()
+    } else {
+        let services = nss_module::services(Database::Shadow);
+        frankenlibc_core::nss::lookup(
+            &services,
+            |service| match service.kind() {
+                SourceKind::Files => files(),
+                // SAFETY: getspnam_r has the documented spwd by-name ABI;
+                // SpwdEntry and libc::spwd share the public C layout.
+                SourceKind::Module => unsafe {
+                    nss_module::account_by_name_r(
+                        service.name(),
+                        "getspnam_r",
+                        name_bytes,
+                        spbuf.cast::<libc::spwd>(),
+                        buf,
+                        capacity,
+                    )
+                    .answer
+                },
+            },
+            None,
+        )
+    };
+    // SAFETY: SUCCESS has already filled spbuf. A miss keeps result null.
+    unsafe { nss_module::finish_account_r(answer, spbuf, result) }
 }
 
 /// `setspent` — rewind the shadow database iterator.

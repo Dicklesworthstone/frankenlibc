@@ -646,22 +646,157 @@ fn static_group(answer: Answer<frankenlibc_core::grp::Group>) -> (*mut libc::gro
 ///
 /// # Safety
 /// As for [`fill_group_r`].
+/// GNU group snapshots reserve another pointer slot beyond the final NULL.
+/// The first merge snapshot is heap-aligned; the final copy must account for
+/// the actual caller address. Both admission checks are observable ERANGE.
+fn group_merge_space(entry: &frankenlibc_core::grp::Group, base: *const c_char) -> Option<usize> {
+    let strings = group_string_space(entry)?;
+    let pointers = entry.gr_mem.len().checked_add(2)?;
+    aligned_offset_from(base, strings, std::mem::align_of::<*mut c_char>())?
+        .checked_add(pointers.checked_mul(std::mem::size_of::<*mut c_char>())?)
+}
+
 unsafe fn reentrant_group(
-    answer: Answer<frankenlibc_core::grp::Group>,
+    key: GrKey<'_>,
+    files_only: bool,
     grp: *mut libc::group,
     buf: *mut c_char,
     buflen: libc::size_t,
     result: *mut *mut libc::group,
 ) -> c_int {
-    match answer {
-        // SAFETY: forwarded caller contract.
-        Answer::Found(entry) => unsafe {
-            fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result)
-        },
-        Answer::NotFound => 0,
-        Answer::Unavailable(err) | Answer::TryAgain(err) => err,
-        Answer::BufferTooSmall => libc::ERANGE,
+    use frankenlibc_core::nss::Action;
+
+    let capacity = effective_buffer_len(buf, buflen);
+    let files = || {
+        let mut invoked = false;
+        let answer = nss_module::write_account_answer(
+            files_group_answer(key, Some((buf as usize, capacity))),
+            |entry| {
+                let mut written = ptr::null_mut();
+                invoked = true;
+                // SAFETY: caller storage is validated; defer publication of
+                // the result pointer until the source policy selects it.
+                unsafe { fill_group_r(&entry, grp, buf, capacity, &mut written) }
+            },
+        );
+        nss_module::AccountCall { answer, invoked }
+    };
+    if files_only {
+        // SAFETY: the files writer and caller's output slot are valid here.
+        return unsafe { nss_module::finish_account_r(files().answer, grp, result) };
     }
+
+    struct WrittenGroup {
+        entry: frankenlibc_core::grp::Group,
+        current: bool,
+    }
+    let services = nss_module::services(Database::Group);
+    let mut held: Option<WrittenGroup> = None;
+    let mut selected = Answer::NotFound;
+    for (index, service) in services.iter().enumerate() {
+        let call = match service.kind() {
+            SourceKind::Files => files(),
+            // SAFETY: the callback signature matches the group key and
+            // receives the caller's exact buffer, including alignment.
+            SourceKind::Module => unsafe {
+                match key {
+                    GrKey::Name(name) => nss_module::account_by_name_r(
+                        service.name(),
+                        "getgrnam_r",
+                        name,
+                        grp,
+                        buf,
+                        capacity,
+                    ),
+                    GrKey::Gid(gid) => nss_module::account_by_id_r(
+                        service.name(),
+                        "getgrgid_r",
+                        gid,
+                        grp,
+                        buf,
+                        capacity,
+                    ),
+                }
+            },
+        };
+        if matches!(call.answer, Answer::BufferTooSmall) {
+            selected = Answer::BufferTooSmall;
+            break;
+        }
+        let answer = match call.answer {
+            Answer::Found(()) => Answer::Found(WrittenGroup {
+                // SAFETY: SUCCESS established all group fields. Own them
+                // before another source can overwrite the shared buffer.
+                entry: unsafe { nss_module::group_from_c(&*grp) },
+                current: true,
+            }),
+            Answer::NotFound => Answer::NotFound,
+            Answer::Unavailable(error) => Answer::Unavailable(error),
+            Answer::TryAgain(error) => Answer::TryAgain(error),
+            Answer::BufferTooSmall => unreachable!(),
+        };
+        let answer = match held.take() {
+            Some(mut kept) => {
+                // A missing entry point cannot overwrite a held layout.
+                kept.current &= !call.invoked;
+                if let Answer::Found(next) = answer
+                    && nss_module::merge_group(&mut kept.entry, next.entry)
+                {
+                    kept.current = false;
+                    if group_merge_space(&kept.entry, buf).is_none_or(|need| need > capacity) {
+                        selected = Answer::BufferTooSmall;
+                        break;
+                    }
+                }
+                Answer::Found(kept)
+            }
+            None => answer,
+        };
+        let last = index + 1 == services.len();
+        let status = match &answer {
+            Answer::Found(_) => Status::Success,
+            Answer::NotFound => Status::NotFound,
+            Answer::Unavailable(_) => Status::Unavailable,
+            Answer::TryAgain(_) => Status::TryAgain,
+            Answer::BufferTooSmall => unreachable!(),
+        };
+        let action = service.action(status);
+        match (answer, action) {
+            (Answer::Found(value), Action::Merge) if !last => {
+                // Admit the private snapshot before consulting another source.
+                // It has the same capacity as the caller, but malloc alignment.
+                if group_merge_space(&value.entry, ptr::null()).is_none_or(|need| need > capacity) {
+                    selected = Answer::BufferTooSmall;
+                    break;
+                }
+                held = Some(value);
+            }
+            (answer, Action::Return | Action::Merge) => {
+                selected = answer;
+                break;
+            }
+            (answer, Action::Continue) if last => {
+                selected = answer;
+                break;
+            }
+            (_, Action::Continue) => {}
+        }
+    }
+    let answer = nss_module::write_account_answer(selected, |selected| {
+        if selected.current {
+            // Preserve a successful provider's original pointer layout.
+            return 0;
+        }
+        if group_merge_space(&selected.entry, buf).is_none_or(|need| need > capacity) {
+            return libc::ERANGE;
+        }
+        let mut written = ptr::null_mut();
+        // SAFETY: a merge or later callback invalidated the original layout;
+        // reconstruct the selected owned snapshot in the same bounded buffer.
+        unsafe { fill_group_r(&selected.entry, grp, buf, capacity, &mut written) }
+    });
+    // SAFETY: SUCCESS has filled grp; entry validated result's pointer slot.
+    unsafe { nss_module::finish_account_r(answer, grp, result) }
 }
 
 impl GrpStorage {
@@ -1167,13 +1302,16 @@ unsafe fn getgrnam_r_impl(
         return libc::EINVAL;
     };
     // A miss leaves *result NULL and returns 0.
-    let buffer = Some((buf as usize, effective_buffer_len(buf, buflen)));
-    let answer = if files_only {
-        files_group_answer(GrKey::Name(name_bytes), buffer)
-    } else {
-        group_answer(GrKey::Name(name_bytes), buffer)
+    let rc = unsafe {
+        reentrant_group(
+            GrKey::Name(name_bytes),
+            files_only,
+            grp,
+            buf,
+            buflen,
+            result,
+        )
     };
-    let rc = unsafe { reentrant_group(answer, grp, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -1230,13 +1368,7 @@ unsafe fn getgrgid_r_impl(
         return libc::EACCES;
     }
 
-    let buffer = Some((buf as usize, effective_buffer_len(buf, buflen)));
-    let answer = if files_only {
-        files_group_answer(GrKey::Gid(gid), buffer)
-    } else {
-        group_answer(GrKey::Gid(gid), buffer)
-    };
-    let rc = unsafe { reentrant_group(answer, grp, buf, buflen, result) };
+    let rc = unsafe { reentrant_group(GrKey::Gid(gid), files_only, grp, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }

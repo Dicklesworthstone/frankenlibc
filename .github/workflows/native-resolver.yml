@@ -227,6 +227,22 @@ jobs:
             -- --nocapture --test-threads=1 2>&1 | tee artifacts/services-enumeration/tests.log
           grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
             artifacts/services-enumeration/tests.log
+      - name: Compare reentrant account buffers, source actions, and group merges with GNU
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test accounts_reentrant_module_buffers_match_glibc \
+            -- --exact --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/services-enumeration/accounts.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/services-enumeration/accounts.log
       - name: Compare protocol modules, source actions, retries, and reentry with GNU
         env:
           CACHE: ${{ matrix.cache }}

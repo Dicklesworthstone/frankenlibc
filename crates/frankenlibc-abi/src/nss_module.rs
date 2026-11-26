@@ -1786,7 +1786,7 @@ unsafe fn passwd_from_c(pw: &libc::passwd) -> frankenlibc_core::pwd::Passwd {
 
 /// # Safety
 /// `gr` was filled by a module call that reported SUCCESS.
-unsafe fn group_from_c(gr: &libc::group) -> frankenlibc_core::grp::Group {
+pub(crate) unsafe fn group_from_c(gr: &libc::group) -> frankenlibc_core::grp::Group {
     let mut members = Vec::new();
     if !gr.gr_mem.is_null() {
         let mut index = 0usize;
@@ -2003,6 +2003,130 @@ type ByIdFn<T> = unsafe extern "C" fn(u32, *mut T, *mut c_char, usize, *mut c_in
 type GetEntFn<T> = unsafe extern "C" fn(*mut T, *mut c_char, usize, *mut c_int) -> c_int;
 type SetEntFn = unsafe extern "C" fn(c_int) -> c_int;
 type EndEntFn = unsafe extern "C" fn() -> c_int;
+
+/// Preserve the exact caller-owned account buffer, including its alignment.
+/// ERANGE stops a public `_r` call regardless of the configured TRYAGAIN
+/// action; only non-reentrant entry points may grow their scratch buffer.
+fn account_caller_answer(status: c_int, error: c_int) -> Answer<()> {
+    match classify(status, error) {
+        Raw::Range => Answer::BufferTooSmall,
+        Raw::Status(Status::Success, _) => Answer::Found(()),
+        Raw::Status(Status::NotFound, _) => Answer::NotFound,
+        Raw::Status(Status::TryAgain, error) => Answer::TryAgain(error),
+        Raw::Status(Status::Unavailable, error) => Answer::Unavailable(error),
+    }
+}
+
+/// Write a native files result without losing the switch's error category.
+pub(crate) fn write_account_answer<T>(
+    answer: Answer<T>,
+    write: impl FnOnce(T) -> c_int,
+) -> Answer<()> {
+    match answer {
+        Answer::Found(entry) => match write(entry) {
+            0 => Answer::Found(()),
+            libc::ERANGE => Answer::BufferTooSmall,
+            error => Answer::Unavailable(error),
+        },
+        Answer::NotFound => Answer::NotFound,
+        Answer::Unavailable(error) => Answer::Unavailable(error),
+        Answer::TryAgain(error) => Answer::TryAgain(error),
+        Answer::BufferTooSmall => Answer::BufferTooSmall,
+    }
+}
+
+pub(crate) struct AccountCall {
+    pub answer: Answer<()>,
+    /// False when no provider was entered, so a held group still occupies
+    /// its original caller-buffer layout.
+    pub invoked: bool,
+}
+
+/// # Safety
+/// `function` must select the NSS by-name signature for `T`. The complete
+/// `out` object and `buf[..len]` are writable throughout the provider call.
+pub(crate) unsafe fn account_by_name_r<T>(
+    service: &[u8],
+    function: &'static str,
+    key: &[u8],
+    out: *mut T,
+    buf: *mut c_char,
+    len: usize,
+) -> AccountCall {
+    let Some(address) = module_function(service, function) else {
+        return AccountCall {
+            answer: Answer::Unavailable(missing_source()),
+            invoked: false,
+        };
+    };
+    let mut key_c = key.to_vec();
+    key_c.push(0);
+    // SAFETY: the selected entry point has the caller's specified signature.
+    let function: ByNameFn<T> = unsafe { core::mem::transmute(address) };
+    // SAFETY: the canonical errno cell belongs to the calling thread.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    // SAFETY: the terminated key and caller-owned outputs remain live.
+    let status = unsafe { function(key_c.as_ptr().cast(), out, buf, len, error) };
+    AccountCall {
+        answer: account_caller_answer(status, unsafe { *error }),
+        invoked: true,
+    }
+}
+
+/// # Safety
+/// As for `account_by_name_r`, with the NSS uid/gid signature for `T`.
+pub(crate) unsafe fn account_by_id_r<T>(
+    service: &[u8],
+    function: &'static str,
+    id: u32,
+    out: *mut T,
+    buf: *mut c_char,
+    len: usize,
+) -> AccountCall {
+    let Some(address) = module_function(service, function) else {
+        return AccountCall {
+            answer: Answer::Unavailable(missing_source()),
+            invoked: false,
+        };
+    };
+    // SAFETY: the selected entry point has the caller's specified signature.
+    let function: ByIdFn<T> = unsafe { core::mem::transmute(address) };
+    // SAFETY: the canonical errno cell belongs to the calling thread.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    // SAFETY: the complete output and exact buffer stay writable in the call.
+    let status = unsafe { function(id, out, buf, len, error) };
+    AccountCall {
+        answer: account_caller_answer(status, unsafe { *error }),
+        invoked: true,
+    }
+}
+
+/// Publish only the final selected result, after all source actions ran.
+///
+/// # Safety
+/// `result` is writable; `out` contains a provider/native result on SUCCESS.
+pub(crate) unsafe fn finish_account_r<T>(
+    answer: Answer<()>,
+    out: *mut T,
+    result: *mut *mut T,
+) -> c_int {
+    let error = match answer {
+        Answer::Found(()) => {
+            // SAFETY: callers have validated the complete result pointer slot.
+            unsafe { *result = out };
+            0
+        }
+        Answer::NotFound => 0,
+        Answer::Unavailable(error) | Answer::TryAgain(error) => error,
+        Answer::BufferTooSmall => libc::ERANGE,
+    };
+    // Account providers share the incoming errno across source transitions;
+    // only the public lookup's final status normalizes it. A successful
+    // lookup or miss clears errno, including a prior provider's error.
+    // SAFETY: this is the calling thread's canonical errno slot.
+    unsafe { crate::errno_abi::set_abi_errno(error) };
+    error
+}
 
 fn call_by_name<T, R>(
     service: &[u8],

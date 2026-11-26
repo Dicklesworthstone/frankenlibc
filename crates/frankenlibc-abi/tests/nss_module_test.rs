@@ -284,6 +284,293 @@ fn scratch_dir(tag: &str) -> PathBuf {
     dir
 }
 
+// Keep the provider's alignment deterministic in separate GNU/candidate processes.
+#[repr(align(16))]
+struct AccountCallerBuffer([u8; 4160]);
+
+fn account_reentrant_transcript(host: bool) -> String {
+    use frankenlibc_abi::{grp_abi as group, pwd_abi as passwd};
+
+    let mut transcript = String::new();
+    for capacity in [
+        0, 16, 23, 43, 44, 51, 52, 55, 56, 59, 63, 64, 87, 88, 94, 95, 96, 128, 4095, 4096,
+    ] {
+        for offset in [0, 1] {
+            for operation in ["pwnam", "pwuid", "grnam", "grgid", "spnam"] {
+                let mut storage = AccountCallerBuffer([0xa5; 4160]);
+                let start = 16 + offset;
+                // SAFETY: every call receives capacity writable bytes and valid
+                // output/result objects. The surrounding bytes are canaries.
+                let (rc, error, value) = unsafe {
+                    let buffer = storage.0.as_mut_ptr().add(start).cast::<c_char>();
+                    let errno = if host {
+                        libc::__errno_location()
+                    } else {
+                        frankenlibc_abi::errno_abi::__errno_location()
+                    };
+                    *errno = 619;
+                    match operation {
+                        "pwnam" | "pwuid" => {
+                            let mut entry: libc::passwd = std::mem::zeroed();
+                            let mut result = &mut entry as *mut libc::passwd;
+                            let rc = match (host, operation) {
+                                (true, "pwnam") => libc::getpwnam_r(
+                                    c"fltest1".as_ptr(),
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                                (false, "pwnam") => passwd::getpwnam_r(
+                                    c"fltest1".as_ptr(),
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                                (true, _) => libc::getpwuid_r(
+                                    4201,
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                                (false, _) => passwd::getpwuid_r(
+                                    4201,
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                            };
+                            let error = *errno;
+                            assert!(result.is_null() || (rc == 0 && std::ptr::eq(result, &entry)));
+                            (rc, error, pw_line(result))
+                        }
+                        "grnam" | "grgid" => {
+                            let mut entry: libc::group = std::mem::zeroed();
+                            let mut result = &mut entry as *mut libc::group;
+                            let rc = match (host, operation) {
+                                (true, "grnam") => libc::getgrnam_r(
+                                    c"fltestgrp".as_ptr(),
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                                (false, "grnam") => group::getgrnam_r(
+                                    c"fltestgrp".as_ptr(),
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                                (true, _) => libc::getgrgid_r(
+                                    4301,
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                                (false, _) => group::getgrgid_r(
+                                    4301,
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                ),
+                            };
+                            let error = *errno;
+                            assert!(result.is_null() || (rc == 0 && std::ptr::eq(result, &entry)));
+                            (rc, error, gr_line(result))
+                        }
+                        _ => {
+                            let mut entry: libc::spwd = std::mem::zeroed();
+                            let mut result = &mut entry as *mut libc::spwd;
+                            let rc = if host {
+                                libc::getspnam_r(
+                                    c"fltest1".as_ptr(),
+                                    &mut entry,
+                                    buffer,
+                                    capacity,
+                                    &mut result,
+                                )
+                            } else {
+                                passwd::getspnam_r(
+                                    c"fltest1".as_ptr(),
+                                    std::ptr::from_mut(&mut entry).cast(),
+                                    buffer,
+                                    capacity,
+                                    std::ptr::from_mut(&mut result).cast(),
+                                )
+                            };
+                            let error = *errno;
+                            assert!(result.is_null() || (rc == 0 && std::ptr::eq(result, &entry)));
+                            (rc, error, format!("{:?}", spwd_fields(result)))
+                        }
+                    }
+                };
+                assert!(storage.0[..start].iter().all(|byte| *byte == 0xa5));
+                assert!(
+                    storage.0[start + capacity..]
+                        .iter()
+                        .all(|byte| *byte == 0xa5)
+                );
+                writeln!(
+                    transcript,
+                    "{operation}/{capacity}/{offset}={rc}:{error}:{value}"
+                )
+                .unwrap();
+            }
+        }
+    }
+    // Only nonreentrant calls own growable scratch. Do not compare their
+    // internal retry count, which is not part of the public libc contract.
+    unsafe {
+        std::env::remove_var("FLTEST_TRACE");
+        std::env::remove_var("FLTEST_ACCOUNT_ERRNO");
+    }
+    let api = if host { host_api() } else { fl_api() };
+    unsafe {
+        writeln!(
+            transcript,
+            "static-pw={}",
+            pw_line((api.getpwnam)(c"fltest1".as_ptr()))
+        )
+        .unwrap();
+        writeln!(
+            transcript,
+            "static-gr={}",
+            gr_line((api.getgrnam)(c"fltestgrp".as_ptr()))
+        )
+        .unwrap();
+        writeln!(
+            transcript,
+            "static-sp={:?}",
+            (api.getspnam)(c"fltest1".as_ptr())
+        )
+        .unwrap();
+    }
+    transcript
+}
+
+/// A module may require more scratch than its result occupies. A caller's
+/// ERANGE must be terminal even with TRYAGAIN=continue, and successful module
+/// layouts must not be repacked into a larger representation.
+#[test]
+fn accounts_reentrant_module_buffers_match_glibc() {
+    const TEST: &str = "accounts_reentrant_module_buffers_match_glibc";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_ACCOUNT_PROVIDER").unwrap() == "host";
+        if host {
+            unsafe extern "C" {
+                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char)
+                -> c_int;
+            }
+            let accounts = CString::new(std::env::var("FLTEST_ACCOUNT_SOURCES").unwrap()).unwrap();
+            let groups = CString::new(std::env::var("FLTEST_GROUP_SOURCES").unwrap()).unwrap();
+            for (database, sources) in [
+                (c"passwd", &accounts),
+                (c"shadow", &accounts),
+                (c"group", &groups),
+            ] {
+                assert_eq!(
+                    unsafe { __nss_configure_lookup(database.as_ptr(), sources.as_ptr()) },
+                    0
+                );
+            }
+        }
+        unsafe { libc::alarm(15) };
+        let transcript = account_reentrant_transcript(host);
+        unsafe { libc::alarm(0) };
+        println!("ACCOUNT_BUFFER_BEGIN\n{transcript}ACCOUNT_BUFFER_END");
+        return;
+    }
+    let dir = scratch_dir("account-reentrant-buffers");
+    build_modules(&dir);
+    let cases = [
+        ("fltest", "fltest", false, false),
+        ("fltest", "fltest", true, false),
+        (
+            "fltest [TRYAGAIN=continue] fltestnoig",
+            "fltest [TRYAGAIN=continue] fltestnoig",
+            true,
+            false,
+        ),
+        (
+            "fltest [TRYAGAIN=return] fltestnoig",
+            "fltest [TRYAGAIN=return] fltestnoig",
+            true,
+            false,
+        ),
+        (
+            "fltest [SUCCESS=continue] fltestnoig",
+            "fltest [SUCCESS=continue] fltestnoig",
+            false,
+            false,
+        ),
+        ("fltest", "fltest [SUCCESS=merge] fltestnoig", false, false),
+        ("fltest", "fltest [SUCCESS=merge] flmissing", false, false),
+        ("fltest fltestnoig", "fltest fltestnoig", false, true),
+    ];
+    let mut compared = 0;
+    for (index, (accounts, groups, scratch, errno_probe)) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("account-buffers-{index}-{provider}-{mode}");
+            let config = format!("passwd: {accounts}\nshadow: {accounts}\ngroup: {groups}\n");
+            let mut child = host_module_child(TEST, &dir, &config, &label);
+            child
+                .env("FLTEST_ACCOUNT_PROVIDER", provider)
+                .env("FLTEST_ACCOUNT_SOURCES", accounts)
+                .env("FLTEST_GROUP_SOURCES", groups)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode);
+            child.env("FLTEST_ACCOUNT_ERRNO", if errno_probe { "1" } else { "0" });
+            if scratch {
+                child.env("FLTEST_ACCOUNT_SCRATCH", "fltest");
+            } else {
+                child.env_remove("FLTEST_ACCOUNT_SCRATCH");
+            }
+            let result = run_child(child, &label);
+            let stdout = std::str::from_utf8(&result.stdout).unwrap();
+            let transcript = stdout
+                .split_once("ACCOUNT_BUFFER_BEGIN\n")
+                .and_then(|(_, rest)| rest.split_once("ACCOUNT_BUFFER_END"))
+                .map(|(text, _)| text)
+                .expect("account buffer transcript")
+                .to_owned();
+            assert_eq!(transcript.lines().count(), 203);
+            let trace = String::from_utf8_lossy(&result.stderr)
+                .lines()
+                .filter(|line| line.starts_with("fltest:") || line.starts_with("fltestnoig:"))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if scratch {
+                assert!(transcript.contains(&format!(
+                    "pwnam/128/0={}:{}:NULL",
+                    libc::ERANGE,
+                    libc::ERANGE
+                )));
+                assert!(transcript.contains("pwnam/4096/0=0:"));
+                assert!(transcript.contains("static-pw=fltest1:x:4201:4301:"));
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(
+                    &(transcript, trace),
+                    expected,
+                    "{label}: accounts={accounts}, groups={groups}"
+                );
+                compared += 1;
+            } else {
+                oracle = Some((transcript, trace));
+            }
+        }
+    }
+    assert_eq!(compared, 16);
+    eprintln!("account buffers: {compared} GNU/candidate comparisons, all five reentrant lookups");
+}
+
 fn build_modules(dir: &Path) {
     let source = repo_root().join("tests/integration/fixture_nss_module_lib.c");
     let variants: &[(&str, &[&str])] = &[
