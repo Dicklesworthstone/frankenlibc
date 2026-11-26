@@ -2009,6 +2009,52 @@ fn gethostbyname_ipv4_address(address: &[u8]) -> Option<Ipv4Addr> {
 /// An AF_INET6 host answer: canonical name, aliases, addresses.
 type Host6Target = (Vec<u8>, Vec<Vec<u8>>, Vec<Ipv6Addr>);
 
+fn native_host6_backend(
+    name: &CStr,
+    dns: bool,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<Host6Target, c_int> {
+    use frankenlibc_core::addrinfo::Family;
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    if dns {
+        return dns_backend_result(native_dns_hostent(name.to_bytes(), Family::Inet6))
+            .map(|answer| (answer.name, answer.metadata.aliases, answer.addresses.ipv6));
+    }
+    let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+        let mut target: Option<Host6Target> = None;
+        frankenlibc_core::resolv::for_each_hosts_match_entry(content, name.to_bytes(), |entry| {
+            let Some(address) = core::str::from_utf8(entry.address())
+                .ok()
+                .and_then(|a| a.parse::<Ipv6Addr>().ok())
+            else {
+                return false;
+            };
+            match &mut target {
+                Some((canonical, aliases, addresses)) => {
+                    aliases.extend(entry.aliases().map(ToOwned::to_owned));
+                    if entry.canonical_name() != canonical.as_slice() {
+                        aliases.push(entry.canonical_name().to_vec());
+                    }
+                    addresses.push(address);
+                }
+                None => {
+                    target = Some((
+                        entry.canonical_name().to_vec(),
+                        entry.aliases().map(ToOwned::to_owned).collect(),
+                        vec![address],
+                    ));
+                }
+            }
+            false
+        });
+        target
+    });
+    match snapshot {
+        Ok(Some(target)) => BackendResult::Success(target),
+        Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+        Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+    }
+}
+
 /// `gethostbyname2(name, AF_INET6)`: an IPv6 literal, else the IPv6
 /// `/etc/hosts` lines naming `name` (aliases merged across lines, as for
 /// IPv4), else native DNS AAAA.
@@ -2016,8 +2062,7 @@ fn resolve_gethostbyname6_target(
     name: Option<&CStr>,
     files_only: bool,
 ) -> Result<Host6Target, c_int> {
-    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
-    use frankenlibc_core::addrinfo::Family;
+    use frankenlibc_core::addrinfo::hosts_policy::Backend;
     let name_cstr = name
         .filter(|name| !name.to_bytes().is_empty())
         .ok_or(libc::EAI_NONAME)?;
@@ -2029,58 +2074,12 @@ fn resolve_gethostbyname6_target(
     {
         return Ok((name_cstr.to_bytes().to_vec(), Vec::new(), vec![v6]));
     }
-    let files_lookup = || -> BackendResult<Host6Target, c_int> {
-        let snapshot = with_hosts_backend_snapshot(|content, _generation| {
-            let mut target: Option<Host6Target> = None;
-            frankenlibc_core::resolv::for_each_hosts_match_entry(
-                content,
-                name_cstr.to_bytes(),
-                |entry| {
-                    let Some(address) = core::str::from_utf8(entry.address())
-                        .ok()
-                        .and_then(|a| a.parse::<Ipv6Addr>().ok())
-                    else {
-                        return false;
-                    };
-                    match &mut target {
-                        Some((canonical, aliases, addresses)) => {
-                            aliases.extend(entry.aliases().map(ToOwned::to_owned));
-                            if entry.canonical_name() != canonical.as_slice() {
-                                aliases.push(entry.canonical_name().to_vec());
-                            }
-                            addresses.push(address);
-                        }
-                        None => {
-                            target = Some((
-                                entry.canonical_name().to_vec(),
-                                entry.aliases().map(ToOwned::to_owned).collect(),
-                                vec![address],
-                            ));
-                        }
-                    }
-                    false
-                },
-            );
-            target
-        });
-        match snapshot {
-            Ok(Some(target)) => BackendResult::Success(target),
-            Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
-            Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
-        }
-    };
-    // The backend snapshot borrow ends before network I/O.
-    let dns_lookup = || -> BackendResult<Host6Target, c_int> {
-        dns_backend_result(native_dns_hostent(name_cstr.to_bytes(), Family::Inet6)).map(|answer| {
-            (answer.name, answer.metadata.aliases, answer.addresses.ipv6)
-        })
-    };
     // The same nsswitch `hosts:` policy as the IPv4 and getaddrinfo paths;
     // this path used to hard-code files-then-DNS (bd-smc8xs).
     hosts_policy_for(files_only)
         .lookup(|backend| match backend {
-            Backend::Files => files_lookup(),
-            Backend::Dns => dns_lookup(),
+            Backend::Files => native_host6_backend(name_cstr, false),
+            Backend::Dns => native_host6_backend(name_cstr, true),
             Backend::Module(service) => observe_module_hosts_result(
                 crate::nss_module::gethostbyname(service, name_cstr.to_bytes(), libc::AF_INET6)
                     .map(|entry| {
@@ -2117,7 +2116,9 @@ pub(crate) unsafe fn gethostbyname2_r_impl(
 ) -> c_int {
     if af == libc::AF_INET {
         return unsafe {
-            gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop, files_only)
+            gethostbyname_r_for(
+                name, result_buf, buf, buflen, result, h_errnop, files_only, true,
+            )
         };
     }
     if !result.is_null() {
@@ -2130,6 +2131,21 @@ pub(crate) unsafe fn gethostbyname2_r_impl(
             return libc::EINVAL;
         }
     };
+    if let Some(name) = name_cstr
+        && let Some(code) = unsafe {
+            reentrant_host_modules(
+                crate::nss_module::HostLookup::NameFamily(name, af),
+                files_only,
+                result_buf,
+                buf,
+                buflen,
+                result,
+                h_errnop,
+            )
+        }
+    {
+        return code;
+    }
     let (canonical, aliases, addresses) = match resolve_gethostbyname6_target(name_cstr, files_only)
     {
         Ok(found) => found,
@@ -2169,13 +2185,53 @@ pub(crate) unsafe fn gethostbyname2_r_impl(
     }
 }
 
+fn native_host4_backend(
+    name: &CStr,
+    dns: bool,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<GethostbynameTarget, c_int> {
+    use frankenlibc_core::addrinfo::Family;
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    if dns {
+        return dns_backend_result(native_dns_hostent(name.to_bytes(), Family::Inet)).map(
+            |answer| GethostbynameTarget {
+                name: answer.name,
+                aliases: answer.metadata.aliases,
+                addresses: answer.addresses.ipv4,
+            },
+        );
+    }
+    let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+        let mut target: Option<GethostbynameTarget> = None;
+        frankenlibc_core::resolv::for_each_hosts_match_entry(content, name.to_bytes(), |entry| {
+            let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
+                return false;
+            };
+            if let Some(target) = &mut target {
+                target.append_row(entry.canonical_name(), entry.aliases(), address);
+            } else {
+                target = Some(GethostbynameTarget::seeded(
+                    entry.canonical_name(),
+                    entry.aliases(),
+                    address,
+                ));
+            }
+            false
+        });
+        target
+    });
+    match snapshot {
+        Ok(Some(target)) => BackendResult::Success(target),
+        Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+        Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+    }
+}
+
 /// Resolve legacy IPv4 hosts: numeric, else the nsswitch `hosts:` sources.
 /// Release the backend borrow before performing network I/O.
 fn resolve_gethostbyname_target(
     name: Option<&CStr>,
     files_only: bool,
 ) -> Result<GethostbynameTarget, c_int> {
-    use frankenlibc_core::addrinfo::Family;
     let name_cstr = name
         .filter(|name| !name.to_bytes().is_empty())
         .ok_or(libc::EAI_NONAME)?;
@@ -2187,52 +2243,13 @@ fn resolve_gethostbyname_target(
     {
         return Ok(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
     }
-    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
-    let files_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
-        let snapshot = with_hosts_backend_snapshot(|content, _generation| {
-            let mut target: Option<GethostbynameTarget> = None;
-            frankenlibc_core::resolv::for_each_hosts_match_entry(
-                content,
-                name_cstr.to_bytes(),
-                |entry| {
-                    let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
-                        return false;
-                    };
-                    if let Some(target) = &mut target {
-                        target.append_row(entry.canonical_name(), entry.aliases(), address);
-                    } else {
-                        target = Some(GethostbynameTarget::seeded(
-                            entry.canonical_name(),
-                            entry.aliases(),
-                            address,
-                        ));
-                    }
-                    false
-                },
-            );
-            target
-        });
-        match snapshot {
-            Ok(Some(target)) => BackendResult::Success(target),
-            Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
-            Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
-        }
-    };
-    let dns_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
-        dns_backend_result(native_dns_hostent(name_cstr.to_bytes(), Family::Inet)).map(|answer| {
-            GethostbynameTarget {
-                name: answer.name,
-                aliases: answer.metadata.aliases,
-                addresses: answer.addresses.ipv4,
-            }
-        })
-    };
+    use frankenlibc_core::addrinfo::hosts_policy::Backend;
     // The same nsswitch `hosts:` policy as getaddrinfo, so both APIs agree
     // within one process (bd-rc0923-epic-eeuy4f.19).
     hosts_policy_for(files_only)
         .lookup(|backend| match backend {
-            Backend::Files => files_lookup(),
-            Backend::Dns => dns_lookup(),
+            Backend::Files => native_host4_backend(name_cstr, false),
+            Backend::Dns => native_host4_backend(name_cstr, true),
             Backend::Module(service) => observe_module_hosts_result(
                 crate::nss_module::gethostbyname(service, name_cstr.to_bytes(), libc::AF_INET).map(
                     |entry| GethostbynameTarget {
@@ -2262,6 +2279,299 @@ fn legacy_host_lookup_error(error: c_int) -> (c_int, c_int) {
         libc::EAI_NODATA => (0, 4), // NO_DATA
         _ => (0, NO_RECOVERY_ERRNO),
     }
+}
+
+#[derive(Clone, Copy)]
+struct ReentrantHostOutput {
+    record: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+    result: *mut *mut c_void,
+}
+
+/// The native sources retain their existing parsers, DNS transport and
+/// packing rules when interleaved with exact-buffer foreign NSS callbacks.
+unsafe fn native_reentrant_host_backend(
+    key: crate::nss_module::HostLookup<'_>,
+    dns: bool,
+    output: ReentrantHostOutput,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<Result<(), c_int>, c_int> {
+    use crate::nss_module::HostLookup;
+    match key {
+        HostLookup::Name(name) | HostLookup::NameFamily(name, libc::AF_INET) => {
+            native_host4_backend(name, dns).map(|target| unsafe {
+                write_reentrant_gethostbyname(
+                    &target,
+                    output.record,
+                    output.buffer,
+                    output.capacity,
+                    output.result,
+                )
+            })
+        }
+        HostLookup::NameFamily(name, _) => {
+            native_host6_backend(name, dns).map(|(name, aliases, addresses)| {
+                let octets: Vec<[u8; 16]> = addresses.iter().map(Ipv6Addr::octets).collect();
+                let addresses: Vec<&[u8]> = octets.iter().map(|value| &value[..]).collect();
+                // SAFETY: the caller storage was validated before source dispatch.
+                unsafe {
+                    write_reentrant_hostent_family(
+                        &name,
+                        &aliases,
+                        &addresses,
+                        libc::AF_INET6,
+                        output.record,
+                        output.buffer,
+                        output.capacity,
+                        output.result,
+                    )
+                }
+            })
+        }
+        HostLookup::Address(address) => {
+            let lookup_address = match address {
+                std::net::IpAddr::V6(ip) => ip
+                    .to_ipv4_mapped()
+                    .map(std::net::IpAddr::V4)
+                    .unwrap_or(address),
+                _ => address,
+            };
+            let write = |answer: ReverseHostAnswer<'_>| unsafe {
+                write_reentrant_reverse_hostent(
+                    answer.name(),
+                    address,
+                    output.record,
+                    output.buffer,
+                    output.capacity,
+                    output.result,
+                )
+            };
+            match lookup_address {
+                std::net::IpAddr::V4(ip) => {
+                    let mut text = [0u8; 15];
+                    let text = write_ipv4_text(ip, &mut text);
+                    native_reverse_hosts_backend(lookup_address, text, dns, write)
+                }
+                std::net::IpAddr::V6(ip) => {
+                    let text = ip.to_string();
+                    native_reverse_hosts_backend(lookup_address, text.as_bytes(), dns, write)
+                }
+            }
+        }
+    }
+}
+
+/// Reentrant callers own their module buffer budget. A private growing buffer
+/// would erase TRY_AGAIN, change callback counts and replace provider storage
+/// with a second packing pass. Keep the exact callback outcome in the source
+/// state machine, including a previous answer when a later module is absent.
+/// Pure native policies, numeric shortcuts and internal files-only operations
+/// continue through their existing paths.
+#[allow(clippy::too_many_arguments)]
+unsafe fn reentrant_host_modules(
+    key: crate::nss_module::HostLookup<'_>,
+    files_only: bool,
+    record: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+) -> Option<c_int> {
+    use crate::nss_module::HostLookup;
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    use frankenlibc_core::nss::{Action, Status};
+    if files_only {
+        return None;
+    }
+    let name = match key {
+        HostLookup::Name(name) | HostLookup::NameFamily(name, libc::AF_INET) => {
+            if name.to_bytes().is_empty()
+                || name
+                    .to_str()
+                    .ok()
+                    .is_some_and(|value| value.parse::<Ipv4Addr>().is_ok())
+            {
+                return None;
+            }
+            Some(name)
+        }
+        HostLookup::NameFamily(name, _) => {
+            if name.to_bytes().is_empty()
+                || name
+                    .to_str()
+                    .ok()
+                    .is_some_and(|value| value.parse::<Ipv6Addr>().is_ok())
+            {
+                return None;
+            }
+            Some(name)
+        }
+        HostLookup::Address(_) => None,
+    };
+    // SAFETY: the canonical errno slot is live for this thread.
+    let errno = unsafe { crate::errno_abi::__errno_location() };
+    let initial_errno = unsafe { *errno };
+    let sources = hosts_policy_for(false).enumeration_sources();
+    if !sources
+        .iter()
+        .any(|source| !matches!(source.name(), b"files" | b"dns"))
+    {
+        return None;
+    }
+    if !tracked_object_fits(result)
+        || !tracked_object_fits(record.cast::<libc::hostent>())
+        || buffer.is_null()
+        || (!h_errnop.is_null() && !tracked_object_fits(h_errnop))
+    {
+        return Some(libc::EINVAL);
+    }
+    let h_errnop = if h_errnop.is_null() {
+        unsafe { __h_errno_location() }
+    } else {
+        h_errnop
+    };
+    let capacity =
+        known_remaining(buffer as usize).map_or(capacity, |remaining| remaining.min(capacity));
+    let output = ReentrantHostOutput {
+        record,
+        buffer,
+        capacity,
+        result,
+    };
+    // SAFETY: every output object was validated above. An explicit resolver
+    // error slot must not also overwrite the thread's canonical h_errno.
+    unsafe {
+        *result = ptr::null_mut();
+        *h_errnop = -1; // NETDB_INTERNAL before any provider answer.
+        set_abi_errno(initial_errno);
+    }
+    // GNU reserves its numeric-host layout before rejecting a name which
+    // begins like an address: sixteen address bytes, three pointer slots,
+    // and the terminated name. This is observable even for "fltest-large".
+    if let Some(name) = name
+        && name
+            .to_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_hexdigit() || *byte == b':')
+        && 16usize
+            .checked_add(3 * size_of::<*mut c_char>())
+            .and_then(|size| size.checked_add(name.to_bytes_with_nul().len()))
+            .is_none_or(|required| required > capacity)
+    {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return Some(libc::ERANGE);
+    }
+
+    let mut last_status = -1;
+    let mut last_native_result = None;
+    for source in &sources {
+        let status = if matches!(source.name(), b"files" | b"dns") {
+            unsafe { *result = ptr::null_mut() };
+            let answer =
+                unsafe { native_reentrant_host_backend(key, source.name() == b"dns", output) };
+            let (status, error) = match answer {
+                BackendResult::Success(Ok(())) => (1, None),
+                BackendResult::Success(Err(error)) => {
+                    unsafe {
+                        *result = ptr::null_mut();
+                        *h_errnop = if error == libc::ERANGE {
+                            -1
+                        } else {
+                            NO_RECOVERY_ERRNO
+                        };
+                        set_abi_errno(error);
+                    }
+                    return Some(error);
+                }
+                BackendResult::NotFound(error) => (0, Some(error)),
+                BackendResult::Unavailable(error) => (-1, Some(error)),
+                BackendResult::TryAgain(error) => (-2, Some(error)),
+            };
+            if let Some(error) = error {
+                let (code, host_error) = legacy_host_lookup_error(error);
+                unsafe {
+                    *h_errnop = host_error;
+                    if code != 0 || status == 0 {
+                        set_abi_errno(code);
+                    }
+                }
+                // Preserve the native reverse DNS path's existing return
+                // contract; a foreign provider's return is handled below.
+                last_native_result = Some(if matches!(key, HostLookup::Address(_)) {
+                    0
+                } else {
+                    code
+                });
+            } else {
+                unsafe {
+                    *h_errnop = 0;
+                    set_abi_errno(0);
+                }
+                last_native_result = Some(0);
+            }
+            last_status = status;
+            status
+        } else {
+            let called = unsafe {
+                crate::nss_module::host_entry_r(
+                    source.name(),
+                    key,
+                    record.cast(),
+                    buffer,
+                    capacity,
+                    h_errnop,
+                )
+            };
+            if let Some(status) = called {
+                last_status = status;
+                last_native_result = None;
+                unsafe { *result = if status == 1 { record } else { ptr::null_mut() } };
+                // Only NETDB_INTERNAL authorizes a buffer-size retry. It is
+                // terminal even under a configured TRYAGAIN=continue action.
+                if status == -2 && unsafe { *errno == libc::ERANGE && *h_errnop == -1 } {
+                    return Some(libc::ERANGE);
+                }
+            }
+            let status = called.unwrap_or(-1);
+            if Status::from_raw(status) == Status::Unavailable {
+                DNS_METRICS
+                    .nss_unavailable_sources
+                    .fetch_add(1, AtomicOrdering::Relaxed);
+            }
+            status
+        };
+        let action = if status == 2 {
+            source.return_action()
+        } else {
+            source.action(Status::from_raw(status))
+        };
+        match action {
+            Action::Return => break,
+            Action::Continue => {}
+            // Keep the existing hosts policy's explicit rejection of merge.
+            Action::Merge => {
+                unsafe {
+                    *result = ptr::null_mut();
+                    *h_errnop = NO_RECOVERY_ERRNO;
+                }
+                return Some(0);
+            }
+        }
+    }
+    if let Some(code) = last_native_result {
+        return Some(code);
+    }
+    // GNU clears errno for a success or a definitive miss. Ordinary transient
+    // host failures report EAGAIN; internal/provider failures retain errno.
+    let code = if matches!(last_status, 0 | 1) {
+        0
+    } else if last_status == -2 && unsafe { *h_errnop == 2 } {
+        libc::EAGAIN
+    } else {
+        unsafe { *errno }
+    };
+    unsafe { set_abi_errno(code) };
+    Some(code)
 }
 
 /// Bench-only: reconstruct the per-call `to_vec()` needle allocation that
@@ -3151,7 +3461,14 @@ fn native_dns_resolve(
                 want_v6,
                 &lookup.config,
                 |name, kind, server, timeout, _, _| {
-                    native_dns_query(name, kind, server, timeout, lookup.options, metadata.as_deref_mut())
+                    native_dns_query(
+                        name,
+                        kind,
+                        server,
+                        timeout,
+                        lookup.options,
+                        metadata.as_deref_mut(),
+                    )
                 },
             )?;
             // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
@@ -3183,6 +3500,27 @@ impl ReverseHostAnswer<'_> {
     }
 }
 
+fn native_reverse_hosts_backend<T>(
+    address: std::net::IpAddr,
+    ip_str: &[u8],
+    dns: bool,
+    write: impl Fn(ReverseHostAnswer<'_>) -> T,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    if dns {
+        return dns_backend_result(native_dns_reverse_host(address))
+            .map(|hostname| write(ReverseHostAnswer::Name(&hostname)));
+    }
+    match with_hosts_backend_snapshot(|content, _generation| {
+        frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)
+            .map(|name| write(ReverseHostAnswer::Name(name)))
+    }) {
+        Ok(Some(written)) => BackendResult::Success(written),
+        Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+        Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+    }
+}
+
 /// Reverse lookup through the nsswitch `hosts:` sources
 /// (bd-rc0923-epic-eeuy4f.19). `write` stores the found hostname; the files
 /// source calls it inside the hosts-file borrow, so a hit stays
@@ -3193,26 +3531,11 @@ fn reverse_hosts_lookup<T>(
     files_only: bool,
     write: impl Fn(ReverseHostAnswer<'_>) -> T,
 ) -> Result<T, c_int> {
-    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+    use frankenlibc_core::addrinfo::hosts_policy::Backend;
     hosts_policy_for(files_only)
         .lookup(|backend| match backend {
-            Backend::Files => match with_hosts_backend_snapshot(|content, _generation| {
-                frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)
-                    .map(|name| write(ReverseHostAnswer::Name(name)))
-            }) {
-                Ok(Some(written)) => BackendResult::Success(written),
-                Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
-                Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
-            },
-            // The backend snapshot borrow ends before network I/O.
-            Backend::Dns => match dns_backend_result(native_dns_reverse_host(address)) {
-                BackendResult::Success(hostname) => {
-                    BackendResult::Success(write(ReverseHostAnswer::Name(&hostname)))
-                }
-                BackendResult::NotFound(code) => BackendResult::NotFound(code),
-                BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
-                BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
-            },
+            Backend::Files => native_reverse_hosts_backend(address, ip_str, false, &write),
+            Backend::Dns => native_reverse_hosts_backend(address, ip_str, true, &write),
             Backend::Module(service) => observe_module_hosts_result(
                 crate::nss_module::gethostbyaddr(service, address)
                     .map(|entry| write(ReverseHostAnswer::Module(&entry))),
@@ -3812,7 +4135,11 @@ pub unsafe extern "C" fn getaddrinfo(
                     // A missing name or an unavailable DNS server is a defined
                     // lookup failure, not memory corruption. Even hardened mode
                     // must not redirect it to localhost.
-                    match dns_backend_result(native_dns_resolve(text.as_bytes(), address_policy, None)) {
+                    match dns_backend_result(native_dns_resolve(
+                        text.as_bytes(),
+                        address_policy,
+                        None,
+                    )) {
                         BackendResult::Success((resolution, _))
                             if resolution.ipv4.is_empty() && resolution.ipv6.is_empty() =>
                         {
@@ -5339,6 +5666,24 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     h_errnop: *mut c_int,
     files_only: bool,
 ) -> c_int {
+    unsafe {
+        gethostbyname_r_for(
+            name, result_buf, buf, buflen, result, h_errnop, files_only, false,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn gethostbyname_r_for(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+    files_only: bool,
+    family_lookup: bool,
+) -> c_int {
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
@@ -5368,6 +5713,19 @@ pub(crate) unsafe fn gethostbyname_r_impl(
             return libc::EINVAL;
         }
     };
+    if let Some(name) = name_cstr {
+        let key = if family_lookup {
+            crate::nss_module::HostLookup::NameFamily(name, libc::AF_INET)
+        } else {
+            crate::nss_module::HostLookup::Name(name)
+        };
+        if let Some(code) = unsafe {
+            reentrant_host_modules(key, files_only, result_buf, buf, buflen, result, h_errnop)
+        } {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, code != 0);
+            return code;
+        }
+    }
     let target = match resolve_gethostbyname_target(name_cstr, files_only) {
         Ok(target) => target,
         Err(error) => {
@@ -5686,6 +6044,20 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
         }
     };
 
+    if let Some(code) = unsafe {
+        reentrant_host_modules(
+            crate::nss_module::HostLookup::Address(address),
+            files_only,
+            result_buf,
+            buf,
+            buflen,
+            result,
+            h_errnop,
+        )
+    } {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, code != 0);
+        return code;
+    }
     let written = match lookup_reverse_host(address, files_only, |answer| {
         // SAFETY: caller-provided output buffers; the writer checks their bounds.
         unsafe {

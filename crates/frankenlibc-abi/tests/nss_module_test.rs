@@ -623,11 +623,21 @@ fn account_enumeration_read(
         let rc = if let Some(capacity) = capacity {
             let buffer = storage.0.as_mut_ptr().add(start).cast::<c_char>();
             match (host, database) {
-                (true, "passwd") => libc::getpwent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
-                (false, "passwd") => passwd::getpwent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
-                (true, "group") => libc::getgrent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
-                (false, "group") => group::getgrent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
-                (true, "shadow") => libc::getspent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
+                (true, "passwd") => {
+                    libc::getpwent_r(output.cast(), buffer, capacity, (&raw mut result).cast())
+                }
+                (false, "passwd") => {
+                    passwd::getpwent_r(output.cast(), buffer, capacity, (&raw mut result).cast())
+                }
+                (true, "group") => {
+                    libc::getgrent_r(output.cast(), buffer, capacity, (&raw mut result).cast())
+                }
+                (false, "group") => {
+                    group::getgrent_r(output.cast(), buffer, capacity, (&raw mut result).cast())
+                }
+                (true, "shadow") => {
+                    libc::getspent_r(output.cast(), buffer, capacity, (&raw mut result).cast())
+                }
                 (false, "shadow") => passwd::getspent_r(output, buffer, capacity, &mut result),
                 _ => unreachable!(),
             }
@@ -652,7 +662,11 @@ fn account_enumeration_read(
     };
     if let Some(capacity) = capacity {
         assert!(storage.0[..start].iter().all(|byte| *byte == 0xa5));
-        assert!(storage.0[start + capacity..].iter().all(|byte| *byte == 0xa5));
+        assert!(
+            storage.0[start + capacity..]
+                .iter()
+                .all(|byte| *byte == 0xa5)
+        );
     } else {
         unsafe { std::env::remove_var("FLTEST_ACCOUNT_ENUM_PRIVATE") };
     }
@@ -662,7 +676,9 @@ fn account_enumeration_read(
 fn account_enumeration_lifecycle(host: bool, database: &str, rewind: bool) -> c_int {
     use frankenlibc_abi::{grp_abi as group, pwd_abi as passwd};
     unsafe {
-        let errno = if host { libc::__errno_location() } else {
+        let errno = if host {
+            libc::__errno_location()
+        } else {
             frankenlibc_abi::errno_abi::__errno_location()
         };
         *errno = 619;
@@ -687,29 +703,96 @@ fn account_enumeration_lifecycle(host: bool, database: &str, rewind: bool) -> c_
 
 fn account_enumeration_transcript(host: bool, database: &str) -> String {
     let mut output = String::new();
-    writeln!(output, "fresh-end {}", account_enumeration_lifecycle(host, database, false)).unwrap();
+    writeln!(
+        output,
+        "fresh-end {}",
+        account_enumeration_lifecycle(host, database, false)
+    )
+    .unwrap();
     for capacity in [0, 1, 8] {
-        writeln!(output, "implicit {capacity} {:?}", account_enumeration_read(host, database, Some(capacity), 1)).unwrap();
+        writeln!(
+            output,
+            "implicit {capacity} {:?}",
+            account_enumeration_read(host, database, Some(capacity), 1)
+        )
+        .unwrap();
     }
-    writeln!(output, "static-after-range {:?}", account_enumeration_read(host, database, None, 0)).unwrap();
+    writeln!(
+        output,
+        "static-after-range {:?}",
+        account_enumeration_read(host, database, None, 0)
+    )
+    .unwrap();
     for (index, capacity) in [64, 4095, 4096].into_iter().enumerate() {
-        writeln!(output, "mixed {capacity} {:?}", account_enumeration_read(host, database, Some(capacity), index % 2)).unwrap();
+        writeln!(
+            output,
+            "mixed {capacity} {:?}",
+            account_enumeration_read(host, database, Some(capacity), index % 2)
+        )
+        .unwrap();
     }
     for index in 0..16 {
         let value = account_enumeration_read(host, database, Some(4096), index % 2);
         let done = value.2.is_none();
         writeln!(output, "drain {index} {value:?}").unwrap();
-        if done { break; }
+        if done {
+            break;
+        }
     }
-    writeln!(output, "repeat-eof {:?}", account_enumeration_read(host, database, Some(4096), 0)).unwrap();
-    writeln!(output, "set {}", account_enumeration_lifecycle(host, database, true)).unwrap();
-    writeln!(output, "rewind-small {:?}", account_enumeration_read(host, database, Some(1), 0)).unwrap();
-    writeln!(output, "rewind-retry {:?}", account_enumeration_read(host, database, Some(4096), 1)).unwrap();
-    writeln!(output, "static-next {:?}", account_enumeration_read(host, database, None, 0)).unwrap();
-    writeln!(output, "end {}", account_enumeration_lifecycle(host, database, false)).unwrap();
-    writeln!(output, "end-again {}", account_enumeration_lifecycle(host, database, false)).unwrap();
-    writeln!(output, "after-end {:?}", account_enumeration_read(host, database, Some(4096), 1)).unwrap();
-    writeln!(output, "final-end {}", account_enumeration_lifecycle(host, database, false)).unwrap();
+    writeln!(
+        output,
+        "repeat-eof {:?}",
+        account_enumeration_read(host, database, Some(4096), 0)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "set {}",
+        account_enumeration_lifecycle(host, database, true)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "rewind-small {:?}",
+        account_enumeration_read(host, database, Some(1), 0)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "rewind-retry {:?}",
+        account_enumeration_read(host, database, Some(4096), 1)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "static-next {:?}",
+        account_enumeration_read(host, database, None, 0)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "end {}",
+        account_enumeration_lifecycle(host, database, false)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "end-again {}",
+        account_enumeration_lifecycle(host, database, false)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "after-end {:?}",
+        account_enumeration_read(host, database, Some(4096), 1)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "final-end {}",
+        account_enumeration_lifecycle(host, database, false)
+    )
+    .unwrap();
     output
 }
 
@@ -723,11 +806,15 @@ fn accounts_enumeration_matches_glibc_module_policy() {
         let database = std::env::var("FLTEST_ACCOUNT_DATABASE").unwrap();
         if host {
             unsafe extern "C" {
-                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char)
+                -> c_int;
             }
             let name = CString::new(database.as_str()).unwrap();
             let sources = CString::new(std::env::var("FLTEST_ACCOUNT_SOURCES").unwrap()).unwrap();
-            assert_eq!(unsafe { __nss_configure_lookup(name.as_ptr(), sources.as_ptr()) }, 0);
+            assert_eq!(
+                unsafe { __nss_configure_lookup(name.as_ptr(), sources.as_ptr()) },
+                0
+            );
         }
         unsafe { libc::alarm(15) };
         let transcript = account_enumeration_transcript(host, &database);
@@ -739,13 +826,24 @@ fn accounts_enumeration_matches_glibc_module_policy() {
     let dir = scratch_dir("account-enumeration");
     build_modules(&dir);
     let module = Command::new("cc")
-        .args(["-O2", "-fPIC", "-shared", "-DSERVICE=flaccountgetonly",
-            "-DNO_ACCOUNT_SET", "-DNO_ACCOUNT_END"])
+        .args([
+            "-O2",
+            "-fPIC",
+            "-shared",
+            "-DSERVICE=flaccountgetonly",
+            "-DNO_ACCOUNT_SET",
+            "-DNO_ACCOUNT_END",
+        ])
         .arg(repo_root().join("tests/integration/fixture_nss_module_lib.c"))
-        .arg("-o").arg(dir.join("libnss_flaccountgetonly.so.2"))
-        .output().expect("build get-only account module");
-    assert!(module.status.success(), "account module build failed: {}",
-        String::from_utf8_lossy(&module.stderr));
+        .arg("-o")
+        .arg(dir.join("libnss_flaccountgetonly.so.2"))
+        .output()
+        .expect("build get-only account module");
+    assert!(
+        module.status.success(),
+        "account module build failed: {}",
+        String::from_utf8_lossy(&module.stderr)
+    );
     let cases = [
         ("fltest", "normal", false),
         ("fltest fltestnoig", "normal", false),
@@ -756,9 +854,17 @@ fn accounts_enumeration_matches_glibc_module_policy() {
         ("fltest [UNAVAIL=continue] fltestnoig", "get-unavail", false),
         ("fltest [TRYAGAIN=return] fltestnoig", "get-again", false),
         ("fltest [TRYAGAIN=continue] fltestnoig", "get-again", false),
-        ("fltest [TRYAGAIN=return] fltestnoig", "get-quiet-again", false),
+        (
+            "fltest [TRYAGAIN=return] fltestnoig",
+            "get-quiet-again",
+            false,
+        ),
         ("fltest [NOTFOUND=return] fltestnoig", "get-notfound", false),
-        ("fltest [NOTFOUND=continue] fltestnoig", "get-notfound", false),
+        (
+            "fltest [NOTFOUND=continue] fltestnoig",
+            "get-notfound",
+            false,
+        ),
         ("fltest fltestnoig", "get-return", false),
         ("fltest [!SUCCESS=continue] fltestnoig", "get-return", false),
         ("fltest fltestnoig", "set-unavail", false),
@@ -778,8 +884,10 @@ fn accounts_enumeration_matches_glibc_module_policy() {
             let mut oracle = None;
             for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
                 let label = format!("account-enum-{database}-{index}-{provider}-{mode}");
-                let mut child = host_module_child(TEST, &dir, &format!("{database}: {sources}\n"), &label);
-                child.env("FLTEST_ACCOUNT_PROVIDER", provider)
+                let mut child =
+                    host_module_child(TEST, &dir, &format!("{database}: {sources}\n"), &label);
+                child
+                    .env("FLTEST_ACCOUNT_PROVIDER", provider)
                     .env("FLTEST_ACCOUNT_DATABASE", database)
                     .env("FLTEST_ACCOUNT_SOURCES", sources)
                     .env("FLTEST_ACCOUNT_ENUM", scenario)
@@ -795,23 +903,38 @@ fn accounts_enumeration_matches_glibc_module_policy() {
                 }
                 let result = run_child(child, &label);
                 let stdout = std::str::from_utf8(&result.stdout).unwrap();
-                let transcript = stdout.split_once("ACCOUNT_ENUM_BEGIN\n")
+                let transcript = stdout
+                    .split_once("ACCOUNT_ENUM_BEGIN\n")
                     .and_then(|(_, rest)| rest.split_once("ACCOUNT_ENUM_END"))
-                    .map(|(text, _)| text).expect("account enumeration transcript").to_owned();
+                    .map(|(text, _)| text)
+                    .expect("account enumeration transcript")
+                    .to_owned();
                 assert!(transcript.lines().count() >= 18);
-                let trace = String::from_utf8_lossy(&result.stderr).lines()
-                    .filter(|line| line.starts_with("fltest:") || line.starts_with("fltestnoig:")
-                        || line.starts_with("flaccountgetonly:"))
-                    .map(str::to_owned).collect::<Vec<_>>();
+                let trace = String::from_utf8_lossy(&result.stderr)
+                    .lines()
+                    .filter(|line| {
+                        line.starts_with("fltest:")
+                            || line.starts_with("fltestnoig:")
+                            || line.starts_with("flaccountgetonly:")
+                    })
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
                 if sources == "fltest" && scenario == "normal" {
-                    assert!(transcript.contains("static-after-range (0,"),
-                        "{label}: the first record must survive short-buffer retries");
-                    assert!(transcript.contains("fltest1") || transcript.contains("fltestgrp"),
-                        "{label}: no provider record was observed");
+                    assert!(
+                        transcript.contains("static-after-range (0,"),
+                        "{label}: the first record must survive short-buffer retries"
+                    );
+                    assert!(
+                        transcript.contains("fltest1") || transcript.contains("fltestgrp"),
+                        "{label}: no provider record was observed"
+                    );
                 }
                 if let Some(expected) = &oracle {
-                    assert_eq!(&(transcript, trace), expected,
-                        "{label}: database={database}, sources={sources}, scenario={scenario}");
+                    assert_eq!(
+                        &(transcript, trace),
+                        expected,
+                        "{label}: database={database}, sources={sources}, scenario={scenario}"
+                    );
                     compared += 1;
                 } else {
                     oracle = Some((transcript, trace));
@@ -889,13 +1012,19 @@ fn accounts_enumeration_shares_files_provider_cursor() {
                 let (rc, _, record) = account_enumeration_read(false, database, capacity, 1);
                 assert_eq!(rc, 0, "{database}: {expected}");
                 let record = record.expect("public enumeration record");
-                assert!(record.starts_with(&format!("{expected}:")), "{database}: {record}");
+                assert!(
+                    record.starts_with(&format!("{expected}:")),
+                    "{database}: {record}"
+                );
             };
             let assert_direct = |expected: &str| {
                 let (status, record) = account_enumeration_files_read(database, 4096);
                 assert_eq!(status, 1, "{database}: {expected}");
                 let record = record.expect("direct files enumeration record");
-                assert!(record.starts_with(&format!("{expected}:")), "{database}: {record}");
+                assert!(
+                    record.starts_with(&format!("{expected}:")),
+                    "{database}: {record}"
+                );
             };
             account_enumeration_lifecycle(false, database, true);
             // The ignored physical line is larger than 128 bytes even though
@@ -949,7 +1078,8 @@ fn accounts_enumeration_shares_files_provider_cursor() {
             "passwd: files fltest\ngroup: files fltest\nshadow: files fltest\n",
             mode,
         );
-        child.env("FRANKENLIBC_MODE", mode)
+        child
+            .env("FRANKENLIBC_MODE", mode)
             .env("FRANKENLIBC_PASSWD_PATH", dir.join("passwd"))
             .env("FRANKENLIBC_GROUP_PATH", dir.join("group"))
             .env("FRANKENLIBC_SHADOW_PATH", dir.join("shadow"))
@@ -1919,7 +2049,228 @@ fn tuple_addresses() -> Vec<(IpAddr, u32)> {
     addresses
 }
 
+#[derive(Clone, Copy)]
+enum ReentrantModuleHost<'a> {
+    Name(&'a CStr, c_int),
+    Address(&'a [u8], c_int),
+}
+
+fn reentrant_module_host(
+    host_provider: bool,
+    query: ReentrantModuleHost<'_>,
+    capacity: usize,
+) -> (c_int, c_int, c_int, Option<HostAnswer>) {
+    unsafe extern "C" {
+        #[link_name = "gethostbyname2_r"]
+        fn host_name_r(
+            name: *const c_char,
+            family: c_int,
+            output: *mut libc::hostent,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut libc::hostent,
+            error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "gethostbyaddr_r"]
+        fn host_address_r(
+            address: *const c_void,
+            length: libc::socklen_t,
+            family: c_int,
+            output: *mut libc::hostent,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut libc::hostent,
+            error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "__h_errno_location"]
+        fn host_error() -> *mut c_int;
+    }
+    assert_ne!(
+        host_name_r as *const (),
+        frankenlibc_abi::unistd_abi::gethostbyname2_r as *const ()
+    );
+    assert_ne!(
+        host_address_r as *const (),
+        frankenlibc_abi::inet_abi::gethostbyaddr_r as *const ()
+    );
+    assert!(capacity <= 8192);
+    let mut storage = vec![0xa5u8; 8192 + 32];
+    let buffer = unsafe { storage.as_mut_ptr().add(16).cast::<c_char>() };
+    let mut output: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut::<libc::hostent>();
+    let mut error = 711;
+    let errno = unsafe {
+        if host_provider {
+            libc::__errno_location()
+        } else {
+            frankenlibc_abi::errno_abi::__errno_location()
+        }
+    };
+    let canonical_error = unsafe {
+        if host_provider {
+            host_error()
+        } else {
+            frankenlibc_abi::resolv_abi::__h_errno_location()
+        }
+    };
+    unsafe {
+        *errno = 619;
+        *canonical_error = 811;
+    }
+    let rc = unsafe {
+        match (host_provider, query) {
+            (true, ReentrantModuleHost::Name(name, family)) => host_name_r(
+                name.as_ptr(),
+                family,
+                &mut output,
+                buffer,
+                capacity,
+                &mut result,
+                &mut error,
+            ),
+            (false, ReentrantModuleHost::Name(name, family)) => {
+                frankenlibc_abi::unistd_abi::gethostbyname2_r(
+                    name.as_ptr(),
+                    family,
+                    &mut output,
+                    buffer,
+                    capacity,
+                    &mut result,
+                    &mut error,
+                )
+            }
+            (true, ReentrantModuleHost::Address(address, family)) => host_address_r(
+                address.as_ptr().cast(),
+                address.len() as libc::socklen_t,
+                family,
+                &mut output,
+                buffer,
+                capacity,
+                &mut result,
+                &mut error,
+            ),
+            (false, ReentrantModuleHost::Address(address, family)) => {
+                frankenlibc_abi::inet_abi::gethostbyaddr_r(
+                    address.as_ptr().cast(),
+                    address.len() as libc::socklen_t,
+                    family,
+                    (&raw mut output).cast(),
+                    buffer,
+                    capacity,
+                    (&raw mut result).cast(),
+                    &mut error,
+                )
+            }
+        }
+    };
+    let observed_errno = unsafe { *errno };
+    assert_eq!(
+        unsafe { *canonical_error },
+        811,
+        "explicit h_errnop must stay independent"
+    );
+    assert!(
+        storage[..16]
+            .iter()
+            .chain(&storage[16 + capacity..])
+            .all(|&byte| byte == 0xa5),
+        "provider wrote outside its advertised caller buffer"
+    );
+    if !result.is_null() {
+        assert_eq!(result, &raw mut output);
+        assert_eq!(rc, 0);
+        let within = |pointer: *const c_void, width: usize| {
+            let start = buffer as usize;
+            let address = pointer as usize;
+            address >= start && address - start <= capacity && width <= capacity - (address - start)
+        };
+        let string = |pointer: *const c_char| {
+            assert!(within(pointer.cast(), 1));
+            let remaining = capacity - (pointer as usize - buffer as usize);
+            assert!(
+                unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), remaining) }.contains(&0)
+            );
+        };
+        string(output.h_name);
+        for (table, strings) in [(output.h_aliases, true), (output.h_addr_list, false)] {
+            assert!((table as usize).is_multiple_of(std::mem::align_of::<*mut c_char>()));
+            for index in 0..=capacity / std::mem::size_of::<*mut c_char>() {
+                let slot = table.wrapping_add(index);
+                assert!(within(slot.cast(), std::mem::size_of::<*mut c_char>()));
+                let pointer = unsafe { *slot };
+                if pointer.is_null() {
+                    break;
+                }
+                if strings {
+                    string(pointer);
+                } else {
+                    assert!(matches!(output.h_length, 4 | 16));
+                    assert!(within(pointer.cast(), output.h_length as usize));
+                }
+            }
+        }
+    }
+    (rc, observed_errno, error, unsafe { host_answer(result) })
+}
+
+fn nonreentrant_module_host(
+    host_provider: bool,
+    name: &CStr,
+    family: c_int,
+) -> (c_int, c_int, Option<HostAnswer>) {
+    unsafe extern "C" {
+        #[link_name = "gethostbyname2"]
+        fn host_name(name: *const c_char, family: c_int) -> *mut libc::hostent;
+        #[link_name = "__h_errno_location"]
+        fn host_error() -> *mut c_int;
+    }
+    assert_ne!(
+        host_name as *const (),
+        frankenlibc_abi::unistd_abi::gethostbyname2 as *const ()
+    );
+    let (errno, error) = unsafe {
+        if host_provider {
+            (libc::__errno_location(), host_error())
+        } else {
+            (
+                frankenlibc_abi::errno_abi::__errno_location(),
+                frankenlibc_abi::resolv_abi::__h_errno_location(),
+            )
+        }
+    };
+    unsafe {
+        *errno = 619;
+        *error = 811;
+    }
+    let result = unsafe {
+        if host_provider {
+            host_name(name.as_ptr(), family)
+        } else {
+            frankenlibc_abi::unistd_abi::gethostbyname2(name.as_ptr(), family).cast()
+        }
+    };
+    let observed_errno = unsafe { *errno };
+    let observed_error = unsafe { *error };
+    (observed_errno, observed_error, unsafe {
+        host_answer(result)
+    })
+}
+
 fn assert_module_hosts(include_ipv6: bool, has_canonp: bool) {
+    unsafe extern "C" {
+        fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+    }
+    assert_ne!(
+        __nss_configure_lookup as *const (),
+        frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup as *const ()
+    );
+    let service = std::env::var(CHILD_ENV).unwrap();
+    let has_name2 = service != "fltesthostlegacy";
+    let sources = CString::new(service).unwrap();
+    assert_eq!(
+        unsafe { __nss_configure_lookup(c"hosts".as_ptr(), sources.as_ptr()) },
+        0
+    );
     let v4: [IpAddr; 2] = [
         Ipv4Addr::new(192, 0, 2, 41).into(),
         Ipv4Addr::new(192, 0, 2, 42).into(),
@@ -1935,51 +2286,59 @@ fn assert_module_hosts(include_ipv6: bool, has_canonp: bool) {
         }
         for name in ["fltest-alias", "fltest-large"] {
             let name_c = CString::new(name).unwrap();
-            let answer = unsafe {
-                host_answer(
-                    frankenlibc_abi::unistd_abi::gethostbyname2(name_c.as_ptr(), family).cast(),
-                )
-            }
-            .expect("module host must be visible through gethostbyname2");
-            assert_eq!(answer.name, b"fltest-host.example");
-            assert_eq!(answer.addresses, addresses);
-            assert_eq!(
-                answer.aliases[..2],
-                [b"fltest-alias".to_vec(), b"fltest-short".to_vec()]
-            );
+            let mut aliases = vec![b"fltest-alias".to_vec(), b"fltest-short".to_vec()];
             if name == "fltest-large" {
-                assert_eq!(answer.aliases.len(), 3);
-                assert_eq!(answer.aliases[2], vec![b'a'; 3072]);
+                aliases.push(vec![b'a'; 3072]);
+            }
+            let answer = HostAnswer {
+                name: b"fltest-host.example".to_vec(),
+                aliases,
+                addresses: addresses.to_vec(),
+            };
+            let measured = nonreentrant_module_host(true, &name_c, family);
+            let actual = nonreentrant_module_host(false, &name_c, family);
+            assert_eq!(actual, measured, "gethostbyname2 {name} family={family}");
+            if !has_name2 {
+                assert_eq!(actual, (619, -1, None));
+            } else if name == "fltest-large" {
+                // This wrapper owns 1024 bytes but cannot reinterpret the
+                // provider's TRY_AGAIN as NETDB_INTERNAL buffer exhaustion.
+                assert_eq!(actual, (libc::EAGAIN, 2, None));
             } else {
-                assert_eq!(answer.aliases.len(), 2);
+                assert_eq!((actual.0, actual.1), (0, 811));
+                assert_eq!(actual.2.as_ref(), Some(&answer));
+            }
+            if family == libc::AF_INET {
+                // The independent owned-scratch legacy path still exercises
+                // large successful records and every alias byte.
+                let owned = unsafe {
+                    host_answer(frankenlibc_abi::resolv_abi::gethostbyname(name_c.as_ptr()).cast())
+                };
+                assert_eq!(owned.as_ref(), Some(&answer));
             }
             let addrinfo = named_addresses(name, family, 0).unwrap();
             assert_eq!(addrinfo.name, b"fltest-host.example");
             assert_eq!(addrinfo.addresses, addresses);
 
-            for len in [8usize, 8192] {
-                let mut host: libc::hostent = unsafe { std::mem::zeroed() };
-                let mut result = std::ptr::null_mut();
-                let mut buffer = vec![0 as c_char; len];
-                let mut h_errno = -1;
-                let rc = unsafe {
-                    frankenlibc_abi::unistd_abi::gethostbyname2_r(
-                        name_c.as_ptr(),
-                        family,
-                        &mut host,
-                        buffer.as_mut_ptr(),
-                        buffer.len(),
-                        &mut result,
-                        &mut h_errno,
-                    )
-                };
+            for len in [8usize, 1024, 8192] {
+                let query = ReentrantModuleHost::Name(&name_c, family);
+                let measured = reentrant_module_host(true, query, len);
+                let actual = reentrant_module_host(false, query, len);
+                assert_eq!(
+                    actual, measured,
+                    "forward {name} family={family} capacity={len}"
+                );
                 if len == 8 {
-                    assert_eq!(rc, libc::ERANGE);
-                    assert!(result.is_null());
+                    assert_eq!(actual, (libc::ERANGE, libc::ERANGE, -1, None));
+                } else if !has_name2 {
+                    // A public name2 operation must not silently select a
+                    // different callback from a legacy name1-only module.
+                    assert_eq!(actual, (619, 619, -1, None));
+                } else if len == 1024 && name == "fltest-large" {
+                    assert_eq!(actual, (libc::EAGAIN, libc::EAGAIN, 2, None));
                 } else {
-                    assert_eq!(rc, 0);
-                    assert_eq!(h_errno, 0);
-                    assert_eq!(unsafe { host_answer(result) }.as_ref(), Some(&answer));
+                    assert_eq!((actual.0, actual.1, actual.2), (0, 0, 0));
+                    assert_eq!(actual.3.as_ref(), Some(&answer));
                 }
             }
         }
@@ -2013,36 +2372,37 @@ fn assert_module_hosts(include_ipv6: bool, has_canonp: bool) {
             } else {
                 assert_eq!(legacy.aliases.len(), 2);
             }
-            for len in [8usize, 8192] {
-                let mut host: libc::hostent = unsafe { std::mem::zeroed() };
-                let mut result: *mut c_void = std::ptr::null_mut();
-                let mut buffer = vec![0 as c_char; len];
-                let mut h_errno = -1;
-                let rc = unsafe {
-                    frankenlibc_abi::inet_abi::gethostbyaddr_r(
-                        bytes.as_ptr().cast(),
-                        bytes.len() as libc::socklen_t,
-                        family,
-                        (&mut host as *mut libc::hostent).cast(),
-                        buffer.as_mut_ptr(),
-                        buffer.len(),
-                        &mut result,
-                        &mut h_errno,
-                    )
-                };
-                if len == 8 {
-                    assert_eq!(rc, libc::ERANGE);
-                    assert!(result.is_null());
+            for len in [8usize, 1024, 8192] {
+                let query = ReentrantModuleHost::Address(&bytes, family);
+                let measured = reentrant_module_host(true, query, len);
+                let actual = reentrant_module_host(false, query, len);
+                assert_eq!(actual, measured, "reverse {address} capacity={len}");
+                if len == 8 || (len == 1024 && address == addresses[1]) {
+                    assert_eq!(actual, (libc::EAGAIN, libc::EAGAIN, 2, None));
                 } else {
-                    assert_eq!(rc, 0);
-                    assert_eq!(h_errno, 0);
-                    assert_eq!(
-                        unsafe { host_answer(result.cast()) }.as_ref(),
-                        Some(&legacy)
-                    );
+                    assert_eq!((actual.0, actual.1, actual.2), (0, 0, 0));
+                    assert_eq!(actual.3.as_ref(), Some(&legacy));
                 }
             }
         }
+    }
+
+    for (name, family, address) in [
+        (c"127.0.0.1", libc::AF_INET, IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        (c"::1", libc::AF_INET6, IpAddr::V6(Ipv6Addr::LOCALHOST)),
+    ] {
+        let measured = nonreentrant_module_host(true, name, family);
+        let actual = nonreentrant_module_host(false, name, family);
+        assert_eq!(actual, measured, "numeric gethostbyname2 {name:?}");
+        assert_eq!((actual.0, actual.1), (619, 811));
+        assert_eq!(
+            actual.2,
+            Some(HostAnswer {
+                name: name.to_bytes().to_vec(),
+                aliases: Vec::new(),
+                addresses: vec![address],
+            })
+        );
     }
 
     let name = CString::new("fltest-host").unwrap();
@@ -2243,38 +2603,40 @@ fn assert_hosts_policy(expected: &str) {
     let name = CString::new("shared-host").unwrap();
     let legacy =
         unsafe { host_answer(frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()).cast()) };
-    let mut host: libc::hostent = unsafe { std::mem::zeroed() };
-    let mut result = std::ptr::null_mut();
-    let mut buffer = [0 as c_char; 8192];
-    let mut h_errno = -1;
-    let rc = unsafe {
-        frankenlibc_abi::unistd_abi::gethostbyname2_r(
-            name.as_ptr(),
-            libc::AF_INET6,
-            &mut host,
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            &mut result,
-            &mut h_errno,
-        )
-    };
     let reverse_address = [192u8, 0, 2, 41];
-    let mut reverse_host: libc::hostent = unsafe { std::mem::zeroed() };
-    let mut reverse_result: *mut c_void = std::ptr::null_mut();
-    let mut reverse_buffer = [0 as c_char; 8192];
-    let mut reverse_h_errno = -1;
-    let reverse_rc = unsafe {
-        frankenlibc_abi::inet_abi::gethostbyaddr_r(
-            reverse_address.as_ptr().cast(),
-            reverse_address.len() as libc::socklen_t,
-            libc::AF_INET,
-            (&mut reverse_host as *mut libc::hostent).cast(),
-            reverse_buffer.as_mut_ptr(),
-            reverse_buffer.len(),
-            &mut reverse_result,
-            &mut reverse_h_errno,
-        )
-    };
+    let forward_query = ReentrantModuleHost::Name(&name, libc::AF_INET6);
+    let reverse_query = ReentrantModuleHost::Address(&reverse_address, libc::AF_INET);
+    let forward_call = reentrant_module_host(false, forward_query, 8192);
+    let reverse_call = reentrant_module_host(false, reverse_query, 8192);
+    let sources = std::env::var("FLTEST_HOST_SOURCES").unwrap();
+    if expected != "files" {
+        // These cases terminate in a module answer, an explicit status action
+        // or a missing callback. GNU need not see the controlled files fixture.
+        unsafe extern "C" {
+            fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+        }
+        assert_ne!(
+            __nss_configure_lookup as *const (),
+            frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup as *const ()
+        );
+        let selected = CString::new(sources.as_str()).unwrap();
+        assert_eq!(
+            unsafe { __nss_configure_lookup(c"hosts".as_ptr(), selected.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            forward_call,
+            reentrant_module_host(true, forward_query, 8192),
+            "forward policy {sources}"
+        );
+        assert_eq!(
+            reverse_call,
+            reentrant_module_host(true, reverse_query, 8192),
+            "reverse policy {sources}"
+        );
+    }
+    let (rc, error, h_errno, result) = forward_call;
+    let (reverse_rc, reverse_error, reverse_h_errno, reverse_result) = reverse_call;
     match expected {
         "module" => {
             let answer = forward.unwrap();
@@ -2289,15 +2651,12 @@ fn assert_hosts_policy(expected: &str) {
             assert_eq!(reverse.unwrap(), b"fltest-host.example");
             assert_eq!(reverse_rc, 0);
             assert_eq!(
-                unsafe { host_answer(reverse_result.cast()) }.unwrap().name,
+                reverse_result.as_ref().unwrap().name,
                 b"fltest-host.example"
             );
             assert_eq!(legacy.unwrap().name, b"fltest-host.example");
             assert_eq!(rc, 0);
-            assert_eq!(
-                unsafe { host_answer(result) }.unwrap().name,
-                b"fltest-host.example"
-            );
+            assert_eq!(result.as_ref().unwrap().name, b"fltest-host.example");
         }
         "files" => {
             let answer = forward.unwrap();
@@ -2308,28 +2667,50 @@ fn assert_hosts_policy(expected: &str) {
             );
             assert_eq!(reverse.unwrap(), b"files-reverse");
             assert_eq!(reverse_rc, 0);
-            assert_eq!(
-                unsafe { host_answer(reverse_result.cast()) }.unwrap().name,
-                b"files-reverse"
-            );
+            assert_eq!(reverse_result.as_ref().unwrap().name, b"files-reverse");
             assert_eq!(legacy.unwrap().name, b"files-host");
             assert_eq!(rc, 0);
-            assert_eq!(unsafe { host_answer(result) }.unwrap().name, b"files-host");
+            assert_eq!(result.as_ref().unwrap().name, b"files-host");
         }
         "none" | "temporary" => {
             assert!(legacy.is_none());
-            assert!(result.is_null());
-            assert!(reverse_result.is_null(), "discarded module result leaked");
             if expected == "temporary" {
                 assert_eq!(forward, Err(libc::EAI_AGAIN));
                 assert_eq!(reverse, Err(libc::EAI_AGAIN));
-                assert_eq!(h_errno, 2);
-                assert_eq!(reverse_h_errno, 2);
-                assert_eq!(rc, libc::EAGAIN, "forward temporary return convention");
-                assert_eq!(reverse_rc, 0, "reverse errors are reported through h_errno");
+                assert_eq!(
+                    (rc, error, h_errno, result),
+                    (libc::EAGAIN, libc::EAGAIN, 2, None)
+                );
+                assert_eq!(
+                    (reverse_rc, reverse_error, reverse_h_errno, reverse_result),
+                    (libc::EAGAIN, libc::EAGAIN, 2, None)
+                );
             } else {
                 assert!(forward.is_err());
                 assert!(reverse.is_err());
+                if sources == "fltest [SUCCESS=continue] fltestmissing" {
+                    // Skipping an absent later callback preserves a real
+                    // reentrant success; it is not a negative provider answer.
+                    assert_eq!((rc, error, h_errno), (0, 0, 0));
+                    assert_eq!((reverse_rc, reverse_error, reverse_h_errno), (0, 0, 0));
+                    assert_eq!(result.as_ref().unwrap().name, b"fltest-host.example");
+                    assert_eq!(
+                        reverse_result.as_ref().unwrap().name,
+                        b"fltest-host.example"
+                    );
+                } else {
+                    let status = std::env::var("FLTEST_STATUS").unwrap();
+                    let wanted = match status.as_str() {
+                        "notfound" => (0, 0, 1),
+                        "unavail" => (libc::ENOENT, libc::ENOENT, 3),
+                        "" => (619, 619, -1), // missing initial module
+                        value => panic!("unexpected negative provider status: {value}"),
+                    };
+                    assert_eq!((rc, error, h_errno), wanted);
+                    assert_eq!((reverse_rc, reverse_error, reverse_h_errno), wanted);
+                    assert!(result.is_none());
+                    assert!(reverse_result.is_none(), "discarded module result leaked");
+                }
             }
         }
         value => panic!("unknown hosts policy result: {value}"),
@@ -2373,6 +2754,7 @@ fn hosts_modules_policy_order_statuses_and_files_isolation() {
         );
         child
             .env("FLTEST_STATUS", status)
+            .env("FLTEST_HOST_SOURCES", config)
             .env("FLTEST_HOST_EXPECTED", expected);
         run_child(child, &format!("hosts policy {index}: {config}"));
     }

@@ -22717,6 +22717,8 @@ pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut 
     with_gethostbyname2_state(|state| {
         let mut result: *mut libc::hostent = std::ptr::null_mut();
         let h_errno = unsafe { crate::resolv_abi::__h_errno_location() };
+        let saved_h_errno = unsafe { *h_errno };
+        let mut lookup_h_errno = saved_h_errno;
         loop {
             let rc = unsafe {
                 gethostbyname2_r(
@@ -22726,15 +22728,19 @@ pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut 
                     state.buffer.as_mut_ptr(),
                     state.buffer.len(),
                     (&mut result as *mut *mut libc::hostent).cast(),
-                    h_errno,
+                    &mut lookup_h_errno,
                 )
             };
             if rc != libc::ERANGE {
-                return if rc == 0 {
-                    result.cast()
-                } else {
-                    std::ptr::null_mut()
-                };
+                // GNU publishes the resolver error only when lookup fails.
+                // Restore it explicitly on success: native numeric/files
+                // helpers may also update the canonical cell internally.
+                if rc == 0 && !result.is_null() {
+                    unsafe { *h_errno = saved_h_errno };
+                    return result.cast();
+                }
+                unsafe { *h_errno = lookup_h_errno };
+                return std::ptr::null_mut();
             }
             // A module can successfully resolve an answer larger than the
             // initial TLS buffer. Retry serialization with owned storage,

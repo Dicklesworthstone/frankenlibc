@@ -1225,6 +1225,111 @@ pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_
     Some(unsafe { function() })
 }
 
+/// Public legacy hosts operations select their own NSS entry point. These
+/// must not use the newer gethostbyname3_r/gethostbyaddr2_r preference used
+/// by lookups which own their scratch storage.
+#[derive(Clone, Copy)]
+pub(crate) enum HostLookup<'a> {
+    Name(&'a CStr),
+    NameFamily(&'a CStr, c_int),
+    Address(std::net::IpAddr),
+}
+
+/// Invoke a hosts provider with the public reentrant caller's exact buffer.
+/// In particular, TRYAGAIN/ERANGE with TRY_AGAIN is a provider failure, not
+/// permission to grow private scratch and conceal that failure from callers.
+/// Missing modules and entry points are distinct from an UNAVAIL callback.
+///
+/// # Safety
+/// The complete hostent, buf[..len], and h_errnop are writable for the foreign
+/// callback. A name remains a live terminated string throughout the call.
+pub(crate) unsafe fn host_entry_r(
+    service: &[u8],
+    key: HostLookup<'_>,
+    out: *mut libc::hostent,
+    buf: *mut c_char,
+    len: usize,
+    h_errnop: *mut c_int,
+) -> Option<c_int> {
+    let function = match key {
+        HostLookup::Name(_) => "gethostbyname_r",
+        HostLookup::NameFamily(..) => "gethostbyname2_r",
+        HostLookup::Address(_) => "gethostbyaddr_r",
+    };
+    // SAFETY: errno belongs to the calling thread. Loader bookkeeping must
+    // not replace either the caller's initial error or a preceding answer.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    let saved_errno = unsafe { *error };
+    let address = module_function(service, function);
+    unsafe { crate::errno_abi::set_abi_errno(saved_errno) };
+    let address = address?;
+    // SAFETY: the selected public NSS symbol fixes each callback's ABI; the
+    // validated caller storage and lookup key remain live across the call.
+    Some(unsafe {
+        match key {
+            HostLookup::Name(name) => {
+                type ByName = unsafe extern "C" fn(
+                    *const c_char,
+                    *mut libc::hostent,
+                    *mut c_char,
+                    usize,
+                    *mut c_int,
+                    *mut c_int,
+                ) -> c_int;
+                let call: ByName = core::mem::transmute(address);
+                call(name.as_ptr(), out, buf, len, error, h_errnop)
+            }
+            HostLookup::NameFamily(name, family) => {
+                type ByNameFamily = unsafe extern "C" fn(
+                    *const c_char,
+                    c_int,
+                    *mut libc::hostent,
+                    *mut c_char,
+                    usize,
+                    *mut c_int,
+                    *mut c_int,
+                ) -> c_int;
+                let call: ByNameFamily = core::mem::transmute(address);
+                call(name.as_ptr(), family, out, buf, len, error, h_errnop)
+            }
+            HostLookup::Address(ip) => {
+                type ByAddress = unsafe extern "C" fn(
+                    *const c_void,
+                    libc::socklen_t,
+                    c_int,
+                    *mut libc::hostent,
+                    *mut c_char,
+                    usize,
+                    *mut c_int,
+                    *mut c_int,
+                ) -> c_int;
+                let call: ByAddress = core::mem::transmute(address);
+                let mut bytes = [0u8; 16];
+                let (family, width) = match ip {
+                    std::net::IpAddr::V4(ip) => {
+                        bytes[..4].copy_from_slice(&ip.octets());
+                        (libc::AF_INET, 4)
+                    }
+                    std::net::IpAddr::V6(ip) => {
+                        bytes.copy_from_slice(&ip.octets());
+                        (libc::AF_INET6, 16)
+                    }
+                };
+                call(
+                    bytes.as_ptr().cast(),
+                    width,
+                    family,
+                    out,
+                    buf,
+                    len,
+                    error,
+                    h_errnop,
+                )
+            }
+        }
+    })
+}
+
 /// Invoke a networks provider with the caller's exact buffer and error slots.
 /// Absence is distinct from a callback returning UNAVAIL: skipping a missing
 /// later module must retain the last callback's status and resolver error.
@@ -2418,7 +2523,9 @@ impl AccountEnumerationState {
         Self {
             iteration: crate::unistd_abi::NetdbIteration::new(database.enumeration()),
             buffer: Vec::new(),
-            output: AccountEnumerationOutput { passwd: MaybeUninit::uninit() },
+            output: AccountEnumerationOutput {
+                passwd: MaybeUninit::uninit(),
+            },
             busy: false,
         }
     }
@@ -2626,7 +2733,10 @@ fn account_getent_static<T: Copy>(database: EntDb) -> *mut T {
         {
             return std::ptr::null_mut();
         }
-        let Some(next) = capacity.checked_mul(2).filter(|size| *size <= isize::MAX as usize) else {
+        let Some(next) = capacity
+            .checked_mul(2)
+            .filter(|size| *size <= isize::MAX as usize)
+        else {
             unsafe { crate::errno_abi::set_abi_errno(libc::ENOMEM) };
             return std::ptr::null_mut();
         };
