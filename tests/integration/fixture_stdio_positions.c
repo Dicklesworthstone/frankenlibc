@@ -187,6 +187,41 @@ static int check_descriptor_association(void) {
     return 0;
 }
 
+/* A growable FILE keeps a private cursor and extent between publications.
+   Check both a flush and a direct close after a forward seek without a write. */
+static int check_memstream_seeks(void) {
+    for (int close_directly = 0; close_directly < 2; ++close_directly) {
+        char *buffer = NULL;
+        size_t size = 0;
+        FILE *stream = open_memstream(&buffer, &size);
+        POSITION_CHECK(stream && fwrite("ABCDEF", 1, 6, stream) == 6);
+        POSITION_CHECK(fflush(stream) == 0 && size == 6 && buffer[6] == 0);
+
+        /* No output since the flush: backseeks must not republish or free
+           the caller's buffer, including when issued via the 64-bit alias. */
+        char *published = buffer;
+        POSITION_CHECK(fseek(stream, 4, SEEK_SET) == 0);
+        POSITION_CHECK(fseeko64(stream, -2, SEEK_CUR) == 0);
+        POSITION_CHECK(size == 6 && buffer == published && memcmp(buffer, "ABCDEF", 6) == 0);
+        POSITION_CHECK(fseek(stream, 0, SEEK_END) == 0 && ftell(stream) == 2);
+        POSITION_CHECK(fputc('X', stream) == 'X');
+        POSITION_CHECK(fseeko(stream, 1, SEEK_END) == 0 && ftello(stream) == 4);
+        POSITION_CHECK(fputc('Y', stream) == 'Y');
+
+        /* The retained F survives; storage beyond the original six bytes
+           reads as zero, even if the last operation before close is a seek. */
+        POSITION_CHECK(fseek(stream, 12, SEEK_SET) == 0 && ftell(stream) == 12);
+        if (!close_directly) {
+            POSITION_CHECK(fflush(stream) == 0 && size == 12);
+            POSITION_CHECK(memcmp(buffer, "ABXDYF\0\0\0\0\0\0", 13) == 0);
+        }
+        POSITION_CHECK(fclose(stream) == 0 && size == 12);
+        POSITION_CHECK(memcmp(buffer, "ABXDYF\0\0\0\0\0\0", 13) == 0);
+        free(buffer);
+    }
+    return 0;
+}
+
 static int check_saved_positions(void) {
     /* Both an uncached and a read-cached unseekable stream must fail without
        publishing any part of the opaque output or setting its I/O error bit. */
@@ -312,7 +347,8 @@ static int check_saved_positions(void) {
 }
 
 int main(void) {
-    if (check_descriptor_association() != 0 || check_saved_positions() != 0) return 1;
+    if (check_descriptor_association() != 0 || check_memstream_seeks() != 0 ||
+        check_saved_positions() != 0) return 1;
     char path[64];
     snprintf(path, sizeof path, "/tmp/fl_stdio_pos_%d", (int)getpid());
 

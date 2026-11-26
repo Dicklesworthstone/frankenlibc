@@ -383,6 +383,17 @@ pub enum MemBacking {
     WideDynamic { data: Vec<u32>, pos: usize },
 }
 
+/// Make a forward seek visible to a later flush or close, even when no
+/// output follows it. Retained elements preceding the new extent survive.
+fn extend_memstream<T: Default + Copy>(data: &mut Vec<T>, extent: usize) -> Result<(), i32> {
+    if extent > data.len() {
+        data.try_reserve(extent - data.len())
+            .map_err(|_| crate::errno::ENOMEM)?;
+        data.resize(extent, T::default());
+    }
+    Ok(())
+}
+
 impl MemBacking {
     /// Write data at the current position. Returns bytes actually written.
     pub fn write(&mut self, src: &[u8]) -> usize {
@@ -489,73 +500,48 @@ impl MemBacking {
     }
 
     /// Seek to a new position. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
-    /// Returns the new position on success, or `None` on invalid seek.
     pub fn seek(&mut self, offset: i64, whence: i32) -> Option<i64> {
-        if let MemBacking::WideDynamic { data, pos } = self {
-            // GNU wide memory streams use the current write position for
-            // SEEK_END, even when a backward seek left an older tail intact.
-            let base = match whence {
-                0 => 0,
-                1 | 2 => i64::try_from(*pos).ok()?,
-                _ => return None,
-            };
-            let next = base.checked_add(offset)?;
-            let next = usize::try_from(next).ok()?;
-            if next > data.len() {
-                data.try_reserve(next - data.len()).ok()?;
-                data.resize(next, 0);
-            }
-            *pos = next;
-            return i64::try_from(next).ok();
-        }
-        let (size, pos) = match self {
-            MemBacking::Fixed {
-                content_end, pos, ..
-            } => {
-                // bd-rv2gv6: use content_end for all whence modes. The logical
-                // extent is independent of the backing allocation size — for
-                // read-only fmemopen streams the cursor owns the content and
-                // the stream's backing may be empty.
-                (*content_end, pos)
-            }
-            MemBacking::Dynamic { data, pos } => (data.len(), pos),
-            MemBacking::WideDynamic { .. } => unreachable!(),
-        };
+        self.try_seek(offset, whence).ok()
+    }
+
+    fn try_seek(&mut self, offset: i64, whence: i32) -> Result<i64, i32> {
+        use crate::errno::EINVAL;
 
         let base = match whence {
-            0 => 0i64,        // SEEK_SET
-            1 => *pos as i64, // SEEK_CUR
-            2 => size as i64, // SEEK_END
-            _ => return None,
+            0 => 0,
+            1 => self.position(),
+            // GNU growing streams use the current output position for SEEK_END.
+            // The older tail remains in storage after a backward seek.
+            2 => match self {
+                Self::Fixed { content_end, .. } => *content_end,
+                _ => self.position(),
+            },
+            _ => return Err(EINVAL),
         };
-
-        let new_pos = base.checked_add(offset)?;
-        if new_pos < 0 {
-            return None;
-        }
-
-        let new_pos = new_pos as usize;
-        // bd-rv2gv6: clamp to content_end (the logical extent), not data.len().
-        // For read-only fmemopen the backing may be empty while content_end
-        // reflects the actual content size.
+        let position = i64::try_from(base)
+            .ok()
+            .and_then(|base| base.checked_add(offset))
+            .ok_or(EINVAL)?;
+        let next = usize::try_from(position).map_err(|_| EINVAL)?;
         match self {
-            MemBacking::Fixed { content_end, .. } => {
-                if new_pos > *content_end {
-                    return None;
+            Self::Fixed {
+                pos, content_end, ..
+            } => {
+                if next > *content_end {
+                    return Err(EINVAL);
                 }
+                *pos = next;
             }
-            MemBacking::Dynamic { .. } => {
-                // Allow seeking beyond end; open_memstream semantics grow on write.
+            Self::Dynamic { data, pos } => {
+                extend_memstream(data, next)?;
+                *pos = next;
             }
-            MemBacking::WideDynamic { .. } => unreachable!(),
+            Self::WideDynamic { data, pos } => {
+                extend_memstream(data, next)?;
+                *pos = next;
+            }
         }
-
-        match self {
-            MemBacking::Fixed { pos: p, .. } => *p = new_pos,
-            MemBacking::Dynamic { pos: p, .. } => *p = new_pos,
-            MemBacking::WideDynamic { .. } => unreachable!(),
-        }
-        Some(new_pos as i64)
+        Ok(position)
     }
 
     /// Current position.
@@ -2176,33 +2162,30 @@ impl StdioStream {
     /// Seek within a memory-backed stream.
     /// Returns the new position on success, or -1 on failure.
     pub fn mem_seek(&mut self, offset: i64, whence: i32) -> i64 {
+        self.try_mem_seek(offset, whence).unwrap_or(-1)
+    }
+
+    /// Preserve the cause of a failed seek for the public FILE entrypoints.
+    pub fn try_mem_seek(&mut self, offset: i64, whence: i32) -> Result<i64, i32> {
         if !self.mem_flush() {
-            return -1;
+            return Err(crate::errno::ENOSPC);
         }
         // Queued pushback precedes the backing's physical position. A relative
         // seek starts at the logical position, then discards that pushback.
         let (offset, whence) = if whence == 1 {
-            let Some(absolute) = self.offset.checked_add(offset) else {
-                return -1;
-            };
-            (absolute, 0)
+            let position = self.offset.checked_add(offset).ok_or(crate::errno::EINVAL)?;
+            (position, 0)
         } else {
             (offset, whence)
         };
-        if let Some(ref mut backing) = self.mem_backing {
-            if let Some(new_pos) = backing.seek(offset, whence) {
-                self.ungetc_byte = None;
-                self.read_pushback.clear();
-                self.wide_pushback.clear();
-                self.flags.eof = false;
-                self.offset = new_pos;
-                new_pos
-            } else {
-                -1
-            }
-        } else {
-            -1
-        }
+        let backing = self.mem_backing.as_mut().ok_or(crate::errno::EINVAL)?;
+        let position = backing.try_seek(offset, whence)?;
+        self.ungetc_byte = None;
+        self.read_pushback.clear();
+        self.wide_pushback.clear();
+        self.flags.eof = false;
+        self.offset = position;
+        Ok(position)
     }
 
     /// Get a reference to the memory backing data (for open_memstream sync).
@@ -2974,28 +2957,33 @@ mod tests {
     }
 
     #[test]
-    fn test_mem_backing_dynamic_seek_past_end_grows_on_write() {
-        let mut b = MemBacking::Dynamic {
+    fn test_mem_backing_dynamic_forward_seek_extends_before_write() {
+        let mut backing = MemBacking::Dynamic {
             data: Vec::new(),
             pos: 0,
         };
-        b.write(b"hi");
-        // Seek past end and write; gap should be zero-filled.
-        assert_eq!(b.seek(5, 0), Some(5));
-        b.write(b"!");
-        assert_eq!(b.data(), b"hi\0\0\0!");
+        backing.write(b"hi");
+        assert_eq!(backing.seek(5, 0), Some(5));
+        assert_eq!(backing.data(), b"hi\0\0\0");
+        assert_eq!(backing.write(b"!"), 1);
+        assert_eq!(backing.data(), b"hi\0\0\0!");
     }
 
     #[test]
-    fn test_mem_backing_dynamic_huge_seek_write_fails_without_panic() {
-        let mut b = MemBacking::Dynamic {
-            data: Vec::new(),
-            pos: 0,
-        };
-        assert_eq!(b.seek(i64::MAX, 0), Some(i64::MAX));
-        assert_eq!(b.write(b"!"), 0);
-        assert!(b.data().is_empty());
-        assert_eq!(b.position(), i64::MAX as usize);
+    fn test_unallocatable_memory_seek_preserves_position_and_contents() {
+        let mut byte = StdioStream::new_mem_dynamic();
+        byte.mem_write(b"abc");
+        assert_eq!(byte.try_mem_seek(i64::MAX, 0), Err(crate::errno::ENOMEM));
+        assert_eq!(byte.offset(), 3);
+        assert_eq!(byte.mem_data(), Some(b"abc".as_slice()));
+        assert_eq!(byte.mem_write(b"!"), 1);
+        assert_eq!(byte.mem_data(), Some(b"abc!".as_slice()));
+
+        let mut wide = StdioStream::new_mem_wide_dynamic();
+        wide.mem_write_wide(&[0x20ac]);
+        assert_eq!(wide.try_mem_seek(i64::MAX, 0), Err(crate::errno::ENOMEM));
+        assert_eq!(wide.offset(), 1);
+        assert_eq!(wide.mem_wide_data(), Some([0x20ac].as_slice()));
     }
 
     #[test]

@@ -8148,21 +8148,12 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
             return 0;
         }
-        let flush_ok = s.mem_flush();
-        let published = unsafe { sync_memstream_to_caller(id, s, false) };
-        // open_wmemstream publishes bufp/sizeloc only on fflush or fclose;
-        // seeking changes its wchar cursor without publishing a new buffer.
-        if !flush_ok || !published {
-            let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        // A growing stream publishes its caller's pointer and size on
+        // fflush/fclose. A seek updates only the private extent and cursor.
+        if let Err(error) = s.try_mem_seek(offset, whence) {
             drop(s_guard);
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
-            unsafe { set_abi_errno(saved_errno) };
-            return -1;
-        }
-        let new_pos = s.mem_seek(offset, whence);
-        if new_pos < 0 {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            unsafe { set_abi_errno(error) };
             return -1;
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
