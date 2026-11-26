@@ -40,6 +40,24 @@ sha256sum "$library" \
   "$out/c11_sleep" "$out/c11_lifecycle" "$out/c11_cpp" \
   "$out/stdio_c" "$out/stdio_cpp" > "$out/input-sha256.txt"
 
+# Native delivery setup can be rejected independently at the old-handler query
+# or the new-handler installation. Rejected requests must leave cancellation
+# state and oldtype output unchanged. A worker-only denial must still allow a
+# permitted requester to install the handler and cancel its blocked read.
+# These candidate contracts run in fresh processes and are not host-parity claims.
+for setup in query install thread-local; do
+  for mode in strict hardened; do
+    timeout --kill-after=2s 10s env LD_PRELOAD="$library" \
+      FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=1 \
+      FRANKENLIBC_TEST_LIBRARY="$library" \
+      "$out/fixture_pthread_cancel" native-sigcancel-setup "$setup" \
+      > "$out/sigcancel-setup-${mode}-${setup}.out" \
+      2> "$out/sigcancel-setup-${mode}-${setup}.err"
+    grep -qx "PASS native-sigcancel-setup $setup" "$out/sigcancel-setup-${mode}-${setup}.out"
+    test ! -s "$out/sigcancel-setup-${mode}-${setup}.err"
+  done
+done
+
 # 1. Full POSIX/GNU cancellation point + owned-startup main-thread matrix.
 env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
   timeout --kill-after=3s 30s "$out/fixture_pthread_cancel" > "$out/cancel-host.out" 2> "$out/cancel-host.err"

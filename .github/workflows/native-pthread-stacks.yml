@@ -53,6 +53,8 @@ on:
       - 'crates/frankenlibc-core/src/signal/**'
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
+      - 'tests/integration/fixture_pthread_cancel.c'
+      - 'scripts/check_pthread_cancel_native_parity.sh'
       - 'tests/integration/fixture_pthread_once_unwind.cpp'
       - 'scripts/check_pthread_once_unwind.sh'
       - 'tests/integration/fixture_pthread_key_destructors.c'
@@ -186,6 +188,28 @@ jobs:
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/signal-waits/build.log
+      - name: Preserve cancellation requests when signal setup is denied
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/signal-waits/sigcancel-setup
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/integration/fixture_pthread_cancel.c -ldl \
+            -o artifacts/signal-waits/sigcancel-setup/fixture
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          for setup in query install thread-local; do
+            for mode in strict hardened; do
+              output="artifacts/signal-waits/sigcancel-setup/$mode-$setup"
+              timeout --kill-after=2s 10s env LD_PRELOAD="$library" \
+                FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=1 \
+                FRANKENLIBC_TEST_LIBRARY="$library" \
+                artifacts/signal-waits/sigcancel-setup/fixture native-sigcancel-setup "$setup" \
+                > "$output.out" 2> "$output.err"
+              grep -qx "PASS native-sigcancel-setup $setup" "$output.out"
+              test ! -s "$output.err"
+            done
+          done
       - name: Preserve variadic exec arguments and failure cleanup
         if: always()
         env:

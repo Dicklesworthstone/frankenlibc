@@ -29,6 +29,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <netdb.h>
 #include <poll.h>
 #include <pthread.h>
@@ -36,16 +38,22 @@
 #include <sched.h>
 #include <semaphore.h>
 #include <signal.h>
+#include <stdatomic.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/ipc.h>
 #include <sys/mman.h>
 #include <sys/msg.h>
+#include <sys/prctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/uio.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -1180,7 +1188,225 @@ static int system_signal_scenario(const char *scenario) {
   return 0;
 }
 
+// A failed native SIGCANCEL setup must neither change cancellation settings nor
+// publish a request that is delivered later. Each scenario runs in a fresh
+// process; only rt_sigaction for reserved signal 32 is denied by this filter.
+static void sigcancel_setup_require(int condition, const char *what) {
+  if (!condition) {
+    fprintf(stderr, "native sigcancel setup: %s (errno=%d)\n", what, errno);
+    _exit(80);
+  }
+}
+
+static _Atomic int sigcancel_setup_ready;
+static _Atomic int sigcancel_setup_release;
+static _Atomic int sigcancel_setup_survived;
+
+static void *sigcancel_setup_worker(void *unused) {
+  (void)unused;
+  atomic_store_explicit(&sigcancel_setup_ready, 1, memory_order_release);
+  while (!atomic_load_explicit(&sigcancel_setup_release, memory_order_acquire)) {
+    sched_yield();
+  }
+  pthread_testcancel();
+  atomic_store_explicit(&sigcancel_setup_survived, 1, memory_order_release);
+  return (void *)(uintptr_t)0x51ca;
+}
+
+static void sigcancel_setup_signal(int signum) { (void)signum; }
+
+static int sigcancel_setup_filter(int deny_query, unsigned int flags) {
+  const int denied_error = deny_query ? EPERM : EACCES;
+  const unsigned int low_offset =
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ ? 0 : sizeof(uint32_t);
+  const unsigned int high_offset =
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ ? sizeof(uint32_t) : 0;
+  struct sock_filter instructions[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigaction, 0, 7),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0]) + low_offset),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 32, 0, 5),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1]) + high_offset),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, deny_query ? 3 : 2),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1]) + low_offset),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, deny_query ? 0 : 1, deny_query ? 1 : 0),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (unsigned int)denied_error),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+  struct sock_fprog program = {
+    .len = (unsigned short)(sizeof(instructions) / sizeof(instructions[0])),
+    .filter = instructions,
+  };
+  return (int)syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, flags, &program, 0, 0, 0);
+}
+
+static void sigcancel_setup_require_cold(void) {
+  uintptr_t disposition[4] = {0};
+  sigcancel_setup_require(syscall(SYS_rt_sigaction, 32, NULL, disposition, 8, 0, 0) == 0 &&
+                           disposition[0] == 0,
+                         "SIGCANCEL must be cold before the request");
+}
+
+static _Atomic int sigcancel_local_tid;
+static _Atomic int sigcancel_local_cleanup;
+
+static void sigcancel_setup_cleanup(void *unused) {
+  (void)unused;
+  atomic_store_explicit(&sigcancel_local_cleanup, 1, memory_order_release);
+}
+
+static void *sigcancel_setup_local_worker(void *raw_fd) {
+  const int fd = (int)(intptr_t)raw_fd;
+  sigcancel_setup_require(sigcancel_setup_filter(0, 0) == 0, "thread-local filter");
+  int oldtype = 0x51ca;
+  errno = EDOM;
+  sigcancel_setup_require(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldtype) ==
+                           EACCES && oldtype == 0x51ca && errno == EDOM,
+                         "thread-local setup must fail without changing cancellation type");
+  pthread_cleanup_push(sigcancel_setup_cleanup, NULL);
+  atomic_store_explicit(&sigcancel_local_tid,
+                        (int)syscall(SYS_gettid, 0, 0, 0, 0, 0, 0), memory_order_release);
+  uint64_t value;
+  (void)read(fd, &value, sizeof(value));
+  pthread_cleanup_pop(0);
+  return NULL;
+}
+
+static int sigcancel_setup_local_scenario(void) {
+  int fd = eventfd(0, EFD_CLOEXEC);
+  sigcancel_setup_require(fd >= 0, "eventfd");
+  sigcancel_setup_require(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0, "no_new_privs");
+  pthread_t worker;
+  sigcancel_setup_require(pthread_create(&worker, NULL, sigcancel_setup_local_worker,
+                                        (void *)(intptr_t)fd) == 0,
+                         "thread-local worker");
+  int tid;
+  while ((tid = atomic_load_explicit(&sigcancel_local_tid, memory_order_acquire)) == 0) {
+    sched_yield();
+  }
+  char path[96];
+  int length = snprintf(path, sizeof(path), "/proc/self/task/%d/syscall", tid);
+  sigcancel_setup_require(length > 0 && (size_t)length < sizeof(path), "syscall path");
+  int blocked = 0;
+  for (int attempt = 0; attempt < 2000 && !blocked; ++attempt) {
+    // Raw syscalls do not open a parent cancellation window and accidentally
+    // install the handler before the tested pthread_cancel preflight.
+    int probe = (int)syscall(SYS_openat, AT_FDCWD, path, O_RDONLY | O_CLOEXEC, 0, 0, 0);
+    sigcancel_setup_require(probe >= 0, "open syscall witness");
+    char buffer[256];
+    ssize_t n = syscall(SYS_read, probe, buffer, sizeof(buffer) - 1, 0, 0, 0);
+    (void)syscall(SYS_close, probe, 0, 0, 0, 0, 0);
+    if (n > 0) {
+      buffer[n] = '\0';
+      char *end;
+      long number = strtol(buffer, &end, 10);
+      unsigned long descriptor = strtoul(end, NULL, 16);
+      blocked = number == SYS_read && descriptor == (unsigned long)fd;
+    }
+    if (!blocked) {
+      const struct timespec pause = {0, 1000000};
+      (void)syscall(SYS_nanosleep, &pause, NULL, 0, 0, 0, 0);
+    }
+  }
+  sigcancel_setup_require(blocked, "worker did not park in the guarded read syscall");
+  sigcancel_setup_require_cold();
+  sigcancel_setup_require(pthread_cancel(worker) == 0,
+                         "permitted requester did not install delivery");
+  void *result = NULL;
+  sigcancel_setup_require(pthread_join(worker, &result) == 0 && result == PTHREAD_CANCELED &&
+                           atomic_load_explicit(&sigcancel_local_cleanup, memory_order_acquire),
+                         "thread-local denial lost cancellation or cleanup");
+  sigcancel_setup_require(close(fd) == 0, "close eventfd");
+  puts("PASS native-sigcancel-setup thread-local");
+  return 0;
+}
+
+static int sigcancel_setup_scenario(const char *which) {
+  const int deny_query = strcmp(which, "query") == 0;
+  const int thread_local = strcmp(which, "thread-local") == 0;
+  sigcancel_setup_require(deny_query || strcmp(which, "install") == 0 || thread_local,
+                         "unknown denial scenario");
+  const int denied_error = deny_query ? EPERM : EACCES;
+  const char *expected = getenv("FRANKENLIBC_TEST_LIBRARY");
+  const char *native = getenv("FRANKENLIBC_THREAD_NATIVE");
+  sigcancel_setup_require(expected != NULL && native != NULL && strcmp(native, "1") == 0,
+                         "requires the candidate native backend");
+  void *symbols[] = {(void *)pthread_cancel, (void *)pthread_setcanceltype,
+                     (void *)pthread_testcancel, (void *)read, (void *)close,
+                     (void *)nanosleep};
+  for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); ++i) {
+    Dl_info provider;
+    sigcancel_setup_require(dladdr(symbols[i], &provider) != 0 &&
+                             strcmp(provider.dli_fname, expected) == 0,
+                           "wrong symbol provider");
+  }
+  if (thread_local) {
+    return sigcancel_setup_local_scenario();
+  }
+
+  // Keep a caught application signal so sleep uses the signal-aware syscall
+  // path, and verify that the policy leaves ordinary sigaction untouched.
+  struct sigaction action = {0};
+  action.sa_handler = sigcancel_setup_signal;
+  sigemptyset(&action.sa_mask);
+  sigcancel_setup_require(sigaction(SIGUSR1, &action, NULL) == 0, "application handler");
+  int fd[2];
+  sigcancel_setup_require(pipe(fd) == 0, "pipe");
+  sigcancel_setup_require(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0, "no_new_privs");
+  pthread_t worker;
+  sigcancel_setup_require(pthread_create(&worker, NULL, sigcancel_setup_worker, NULL) == 0,
+                         "native worker");
+  while (!atomic_load_explicit(&sigcancel_setup_ready, memory_order_acquire)) {
+    sched_yield();
+  }
+  // No worker cancellation point has run. Catch accidental prewarming rather
+  // than silently passing because the installer was already cached as ready.
+  sigcancel_setup_require_cold();
+  sigcancel_setup_require(sigcancel_setup_filter(deny_query, SECCOMP_FILTER_FLAG_TSYNC) == 0,
+                         "seccomp filter");
+  sigcancel_setup_require(sigaction(SIGUSR1, &action, NULL) == 0,
+                         "unrelated signal setup was blocked");
+
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    errno = EDOM;
+    sigcancel_setup_require(pthread_cancel(worker) == denied_error && errno == EDOM,
+                           "managed request did not preserve installation error/errno");
+    errno = EDOM;
+    sigcancel_setup_require(pthread_cancel(pthread_self()) == denied_error && errno == EDOM,
+                           "unregistered request did not preserve installation error/errno");
+    pthread_testcancel();
+    int oldtype = 0x51ca;
+    errno = EDOM;
+    sigcancel_setup_require(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldtype) ==
+                             denied_error && oldtype == 0x51ca && errno == EDOM,
+                           "failed type change modified state, output, or errno");
+    sigcancel_setup_require(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &oldtype) == 0 &&
+                             oldtype == PTHREAD_CANCEL_DEFERRED,
+                           "failed type change enabled asynchronous cancellation");
+  }
+
+  // Installation failure must not change an ordinary syscall's effects or
+  // errno contract, nor prevent a sleep from completing without cancellation.
+  sigcancel_setup_require(close(fd[0]) == 0, "close under denied setup");
+  errno = 0;
+  sigcancel_setup_require(close(fd[0]) == -1 && errno == EBADF, "close error contract");
+  sigcancel_setup_require(close(fd[1]) == 0, "close write end");
+  const struct timespec zero = {0, 0};
+  sigcancel_setup_require(nanosleep(&zero, NULL) == 0, "sleep under denied setup");
+  atomic_store_explicit(&sigcancel_setup_release, 1, memory_order_release);
+  void *result = NULL;
+  sigcancel_setup_require(pthread_join(worker, &result) == 0 &&
+                           result == (void *)(uintptr_t)0x51ca &&
+                           atomic_load_explicit(&sigcancel_setup_survived, memory_order_acquire),
+                         "a rejected request survived until a later cancellation point");
+  printf("PASS native-sigcancel-setup %s\n", which);
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 3 && strcmp(argv[1], "native-sigcancel-setup") == 0) {
+    return sigcancel_setup_scenario(argv[2]);
+  }
   if (argc == 3 && strcmp(argv[1], "system-signals") == 0) {
     return system_signal_scenario(argv[2]);
   }

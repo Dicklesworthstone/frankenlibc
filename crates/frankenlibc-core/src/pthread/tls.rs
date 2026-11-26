@@ -721,15 +721,24 @@ fn request_cancel_generation(index: usize, mut observed: u64) -> bool {
 /// caller nor this table needs to dereference the target's allocation.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn request_thread_cancellation(values_address: usize) -> bool {
-    request_thread_cancellation_with_info(values_address).is_some()
+    request_thread_cancellation_with_info(values_address, || Ok(()))
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Request cancellation by an opaque native TLS-storage address and return the
 /// target's `(tid, cancel_flags)` snapshot observed in `SeqCst` order after
 /// publishing `CANCEL_PENDING`.
-pub(crate) fn request_thread_cancellation_with_info(values_address: usize) -> Option<(i32, u32)> {
+/// `prepare` runs before publication, without dereferencing the target. If it
+/// fails, no request is queued; retirement during preparation still invalidates
+/// the captured generation before the pending-bit CAS can succeed.
+pub(crate) fn request_thread_cancellation_with_info(
+    values_address: usize,
+    prepare: impl FnOnce() -> Result<(), i32>,
+) -> Result<Option<(i32, u32)>, i32> {
     if values_address == 0 {
-        return None;
+        return Ok(None);
     }
     for index in 0..TLS_TABLE_SLOTS {
         // Acquire the generation before comparing the pointer. Publishing a
@@ -738,14 +747,15 @@ pub(crate) fn request_thread_cancellation_with_info(values_address: usize) -> Op
         let observed = TLS_CANCEL_WORDS[index].load(Ordering::Acquire);
         if observed != 0 && TLS_PTRS[index].load(Ordering::Acquire) == values_address {
             let tid = TLS_TIDS[index].load(Ordering::Acquire);
+            prepare()?;
             if request_cancel_generation(index, observed) {
                 let flags = TLS_CANCEL_FLAGS[index].load(Ordering::SeqCst);
-                return Some((tid, flags));
+                return Ok(Some((tid, flags)));
             }
-            return None;
+            return Ok(None);
         }
     }
-    None
+    Ok(None)
 }
 
 /// Obtain the calling native thread's wait word without borrowing its handle.
@@ -2825,6 +2835,62 @@ mod tests {
         // A requester paused between observing the old address/generation and
         // publishing its request must not cancel the replacement identity.
         assert!(!request_cancel_generation(index, old_generation));
+        assert!(!take_thread_cancellation(next_tid));
+        assert!(request_thread_cancellation(address));
+        assert!(take_thread_cancellation(next_tid));
+        table_remove(next_tid);
+    }
+
+    #[test]
+    fn cancellation_preparation_failure_does_not_publish_a_request() {
+        let _g = lock_and_reset();
+        let tid = 1001;
+        let mut block = TestTlsBlock::new();
+        let address = block.as_mut_ptr() as usize;
+        assert!(table_register(tid, block.as_mut_ptr()));
+        let wait = thread_cancellation_wait(tid).unwrap();
+
+        assert_eq!(
+            request_thread_cancellation_with_info(address, || Err(1)),
+            Err(1),
+            "EPERM from signal setup must reject the whole request"
+        );
+        assert!(!wait.pending());
+        assert!(!take_thread_cancellation(tid));
+
+        assert_eq!(
+            request_thread_cancellation_with_info(address, || Ok(())),
+            Ok(Some((tid, 0))),
+            "a failed preparation must remain retryable"
+        );
+        assert!(wait.pending());
+        assert!(take_thread_cancellation(tid));
+        table_remove(tid);
+
+        assert_eq!(
+            request_thread_cancellation_with_info(address, || panic!("absent target")),
+            Ok(None),
+            "non-native targets must not initialize native signal delivery"
+        );
+    }
+
+    #[test]
+    fn cancellation_preparation_cannot_cross_a_reused_identity() {
+        let _g = lock_and_reset();
+        let first_tid = 1001;
+        let next_tid = first_tid + TLS_TABLE_SLOTS as i32;
+        let mut block = TestTlsBlock::new();
+        let address = block.as_mut_ptr() as usize;
+        assert!(table_register(first_tid, block.as_mut_ptr()));
+
+        let result = request_thread_cancellation_with_info(address, || {
+            // Simulate exit and allocator/table-slot reuse while signal setup
+            // runs. The request must still belong to the captured generation.
+            assert_eq!(table_remove(first_tid) as usize, address);
+            assert!(table_register(next_tid, block.as_mut_ptr()));
+            Ok(())
+        });
+        assert_eq!(result, Ok(None));
         assert!(!take_thread_cancellation(next_tid));
         assert!(request_thread_cancellation(address));
         assert!(take_thread_cancellation(next_tid));

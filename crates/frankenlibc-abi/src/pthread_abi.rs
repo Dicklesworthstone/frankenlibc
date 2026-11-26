@@ -7564,9 +7564,18 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
     }
 
     let thread_key = pthread_handle_key(thread);
-    if let Some((target_tid, flags)) = core_request_cancellation_with_info(thread_key) {
+    // Prepare the reserved signal before committing a native request. The
+    // core retains its observed generation across this fallible preparation,
+    // so failure queues nothing and a retired/reused target is still rejected.
+    let native_target = match core_request_cancellation_with_info(
+        thread_key,
+        crate::signal_abi::ensure_native_sigcancel_installed,
+    ) {
+        Ok(target) => target,
+        Err(error) => return error,
+    };
+    if let Some((target_tid, flags)) = native_target {
         if target_tid > 0 && native_cancel_signal_needed(flags) {
-            crate::signal_abi::ensure_native_sigcancel_installed();
             let _ = raw_syscall::sys_tgkill(
                 raw_syscall::sys_getpid(),
                 target_tid,
@@ -7613,9 +7622,12 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
         if let Err(errno) = raw_syscall::sys_tgkill(pid, target_tid, 0) {
             return errno;
         }
+        // No unregistered request may survive a failed installation either.
+        if let Err(error) = crate::signal_abi::ensure_native_sigcancel_installed() {
+            return error;
+        }
         if let Some(flags) = request_unregistered_cancellation_with_flags(target_tid) {
             if native_cancel_signal_needed(flags) {
-                crate::signal_abi::ensure_native_sigcancel_installed();
                 let _ =
                     raw_syscall::sys_tgkill(pid, target_tid, crate::signal_abi::NATIVE_SIGCANCEL);
             }
@@ -7702,8 +7714,10 @@ pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut 
     let tid = core_self_tid();
     if typ == PTHREAD_CANCEL_DEFERRED_TYPE {
         set_native_cancel_async(tid, false);
-    } else {
-        crate::signal_abi::ensure_native_sigcancel_installed();
+    } else if let Err(error) = crate::signal_abi::ensure_native_sigcancel_installed() {
+        // Keep both the prior type and the caller's oldtype output unchanged
+        // when asynchronous delivery cannot be established.
+        return error;
     }
     let previous = if let Some(handle) = native {
         // SAFETY: this is the calling thread's live, registered handle.
@@ -8131,7 +8145,11 @@ unsafe extern "C-unwind" fn cancellation_sleep_window_raw(
             && let Some(cancel) = current_native_cancellation_wait()
         {
             let tid = cancel.tid();
-            crate::signal_abi::ensure_native_sigcancel_installed();
+            // A per-thread filter may deny setup here but permit it in the
+            // cancelling thread. Every native requester installs the process-
+            // global handler before publishing/sending, so keep the guarded
+            // window even if this best-effort installation fails locally.
+            let _ = crate::signal_abi::ensure_native_sigcancel_installed();
             let mut window_guard = NativeCancelWindowGuard::enter(tid);
             if cancel.pending() {
                 drop(window_guard);
@@ -9186,7 +9204,11 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
             && let Some(cancel) = current_native_cancellation_wait()
         {
             let tid = cancel.tid();
-            crate::signal_abi::ensure_native_sigcancel_installed();
+            // Request publication/signal delivery happens only after a native
+            // requester's successful handler preflight. A local setup denial
+            // therefore need not disable this window: another thread can still
+            // install the global handler and interrupt the parked syscall.
+            let _ = crate::signal_abi::ensure_native_sigcancel_installed();
             let mut window_guard = NativeCancelWindowGuard::enter(tid);
             if cancel.pending() {
                 drop(window_guard);

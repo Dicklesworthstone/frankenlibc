@@ -888,39 +888,45 @@ pub(crate) fn reset_native_sigcancel_state_in_fork_child() {
 /// Lazily install the `!SA_RESTART | SA_SIGINFO` kernel handler on signal 32
 /// (`NATIVE_SIGCANCEL`) when native cancellation is active. Never called on
 /// pure hosted paths; chains to any preexisting host handler if mixed in tests.
-pub(crate) fn ensure_native_sigcancel_installed() {
+/// A failed query or installation must reach the caller before it publishes a
+/// cancellation request or sends a reserved signal with its default disposition.
+pub(crate) fn ensure_native_sigcancel_installed() -> Result<(), c_int> {
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
     {
-        if NATIVE_SIGCANCEL_STATE.load(Ordering::Acquire) == 2 {
-            return;
-        }
-        if NATIVE_SIGCANCEL_STATE
-            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        loop {
+            if NATIVE_SIGCANCEL_STATE.load(Ordering::Acquire) == 2 {
+                return Ok(());
+            }
+            if NATIVE_SIGCANCEL_STATE
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
+            }
             while NATIVE_SIGCANCEL_STATE.load(Ordering::Acquire) == 1 {
                 core::hint::spin_loop();
             }
-            return;
+            // A failed installer restores zero. Retry instead of treating its
+            // failure as permission to queue or deliver a native cancellation.
         }
         let our_handler = native_sigcancel_trampoline as *const () as usize;
         let mut current = KernelSigaction::zeroed();
-        if unsafe {
+        if let Err(error) = unsafe {
             raw_syscall::sys_rt_sigaction(
                 NATIVE_SIGCANCEL,
                 std::ptr::null(),
                 std::ptr::from_mut(&mut current).cast(),
                 std::mem::size_of::<u64>(),
             )
+        } {
+            // Replacing an unknown disposition could lose a host handler.
+            NATIVE_SIGCANCEL_STATE.store(0, Ordering::Release);
+            return Err(error);
         }
-        .is_ok()
-            && current.sa_handler != 0
-            && current.sa_handler != our_handler
-            && !is_default_or_ignore_handler(current.sa_handler)
-        {
+        if current.sa_handler != our_handler {
             PREV_SIGCANCEL_FLAGS.store(current.sa_flags, Ordering::Relaxed);
             PREV_SIGCANCEL_HANDLER.store(current.sa_handler, Ordering::Release);
         }
@@ -936,21 +942,22 @@ pub(crate) fn ensure_native_sigcancel_installed() {
             act.sa_flags |= SA_RESTORER_FLAG as usize;
             act.sa_restorer = signal_restorer_trampoline_addr();
         }
-        if unsafe {
+        let result = unsafe {
             raw_syscall::sys_rt_sigaction(
                 NATIVE_SIGCANCEL,
                 std::ptr::from_ref(&act).cast(),
                 std::ptr::null_mut(),
                 std::mem::size_of::<u64>(),
             )
-        }
-        .is_ok()
-        {
-            NATIVE_SIGCANCEL_STATE.store(2, Ordering::Release);
-        } else {
-            NATIVE_SIGCANCEL_STATE.store(0, Ordering::Release);
-        }
+        };
+        NATIVE_SIGCANCEL_STATE.store(if result.is_ok() { 2 } else { 0 }, Ordering::Release);
+        result
     }
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    Err(libc::ENOSYS)
 }
 
 /// Child waits can use bounded native cancellation only without deliverable

@@ -1690,19 +1690,29 @@ pub(crate) fn reclaim_native_runtime_tls(tid: i32) {
 /// its handle. The identity table retires requests before handle reclamation.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn request_cancellation(handle_address: usize) -> bool {
-    request_cancellation_with_info(handle_address).is_some()
+    request_cancellation_with_info(handle_address, || Ok(()))
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Request cooperative cancellation of a live native thread and return its
-/// `(tid, cancel_flags)` snapshot observed in `SeqCst` order.
+/// `(tid, cancel_flags)` snapshot observed in `SeqCst` order. Prepare delivery
+/// before publishing the request; a failed preparation leaves no pending bit.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub fn request_cancellation_with_info(handle_address: usize) -> Option<(i32, u32)> {
+pub fn request_cancellation_with_info(
+    handle_address: usize,
+    prepare: impl FnOnce() -> Result<(), i32>,
+) -> Result<Option<(i32, u32)>, i32> {
     if !super::tls::native_threads_may_exist() {
-        return None;
+        return Ok(None);
     }
-    let values_address =
-        handle_address.checked_add(core::mem::offset_of!(ThreadHandle, tls_values))?;
-    super::tls::request_thread_cancellation_with_info(values_address)
+    let Some(values_address) =
+        handle_address.checked_add(core::mem::offset_of!(ThreadHandle, tls_values))
+    else {
+        return Ok(None);
+    };
+    super::tls::request_thread_cancellation_with_info(values_address, prepare)
 }
 
 /// Wait descriptor for the calling native thread while cancellation is enabled.
