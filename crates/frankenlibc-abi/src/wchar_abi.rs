@@ -7412,7 +7412,17 @@ pub(crate) unsafe fn fputwc_unlocked_for_caller(
         });
         return if written { wc } else { WEOF_VALUE };
     }
-    // External files retain the codec selected at their first wide operation.
+    if let Some(written) = super::stdio_abi::with_wide_fd_write_unlocked(stream, |destination| {
+        // SAFETY: the public entry owns the FILE lock (unless unlocked), and
+        // the cell keeps all queued and converted output alive across writes.
+        unsafe {
+            super::stdio_abi::write_wide_fd_chunk(destination, &[wc], caller)
+                && super::stdio_abi::finish_wide_fd_write(destination, wc == u32::from(b'\n'), caller)
+        }
+    }) {
+        return if written { wc } else { WEOF_VALUE };
+    }
+    // Foreign and memory fallback retains the codec selected at orientation.
     let codec = super::stdio_abi::stream_wide_codec(stream);
 
     super::stdio_abi::with_wide_io_active(|| {
@@ -7636,10 +7646,9 @@ pub(crate) unsafe fn fputws_unlocked_for_caller(
     unsafe { fputws_impl(ws, stream, caller) }
 }
 
-/// Bulk-convert an entirely representable, buffer-fitting wide string before
-/// one `fwrite`. An unencodable character or a longer string uses the shared
-/// per-character output path, including locale-sensitive transliteration on
-/// unbuffered streams. Both paths retain the FILE's external codec.
+/// Queue native descriptor output as wchar_t values so conversion occurs at
+/// its actual flush point. Wide memory streams retain their direct storage;
+/// foreign/legacy fallback paths keep the FILE's bound external codec.
 #[inline]
 unsafe fn fputws_impl(
     ws: *const libc::wchar_t,
@@ -7682,6 +7691,35 @@ unsafe fn fputws_impl(
                 offset += count;
             }
         });
+        return if written { 0 } else { libc::EOF };
+    }
+    if let Some(written) = super::stdio_abi::with_wide_fd_write_unlocked(stream, |destination| {
+        let mut length = 0;
+        // GNU chooses bulk line behavior from the complete string length and
+        // the buffer space at operation entry, before emitting any character.
+        // SAFETY: ws denotes the caller's NUL-terminated wchar_t string.
+        while unsafe { *ws.add(length) } != 0 {
+            length += 1;
+        }
+        let mut output = super::stdio_abi::WideFdBulkWrite::new(destination, length);
+        let mut offset = 0;
+        while offset < length {
+            let mut chunk = [0u32; 256];
+            let count = (length - offset).min(chunk.len());
+            for (index, value) in chunk[..count].iter_mut().enumerate() {
+                // SAFETY: the length pass established these initialized units.
+                *value = unsafe { *ws.add(offset + index) } as u32;
+            }
+            // SAFETY: the operation owns the FILE/cell locks and the chunk is
+            // initialized; the sink retains converted bytes across cancellation.
+            if !unsafe { output.write(destination, &chunk[..count], caller) } {
+                return false;
+            }
+            offset += count;
+        }
+        // SAFETY: the FILE and cell remain exclusively held.
+        unsafe { output.finish(destination, caller) }
+    }) {
         return if written { 0 } else { libc::EOF };
     }
     let codec = super::stdio_abi::stream_wide_codec(stream);
@@ -7984,7 +8022,43 @@ unsafe fn write_wprintf_rendered(
         });
         return if written { wide_count } else { -1 };
     }
-    // External streams keep the codec fixed by their first wide orientation.
+    if let Some(written) = super::stdio_abi::with_wide_fd_write_unlocked(stream, |destination| {
+        let mut offset = 0;
+        while offset < rendered.len() {
+            // GNU's wide formatter submits 128-wchar staging spans to FILE.
+            // Each span takes its own initial-capacity snapshot: a newline in
+            // an earlier span must not force a later formatted tail to flush.
+            let mut chunk = [0u32; 128];
+            let mut count = 0;
+            while count < chunk.len() && offset < rendered.len() {
+                let wchar_core::Utf8Step::Char { wc, len } =
+                    wchar_core::utf8_decode_step(&rendered[offset..])
+                else {
+                    // SAFETY: only the calling thread's errno is changed.
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return false;
+                };
+                chunk[count] = wc;
+                count += 1;
+                offset += len;
+            }
+            let mut output = super::stdio_abi::WideFdBulkWrite::new(destination, count);
+            // SAFETY: the rendered transport was validated and the cell owns
+            // queued output across every cancellable descriptor write.
+            if !unsafe { output.write(destination, &chunk[..count], caller) } {
+                return false;
+            }
+            // Embedded NUL remains one output wchar, not a string terminator.
+            // SAFETY: the FILE and cell remain exclusively held.
+            if !unsafe { output.finish(destination, caller) } {
+                return false;
+            }
+        }
+        true
+    }) {
+        return if written { wide_count } else { -1 };
+    }
+    // External fallback keeps the codec fixed by its first wide orientation.
     let codec = super::stdio_abi::stream_wide_codec(stream);
     super::stdio_abi::with_wide_io_active(|| {
         if matches!(codec, crate::locale_abi::MultibyteCodec::Utf8) {

@@ -3917,12 +3917,25 @@ pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
         let s = cell.lock();
         let readable = s.is_readable();
         let writable = s.is_writable();
+        let wide = s.effective_orientation() > 0 && !s.is_mem_backed();
         StreamExtInfo {
             readable,
             writable,
             line_buffered: matches!(s.buf_mode(), BufMode::Line),
-            buf_size: s.buffer_capacity(),
-            pending: s.pending_flush().len(),
+            buf_size: if wide {
+                if s.wide_output_initialized() {
+                    s.wide_output_capacity()
+                } else {
+                    0
+                }
+            } else {
+                s.buffer_capacity()
+            },
+            pending: if wide {
+                s.pending_wide_output()
+            } else {
+                s.pending_flush().len()
+            },
             // glibc: read-only stream, or last op was a read.
             reading: readable && (!writable || s.last_was_read()),
             // glibc: write-only stream, or last op was a write.
@@ -4122,11 +4135,186 @@ pub(crate) fn stream_wide_codec(stream: *mut c_void) -> crate::locale_abi::Multi
     stream_wide_read_context(stream).0
 }
 
-/// Transliteration is selected when a wide character is physically converted,
-/// using the current LC_CTYPE even though the FILE's external codec is fixed.
-/// Native unbuffered streams convert at the write. Buffered streams still hold
-/// external bytes, so their existing substitution remains until they can defer
-/// wide conversion to flush time without losing seek or partial-write state.
+/// Run native descriptor output under the stream-cell lock. The public wide
+/// entrypoint already owns its recursive FILE lock, or explicitly requested
+/// unlocked I/O. The callback must not re-enter an ABI function on this FILE.
+pub(crate) fn with_wide_fd_write_unlocked(
+    stream: *mut c_void,
+    write: impl FnOnce(&mut StdioStream) -> bool,
+) -> Option<bool> {
+    let cell = stream_cell(canonical_stream_id(stream))?;
+    let mut destination = cell.lock();
+    if destination.is_mem_backed() {
+        return None;
+    }
+    Some(write(&mut destination))
+}
+
+/// Admit wchar_t values without converting them. Overflow and unbuffered
+/// writes convert immediately; line-buffered frontends finish their complete
+/// operation separately so fputws/fwprintf flush the suffix after a newline.
+pub(crate) unsafe fn write_wide_fd_chunk(
+    destination: &mut StdioStream,
+    data: &[u32],
+    caller: usize,
+) -> bool {
+    if data.is_empty() {
+        return true;
+    }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        destination.c_handle(),
+        data.len().saturating_mul(std::mem::size_of::<u32>()),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        // SAFETY: only the calling thread's errno cell is changed.
+        unsafe { set_abi_errno(errno::EACCES) };
+        return false;
+    }
+
+    let mut accepted = 0;
+    let success = loop {
+        // An interrupted flush owns an encoded suffix. Finish it before
+        // admitting more input, preserving its conversion-time locale.
+        // SAFETY: the caller holds the FILE and cell locks; queued bytes are
+        // stream-owned throughout the flush and cancellation unwind.
+        if (!destination.pending_wide_flush().is_empty()
+            || destination.pending_wide_output() >= destination.wide_output_capacity())
+            && !unsafe { flush_wide_stream_for_caller(destination, caller) }
+        {
+            break false;
+        }
+        let Some(count) = destination.buffer_wide_write(&data[accepted..]) else {
+            // SAFETY: buffer_wide_write has set the FILE error indicator.
+            unsafe { set_abi_errno(errno::EBADF) };
+            break false;
+        };
+        if count == 0 {
+            // Capacity was made available above, so a nonempty admission
+            // returning zero denotes allocation failure, never a retry loop.
+            // SAFETY: only the calling thread's errno cell is changed.
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            break false;
+        }
+        accepted += count;
+        // SAFETY: the same FILE and cell locks protect the staged batch.
+        if matches!(destination.buf_mode(), BufMode::None)
+            && !unsafe { flush_wide_stream_for_caller(destination, caller) }
+        {
+            break false;
+        }
+        if accepted == data.len() {
+            break true;
+        }
+    };
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(8, data.len()),
+        !success,
+    );
+    success
+}
+
+/// Finish one line-buffer boundary selected by a character or bulk writer.
+/// The bulk state below preserves GNU's initial-capacity and overflow rules.
+pub(crate) unsafe fn finish_wide_fd_write(
+    destination: &mut StdioStream,
+    saw_newline: bool,
+    caller: usize,
+) -> bool {
+    !matches!(destination.buf_mode(), BufMode::Line)
+        || !saw_newline
+        // SAFETY: the enclosing wide operation owns the FILE and cell locks.
+        || unsafe { flush_wide_stream_for_caller(destination, caller) }
+}
+
+/// One bulk wide operation retains its initial line-buffer boundary across
+/// transport chunks. GNU suppresses newline checks in the initial bulk prefix;
+/// overflow characters use ordinary per-newline flushing. A fitting submission
+/// from an established writer flushes its complete tail when it has a newline.
+pub(crate) struct WideFdBulkWrite {
+    line_buffered: bool,
+    prefix_remaining: usize,
+    flush_tail_on_newline: bool,
+    saw_newline: bool,
+}
+
+impl WideFdBulkWrite {
+    pub(crate) fn new(destination: &StdioStream, length: usize) -> Self {
+        let line_buffered = matches!(destination.buf_mode(), BufMode::Line);
+        let prefix = if line_buffered && destination.last_was_write() {
+            destination
+                .wide_output_capacity()
+                .saturating_sub(destination.pending_wide_output())
+        } else {
+            0
+        };
+        Self {
+            line_buffered,
+            prefix_remaining: prefix.min(length),
+            flush_tail_on_newline: line_buffered
+                && destination.last_was_write()
+                && length <= prefix,
+            saw_newline: false,
+        }
+    }
+
+    pub(crate) unsafe fn write(
+        &mut self,
+        destination: &mut StdioStream,
+        mut data: &[u32],
+        caller: usize,
+    ) -> bool {
+        self.saw_newline |= data.contains(&u32::from(b'\n'));
+        if !self.line_buffered || self.flush_tail_on_newline {
+            // SAFETY: the enclosing bulk operation owns the FILE and cell.
+            return unsafe { write_wide_fd_chunk(destination, data, caller) };
+        }
+        let prefix = self.prefix_remaining.min(data.len());
+        if prefix != 0 {
+            // SAFETY: the input prefix is initialized and the cell owns output.
+            if !unsafe { write_wide_fd_chunk(destination, &data[..prefix], caller) } {
+                return false;
+            }
+            self.prefix_remaining -= prefix;
+            data = &data[prefix..];
+        }
+        while !data.is_empty() {
+            let newline = data.iter().position(|&value| value == u32::from(b'\n'));
+            let count = newline.map_or(data.len(), |index| index + 1);
+            // SAFETY: the same operation keeps the FILE and queued bytes live.
+            if !unsafe { write_wide_fd_chunk(destination, &data[..count], caller) } {
+                return false;
+            }
+            if newline.is_some() {
+                // SAFETY: the stream cell remains exclusively held.
+                if !unsafe { finish_wide_fd_write(destination, true, caller) } {
+                    return false;
+                }
+            }
+            data = &data[count..];
+        }
+        true
+    }
+
+    pub(crate) unsafe fn finish(self, destination: &mut StdioStream, caller: usize) -> bool {
+        if self.flush_tail_on_newline && self.saw_newline {
+            // GNU's final bulk flush records the error but still reports the
+            // complete admitted wchar count. Overflow failures return early.
+            // SAFETY: the operation owns the FILE and stream-cell guards.
+            let _ = unsafe { finish_wide_fd_write(destination, true, caller) };
+        }
+        true
+    }
+}
+
+/// Conversion-time transliteration for the legacy byte-output fallback.
+/// Native descriptor streams use the wchar queue and convert in the wide
+/// flush helper; their retained external codec is independent of LC_CTYPE.
 pub(crate) fn unbuffered_wide_transliteration_locale(stream: *mut c_void) -> Option<bool> {
     let unbuffered = if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
         // SAFETY: the generation-valid single-thread cache owns this access.
@@ -4810,7 +4998,66 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
     unsafe { flush_stream_for_caller(stream, 0) }
 }
 
+/// Convert a bounded wchar batch using the retained external codec and the
+/// current LC_CTYPE. Both input and encoded bytes remain stream-owned across
+/// cancellation points. Ordinary GNU write errors replay the source batch;
+/// cancellation cleanup instead resumes its acknowledged byte cursor.
+unsafe fn flush_wide_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bool {
+    if stream.pending_wide_output() == 0 && stream.pending_wide_flush().is_empty() {
+        return true;
+    }
+    let caller = stream_io_caller(stream, caller);
+    let fd = stream.fd();
+    while stream.pending_wide_output() != 0 || !stream.pending_wide_flush().is_empty() {
+        let utf8_transliteration = matches!(
+            crate::locale_abi::active_charset(),
+            crate::locale_abi::Charset::Utf8
+        );
+        if let Err(error) = stream.prepare_wide_flush(utf8_transliteration) {
+            stream.set_error();
+            // SAFETY: only the calling thread's errno cell is changed.
+            unsafe { set_abi_errno(error) };
+            return false;
+        }
+        while !stream.pending_wide_flush().is_empty() {
+            let pending = stream.pending_wide_flush();
+            // SAFETY: the stream cell owns this initialized byte span until
+            // the syscall completes or unwinds through the outer cell guard.
+            let rc = unsafe { stream_write_fd(caller, fd, pending.as_ptr().cast(), pending.len()) };
+            if rc <= 0 {
+                stream.set_error();
+                if rc == 0 {
+                    // A zero-progress write cannot be retried indefinitely.
+                    // SAFETY: only the calling thread's errno cell is changed.
+                    unsafe { set_abi_errno(errno::EIO) };
+                }
+                // This is an ordinary return, not cancellation unwind.
+                // GNU retains the complete wchar batch for re-conversion.
+                stream.retry_wide_flush();
+                if let Ok(position) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR) {
+                    stream.set_offset(position);
+                }
+                return false;
+            }
+            // Record progress before the next cancellation point. Complete
+            // success commits the source batch; partial progress retains it.
+            stream.consume_wide_flushed_prefix(rc as usize);
+        }
+    }
+    if stream.is_appending()
+        && fd >= 0
+        && let Ok(position) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+    {
+        stream.set_offset(position);
+    }
+    true
+}
+
 unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bool {
+    // SAFETY: this helper's caller holds the stream cell across descriptor I/O.
+    if !unsafe { flush_wide_stream_for_caller(stream, caller) } {
+        return false;
+    }
     let caller = stream_io_caller(stream, caller);
     if stream.pending_flush().is_empty() {
         return true;
@@ -5012,6 +5259,9 @@ unsafe fn refill_stream(
     }
     if tmp.len() < want {
         tmp.resize(want, 0);
+    }
+    if stream.effective_orientation() > 0 {
+        stream.mark_wide_buffer_initialized();
     }
     unsafe { flush_native_stdout_before_input(stream, caller) };
     let fd = stream.fd();
@@ -6326,6 +6576,9 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
     if s.buffer_capacity() == 0 {
         let mut b = [0u8; 1];
         let fd = s.fd();
+        if s.effective_orientation() > 0 {
+            s.mark_wide_buffer_initialized();
+        }
         unsafe { flush_native_stdout_before_input(s, caller) };
         let rc =
             unsafe { stream_read_fd(stream_io_caller(s, caller), fd, b.as_mut_ptr().cast(), 1) };
@@ -8308,7 +8561,8 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // GNU position queries account for pending append output without writing
     // it. Seeking the descriptor to EOF discovers where O_APPEND will place
     // those bytes, while the buffer remains pending for fflush/fclose.
-    let pending = s.pending_flush().len();
+    let wide_pending = s.pending_wide_offset();
+    let pending = s.pending_flush().len().saturating_add(wide_pending);
     if s.is_appending() && s.fd() >= 0 && (pending != 0 || s.last_was_write()) {
         // With no pending bytes, automatic/unbuffered writes have already
         // advanced the shared descriptor. EOF may have moved again since.
@@ -8320,7 +8574,11 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
         let position = raw_syscall::sys_lseek(s.fd(), 0, whence)
             .and_then(|offset| buffered_stream_position(offset, pending, 0));
         match position {
-            Ok(position) => s.set_offset(position),
+            Ok(position) => {
+                // Wide characters are not part of offset until their bytes
+                // reach the descriptor. Keep repeated tell queries idempotent.
+                s.set_offset(position.saturating_sub(wide_pending as i64));
+            }
             Err(error) => {
                 unsafe { set_abi_errno(error) };
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -8328,7 +8586,18 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
             }
         }
     }
-    let off = s.offset();
+    let off = if wide_pending == 0 {
+        s.offset()
+    } else {
+        match buffered_stream_position(s.offset(), wide_pending, 0) {
+            Ok(position) => position,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    };
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     off as c_long
 }
@@ -8752,7 +9021,11 @@ pub unsafe extern "C-unwind" fn setvbuf(
         // over unread input) and replaces the buffer. Refusing left programs
         // that unbuffer stdout mid-run fully buffered, their output reordered
         // against stderr.
-        let accepted = s.set_buffering(buf_mode, requested_size)
+        let keep_existing = !s.is_mem_backed()
+            && _buf.is_null()
+            && !matches!(buf_mode, BufMode::None);
+        let accepted = (keep_existing && s.rebuffer(buf_mode, requested_size, true))
+            || s.set_buffering(buf_mode, requested_size)
             || (!s.is_mem_backed() && {
                 let keep = _buf.is_null() && !matches!(buf_mode, BufMode::None);
                 let synced = keep || {
@@ -8767,6 +9040,14 @@ pub unsafe extern "C-unwind" fn setvbuf(
                 synced && s.rebuffer(buf_mode, requested_size, keep)
             });
         if accepted {
+            // GNU allocates one wchar slot per byte for an internal buffer,
+            // but divides a caller-provided buffer size by sizeof(wchar_t).
+            // A NULL buffered mode change preserves the existing allocation.
+            if !_buf.is_null() || matches!(buf_mode, BufMode::None) {
+                s.set_wide_buffer_user_supplied(
+                    !_buf.is_null() && !matches!(buf_mode, BufMode::None),
+                );
+            }
             if let Some(memory) = fixed_mem_cookie(id) {
                 // Direct read-only cursor reads do not mark StdioStream's
                 // buffer as used. An explicit replacement/unbuffering must
@@ -18525,6 +18806,13 @@ pub unsafe extern "C-unwind" fn freopen(
                 map.remove(&id);
             }
             crate::wchar_abi::unregister_open_wmemstream(id);
+        }
+        // freopen bypasses the ordinary flush helper while replacing the
+        // registry entry. Drain wide output before detaching its source batch;
+        // zero caller keeps this internal reopen phase non-cancelling.
+        if old.fd() >= 0 {
+            // SAFETY: the reopen operation exclusively holds the old stream.
+            let _ = unsafe { flush_wide_stream_for_caller(old, 0) };
         }
         let pending = old.prepare_close();
         let old_fd = old.fd();

@@ -161,7 +161,7 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
               --test conformance_diff_wide_stdio_write -- --test-threads=1 --nocapture \
               2>&1 | tee "$log"
-            grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' "$log"
+            grep -Eq '^test result: ok\. 12 passed; 0 failed; 0 ignored;' "$log"
           done
       - name: Recover from line-input allocation failure under real memory pressure
         if: always()

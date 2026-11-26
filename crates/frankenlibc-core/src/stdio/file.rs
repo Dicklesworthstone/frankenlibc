@@ -1267,10 +1267,16 @@ impl StdioStream {
         self.wide_output.user_supplied = user_supplied;
     }
 
-    /// Whether wide output has materialized this stream's logical wide buffer.
+    /// Whether descriptor I/O has materialized this stream's logical wide buffer.
     #[must_use]
     pub fn wide_output_initialized(&self) -> bool {
         self.wide_output.initialized
+    }
+
+    /// Record primary wide-buffer initialization before descriptor input.
+    /// Wide pushback alone does not initialize this buffer.
+    pub fn mark_wide_buffer_initialized(&mut self) {
+        self.wide_output.initialized = true;
     }
 
     /// Number of queued wchar_t values, including a partially written batch.
@@ -2517,6 +2523,19 @@ mod tests {
         assert_eq!(readonly.pending_wide_output(), 0);
         let unbuffered = StdioStream::with_mode(9, parse_mode(b"w").unwrap(), BufMode::None);
         assert_eq!(unbuffered.wide_output_capacity(), 1);
+
+        let mut input = StdioStream::new(10, parse_mode(b"r").unwrap());
+        input.set_orientation(1);
+        assert!(input.ungetwc(0x41));
+        assert!(input.last_was_read());
+        assert!(!input.wide_output_initialized());
+        assert_eq!(input.read_wide_pushback(), Some(0x41));
+        assert!(!input.wide_output_initialized());
+        input.mark_wide_buffer_initialized();
+        assert!(input.wide_output_initialized());
+        assert!(input.rebuffer(BufMode::Full, 32, false));
+        assert!(input.last_was_read());
+        assert!(!input.wide_output_initialized());
     }
 
     #[test]
