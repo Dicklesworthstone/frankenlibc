@@ -14,6 +14,9 @@ use crate::{
 #[path = "dlfcn_io.rs"]
 mod io;
 
+#[path = "dlfcn_encoding.rs"]
+mod encoding;
+
 #[path = "dlfcn_stdio.rs"]
 mod stdio;
 
@@ -31,6 +34,9 @@ mod thread_control;
 /// private/future version is not interchangeable with an unversioned lookup.
 /// Callers perform native DSO scope/preemption checks before this fallback.
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
+    if let Some(address) = encoding::address(name, version) {
+        return Some(address);
+    }
     if let Some(address) = semaphore::address(name, version) {
         return Some(address);
     }

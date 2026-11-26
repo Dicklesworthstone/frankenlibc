@@ -4042,57 +4042,22 @@ pub unsafe extern "C" fn __lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
         }
     }
 }
-// __mbrlen: native — multibyte character length (UTF-8)
+// Internal aliases share the public converters' locale and restartable state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __mbrlen(s: *const c_char, n: SizeT, _ps: *mut c_void) -> SizeT {
-    unsafe { __mbrtowc(std::ptr::null_mut(), s, n, _ps) }
+pub unsafe extern "C" fn __mbrlen(s: *const c_char, n: SizeT, ps: *mut c_void) -> SizeT {
+    // SAFETY: this alias preserves the public input and mbstate_t contract.
+    unsafe { crate::wchar_abi::mbrlen(s, n, ps) }
 }
-// __mbrtowc: native — multibyte (UTF-8) to wide char
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __mbrtowc(
     pwc: *mut WcharT,
     s: *const c_char,
     n: SizeT,
-    _ps: *mut c_void,
+    ps: *mut c_void,
 ) -> SizeT {
-    if s.is_null() {
-        return 0;
-    }
-    if n == 0 {
-        return SizeT::MAX.wrapping_neg();
-    } // (size_t)-2 = incomplete
-    let b0 = unsafe { *s.cast::<u8>() };
-    if b0 < 0x80 {
-        if !pwc.is_null() {
-            unsafe { *pwc = b0 as WcharT };
-        }
-        return if b0 == 0 { 0 } else { 1 };
-    }
-    let (len, mut cp) = if b0 < 0xC0 {
-        return SizeT::MAX; // (size_t)-1 = invalid
-    } else if b0 < 0xE0 {
-        (2, (b0 & 0x1F) as u32)
-    } else if b0 < 0xF0 {
-        (3, (b0 & 0x0F) as u32)
-    } else if b0 < 0xF8 {
-        (4, (b0 & 0x07) as u32)
-    } else {
-        return SizeT::MAX; // invalid
-    };
-    if n < len {
-        return SizeT::MAX.wrapping_neg();
-    } // incomplete
-    for i in 1..len {
-        let b = unsafe { *s.cast::<u8>().add(i) };
-        if b & 0xC0 != 0x80 {
-            return SizeT::MAX;
-        } // invalid continuation
-        cp = (cp << 6) | (b & 0x3F) as u32;
-    }
-    if !pwc.is_null() {
-        unsafe { *pwc = cp as WcharT };
-    }
-    len
+    // SAFETY: this alias preserves the public optional output, input bounds,
+    // and restartable conversion-state contract.
+    unsafe { crate::wchar_abi::mbrtowc(pwc, s, n, ps) }
 }
 // __monstartup: profiling — no-op stub
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
