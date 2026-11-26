@@ -17,6 +17,9 @@ mod io;
 #[path = "dlfcn_encoding.rs"]
 mod encoding;
 
+#[path = "dlfcn_identity.rs"]
+mod identity;
+
 #[path = "dlfcn_stdio.rs"]
 mod stdio;
 
@@ -35,6 +38,9 @@ mod thread_control;
 /// Callers perform native DSO scope/preemption checks before this fallback.
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     if let Some(address) = encoding::address(name, version) {
+        return Some(address);
+    }
+    if let Some(address) = identity::address(name, version) {
         return Some(address);
     }
     if let Some(address) = semaphore::address(name, version) {

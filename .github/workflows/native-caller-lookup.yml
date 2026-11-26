@@ -25,6 +25,7 @@ on:
       - 'crates/frankenlibc-abi/tests/dlfcn_native_info_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_encoding_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_identity_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
@@ -54,6 +55,7 @@ on:
       - 'crates/frankenlibc-abi/tests/dlfcn_native_info_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_encoding_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_identity_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
@@ -91,7 +93,7 @@ jobs:
         run: |
           mkdir -p artifacts/native-caller
           status=0
-          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_encoding_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test dlfcn_native_barrier_test; do
+          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_encoding_test dlfcn_native_identity_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test dlfcn_native_barrier_test; do
             log="artifacts/native-caller/${target}-${FRANKENLIBC_MODE}.log"
             # Preserve every failure, but execute later targets as well: a
             # memory-admission failure must not hide stream test outcomes.
