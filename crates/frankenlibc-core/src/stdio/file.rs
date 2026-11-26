@@ -627,6 +627,130 @@ impl WidePushback {
     }
 }
 
+/// Wide output remains in characters until a flush chooses its transliteration
+/// locale. Its encoded batch and acknowledged prefix belong to the stream, so
+/// cancellation cannot lose or replay bytes already delivered to the fd.
+///
+/// GNU wide streams retain the complete character batch on an ordinary write
+/// error, even if a prefix reached the fd. A later retry converts that batch
+/// again using its then-current locale. Cancellation instead leaves the encoded
+/// cursor intact for a cleanup handler to finish the suffix.
+#[derive(Debug, Default)]
+struct WideOutputBuffer {
+    initialized: bool,
+    user_supplied: bool,
+    characters: VecDeque<u32>,
+    encoded: Vec<u8>,
+    encoded_characters: usize,
+    consumed: usize,
+}
+
+impl WideOutputBuffer {
+    fn clear(&mut self) {
+        self.characters.clear();
+        self.retry();
+    }
+
+    fn retry(&mut self) {
+        self.encoded.clear();
+        self.encoded_characters = 0;
+        self.consumed = 0;
+    }
+
+    fn append_character(
+        destination: &mut Vec<u8>,
+        codec: crate::iconv::MultibyteCodec,
+        value: u32,
+        utf8_transliteration: bool,
+    ) -> Result<(), i32> {
+        let mut encoded = [0u8; 6];
+        if let Some(length) = codec.encode(value, &mut encoded) {
+            destination
+                .try_reserve(length)
+                .map_err(|_| crate::errno::ENOMEM)?;
+            destination.extend_from_slice(&encoded[..length]);
+            return Ok(());
+        }
+
+        let mut replacement = crate::iconv::transliteration(value, utf8_transliteration);
+        // The table supplies ASCII characters, not external bytes. Preflight
+        // the whole replacement before encoding it (notably for EBCDIC).
+        if !replacement
+            .iter()
+            .all(|&byte| codec.encode(u32::from(byte), &mut encoded).is_some())
+        {
+            replacement = b"?";
+        }
+        for &byte in replacement {
+            let length = codec
+                .encode(u32::from(byte), &mut encoded)
+                .ok_or(crate::errno::EILSEQ)?;
+            destination
+                .try_reserve(length)
+                .map_err(|_| crate::errno::ENOMEM)?;
+            destination.extend_from_slice(&encoded[..length]);
+        }
+        Ok(())
+    }
+
+    fn prepare(
+        &mut self,
+        codec: crate::iconv::MultibyteCodec,
+        utf8_transliteration: bool,
+    ) -> Result<(), i32> {
+        if self.encoded_characters != 0 || self.characters.is_empty() {
+            return Ok(());
+        }
+        for &value in &self.characters {
+            if let Err(error) =
+                Self::append_character(&mut self.encoded, codec, value, utf8_transliteration)
+            {
+                // No descriptor I/O happened: keep the original characters
+                // and discard this incomplete conversion transaction.
+                self.retry();
+                return Err(error);
+            }
+        }
+        self.encoded_characters = self.characters.len();
+        if self.encoded.is_empty() {
+            // Empty transliterations still consume their source characters.
+            self.consume(0);
+        }
+        Ok(())
+    }
+
+    fn consume(&mut self, count: usize) -> usize {
+        let acknowledged = count.min(self.encoded.len().saturating_sub(self.consumed));
+        self.consumed += acknowledged;
+        if self.consumed == self.encoded.len() && self.encoded_characters != 0 {
+            // A caller may have appended characters after staging this batch.
+            // Commit only the source prefix represented by these bytes.
+            drop(self.characters.drain(..self.encoded_characters));
+            self.retry();
+        }
+        acknowledged
+    }
+
+    fn pending_offset(&self, codec: crate::iconv::MultibyteCodec) -> usize {
+        let mut encoded = [0u8; 6];
+        let width = self.characters.iter().fold(0usize, |total, &value| {
+            let width = match codec {
+                crate::iconv::MultibyteCodec::Ascii
+                | crate::iconv::MultibyteCodec::SingleByte(_) => 1,
+                crate::iconv::MultibyteCodec::Utf8
+                | crate::iconv::MultibyteCodec::Stateless(_) => codec
+                    .encode(value, &mut encoded)
+                    .or_else(|| codec.encode(u32::from(b'?'), &mut encoded))
+                    .unwrap_or(0),
+            };
+            total.saturating_add(width)
+        });
+        // offset already includes acknowledged descriptor bytes. An ordinary
+        // error resets consumed because GNU will replay the retained batch.
+        width.saturating_sub(self.consumed)
+    }
+}
+
 /// POSIX FILE stream.
 ///
 /// Holds the file descriptor, buffer, and stream state. This type lives
@@ -644,7 +768,10 @@ pub struct StdioStream {
     flags: StreamFlags,
     /// Conversion engine fixed when the ABI first orients this stream wide.
     wide_codec: Option<crate::iconv::MultibyteCodec>,
-    /// Logical file position (for seekable streams).
+    /// Deferred characters and cancellation-safe conversion state for fd output.
+    wide_output: WideOutputBuffer,
+    /// Logical file position (for seekable streams), excluding unacknowledged
+    /// wide output. Narrow buffered writes are already included.
     offset: i64,
     /// One-byte pushback for ungetc (layered on top of buffer).
     ungetc_byte: Option<u8>,
@@ -701,6 +828,7 @@ impl StdioStream {
             open_flags,
             flags: StreamFlags::default(),
             wide_codec: None,
+            wide_output: WideOutputBuffer::default(),
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -720,6 +848,7 @@ impl StdioStream {
             open_flags,
             flags: StreamFlags::default(),
             wide_codec: None,
+            wide_output: WideOutputBuffer::default(),
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -742,6 +871,9 @@ impl StdioStream {
             ..StreamFlags::default()
         };
         self.wide_codec = None;
+        self.wide_output.clear();
+        self.wide_output.initialized = false;
+        self.wide_output.user_supplied = false;
         self.offset = offset;
         self.ungetc_byte = None;
         self.read_pushback.clear();
@@ -767,6 +899,7 @@ impl StdioStream {
             open_flags,
             flags: StreamFlags::default(),
             wide_codec: None,
+            wide_output: WideOutputBuffer::default(),
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -801,6 +934,7 @@ impl StdioStream {
             open_flags,
             flags: StreamFlags::default(),
             wide_codec: None,
+            wide_output: WideOutputBuffer::default(),
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -869,6 +1003,7 @@ impl StdioStream {
             },
             flags: StreamFlags::default(),
             wide_codec: None,
+            wide_output: WideOutputBuffer::default(),
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -904,6 +1039,7 @@ impl StdioStream {
             open_flags,
             flags: StreamFlags::default(),
             wide_codec: None,
+            wide_output: WideOutputBuffer::default(),
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -1000,6 +1136,7 @@ impl StdioStream {
         let unread = self.unread_bytes_for_position() as i64;
         self.offset = self.offset - pending + unread;
         self.buffer.reset();
+        self.wide_output.clear();
         self.ungetc_byte = None;
         self.read_pushback.clear();
         self.wide_pushback.clear();
@@ -1074,6 +1211,9 @@ impl StdioStream {
     ///
     /// Must be called before any I/O. Returns false if too late.
     pub fn set_buffering(&mut self, mode: BufMode, size: usize) -> bool {
+        if self.wide_output.initialized {
+            return false;
+        }
         self.buffer.set_mode(mode, size)
     }
 
@@ -1087,18 +1227,136 @@ impl StdioStream {
             self.buffer.switch_mode_in_place(mode, size);
             return true;
         }
-        if !self.buffer.pending_write_data().is_empty() {
+        if !self.buffer.pending_write_data().is_empty()
+            || !self.wide_output.characters.is_empty()
+            || !self.wide_output.encoded.is_empty()
+        {
             return false;
         }
         let eof = self.flags.eof;
         let _ = self.prepare_seek();
         self.flags.eof = eof;
-        self.buffer.rebuild_after_sync(mode, size)
+        let accepted = self.buffer.rebuild_after_sync(mode, size);
+        if accepted {
+            self.wide_output.initialized = false;
+        }
+        accepted
     }
 
     // -----------------------------------------------------------------------
     // Write operations
     // -----------------------------------------------------------------------
+
+    /// Capacity of the independent wide buffer, in wchar_t elements.
+    /// GNU uses one wide slot per byte of owned storage, but caller-provided
+    /// storage contributes one slot per rounded-up wchar_t. Unbuffered output
+    /// still needs one character for conversion.
+    #[must_use]
+    pub fn wide_output_capacity(&self) -> usize {
+        let bytes = self.buffer.capacity();
+        if self.wide_output.user_supplied {
+            bytes.div_ceil(std::mem::size_of::<u32>()).max(1)
+        } else {
+            bytes.max(1)
+        }
+    }
+
+    /// Record ownership after a successful setvbuf buffer replacement.
+    /// A NULL-buffer mode change preserves the previous ownership.
+    pub fn set_wide_buffer_user_supplied(&mut self, user_supplied: bool) {
+        self.wide_output.user_supplied = user_supplied;
+    }
+
+    /// Whether wide output has materialized this stream's logical wide buffer.
+    #[must_use]
+    pub fn wide_output_initialized(&self) -> bool {
+        self.wide_output.initialized
+    }
+
+    /// Number of queued wchar_t values, including a partially written batch.
+    /// GNU retains the complete batch until its descriptor write succeeds.
+    #[must_use]
+    pub fn pending_wide_output(&self) -> usize {
+        self.wide_output.characters.len()
+    }
+
+    /// Queue as many wide characters as fit without converting or flushing.
+    /// The ABI chooses line-buffer boundaries and flushes a full buffer.
+    /// None means permission failure. For nonempty input with available room,
+    /// Some(0) means allocation failure; both failures set the stream error.
+    pub fn buffer_wide_write(&mut self, data: &[u32]) -> Option<usize> {
+        if !self.open_flags.writable {
+            self.flags.error = true;
+            return None;
+        }
+        let room = self
+            .wide_output_capacity()
+            .saturating_sub(self.wide_output.characters.len());
+        let count = room.min(data.len());
+        if self.wide_output.characters.try_reserve(count).is_err() {
+            self.flags.error = true;
+            return Some(0);
+        }
+        self.wide_output
+            .characters
+            .extend(data[..count].iter().copied());
+        self.wide_output.initialized = true;
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        // setvbuf must observe wide I/O even before external bytes exist.
+        // An empty narrow write marks use without staging or allocating bytes.
+        let _ = self.buffer.write(&[]);
+        Some(count)
+    }
+
+    /// Convert the queued batch through the FILE's immutable external codec,
+    /// selecting transliteration from the locale active at physical conversion.
+    /// An already staged suffix survives cancellation without reconversion.
+    /// Failed conversion leaves all source characters available for retry.
+    pub fn prepare_wide_flush(&mut self, utf8_transliteration: bool) -> Result<(), i32> {
+        let codec = self
+            .wide_codec
+            .unwrap_or(crate::iconv::MultibyteCodec::Ascii);
+        let result = self.wide_output.prepare(codec, utf8_transliteration);
+        if result.is_err() {
+            self.flags.error = true;
+        }
+        result
+    }
+
+    /// Remaining external bytes of the staged wide batch. The stream owns this
+    /// slice across cancellable writes, including partially written characters.
+    #[must_use]
+    pub fn pending_wide_flush(&self) -> &[u8] {
+        &self.wide_output.encoded[self.wide_output.consumed..]
+    }
+
+    /// Commit a descriptor's acknowledged prefix before another cancellation
+    /// point. Only complete batch delivery consumes its original characters.
+    pub fn consume_wide_flushed_prefix(&mut self, count: usize) {
+        let acknowledged = self.wide_output.consume(count);
+        self.advance_offset(acknowledged);
+    }
+
+    /// An ordinary GNU write error retains and later reencodes the complete
+    /// wchar batch, including any prefix the descriptor accepted. Cancellation
+    /// must not call this: cleanup resumes at the retained encoded cursor.
+    pub fn retry_wide_flush(&mut self) {
+        self.wide_output.retry();
+    }
+
+    /// Pending byte-position adjustment without flushing or materializing
+    /// conversion. GNU single-byte streams count source wchar_t units even
+    /// when transliteration will expand them; multibyte streams count encoded
+    /// widths. Acknowledged staged bytes already contribute to offset.
+    #[must_use]
+    pub fn pending_wide_offset(&self) -> usize {
+        let codec = self
+            .wide_codec
+            .unwrap_or(crate::iconv::MultibyteCodec::Ascii);
+        self.wide_output.pending_offset(codec)
+    }
 
     /// Buffer a write and return the buffering outcome.
     ///
@@ -1913,7 +2171,9 @@ impl StdioStream {
 
     /// Prepare for a seek: discard read buffer and flush writes.
     ///
-    /// Returns pending write data that must be flushed before the seek.
+    /// Returns pending narrow write data that must be flushed before the seek.
+    /// Wide output must be converted and drained by the ABI first; this method
+    /// deliberately retains any unresolved wide batch instead of losing it.
     pub fn prepare_seek(&mut self) -> Vec<u8> {
         let pending = self.buffer.pending_write_data().to_vec();
         self.ungetc_byte = None;
@@ -1929,7 +2189,8 @@ impl StdioStream {
     // Close
     // -----------------------------------------------------------------------
 
-    /// Prepare for close: returns pending write data.
+    /// Prepare for close: returns pending narrow write data. The ABI must
+    /// separately flush wide output; unresolved wide characters are retained.
     pub fn prepare_close(&mut self) -> Vec<u8> {
         let pending = self.buffer.pending_write_data().to_vec();
         self.buffer.mark_flushed();
@@ -2215,6 +2476,214 @@ impl StdioStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deferred_wide_stream(codec: crate::iconv::MultibyteCodec, bytes: usize) -> StdioStream {
+        let mut stream = StdioStream::new(7, parse_mode(b"w+").unwrap());
+        assert!(stream.set_buffering(BufMode::Full, bytes));
+        stream.set_wide_buffer_user_supplied(true);
+        assert_eq!(stream.set_orientation(1), 1);
+        stream.bind_wide_codec(codec);
+        stream
+    }
+
+    #[test]
+    fn wide_output_admission_counts_characters_and_checks_permissions() {
+        let mut owned = StdioStream::new(6, parse_mode(b"w").unwrap());
+        assert_eq!(owned.wide_output_capacity(), BUFSIZ);
+        assert!(owned.set_buffering(BufMode::Full, 9));
+        assert_eq!(owned.wide_output_capacity(), 9);
+        owned.set_wide_buffer_user_supplied(true);
+        assert_eq!(owned.wide_output_capacity(), 3);
+        owned.reset_for_fmemopen(parse_mode(b"w+").unwrap(), 0, 0);
+        assert_eq!(owned.wide_output_capacity(), BUFSIZ);
+
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 9);
+        assert_eq!(stream.wide_output_capacity(), 3);
+        assert!(!stream.wide_output_initialized());
+        // Newlines are deliberately retained: the ABI chooses line flushes.
+        assert_eq!(stream.buffer_wide_write(&[0x41, 0x0a, 0x20ac, 0x42]), Some(3));
+        assert_eq!(stream.buffer_wide_write(&[0x43]), Some(0));
+        assert_eq!(stream.pending_wide_output(), 3);
+        assert!(stream.wide_output_initialized());
+        assert!(stream.last_was_write());
+        assert!(stream.pending_flush().is_empty());
+        assert_eq!(stream.offset(), 0);
+        assert!(!stream.set_buffering(BufMode::None, 0));
+
+        let mut readonly = StdioStream::new(8, parse_mode(b"r").unwrap());
+        assert_eq!(readonly.buffer_wide_write(&[0x0301]), None);
+        assert!(readonly.is_error());
+        assert!(!readonly.wide_output_initialized());
+        assert_eq!(readonly.pending_wide_output(), 0);
+        let unbuffered = StdioStream::with_mode(9, parse_mode(b"w").unwrap(), BufMode::None);
+        assert_eq!(unbuffered.wide_output_capacity(), 1);
+    }
+
+    #[test]
+    fn wide_output_conversion_uses_flush_locale_and_bound_codec() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 16);
+        assert_eq!(stream.buffer_wide_write(&[0x20ac, 0x0301, 0xa9]), Some(3));
+        assert!(stream.pending_wide_flush().is_empty());
+        assert_eq!(stream.pending_wide_offset(), 3);
+        // GNU ASCII output: Euro and copyright expand in both C locales;
+        // the combining acute mark disappears only under C.UTF-8.
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"EUR?(C)");
+        stream.retry_wide_flush();
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Utf8);
+        assert_eq!(stream.prepare_wide_flush(true), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"EUR(C)");
+        assert_eq!(stream.pending_wide_output(), 3);
+        stream.consume_wide_flushed_prefix(6);
+        assert_eq!(stream.offset(), 6);
+        assert_eq!(stream.pending_wide_output(), 0);
+    }
+
+    #[test]
+    fn wide_output_partial_acknowledgement_retains_cancellation_suffix() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Utf8, 16);
+        assert_eq!(stream.buffer_wide_write(&[0x20ac, 0x41]), Some(2));
+        assert_eq!(stream.prepare_wide_flush(true), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"\xe2\x82\xacA");
+        stream.consume_wide_flushed_prefix(1);
+        assert_eq!(stream.offset(), 1);
+        assert_eq!(stream.pending_wide_offset(), 3);
+        assert_eq!(stream.pending_wide_output(), 2);
+        // A cleanup flush resumes mid-character without encoding it again.
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"\x82\xacA");
+        stream.consume_wide_flushed_prefix(2);
+        assert_eq!(stream.pending_wide_flush(), b"A");
+        assert_eq!(stream.pending_wide_output(), 2);
+        stream.consume_wide_flushed_prefix(1);
+        assert_eq!(stream.offset(), 4);
+        assert_eq!(stream.pending_wide_offset(), 0);
+        assert_eq!(stream.pending_wide_output(), 0);
+        assert!(stream.pending_wide_flush().is_empty());
+    }
+
+    #[test]
+    fn wide_output_write_error_replays_the_complete_character_batch() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 16);
+        assert_eq!(stream.buffer_wide_write(&[0x41, 0x42, 0x43]), Some(3));
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        stream.consume_wide_flushed_prefix(1);
+        assert_eq!(stream.pending_wide_flush(), b"BC");
+        stream.retry_wide_flush();
+        assert_eq!(stream.offset(), 1);
+        assert_eq!(stream.pending_wide_output(), 3);
+        assert_eq!(stream.pending_wide_offset(), 3);
+        assert_eq!(stream.prepare_wide_flush(true), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"ABC");
+        stream.consume_wide_flushed_prefix(3);
+        assert_eq!(stream.offset(), 4);
+        assert_eq!(stream.pending_wide_output(), 0);
+    }
+
+    #[test]
+    fn wide_output_empty_transliterations_commit_without_descriptor_bytes() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 16);
+        stream.set_offset(12);
+        stream.set_eof();
+        assert_eq!(stream.buffer_wide_write(&[0x0301, 0x0301]), Some(2));
+        assert!(!stream.is_eof());
+        assert!(stream.last_was_write());
+        assert_eq!(stream.prepare_wide_flush(true), Ok(()));
+        assert_eq!(stream.pending_wide_output(), 0);
+        assert!(stream.pending_wide_flush().is_empty());
+        assert_eq!(stream.offset(), 12);
+        stream.consume_wide_flushed_prefix(usize::MAX);
+        assert_eq!(stream.offset(), 12);
+    }
+
+    #[test]
+    fn wide_output_purge_and_rebuffer_preserve_acknowledged_progress() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Utf8, 16);
+        assert_eq!(stream.buffer_wide_write(&[0x20ac, 0x41]), Some(2));
+        assert!(!stream.rebuffer(BufMode::None, 0, false));
+        assert!(stream.rebuffer(BufMode::Line, 64, true));
+        assert_eq!(stream.wide_output_capacity(), 4);
+        assert_eq!(stream.prepare_wide_flush(true), Ok(()));
+        stream.consume_wide_flushed_prefix(1);
+        stream.purge();
+        assert_eq!(stream.offset(), 1);
+        assert_eq!(stream.pending_wide_output(), 0);
+        assert!(stream.pending_wide_flush().is_empty());
+        assert!(stream.wide_output_initialized());
+        assert!(stream.rebuffer(BufMode::Full, 32, false));
+        assert!(!stream.wide_output_initialized());
+        assert_eq!(stream.wide_output_capacity(), 8);
+        assert_eq!(stream.buffer_wide_write(&[0x20ac]), Some(1));
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"\xe2\x82\xac");
+
+        stream.reset_for_fmemopen(parse_mode(b"r").unwrap(), 4, 99);
+        assert_eq!(stream.pending_wide_output(), 0);
+        assert!(stream.pending_wide_flush().is_empty());
+        assert!(!stream.wide_output_initialized());
+        assert_eq!(stream.offset(), 4);
+    }
+
+    #[test]
+    fn wide_output_appended_characters_survive_an_earlier_batch_commit() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 16);
+        assert_eq!(stream.buffer_wide_write(&[0x41]), Some(1));
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        assert_eq!(stream.buffer_wide_write(&[0x42, 0x43]), Some(2));
+        assert_eq!(stream.pending_wide_flush(), b"A");
+        stream.consume_wide_flushed_prefix(1);
+        assert_eq!(stream.pending_wide_output(), 2);
+        assert_eq!(stream.offset(), 1);
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"BC");
+        stream.consume_wide_flushed_prefix(2);
+        assert_eq!(stream.offset(), 3);
+        assert_eq!(stream.pending_wide_output(), 0);
+    }
+
+    #[test]
+    fn wide_output_position_uses_external_codec_widths_without_conversion() {
+        for (codec, characters, expected) in [
+            (crate::iconv::MultibyteCodec::Ascii, vec![0x20ac, 0x0301], 2),
+            (
+                crate::iconv::MultibyteCodec::for_stream(b"ISO-8859-1").unwrap(),
+                vec![0xe9, 0x20ac, 0],
+                3,
+            ),
+            (
+                crate::iconv::MultibyteCodec::Utf8,
+                vec![0xe9, 0x20ac, 0],
+                6,
+            ),
+            (
+                crate::iconv::MultibyteCodec::for_stream(b"UTF-16LE").unwrap(),
+                vec![0x20ac, 0x1f642, 0],
+                8,
+            ),
+        ] {
+            let mut stream = deferred_wide_stream(codec, 16);
+            assert_eq!(stream.buffer_wide_write(&characters), Some(characters.len()));
+            assert_eq!(stream.pending_wide_offset(), expected);
+            assert!(stream.pending_wide_flush().is_empty());
+            assert_eq!(stream.offset(), 0);
+        }
+    }
+
+    #[test]
+    fn wide_output_seek_and_close_preparation_do_not_drop_unflushed_characters() {
+        let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 16);
+        assert_eq!(stream.buffer_wide_write(&[0x41, 0x42]), Some(2));
+        assert!(stream.prepare_seek().is_empty());
+        assert_eq!(stream.pending_wide_output(), 2);
+        assert!(stream.prepare_close().is_empty());
+        assert_eq!(stream.pending_wide_output(), 2);
+        assert_eq!(stream.prepare_wide_flush(false), Ok(()));
+        assert_eq!(stream.pending_wide_flush(), b"AB");
+        stream.consume_wide_flushed_prefix(2);
+        assert!(stream.prepare_seek().is_empty());
+        assert_eq!(stream.pending_wide_output(), 0);
+        assert_eq!(stream.offset(), 2);
+    }
 
     #[test]
     fn memory_seek_cur_accounts_for_pending_pushback() {
