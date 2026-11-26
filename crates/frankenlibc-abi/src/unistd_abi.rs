@@ -12620,6 +12620,19 @@ unsafe fn nss_pack_gaih_addrtuples(
     if allocation_failed {
         return Err(libc::ENOMEM);
     }
+    // SAFETY: the provider validated the caller objects before scanning files.
+    unsafe { nss_write_gaih_addrtuples(&canonical, &addresses, pat, buffer, buflen) }
+}
+
+/// Publish a complete list into caller-owned storage, retaining a supplied
+/// head tuple. Files and DNS use the same alignment and capacity checks.
+unsafe fn nss_write_gaih_addrtuples(
+    canonical: &[u8],
+    addresses: &[std::net::IpAddr],
+    pat: *mut *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+) -> Result<bool, c_int> {
     if addresses.is_empty() {
         return Ok(false);
     }
@@ -14358,17 +14371,52 @@ unsafe fn nss_dns_lookup_error(code: c_int, errnop: *mut c_int, h_errnop: *mut c
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_dns_gethostbyname4_r(
-    _name: *const c_char,
-    _pat: *mut *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    pat: *mut *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    _ttlp: *mut i32,
+    ttlp: *mut i32,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if (!errnop.is_null() && !tracked_object_fits(errnop))
+        || (!h_errnop.is_null() && !tracked_object_fits(h_errnop))
+    {
+        return NSS_STATUS_UNAVAIL;
+    }
+    if !tracked_object_fits(pat) || buffer.is_null() || (!ttlp.is_null() && !tracked_object_fits(ttlp)) {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    }
+    let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    };
+    let answer = match crate::resolv_abi::native_dns_hostent(
+        &name, frankenlibc_core::addrinfo::Family::Unspecified,
+    ) {
+        Ok(answer) => answer,
+        Err(error) => return unsafe { nss_dns_lookup_error(error, errnop, h_errnop) },
+    };
+    let mut addresses = Vec::new();
+    let count = answer.addresses.ipv4.len().saturating_add(answer.addresses.ipv6.len());
+    if addresses.try_reserve_exact(count).is_err() {
+        return unsafe { nss_files_host_status(Err(libc::ENOMEM), errnop, h_errnop) };
+    }
+    addresses.extend(answer.addresses.ipv4.into_iter().map(std::net::IpAddr::V4));
+    addresses.extend(answer.addresses.ipv6.into_iter().map(std::net::IpAddr::V6));
+    // SAFETY: the packer checks the supplied head, scratch extent and alignment,
+    // and publishes only when all tuples and the canonical name fit.
+    match unsafe { nss_write_gaih_addrtuples(&answer.name, &addresses, pat, buffer, buflen) } {
+        Ok(true) => {
+            unsafe {
+                if !ttlp.is_null() {
+                    *ttlp = (*ttlp).min(answer.metadata.ttl as i32);
+                }
+                nss_set_herr(h_errnop, 0);
+            }
+            NSS_STATUS_SUCCESS
+        }
+        outcome => unsafe { nss_files_host_status(outcome, errnop, h_errnop) },
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

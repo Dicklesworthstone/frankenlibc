@@ -565,6 +565,11 @@ fn address_answer(
             qtype::A | qtype::AAAA => return Err(QueryError::InvalidResponse),
             _ => continue,
         };
+        // RFC 2181 section 8. Normalize before taking the minimum across
+        // a CNAME chain or address families, as a high-bit TTL forbids caching.
+        if record.ttl > i32::MAX as u32 {
+            record.ttl = 0;
+        }
         records.push(AddressRecord {
             owner: name,
             target,
@@ -649,10 +654,19 @@ pub fn query(
 
 /// Extra outputs for the legacy hostent APIs. Only a successful address
 /// response publishes metadata, so a failed search suffix cannot supply it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HostentMetadata {
     pub aliases: Vec<Vec<u8>>,
     pub ttl: u32,
+}
+
+impl Default for HostentMetadata {
+    fn default() -> Self {
+        Self {
+            aliases: Vec::new(),
+            ttl: i32::MAX as u32,
+        }
+    }
 }
 
 /// Query one server and optionally retain the validated hostent aliases and TTL.
@@ -771,7 +785,7 @@ where
                 if let Some(metadata) = metadata
                     && let Some(ttl) = reply.records.iter().map(|record| record.ttl).min()
                 {
-                    metadata.ttl = ttl;
+                    metadata.ttl = metadata.ttl.min(ttl);
                     metadata.aliases.clear();
                     // Each name preceding the terminal owner was reached by a
                     // validated CNAME, potentially in a previous packet.
@@ -2717,6 +2731,28 @@ mod tests {
             reply.records[0].as_ipv4(),
             Some(Ipv4Addr::new(192, 0, 2, 7))
         );
+    }
+
+    #[test]
+    fn high_bit_ttl_on_a_cname_or_address_prevents_caching() {
+        for (alias_ttl, address_ttl) in [(0x8000_0000, 31), (31, u32::MAX)] {
+            let mut metadata = HostentMetadata::default();
+            let reply = exchange_host_query(
+                b"alias.test",
+                qtype::A,
+                Duration::from_secs(1),
+                QueryOptions::default(),
+                Some(&mut metadata),
+                |sent, _| {
+                    Ok(response_with_records(sent, &[
+                        rr(&[0xc0, 12], qtype::CNAME, 1, alias_ttl, &name(b"host.test")),
+                        rr(&name(b"host.test"), qtype::A, 1, address_ttl, &[192, 0, 2, 3]),
+                    ]))
+                },
+            ).unwrap();
+            assert_eq!(reply.records[0].ttl, 0);
+            assert_eq!(metadata.ttl, 0);
+        }
     }
 
     #[test]

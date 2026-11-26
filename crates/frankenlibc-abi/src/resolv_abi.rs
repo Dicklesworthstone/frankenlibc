@@ -3103,8 +3103,9 @@ pub(crate) struct DnsHostEntry {
     pub addresses: frankenlibc_core::resolv::dns::DnsResolution,
 }
 
-/// A single family has one successful search candidate and one validated
-/// CNAME chain. Both public hostent lookups and direct NSS entry points use it.
+/// For a single family, aliases belong to its validated CNAME chain. A
+/// dual-stack tuple lookup uses the first canonical name and the minimum
+/// TTL across all addresses from the successful search candidate.
 pub(crate) fn native_dns_hostent(
     name: &[u8],
     family: frankenlibc_core::addrinfo::Family,

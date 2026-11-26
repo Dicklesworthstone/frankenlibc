@@ -1048,6 +1048,9 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
         assert_eq!(observations[1], (expected.to_vec(), expected.to_vec()));
     }
     check_direct_dns_forward_provider(host_apis()[0]);
+    for (index, api) in host_apis().into_iter().enumerate() {
+        check_direct_dns_tuple_provider(api, index == 0);
+    }
 }
 
 fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
@@ -1117,26 +1120,28 @@ fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
     assert_eq!(queries[2], queries[0]);
 }
 
+fn dual_stack_reply(query: &[u8]) -> Vec<u8> {
+    let kind = DnsMessage::decode(query).unwrap().questions[0].qtype;
+    let mut response = host_reply(query, 3, 0);
+    let address = match kind {
+        1 => vec![192, 0, 2, 17],
+        28 => std::net::Ipv6Addr::LOCALHOST.octets().to_vec(),
+        _ => panic!("expected A or AAAA"),
+    };
+    response[3] = 0x80;
+    response[7] = 1;
+    response.extend_from_slice(&[0xc0, 12]);
+    response.extend_from_slice(&kind.to_be_bytes());
+    response.extend_from_slice(&[0, 1, 0, 0, 0, if kind == 1 { 19 } else { 31 }]);
+    response.extend_from_slice(&(address.len() as u16).to_be_bytes());
+    response.extend_from_slice(&address);
+    response
+}
+
 fn check_direct_dns_forward_provider(api: HostApi) {
     use frankenlibc_abi::unistd_abi::_nss_dns_gethostbyname3_r;
 
-    let server = HostServer::new(|query| {
-        let kind = DnsMessage::decode(query).unwrap().questions[0].qtype;
-        let mut response = host_reply(query, 3, 0);
-        let address = match kind {
-            1 => vec![192, 0, 2, 17],
-            28 => std::net::Ipv6Addr::LOCALHOST.octets().to_vec(),
-            _ => panic!("expected A or AAAA"),
-        };
-        response[3] = 0x80;
-        response[7] = 1;
-        response.extend_from_slice(&[0xc0, 12]);
-        response.extend_from_slice(&kind.to_be_bytes());
-        response.extend_from_slice(&[0, 1, 0, 0, 0, 31]);
-        response.extend_from_slice(&(address.len() as u16).to_be_bytes());
-        response.extend_from_slice(&address);
-        response
-    });
+    let server = HostServer::new(dual_stack_reply);
     let _cleanup = configure_host(api, server.endpoint);
     assert_eq!(unsafe { (api.select)(c"hosts".as_ptr(), c"files".as_ptr()) }, 0);
     for (family, expected, initial_ttl) in [
@@ -1167,8 +1172,77 @@ fn check_direct_dns_forward_provider(api: HostApi) {
             assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), expected.len()), expected);
             assert!((*entry.h_addr_list.add(1)).is_null());
             assert!((*entry.h_aliases).is_null());
-            assert_eq!((ttl, host_error), (31.min(initial_ttl), 0));
+            let record_ttl = if family == libc::AF_INET { 19 } else { 31 };
+            assert_eq!((ttl, host_error), (record_ttl.min(initial_ttl), 0));
         }
     }
     assert_eq!(server.finish(), vec![b"forward.provider.invalid".to_vec(); 2]);
+}
+
+fn check_direct_dns_tuple_provider(api: HostApi, candidate: bool) {
+    use frankenlibc_abi::unistd_abi::_nss_dns_gethostbyname4_r;
+    use std::ffi::{CStr, c_char, c_int};
+
+    #[repr(C)]
+    struct Tuple {
+        next: *mut Tuple,
+        name: *mut c_char,
+        family: c_int,
+        addr: [u32; 4],
+        scopeid: u32,
+    }
+    type Lookup = unsafe extern "C" fn(
+        *const c_char, *mut *mut c_void, *mut c_char, usize,
+        *mut c_int, *mut c_int, *mut i32,
+    ) -> c_int;
+    let lookup: Lookup = if candidate {
+        _nss_dns_gethostbyname4_r
+    } else {
+        unsafe {
+            dlsym_oracle::host_fn(
+                c"_nss_dns_gethostbyname4_r", _nss_dns_gethostbyname4_r as *const (),
+            )
+        }
+    };
+    let server = HostServer::new(dual_stack_reply);
+    let _cleanup = configure_host(api, server.endpoint);
+    assert_eq!(unsafe { (api.select)(c"hosts".as_ptr(), c"files".as_ptr()) }, 0);
+    let name = c"tuples.provider.invalid.";
+    for supplied in [false, true] {
+        let mut first = std::mem::MaybeUninit::<Tuple>::zeroed();
+        let mut head: *mut c_void = if supplied { first.as_mut_ptr().cast() } else { std::ptr::null_mut() };
+        let mut buffer = [0u8; 2048];
+        let (mut error, mut host_error, mut ttl) = (0, 0, i32::MAX);
+        // SAFETY: the head and scratch survive through inspection of every
+        // returned tuple. No pointers are retained across resolver calls.
+        unsafe {
+            assert_eq!(lookup(name.as_ptr(), &mut head, buffer.as_mut_ptr().add(1).cast(),
+                buffer.len() - 1, &mut error, &mut host_error, &mut ttl), 1);
+            assert!(!head.is_null());
+            if supplied {
+                assert_eq!(head, first.as_mut_ptr().cast());
+            }
+            let first = &*head.cast::<Tuple>();
+            assert!(!first.name.is_null());
+            assert_eq!(CStr::from_ptr(first.name).to_bytes(), b"tuples.provider.invalid");
+            assert!(!first.next.is_null());
+            let second = &*first.next;
+            assert!(second.next.is_null());
+            let mut families = Vec::new();
+            for item in [first, second] {
+                families.push(item.family);
+                let bytes = std::slice::from_raw_parts(item.addr.as_ptr().cast::<u8>(), 16);
+                match item.family {
+                    libc::AF_INET => assert_eq!(&bytes[..4], &[192, 0, 2, 17]),
+                    libc::AF_INET6 => assert_eq!(bytes, std::net::Ipv6Addr::LOCALHOST.octets()),
+                    other => panic!("unexpected address family {other}"),
+                }
+                assert_eq!(item.scopeid, 0);
+            }
+            families.sort_unstable();
+            assert_eq!(families, [libc::AF_INET, libc::AF_INET6]);
+            assert_eq!(ttl, 19);
+        }
+    }
+    assert_eq!(server.finish(), vec![b"tuples.provider.invalid".to_vec(); 4]);
 }
