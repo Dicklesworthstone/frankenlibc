@@ -9568,6 +9568,7 @@ pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
 //   word 0: magic (AtomicU32, validity sentinel)
 //   word 1: count (total threads needed)
 //   word 2-3: phase_arrived (AtomicU64, phase in upper 32 bits, arrived in lower 32)
+//   word 4: active waits (low bits) and destroy notification request (high bit)
 //
 // The phase and arrival count are packed into a single AtomicU64 so that the
 // last arriving thread can reset the counter and advance the phase in one
@@ -9586,6 +9587,9 @@ pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
 const BARRIER_MAGIC: u32 = 0x4742_4152; // "GBAR"
 /// Magic of a `PTHREAD_PROCESS_SHARED` barrier (shared futexes).
 const BARRIER_PSHARED_MAGIC: u32 = 0x4742_4153; // "GBAS"
+
+// The number of simultaneous callers is bounded by the Linux thread limit.
+const BARRIER_DESTROY_WAITING: u32 = 1 << 31;
 
 /// PTHREAD_BARRIER_SERIAL_THREAD: returned to exactly one thread per barrier cycle.
 const PTHREAD_BARRIER_SERIAL_THREAD: c_int = -1;
@@ -9614,7 +9618,13 @@ struct BarrierData {
     count: u32,
     /// Packed: phase (upper 32) | arrived (lower 32).
     phase_arrived: AtomicU64,
+    active: AtomicU32,
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<BarrierData>() <= std::mem::size_of::<libc::pthread_barrier_t>());
+    assert!(std::mem::align_of::<BarrierData>() <= std::mem::align_of::<libc::pthread_barrier_t>());
+};
 
 fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
     if barrier.is_null() {
@@ -9627,29 +9637,30 @@ fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
     Some(ptr)
 }
 
-unsafe fn futex_wait_u32(addr: *const u32, expected: u32, private: bool) -> c_int {
-    // SAFETY: Linux futex syscall with valid userspace address and null timeout.
-    match unsafe {
+// These waits retry on a wake, EINTR or a changed futex value. Internal
+// scheduling races must never overwrite a successful pthread caller's errno.
+unsafe fn futex_wait_u32(
+    addr: *const u32,
+    expected: u32,
+    private: bool,
+    timeout: Option<&libc::timespec>,
+) {
+    // SAFETY: addr is a live, aligned futex word for the duration of the wait.
+    let _ = unsafe {
         raw_syscall::sys_futex(
             addr,
             libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             expected,
-            0, // null timeout
+            timeout.map_or(0, |ts| std::ptr::from_ref(ts) as usize),
             0,
             0,
         )
-    } {
-        Ok(v) => v as c_int,
-        Err(errno) => {
-            unsafe { set_abi_errno(errno) };
-            -1
-        }
-    }
+    };
 }
 
-unsafe fn futex_wake_u32(addr: *const u32, count: i32, private: bool) -> c_int {
-    // SAFETY: Linux futex syscall with valid userspace address.
-    match unsafe {
+unsafe fn futex_wake_u32(addr: *const u32, count: i32, private: bool) {
+    // SAFETY: the waiter retains its barrier until this wake completes.
+    let _ = unsafe {
         raw_syscall::sys_futex(
             addr,
             libc::FUTEX_WAKE | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
@@ -9658,13 +9669,7 @@ unsafe fn futex_wake_u32(addr: *const u32, count: i32, private: bool) -> c_int {
             0,
             0,
         )
-    } {
-        Ok(v) => v as c_int,
-        Err(errno) => {
-            unsafe { set_abi_errno(errno) };
-            -1
-        }
-    }
+    };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9705,6 +9710,7 @@ pub unsafe extern "C" fn pthread_barrier_init(
             Ordering::Release,
         );
         (*data).count = count;
+        (*data).active.store(0, Ordering::Relaxed);
         (*data)
             .phase_arrived
             .store(barrier_pack(0, 0), Ordering::Release);
@@ -9717,17 +9723,33 @@ pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int 
     let Some(data) = barrier_data_ptr(barrier) else {
         return libc::EINVAL;
     };
-    // SAFETY: pointer is non-null and aligned; caller owns the memory.
-    unsafe {
-        // If any threads are currently blocked at the barrier, destruction is
-        // not permitted (POSIX says behaviour is undefined, but returning
-        // EBUSY is the quality-of-implementation choice made by glibc/musl).
-        let packed = (*data).phase_arrived.load(Ordering::Acquire);
-        if barrier_arrived(packed) > 0 {
-            return libc::EBUSY;
-        }
-        (*data).magic.store(0, Ordering::Release);
+    // SAFETY: the caller owns an initialized barrier and admits no new waits.
+    let bd = unsafe { &*data };
+    if barrier_arrived(bd.phase_arrived.load(Ordering::Acquire)) != 0 {
+        return libc::EBUSY;
     }
+    // A round can be logically complete while its participants are still
+    // inspecting the phase or about to wake their peers. POSIX permits a
+    // released participant to destroy the barrier. Wait for those final
+    // accesses before allowing the application to reuse the storage.
+    let private = bd.magic.load(Ordering::Relaxed) != BARRIER_PSHARED_MAGIC;
+    let previous = bd.active.fetch_or(BARRIER_DESTROY_WAITING, Ordering::AcqRel);
+    if previous != 0 {
+        let mut state = previous | BARRIER_DESTROY_WAITING;
+        let wake_timeout = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 50_000,
+        };
+        while state != 0 {
+            // With just the marker left, the peer may already have issued its
+            // wake but still be returning from the kernel. A short timed wait
+            // lets it finish even under single-CPU real-time scheduling.
+            let timeout = (state == BARRIER_DESTROY_WAITING).then_some(&wake_timeout);
+            unsafe { futex_wait_u32(bd.active.as_ptr(), state, private, timeout) };
+            state = bd.active.load(Ordering::Acquire);
+        }
+    }
+    bd.magic.store(0, Ordering::Release);
     0
 }
 
@@ -9786,6 +9808,9 @@ unsafe fn barrier_wait_observed(
     let bd = unsafe { &*data };
     let private = bd.magic.load(Ordering::Acquire) != BARRIER_PSHARED_MAGIC;
     let count = bd.count;
+    // Register before publishing our arrival, which may release the round
+    // and permit a peer to destroy the barrier.
+    bd.active.fetch_add(1, Ordering::Relaxed);
     // Cache the address before publishing completion. The kernel can compare
     // the phase half without creating mixed-width Rust atomic accesses. Its
     // offset is one word on little-endian targets and zero on big-endian ones.
@@ -9823,6 +9848,7 @@ unsafe fn barrier_wait_observed(
                     // SAFETY: phase_word is the aligned phase subword of the
                     // caller-owned barrier, retained until all waits return.
                     unsafe { futex_wake_u32(phase_word, i32::MAX, private) };
+                    barrier_depart(bd, private);
                     return PTHREAD_BARRIER_SERIAL_THREAD;
                 }
                 Err(actual) => {
@@ -9862,9 +9888,21 @@ unsafe fn barrier_wait_observed(
         observer(PthreadBarrierTestEvent::BeforeWait { phase: my_phase });
         // SAFETY: phase_word is aligned and live. If completion races this
         // syscall, the kernel observes the changed phase and refuses to sleep.
-        unsafe { futex_wait_u32(phase_word, my_phase, private) };
+        unsafe { futex_wait_u32(phase_word, my_phase, private, None) };
     }
+    barrier_depart(bd, private);
     0
+}
+
+#[inline]
+fn barrier_depart(bd: &BarrierData, private: bool) {
+    if bd.active.fetch_sub(1, Ordering::Release) == (BARRIER_DESTROY_WAITING | 1) {
+        // Keep even a process-shared mapping live through the kernel wake.
+        // Only clearing this bit hands ownership back to destroy. Using an
+        // RMW extends the release sequence of all participants' departures.
+        unsafe { futex_wake_u32(bd.active.as_ptr(), 1, private) };
+        bd.active.fetch_and(!BARRIER_DESTROY_WAITING, Ordering::Release);
+    }
 }
 
 // ---------------------------------------------------------------------------

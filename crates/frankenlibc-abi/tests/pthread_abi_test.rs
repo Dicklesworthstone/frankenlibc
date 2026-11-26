@@ -1882,6 +1882,67 @@ mod barrier_generations {
     }
 
     #[test]
+    fn destroy_waits_for_released_participants() {
+        if !isolated_child("barrier_generations::destroy_waits_for_released_participants") {
+            return;
+        }
+        for shared in [false, true] {
+            for delay_serial in [false, true] {
+                let mut barrier = new_barrier(shared, 2);
+                let address = (&mut *barrier as *mut libc::pthread_barrier_t) as usize;
+                let ordinary = paused_wait(address, false);
+                assert!(matches!(
+                    next_progress(&ordinary.1),
+                    Progress::Paused(PthreadBarrierTestEvent::BeforeWait { .. })
+                ));
+                let serial = paused_wait(address, true);
+                assert!(matches!(
+                    next_progress(&serial.1),
+                    Progress::Paused(PthreadBarrierTestEvent::Arrived { last: true, .. })
+                ));
+                let (released, delayed) = if delay_serial {
+                    (ordinary, serial)
+                } else {
+                    (serial, ordinary)
+                };
+                released.2.send(()).unwrap();
+                let first = released.0.join().unwrap();
+
+                // One peer returned and the other was logically released, so
+                // destroy is legal. Keep the allocation live even if a broken
+                // implementation returns early, so the test can report it.
+                let (started_tx, started_rx) = mpsc::channel();
+                let (done_tx, done_rx) = mpsc::channel();
+                let destroyer = std::thread::spawn(move || {
+                    started_tx.send(()).unwrap();
+                    let rc = unsafe { pthread_barrier_destroy(address as *mut c_void) };
+                    done_tx.send(rc).unwrap();
+                });
+                started_rx.recv().unwrap();
+                let early = done_rx.recv_timeout(Duration::from_millis(100));
+                delayed.2.send(()).unwrap();
+                let second = delayed.0.join().unwrap();
+                destroyer.join().unwrap();
+                assert!(matches!(early, Err(mpsc::RecvTimeoutError::Timeout)));
+                assert_eq!(done_rx.recv().unwrap(), 0);
+                let mut results = [first, second];
+                results.sort();
+                assert_eq!(results, [libc::PTHREAD_BARRIER_SERIAL_THREAD, 0]);
+
+                // Reinitialize exactly the old storage after destroy returns.
+                unsafe {
+                    assert_eq!(pthread_barrier_init(address as *mut c_void, ptr::null(), 1), 0);
+                    assert_eq!(
+                        pthread_barrier_wait(address as *mut c_void),
+                        libc::PTHREAD_BARRIER_SERIAL_THREAD
+                    );
+                    assert_eq!(pthread_barrier_destroy(address as *mut c_void), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn delayed_notifier_cannot_release_later_cohorts() {
         if !isolated_child("barrier_generations::delayed_notifier_cannot_release_later_cohorts") {
             return;
