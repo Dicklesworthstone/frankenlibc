@@ -1957,6 +1957,9 @@ mod streaming_narrow {
         let (native, host) = (Api::native(), Api::host());
         for locale in [c"C", c"C.UTF-8"] {
             let _locale = Utf8Locale::select_named(locale, libc::LC_ALL_MASK);
+            // glibc can advance a wide scanset destination past undecodable bytes.
+            // Compare assigned characters for inputs representable in each locale.
+            let scanset_input = if locale == c"C" { c"Az!" } else { c"é中!" };
             for (name, scan) in [
                 ("sscanf", fl::sscanf as Scan),
                 ("__isoc99_sscanf", fl::__isoc99_sscanf as Scan),
@@ -1966,7 +1969,7 @@ mod streaming_narrow {
                     (c"Az!", c"%2lc%n%c"),
                     (c"é中!", c"%2lc%n%c"),
                     (c"é中!", c"%2ls%n%c"),
-                    (c"é中!", c"%l[^!]%n%c"),
+                    (scanset_input, c"%l[^!]%n%c"),
                     (c"é!", c"%C%n%c"),
                     (c"é中!", c"%2S%n%c"),
                     (c"a\xff!", c"%2lc%n%c"),
@@ -1974,9 +1977,9 @@ mod streaming_narrow {
                     (c"", c"%ls%n%c"),
                 ] {
                     let observe = |api: &Api, scan: Scan| {
-                        let (mut wide, mut count, mut tail) = ([-777i32; 4], -1i32, 0x5au8);
-                        // SAFETY: at most two wchar_t elements plus a terminator
-                        // can be stored, and each later destination has the exact type.
+                        let (mut wide, mut count, mut tail) = ([-777i32; 8], -1i32, 0x5au8);
+                        // SAFETY: room for every external byte as a wchar_t, a
+                        // terminator, and a canary in every path through either libc.
                         unsafe {
                             *(api.errno)() = 0;
                             let rc = scan(
