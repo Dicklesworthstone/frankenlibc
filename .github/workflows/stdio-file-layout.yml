@@ -85,6 +85,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
+      - name: Admit fwrite source bounds before cached or delegated writes
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-regressions
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          for regression in hardened_fwrite_admits_tracked_source_before_dispatch \
+              fwrite_rejects_unrepresentable_spans_before_reading \
+              strict_hot_stdio_writes_skip_runtime_policy_gate; do
+            log="artifacts/stdio-regressions/$regression.log"
+            FRANKENLIBC_MODE=strict cargo test -p frankenlibc-abi "${features[@]}" \
+              --test stdio_abi_test "$regression" \
+              -- --exact --test-threads=1 --nocapture 2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"
+          done
       - name: Preserve complete shadow records and bounded float allocation
         env:
           CACHE: ${{ matrix.cache }}

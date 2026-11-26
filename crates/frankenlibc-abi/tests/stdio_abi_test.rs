@@ -1706,6 +1706,178 @@ fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
 }
 
 #[test]
+fn hardened_fwrite_admits_tracked_source_before_dispatch() {
+    const CHILD: &str = "FRANKENLIBC_HARDENED_FWRITE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // Mode is immutable after initialization. A fresh process also keeps
+        // repair accounting and stream caches isolated from unrelated tests.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hardened_fwrite_admits_tracked_source_before_dispatch",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "hardened")
+            .output()
+            .expect("run isolated hardened fwrite contract");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "hardened fwrite child failed:\nstdout={stdout}\nstderr={stderr}"
+        );
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;")),
+            "hardened fwrite child did not execute its exact test:\n{stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    signal_runtime_ready_for_tests();
+    let contents = *b"bounded-write";
+    let source = unsafe { frankenlibc_abi::malloc_abi::malloc(contents.len()).cast::<u8>() };
+    assert!(!source.is_null());
+    // SAFETY: source is a live allocation of exactly contents.len() bytes.
+    unsafe { std::ptr::copy_nonoverlapping(contents.as_ptr(), source, contents.len()) };
+    assert_eq!(
+        frankenlibc_abi::malloc_abi::known_remaining_for_tests(source as usize),
+        Some(contents.len()),
+        "the regression must exercise a tracked source"
+    );
+
+    type Writer = unsafe extern "C-unwind" fn(*const c_void, usize, usize, *mut c_void) -> usize;
+    let writers: [(&str, Writer); 3] = [
+        ("fwrite", fwrite),
+        ("fwrite_unlocked", fwrite_unlocked),
+        ("_IO_fwrite", _IO_fwrite),
+    ];
+    let policy = frankenlibc_membrane::heal::global_healing_policy();
+    for (name, write) in writers {
+        for backing in 0..4 {
+            for warm in [false, true] {
+                let mut fixed = [0_u8; 128];
+                let mut published: *mut c_char = std::ptr::null_mut();
+                let mut published_size = 0;
+                // Exercise owned descriptor, fixed cookie, growing memory,
+                // and foreign host FILE dispatch with the same source bounds.
+                let stream = unsafe {
+                    match backing {
+                        0 => tmpfile(),
+                        1 => fmemopen(fixed.as_mut_ptr().cast(), fixed.len(), c"w+".as_ptr()),
+                        2 => open_memstream(&mut published, &mut published_size),
+                        _ => libc::tmpfile().cast(),
+                    }
+                };
+                assert!(!stream.is_null(), "{name}: backing={backing}");
+                assert_eq!(
+                    unsafe { setvbuf(stream, std::ptr::null_mut(), libc::_IOFBF, 0) },
+                    0
+                );
+                let mut expected = Vec::new();
+                if warm {
+                    // fputc populates both native descriptor write caches;
+                    // hardened fwrite's cold path alone does not warm them.
+                    for &byte in b"seed" {
+                        assert_eq!(unsafe { fputc(byte.into(), stream) }, c_int::from(byte));
+                    }
+                    expected.extend_from_slice(b"seed");
+                }
+
+                // Fresh and warmed calls must clamp alike. The interior
+                // request has ten live bytes but admits only two four-byte
+                // elements; a two-byte tail admits no four-byte element.
+                for (offset, size, count, admitted) in
+                    [(0, 1, 18, 13), (3, 4, 4, 8), (11, 4, 1, 0), (1, 3, 4, 12)]
+                {
+                    let ptr = unsafe { source.add(offset) };
+                    assert_eq!(
+                        frankenlibc_abi::malloc_abi::known_remaining_for_tests(ptr as usize),
+                        Some(contents.len() - offset)
+                    );
+                    let before = policy.size_clamps.load(Ordering::Relaxed);
+                    // Deliberately oversized C input: hardened fwrite must
+                    // admit its live extent before creating a Rust slice.
+                    let written = unsafe { write(ptr.cast(), size, count, stream) };
+                    assert_eq!(
+                        written,
+                        admitted / size,
+                        "{name}: backing={backing}, warm={warm}, offset={offset}, size={size}"
+                    );
+                    if size * count > contents.len() - offset {
+                        assert!(
+                            policy.size_clamps.load(Ordering::Relaxed) > before,
+                            "{name}: repaired writes must emit evidence, including cache hits"
+                        );
+                    }
+                    expected.extend_from_slice(&contents[offset..offset + admitted]);
+                    assert_eq!(unsafe { ferror(stream) }, 0);
+                }
+
+                let before = policy.size_clamps.load(Ordering::Relaxed);
+                assert_eq!(unsafe { write(source.cast(), 0, usize::MAX, stream) }, 0);
+                assert_eq!(unsafe { write(source.cast(), usize::MAX, 0, stream) }, 0);
+                assert_eq!(policy.size_clamps.load(Ordering::Relaxed), before);
+                assert_eq!(unsafe { fflush(stream) }, 0);
+                if backing == 2 {
+                    assert_eq!(published_size, expected.len());
+                    assert!(!published.is_null());
+                    // SAFETY: successful fflush publishes this live buffer
+                    // with published_size initialized bytes.
+                    let actual = unsafe {
+                        std::slice::from_raw_parts(published.cast::<u8>(), published_size)
+                    };
+                    assert_eq!(actual, expected);
+                } else {
+                    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+                    let mut actual = [0_u8; 128];
+                    let read =
+                        unsafe { fread(actual.as_mut_ptr().cast(), 1, actual.len(), stream) };
+                    assert_eq!(
+                        read,
+                        expected.len(),
+                        "no bytes from a partial or excess element"
+                    );
+                    assert_eq!(&actual[..read], expected);
+                }
+                assert_eq!(unsafe { fclose(stream) }, 0);
+                if backing == 2 {
+                    unsafe { frankenlibc_abi::malloc_abi::free(published.cast()) };
+                }
+            }
+        }
+    }
+    unsafe { frankenlibc_abi::malloc_abi::free(source.cast()) };
+}
+
+#[test]
+fn fwrite_rejects_unrepresentable_spans_before_reading() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+    let source = [b'x'];
+    for (pointer, size, count) in [
+        (source.as_ptr().cast::<c_void>(), usize::MAX, 2),
+        (source.as_ptr().cast::<c_void>(), 1, isize::MAX as usize + 1),
+        ((usize::MAX - 1) as *const c_void, 1, 4),
+    ] {
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+        // Invalid range metadata must be rejected without dereferencing the
+        // pointer, allocating a stream buffer, or changing file position.
+        assert_eq!(unsafe { fwrite(pointer, size, count, stream) }, 0);
+        assert_eq!(
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+            libc::EOVERFLOW
+        );
+        assert_eq!(unsafe { ftell(stream) }, 0);
+        assert_eq!(unsafe { ferror(stream) }, 0);
+    }
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
 fn io_2_1_objects_resolve_to_native_stdio_storage() {
     init_host_stdio_streams_for_tests();
 

@@ -7676,14 +7676,52 @@ pub(crate) unsafe fn fwrite_unlocked_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> usize {
-    let Some(total) = size.checked_mul(nmemb) else {
+    let Some(requested) = size.checked_mul(nmemb) else {
         unsafe { set_abi_errno(errno::EOVERFLOW) };
         return 0;
     };
-    if ptr.is_null() || total == 0 {
+    if ptr.is_null() || requested == 0 {
+        return 0;
+    }
+    if requested > isize::MAX as usize || (ptr as usize).checked_add(requested).is_none() {
+        // Multiplication can succeed even when no Rust slice represents the
+        // range. Reject it before accessing the source or changing the FILE.
+        unsafe { set_abi_errno(errno::EOVERFLOW) };
         return 0;
     }
 
+    let hardened =
+        !runtime_policy::bootstrap_passthrough_active() && runtime_policy::mode().heals_enabled();
+    // The source lookup must use this entrypoint's policy context, not an
+    // enclosing caller's certificate that may skip pointer validation.
+    let _trace_scope = hardened.then(|| runtime_policy::entrypoint_scope("fwrite"));
+    // Source admission precedes every slice, cache hit, and host delegation.
+    // A warm FILE cache proves the stream's lifetime, not the caller's byte
+    // range. Match fread's element-aligned repair: a short final element must
+    // not enter the output buffer merely because it would not count in the
+    // return value. Quarantined/invalid tracked sources report zero remaining.
+    let total = if hardened
+        && let Some(bound) = known_remaining(ptr as usize)
+        && requested > bound
+    {
+        let clamped = (bound / size) * size;
+        global_healing_policy().record(
+            "stdio",
+            "fwrite",
+            &HealingAction::ClampSize { requested, clamped },
+            RepairLogContext::new(0, Some(ptr as usize)),
+        );
+        clamped
+    } else {
+        requested
+    };
+    if total == 0 {
+        return 0;
+    }
+    let nmemb = total / size;
+    // SAFETY: the C contract supplies a readable source; hardened admission
+    // restricts tracked sources to their live extent before any read occurs.
+    // The range is nonempty, nonnull, nonwrapping, and fits isize::MAX.
     let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
 
     // Single-threaded inline fast path: append to the cached Full-buffered fd stream if it
@@ -7700,12 +7738,11 @@ pub(crate) unsafe fn fwrite_unlocked_for_caller(
 
     let id = canonical_stream_id(stream);
 
-    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+    if !hardened {
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, src, caller) };
         return written.checked_div(size).unwrap_or(0);
     }
 
-    let _trace_scope = runtime_policy::entrypoint_scope("fwrite");
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, total, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
