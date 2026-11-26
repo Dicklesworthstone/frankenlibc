@@ -2255,6 +2255,8 @@ struct SigqueueWaitCtx {
     ready: AtomicI32,
     wait_rc: AtomicI32,
     signal_code: AtomicI32,
+    sender_pid: AtomicI32,
+    sender_uid: AtomicU32,
     value_bits: AtomicUsize,
 }
 
@@ -2274,10 +2276,18 @@ unsafe extern "C" fn sigqueue_waiting_thread(arg: *mut c_void) -> *mut c_void {
     ctx.ready.store(1, Ordering::Release);
 
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let wait_rc = unsafe { libc::sigwaitinfo(&set, &mut info) };
+    let timeout = libc::timespec {
+        tv_sec: 5,
+        tv_nsec: 0,
+    };
+    let wait_rc = unsafe { libc::sigtimedwait(&set, &mut info, &timeout) };
     ctx.wait_rc.store(wait_rc, Ordering::Release);
     if wait_rc == libc::SIGUSR1 {
         ctx.signal_code.store(info.si_code, Ordering::Release);
+        ctx.sender_pid
+            .store(unsafe { info.si_pid() }, Ordering::Release);
+        ctx.sender_uid
+            .store(unsafe { info.si_uid() }, Ordering::Release);
         let value = unsafe { info.si_value() };
         ctx.value_bits
             .store(value.sival_ptr as usize, Ordering::Release);
@@ -2292,6 +2302,8 @@ fn sigqueue_live_thread_preserves_queued_value() {
             ready: AtomicI32::new(0),
             wait_rc: AtomicI32::new(i32::MIN),
             signal_code: AtomicI32::new(0),
+            sender_pid: AtomicI32::new(-1),
+            sender_uid: AtomicU32::new(u32::MAX),
             value_bits: AtomicUsize::new(0),
         };
         let mut thr: libc::pthread_t = 0;
@@ -2317,15 +2329,18 @@ fn sigqueue_live_thread_preserves_queued_value() {
             "target thread should block SIGUSR1 before queueing"
         );
 
-        let payload = 0x1234_5678usize;
+        let payload = 0x1234_5678_90ab_cdef_u64 as usize;
         let value = libc::sigval {
             sival_ptr: payload as *mut c_void,
         };
-        assert_eq!(
-            pthread_sigqueue(thr, libc::SIGUSR1, value),
-            0,
-            "pthread_sigqueue should succeed for a live thread"
-        );
+        let errno_ptr = frankenlibc_abi::errno_abi::__errno_location();
+        let saved_errno = *errno_ptr;
+        *errno_ptr = libc::E2BIG;
+        let send_rc = pthread_sigqueue(thr, libc::SIGUSR1, value);
+        let send_errno = *errno_ptr;
+        *errno_ptr = saved_errno;
+        assert_eq!(send_rc, 0, "pthread_sigqueue should succeed for a live thread");
+        assert_eq!(send_errno, libc::E2BIG, "pthread_sigqueue must preserve errno");
         assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
         assert_eq!(
             ctx.wait_rc.load(Ordering::Acquire),
@@ -2336,6 +2351,16 @@ fn sigqueue_live_thread_preserves_queued_value() {
             ctx.signal_code.load(Ordering::Acquire),
             libc::SI_QUEUE,
             "queued signal should preserve SI_QUEUE metadata"
+        );
+        assert_eq!(
+            ctx.sender_pid.load(Ordering::Acquire),
+            libc::getpid(),
+            "queued signal must identify the sending process"
+        );
+        assert_eq!(
+            ctx.sender_uid.load(Ordering::Acquire),
+            libc::getuid(),
+            "queued signal must identify the sender's real UID"
         );
         assert_eq!(
             ctx.value_bits.load(Ordering::Acquire),

@@ -16538,28 +16538,12 @@ pub unsafe extern "C-unwind" fn msgrcv(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigqueue(pid: libc::pid_t, sig: c_int, value: libc::sigval) -> c_int {
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    info.si_signo = sig;
-    info.si_errno = 0;
-    info.si_code = libc::SI_QUEUE;
-
-    // Encode sender identity and queued payload using the Linux siginfo queue layout.
-    let info_words = (&mut info as *mut libc::siginfo_t).cast::<u32>();
-    let caller_pid = syscall::sys_getpid() as u32;
-    let caller_uid = syscall::sys_getuid();
-    let value_bits = value.sival_ptr as usize as u64;
-    unsafe {
-        *info_words.add(3) = caller_pid;
-        *info_words.add(4) = caller_uid;
-        if std::mem::size_of::<usize>() > 4 {
-            // Linux aligns `sigval_t` to 8 bytes inside the SI_QUEUE
-            // payload, leaving one 32-bit hole after `si_uid`.
-            *info_words.add(6) = value_bits as u32;
-            *info_words.add(7) = (value_bits >> 32) as u32;
-        } else {
-            *info_words.add(5) = value_bits as u32;
-        }
-    }
+    let info = crate::signal_abi::queued_signal_info(
+        sig,
+        syscall::sys_getpid(),
+        syscall::sys_getuid(),
+        value,
+    );
 
     match unsafe { syscall::sys_rt_sigqueueinfo(pid, sig, &info as *const _ as *const u8) } {
         Ok(()) => 0,

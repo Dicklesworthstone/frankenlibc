@@ -17,6 +17,59 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationPr
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
+// SI_QUEUE uses the naturally aligned siginfo union, not the byte immediately
+// following its three int fields. On both supported LP64 Linux targets the
+// payload starts at byte 16: pid at 16, uid at 20, and sigval at 24.
+#[repr(C)]
+struct QueuedSignalPayload {
+    pid: libc::pid_t,
+    uid: libc::uid_t,
+    value: libc::sigval,
+}
+
+#[repr(C)]
+struct QueuedSignalInfoPrefix {
+    _signo: c_int,
+    _errno: c_int,
+    _code: c_int,
+    payload: QueuedSignalPayload,
+}
+
+const _: () = {
+    assert!(
+        std::mem::size_of::<QueuedSignalInfoPrefix>() <= std::mem::size_of::<libc::siginfo_t>()
+    );
+    assert!(
+        std::mem::align_of::<QueuedSignalInfoPrefix>() <= std::mem::align_of::<libc::siginfo_t>()
+    );
+};
+
+/// Construct Linux SI_QUEUE metadata shared by process and thread delivery.
+#[inline]
+pub(crate) fn queued_signal_info(
+    signal: c_int,
+    pid: libc::pid_t,
+    uid: libc::uid_t,
+    value: libc::sigval,
+) -> libc::siginfo_t {
+    // SAFETY: siginfo_t contains plain integer/pointer storage; zeroing also
+    // initializes every unused union byte before the kernel copies the record.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    info.si_signo = signal;
+    info.si_code = libc::SI_QUEUE;
+    let prefix = (&raw mut info).cast::<QueuedSignalInfoPrefix>();
+    // SAFETY: repr(C) supplies the Linux queue payload alignment, and the
+    // compile-time checks establish that the prefix fits the live, aligned
+    // siginfo_t. Write each field individually, leaving the zeroed header and
+    // union padding intact instead of copying uninitialized struct padding.
+    unsafe {
+        std::ptr::addr_of_mut!((*prefix).payload.pid).write(pid);
+        std::ptr::addr_of_mut!((*prefix).payload.uid).write(uid);
+        std::ptr::addr_of_mut!((*prefix).payload.value).write(value);
+    }
+    info
+}
+
 /// Highest signal number this ABI tracks per thread.
 ///
 /// 64 = `SIGRTMAX` on Linux. It was 128, and the upper half was unreachable: the kernel

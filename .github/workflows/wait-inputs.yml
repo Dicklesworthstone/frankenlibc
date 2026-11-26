@@ -8,6 +8,10 @@ on:
       - 'crates/frankenlibc-abi/src/wait_snapshot.rs'
       - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/signal_abi.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/tests/pthread_abi_test.rs'
+      - 'tests/integration/fixture_signal_waits.c'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/tests/wait_inputs_test.rs'
       - 'crates/frankenlibc-abi/tests/poll_abi_test.rs'
@@ -110,5 +114,110 @@ jobs:
         with:
           name: owned-wait-input-results
           path: artifacts/wait-inputs/**
+          if-no-files-found: error
+          retention-days: 14
+
+  queued-signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      RUSTFLAGS: '-Zthreads=1 -Cllvm-args=-enable-tlsdesc'
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: queued-signal-delivery
+          cache-on-failure: true
+      - name: Verify sender identity and full-width payload on a real peer thread
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/queued-signals'); root.mkdir(parents=True, exist_ok=True)
+          failures = []
+          for mode in ['strict', 'hardened']:
+              for native in ['0', '1']:
+                  label = f'peer-{mode}-native{native}'
+                  result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi',
+                      '--test', 'pthread_abi_test', 'sigqueue_live_thread_preserves_queued_value',
+                      '--', '--exact', '--nocapture', '--test-threads=1'],
+                      env=dict(os.environ, FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE=native),
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1200)
+                  text = result.stdout.decode(errors='replace')
+                  (root / f'{label}.log').write_text(text)
+                  print(f'{label}: exit={result.returncode}')
+                  print('\n'.join(line for line in text.splitlines() if 'test result:' in line))
+                  if result.returncode or 'test result: ok. 1 passed; 0 failed;' not in text:
+                      failures.append(label); print(text[-12000:])
+          assert not failures, failures
+          PY
+      - name: Build and execute process and thread delivery through the deployed ABI
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/queued-signals
+          cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/queued-signals/release-build.log
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_signal_waits.c \
+            -ldl -o artifacts/queued-signals/signal-waits
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/queued-signals')
+          fixture = str((root / 'signal-waits').resolve())
+          library = str(pathlib.Path('target/release/libfrankenlibc_abi.so').resolve())
+          environment = dict(os.environ); environment.pop('LD_PRELOAD', None)
+          expected = b'queued signals: process and thread preserve sender identity and pointer payload\n'
+          def run(label, args, env):
+              result = subprocess.run(args, env=env, stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE, timeout=15)
+              (root / f'{label}.stdout').write_bytes(result.stdout)
+              (root / f'{label}.stderr').write_bytes(result.stderr)
+              print(f'{label}: exit={result.returncode}')
+              return result
+          host = run('host', [fixture, '--queued-signals'], environment)
+          assert host.returncode == 0 and host.stdout == expected, (host.stdout, host.stderr)
+          negative = run('missing-provider', [fixture, '--queued-signals', library], environment)
+          assert negative.returncode == 1 and b'is not supplied by expected library' in negative.stderr, negative
+          failures = []
+          for mode in ['strict', 'hardened']:
+              for native in ['0', '1']:
+                  label = f'candidate-{mode}-native{native}'
+                  result = run(label, [fixture, '--queued-signals', library],
+                      dict(environment, LD_PRELOAD=library, FRANKENLIBC_MODE=mode,
+                          FRANKENLIBC_THREAD_NATIVE=native))
+                  if result.returncode or result.stdout != host.stdout:
+                      failures.append(label); print(result.stdout, result.stderr)
+          assert not failures, failures
+          print('QUEUED SIGNAL ABI: 8 candidate deliveries, 2 GNU deliveries, provider negative passed')
+          PY
+      - name: Check formatting of changed Rust sources
+        if: always()
+        run: |
+          rustfmt --edition 2024 --check \
+            crates/frankenlibc-abi/src/signal_abi.rs \
+            crates/frankenlibc-abi/src/pthread_abi.rs \
+            crates/frankenlibc-abi/src/unistd_abi.rs \
+            crates/frankenlibc-abi/tests/pthread_abi_test.rs
+      - name: Record tested revision and toolchain
+        if: always()
+        run: |
+          mkdir -p artifacts/queued-signals
+          git rev-parse HEAD > artifacts/queued-signals/revision.txt
+          rustc --version --verbose > artifacts/queued-signals/rustc.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: queued-signal-delivery-results
+          path: artifacts/queued-signals/**
           if-no-files-found: error
           retention-days: 14
