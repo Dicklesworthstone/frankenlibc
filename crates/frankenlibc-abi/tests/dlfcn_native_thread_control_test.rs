@@ -1,6 +1,6 @@
 //! Real native-plugin thread control with a separate live-host oracle.
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use frankenlibc_abi::{dlfcn_abi as dl, pthread_abi as pthread};
+use frankenlibc_abi::{c11threads_abi as c11, dlfcn_abi as dl, pthread_abi as pthread};
 use frankenlibc_core::elf::ElfLoader;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::process::Command;
@@ -14,7 +14,37 @@ fn bindings() -> Vec<(&'static str, &'static str, bool, *const ())> {
             (stringify!($f), $v, $m, pthread::$f as *const ())
         };
     }
+    macro_rules! c11_row {
+        ($f:ident, $merged:literal) => {
+            (stringify!($f), "GLIBC_2.28", $merged, c11::$f as *const ())
+        };
+    }
     vec![
+        c11_row!(thrd_create, true),
+        c11_row!(thrd_join, true),
+        c11_row!(thrd_detach, true),
+        c11_row!(thrd_exit, true),
+        c11_row!(thrd_current, false),
+        c11_row!(thrd_equal, false),
+        c11_row!(thrd_sleep, false),
+        c11_row!(thrd_yield, false),
+        c11_row!(mtx_init, true),
+        c11_row!(mtx_destroy, true),
+        c11_row!(mtx_lock, true),
+        c11_row!(mtx_trylock, true),
+        c11_row!(mtx_timedlock, true),
+        c11_row!(mtx_unlock, true),
+        c11_row!(cnd_init, true),
+        c11_row!(cnd_destroy, true),
+        c11_row!(cnd_wait, true),
+        c11_row!(cnd_timedwait, true),
+        c11_row!(cnd_signal, true),
+        c11_row!(cnd_broadcast, true),
+        c11_row!(tss_create, true),
+        c11_row!(tss_delete, true),
+        c11_row!(tss_set, true),
+        c11_row!(tss_get, true),
+        c11_row!(call_once, true),
         row!(pthread_attr_init, "GLIBC_2.2.5", false),
         row!(pthread_attr_destroy, "GLIBC_2.2.5", false),
         row!(pthread_attr_getdetachstate, "GLIBC_2.2.5", false),
@@ -78,6 +108,7 @@ fn bindings() -> Vec<(&'static str, &'static str, bool, *const ())> {
 const SOURCE: &str = r#"
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <threads.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -86,6 +117,44 @@ const SOURCE: &str = r#"
 #include <unistd.h>
 #include <dlfcn.h>
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
+
+static once_flag c11_once = ONCE_FLAG_INIT;
+static tss_t c11_key;
+static int c11_once_calls;
+static int c11_destructors;
+static void c11_init(void) { ++c11_once_calls; }
+static void c11_destroy(void *value) {
+    if (value == &c11_key) ++c11_destructors;
+}
+static int c11_worker(void *arg) {
+    call_once(&c11_once, c11_init);
+    CHECK(thrd_equal(thrd_current(), pthread_self()));
+    CHECK(tss_set(c11_key, arg) == thrd_success);
+    CHECK(pthread_getspecific(c11_key) == arg);
+    return -37;
+}
+int c11_lifecycle(void) {
+    thrd_t thread;
+    int result = 0;
+    mtx_t lock;
+    cnd_t changed;
+    const struct timespec expired = {0, 0};
+    CHECK(tss_create(&c11_key, c11_destroy) == thrd_success);
+    CHECK(thrd_create(&thread, c11_worker, &c11_key) == thrd_success);
+    CHECK(thrd_join(thread, &result) == thrd_success && result == -37);
+    call_once(&c11_once, c11_init);
+    CHECK(c11_once_calls == 1 && c11_destructors == 1 && !tss_get(c11_key));
+    tss_delete(c11_key);
+    CHECK(mtx_init(&lock, mtx_plain) == thrd_success);
+    CHECK(cnd_init(&changed) == thrd_success);
+    CHECK(mtx_lock(&lock) == thrd_success);
+    CHECK(cnd_timedwait(&changed, &lock, &expired) == thrd_timedout);
+    CHECK(mtx_unlock(&lock) == thrd_success);
+    cnd_destroy(&changed);
+    mtx_destroy(&lock);
+    return 0;
+}
+
 static void *identity(void *arg) { return arg; }
 int attributes(void) {
     pthread_attr_t a; int v; size_t z; pthread_t t; void *result;
@@ -419,6 +488,7 @@ fn native_thread_control_attributes_recovery_and_deadlines() {
                 let lib = Library::new(native, got);
                 for name in [
                     c"attributes",
+                    c"c11_lifecycle",
                     c"mutex_types",
                     c"robust_recovery",
                     c"deadlines",

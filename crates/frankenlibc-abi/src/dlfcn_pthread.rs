@@ -5,7 +5,7 @@
 //! would mix mutex, condition-variable, key and lifecycle ownership domains.
 //! The frontends retain their existing interpose/standalone routing policy.
 
-use crate::pthread_abi as pthread;
+use crate::{c11threads_abi as c11, pthread_abi as pthread};
 
 #[derive(Clone, Copy)]
 enum Version {
@@ -13,10 +13,12 @@ enum Version {
     Merged,
     Condition,
     SignalMask,
+    C11,
+    C11Merged,
 }
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
-    use Version::{Baseline, Condition, Merged, SignalMask};
+    use Version::{Baseline, C11, C11Merged, Condition, Merged, SignalMask};
     // Keep the version contract beside the actual implementation pointer.
     // In particular, GLIBC_2.34 is NOT an alias for every pthread function.
     let (function, contract) = match name {
@@ -51,6 +53,31 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pthread_rwlock_wrlock" => (pthread::pthread_rwlock_wrlock as *const (), Merged),
         "pthread_rwlock_trywrlock" => (pthread::pthread_rwlock_trywrlock as *const (), Merged),
         "pthread_rwlock_unlock" => (pthread::pthread_rwlock_unlock as *const (), Merged),
+        "thrd_create" => (c11::thrd_create as *const (), C11Merged),
+        "thrd_join" => (c11::thrd_join as *const (), C11Merged),
+        "thrd_detach" => (c11::thrd_detach as *const (), C11Merged),
+        "thrd_exit" => (c11::thrd_exit as *const (), C11Merged),
+        "thrd_current" => (c11::thrd_current as *const (), C11),
+        "thrd_equal" => (c11::thrd_equal as *const (), C11),
+        "thrd_sleep" => (c11::thrd_sleep as *const (), C11),
+        "thrd_yield" => (c11::thrd_yield as *const (), C11),
+        "mtx_init" => (c11::mtx_init as *const (), C11Merged),
+        "mtx_destroy" => (c11::mtx_destroy as *const (), C11Merged),
+        "mtx_lock" => (c11::mtx_lock as *const (), C11Merged),
+        "mtx_trylock" => (c11::mtx_trylock as *const (), C11Merged),
+        "mtx_timedlock" => (c11::mtx_timedlock as *const (), C11Merged),
+        "mtx_unlock" => (c11::mtx_unlock as *const (), C11Merged),
+        "cnd_init" => (c11::cnd_init as *const (), C11Merged),
+        "cnd_destroy" => (c11::cnd_destroy as *const (), C11Merged),
+        "cnd_wait" => (c11::cnd_wait as *const (), C11Merged),
+        "cnd_timedwait" => (c11::cnd_timedwait as *const (), C11Merged),
+        "cnd_signal" => (c11::cnd_signal as *const (), C11Merged),
+        "cnd_broadcast" => (c11::cnd_broadcast as *const (), C11Merged),
+        "tss_create" => (c11::tss_create as *const (), C11Merged),
+        "tss_delete" => (c11::tss_delete as *const (), C11Merged),
+        "tss_set" => (c11::tss_set as *const (), C11Merged),
+        "tss_get" => (c11::tss_get as *const (), C11Merged),
+        "call_once" => (c11::call_once as *const (), C11Merged),
         _ => return None,
     };
     let baseline = if cfg!(target_arch = "aarch64") {
@@ -62,11 +89,12 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         // The old x86-64 GLIBC_2.2.5 condition-variable ABI has a different
         // representation. These frontends implement only the modern layout.
         Condition if cfg!(target_arch = "x86_64") => "GLIBC_2.3.2",
+        C11 | C11Merged => "GLIBC_2.28",
         _ => baseline,
     };
     if version.is_some_and(|requested| {
         requested != original
-            && !(matches!(contract, Merged) && requested == "GLIBC_2.34")
+            && !(matches!(contract, Merged | C11Merged) && requested == "GLIBC_2.34")
             && !(matches!(contract, SignalMask) && requested == "GLIBC_2.32")
     }) {
         return None;
