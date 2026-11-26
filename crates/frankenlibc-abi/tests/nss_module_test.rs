@@ -4021,12 +4021,168 @@ fn service_enumeration_native_isolation(first: &EnumeratedService) {
     unsafe { u::endservent() };
 }
 
+/// Direct provider calls share GNU's file-reader contract, not the public NSS
+/// switch. Keep each provider in a fresh process with the same private file.
+fn service_files_keyed_transcript(host: bool) -> String {
+    type ByName = unsafe extern "C" fn(
+        *const c_char,
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+    ) -> c_int;
+    type ByPort = unsafe extern "C" fn(
+        c_int,
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+    ) -> c_int;
+    unsafe extern "C" {
+        #[link_name = "_nss_files_getservbyname_r"]
+        fn host_name(
+            name: *const c_char,
+            proto: *const c_char,
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "_nss_files_getservbyport_r"]
+        fn host_port(
+            port: c_int,
+            proto: *const c_char,
+            out: *mut c_void,
+            buf: *mut c_char,
+            len: usize,
+            error: *mut c_int,
+        ) -> c_int;
+    }
+    use frankenlibc_abi::unistd_abi as u;
+    assert_ne!(
+        host_name as *const (),
+        u::_nss_files_getservbyname_r as *const ()
+    );
+    assert_ne!(
+        host_port as *const (),
+        u::_nss_files_getservbyport_r as *const ()
+    );
+    let (by_name, by_port): (ByName, ByPort) = if host {
+        (host_name, host_port)
+    } else {
+        (u::_nss_files_getservbyname_r, u::_nss_files_getservbyport_r)
+    };
+    let api = service_enumeration_api(host);
+    let mut transcript = String::new();
+    for (name, port, proto) in [
+        (c"http", None, Some(c"tcp")),
+        (c"www", None, None),
+        (c"HTTP", None, Some(c"tcp")),
+        (c"http", None, Some(c"TCP")),
+        (c"http", None, Some(c"")),
+        (c"hex", None, Some(c"tcp")),
+        (c"octal", None, None),
+        (c"negative", None, None),
+        (c"noprot", None, None),
+        (c"badnoprot", None, None),
+        (c"wrap", None, None),
+        (c"overflow", None, None),
+        (c"fltest-service", None, None),
+        (c"missing", None, None),
+        (c"", None, None),
+        (c"port80", Some(c_int::from(80u16.to_be())), Some(c"tcp")),
+        (c"port53", Some(c_int::from(53u16.to_be())), None),
+        (c"wideport", Some(c_int::from(80u16.to_be()) + 65536), None),
+        (c"negativeport", Some(-1), None),
+    ] {
+        for offset in [0, 1, 7] {
+            for capacity in [
+                0, 1, 2, 3, 16, 32, 39, 40, 47, 48, 55, 56, 63, 64, 128, 256, 4096,
+            ] {
+                for aliased_error in [false, true] {
+                    let mut storage = vec![0x5au8; capacity + 16];
+                    let buffer = unsafe { storage.as_mut_ptr().add(offset).cast::<c_char>() };
+                    let mut output: libc::servent = unsafe { std::mem::zeroed() };
+                    let mut error = 717;
+                    let errno = unsafe { (api.error)() };
+                    unsafe { *errno = 731 };
+                    let errnop = if aliased_error { errno } else { &mut error };
+                    let proto = proto.map_or(std::ptr::null(), CStr::as_ptr);
+                    let status = unsafe {
+                        if let Some(port) = port {
+                            by_port(
+                                port,
+                                proto,
+                                (&raw mut output).cast(),
+                                buffer,
+                                capacity,
+                                errnop,
+                            )
+                        } else {
+                            by_name(
+                                name.as_ptr(),
+                                proto,
+                                (&raw mut output).cast(),
+                                buffer,
+                                capacity,
+                                errnop,
+                            )
+                        }
+                    };
+                    let (global_error, provider_error) = unsafe { (*errno, *errnop) };
+                    let answer = if status == 1 {
+                        unsafe {
+                            enumerated_service(
+                                (&raw mut output).cast(),
+                                Some((buffer as usize, buffer as usize + capacity)),
+                            )
+                        }
+                    } else {
+                        None
+                    };
+                    assert!(storage[..offset].iter().all(|byte| *byte == 0x5a));
+                    assert!(
+                        storage[offset + capacity..]
+                            .iter()
+                            .all(|byte| *byte == 0x5a)
+                    );
+                    writeln!(
+                        transcript,
+                        "{name:?} {port:?} {offset} {capacity} {aliased_error}: {status} {global_error} {provider_error} {answer:?}",
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    transcript
+}
+
 #[test]
 fn services_enumeration_files_retry_and_provider_isolation() {
     const TEST: &str = "services_enumeration_files_retry_and_provider_isolation";
     if std::env::var_os(CHILD_ENV).is_some() {
         use frankenlibc_abi::glibc_internal_abi as g;
         unsafe { libc::alarm(30) };
+        if let Some(provider) = std::env::var_os("FLTEST_SERVICES_KEYED_ORACLE") {
+            let host = provider == "host";
+            if !host {
+                assert_eq!(
+                    unsafe {
+                        g::__nss_configure_lookup(c"services".as_ptr(), c"fltest".as_ptr())
+                    },
+                    0
+                );
+            }
+            println!(
+                "FILES_SERVICES_BEGIN\n{}FILES_SERVICES_END",
+                service_files_keyed_transcript(host)
+            );
+            unsafe { libc::alarm(0) };
+            return;
+        }
         let api = service_enumeration_api(false);
         let mut raw: libc::servent = unsafe { std::mem::zeroed() };
         let mut storage = vec![0 as c_char; 16384];
@@ -4079,7 +4235,9 @@ fn services_enumeration_files_retry_and_provider_isolation() {
         assert_eq!(unsafe { (api.files_set)(0) }, 1);
         error = 717;
         assert_eq!(
-            unsafe { (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), 1, &mut error) },
+            unsafe {
+                (api.files_get)((&raw mut raw).cast(), storage.as_mut_ptr(), 1, &mut error)
+            },
             -2
         );
         assert_eq!(error, libc::ERANGE);
@@ -4102,6 +4260,106 @@ fn services_enumeration_files_retry_and_provider_isolation() {
         assert_eq!(first.name.len(), 1800);
         assert_eq!(first.aliases.len(), 24);
         assert_eq!(error, 717);
+        // A direct keyed files query must bypass the configured fltest module
+        // without consuming the direct enumeration's next record.
+        for by_port in [false, true] {
+            error = 717;
+            unsafe { *(api.error)() = 731 };
+            let status = unsafe {
+                if by_port {
+                    frankenlibc_abi::unistd_abi::_nss_files_getservbyport_r(
+                        c_int::from(4501u16.to_be()),
+                        c"tcp".as_ptr(),
+                        (&raw mut raw).cast(),
+                        storage.as_mut_ptr(),
+                        storage.len(),
+                        &mut error,
+                    )
+                } else {
+                    frankenlibc_abi::unistd_abi::_nss_files_getservbyname_r(
+                        c"alias0".as_ptr(),
+                        c"tcp".as_ptr(),
+                        (&raw mut raw).cast(),
+                        storage.as_mut_ptr(),
+                        storage.len(),
+                        &mut error,
+                    )
+                }
+            };
+            assert_eq!((status, error, unsafe { *(api.error)() }), (1, 717, 731));
+            assert_eq!(
+                unsafe { enumerated_service((&raw mut raw).cast(), None) }.as_ref(),
+                Some(&first)
+            );
+        }
+        // Query arguments may point into the answer buffer that this call reuses.
+        error = 717;
+        unsafe { *(api.error)() = 731 };
+        let status = unsafe {
+            frankenlibc_abi::unistd_abi::_nss_files_getservbyname_r(
+                raw.s_name,
+                raw.s_proto,
+                (&raw mut raw).cast(),
+                storage.as_mut_ptr(),
+                storage.len(),
+                &mut error,
+            )
+        };
+        assert_eq!((status, error, unsafe { *(api.error)() }), (1, 717, 731));
+        assert_eq!(
+            unsafe { enumerated_service((&raw mut raw).cast(), None) }.as_ref(),
+            Some(&first)
+        );
+
+        // Keyed calls must leave the direct enumeration at its next record.
+        assert_eq!(
+            unsafe {
+                (api.files_get)(
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    storage.len(),
+                    &mut error,
+                )
+            },
+            1
+        );
+        assert_eq!(
+            unsafe { enumerated_service((&raw mut raw).cast(), None) }
+                .unwrap()
+                .name,
+            b"second"
+        );
+
+        // Opening failures preserve errnop; failures while reading publish it.
+        // A zero-capacity query must still report an unavailable source first.
+        let source = PathBuf::from(std::env::var_os("FRANKENLIBC_SERVICES_PATH").unwrap());
+        let missing = source.with_file_name("services-missing");
+        for (path, capacity, expected_errno, expected_error) in [
+            (missing.as_path(), 0, libc::ENOENT, 717),
+            (missing.as_path(), storage.len(), libc::ENOENT, 717),
+            (source.parent().unwrap(), 3, libc::EISDIR, libc::EISDIR),
+        ] {
+            unsafe {
+                std::env::set_var("FRANKENLIBC_SERVICES_PATH", path);
+                *(api.error)() = 731;
+            }
+            error = 717;
+            let status = unsafe {
+                frankenlibc_abi::unistd_abi::_nss_files_getservbyname_r(
+                    c"http".as_ptr(),
+                    c"tcp".as_ptr(),
+                    (&raw mut raw).cast(),
+                    storage.as_mut_ptr(),
+                    capacity,
+                    &mut error,
+                )
+            };
+            assert_eq!(
+                (status, unsafe { *(api.error)() }, error),
+                (-1, expected_errno, expected_error)
+            );
+        }
+        unsafe { std::env::set_var("FRANKENLIBC_SERVICES_PATH", &source) };
         unsafe { (api.end)() };
         assert_eq!(
             unsafe { g::__nss_configure_lookup(c"services".as_ptr(), c"files".as_ptr()) },
@@ -4183,6 +4441,65 @@ fn services_enumeration_files_retry_and_provider_isolation() {
             .env("FLTEST_SERVICES_REPLACEMENT", &replacement)
             .env("FRANKENLIBC_MODE", mode);
         run_child(child, &format!("files service enumeration {mode}"));
+    }
+    let keyed = dir.join("services-keyed");
+    for (scenario, content) in [
+        ("grammar", "  http 80/tcp www # comment\ndns 53/udp domain\nhex 0x50/tcp aliashex\noctal 0100/tcp\nnegative -1/tcp\nnoprot 71\nbadnoprot 72 alias\nwrap 4294967296/tcp\noverflow 18446744073709551616/tcp\n".to_owned()),
+        (
+            "oversized-prefix",
+            format!(
+                "#{}\nother 12/tcp {}\nhttp 80/tcp www\n",
+                "c".repeat(1000),
+                "a".repeat(1000)
+            ),
+        ),
+        ("empty", String::new()),
+        (
+            "embedded-nul",
+            "http 80/tcp www\0ignored bytes\n".to_owned(),
+        ),
+    ] {
+        std::fs::write(&keyed, content).unwrap();
+        let mut expected: Option<String> = None;
+        for (provider, mode) in
+            [("host", "strict"), ("native", "strict"), ("native", "hardened")]
+        {
+            let mut child = sandboxed(&[("services", keyed.clone())], TEST)
+                .expect("direct services GNU oracle needs a private mount namespace");
+            child
+                .env(CHILD_ENV, "files-services")
+                .env("FLTEST_SERVICES_KEYED_ORACLE", provider)
+                .env("FRANKENLIBC_SERVICES_PATH", &keyed)
+                .env("LD_LIBRARY_PATH", &dir)
+                .env("FRANKENLIBC_MODE", mode);
+            let result = run_child(
+                child,
+                &format!("direct files services {scenario} {provider} {mode}"),
+            );
+            let stdout = String::from_utf8(result.stdout).unwrap();
+            let transcript = stdout
+                .split_once("FILES_SERVICES_BEGIN\n")
+                .unwrap()
+                .1
+                .split_once("FILES_SERVICES_END")
+                .unwrap()
+                .0;
+            if let Some(expected) = &expected {
+                let actual_rows = transcript.lines().collect::<Vec<_>>();
+                let expected_rows = expected.lines().collect::<Vec<_>>();
+                assert_eq!(actual_rows.len(), expected_rows.len());
+                for (index, (actual, expected)) in
+                    actual_rows.iter().zip(&expected_rows).enumerate()
+                {
+                    assert_eq!(
+                        actual, expected,
+                        "direct files services {scenario} {provider} {mode}, row {index}"
+                    );
+                }
+            } else {
+                expected = Some(transcript.to_owned());
+            }
+        }
     }
 }
 

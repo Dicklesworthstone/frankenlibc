@@ -12474,28 +12474,6 @@ unsafe fn nss_files_host_status(
     }
 }
 
-unsafe fn nss_finish_plain_lookup(rc: c_int, resolved: *mut c_void, errnop: *mut c_int) -> c_int {
-    if rc == 0 && !resolved.is_null() {
-        unsafe { nss_set_errnop(errnop, 0) };
-        return NSS_STATUS_SUCCESS;
-    }
-
-    match rc {
-        0 | libc::ENOENT => {
-            unsafe { nss_set_errnop_enoent(errnop) };
-            NSS_STATUS_NOTFOUND
-        }
-        libc::ERANGE => {
-            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
-            NSS_STATUS_TRYAGAIN
-        }
-        code => {
-            unsafe { nss_set_errnop(errnop, code) };
-            NSS_STATUS_UNAVAIL
-        }
-    }
-}
-
 /// The files identity providers report errors through `errnop`, preserving it
 /// on success and ordinary misses. A missing file is UNAVAIL, not NOTFOUND:
 /// nsswitch.conf can assign different fallback actions to these statuses.
@@ -13710,11 +13688,17 @@ pub unsafe extern "C" fn _nss_files_getservbyname_r(
     buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    let mut resolved = std::ptr::null_mut();
-    let rc = unsafe {
-        crate::inet_abi::getservbyname_r(name, proto, result, buffer, buflen, &mut resolved)
-    };
-    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+    // SAFETY: the files adapter validates and snapshots the caller's inputs.
+    unsafe {
+        files_service_lookup_r(
+            ServiceFilesKey::Name(name),
+            proto,
+            result,
+            buffer,
+            buflen,
+            errnop,
+        )
+    }
 }
 
 /// `_nss_files_getservbyport_r(port, proto, *result, *buf, buflen,
@@ -13728,11 +13712,17 @@ pub unsafe extern "C" fn _nss_files_getservbyport_r(
     buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    let mut resolved = std::ptr::null_mut();
-    let rc = unsafe {
-        crate::inet_abi::getservbyport_r(port, proto, result, buffer, buflen, &mut resolved)
-    };
-    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+    // SAFETY: the files adapter validates the caller's complete output layout.
+    unsafe {
+        files_service_lookup_r(
+            ServiceFilesKey::Port(port),
+            proto,
+            result,
+            buffer,
+            buflen,
+            errnop,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -22769,6 +22759,217 @@ pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut 
 
 const SERVICES_PATH: &str = "/etc/services";
 
+fn services_database_path() -> std::path::PathBuf {
+    crate::stdlib_abi::secure_var_os("FRANKENLIBC_SERVICES_PATH")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(SERVICES_PATH))
+}
+
+#[derive(Clone, Copy)]
+enum ServiceFilesKey {
+    Name(*const c_char),
+    Port(c_int),
+}
+
+/// Opening failures leave the NSS error output alone; read and packing failures
+/// publish it. A searched-but-missing service is distinct from either failure.
+enum ServiceFilesError {
+    Open(c_int),
+    Read(c_int),
+    Output(c_int),
+}
+
+/// Direct NSS files providers cannot reenter the configured public dispatcher.
+/// Use a private cursor so keyed calls also leave enumeration and its pending
+/// ERANGE retry untouched. The complete physical line and parser workspace are
+/// admitted before key matching, including comments and nonmatching records.
+unsafe fn files_service_lookup_r(
+    key: ServiceFilesKey,
+    proto: *const c_char,
+    output: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    use frankenlibc_core::resolv::{NssNetdbKind, NssNetdbValue};
+    use std::io::{BufRead, Read};
+
+    let saved_errno = current_abi_errno();
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let outcome = (|| -> Result<bool, ServiceFilesError> {
+        if buffer.is_null() || !tracked_object_fits::<libc::servent>(output.cast()) {
+            return Err(ServiceFilesError::Output(libc::EINVAL));
+        }
+        let file = std::fs::File::open(services_database_path())
+            .map_err(|error| ServiceFilesError::Open(error.raw_os_error().unwrap_or(libc::EIO)))?;
+        // The GNU reader opens the source before its buffer preflight, even
+        // for zero capacity. Reject it before scanning or allocating arguments.
+        if capacity < 3 {
+            return Err(ServiceFilesError::Output(libc::ERANGE));
+        }
+        // Snapshot arguments before any caller-buffer writes: a name/protocol
+        // may point into a previous answer stored in that same buffer.
+        let name = match key {
+            ServiceFilesKey::Name(name) => Some(
+                unsafe { read_c_string_bytes(name) }
+                    .ok_or(ServiceFilesError::Output(libc::EINVAL))?,
+            ),
+            ServiceFilesKey::Port(_) => None,
+        };
+        let proto = if proto.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { read_c_string_bytes(proto) }
+                    .ok_or(ServiceFilesError::Output(libc::EINVAL))?,
+            )
+        };
+        let mut reader = std::io::BufReader::new(file);
+        let mut line = Vec::new();
+        let space = |byte: &u8| matches!(*byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c);
+        loop {
+            line.clear();
+            if (&mut reader)
+                .take((capacity - 1) as u64)
+                .read_until(b'\n', &mut line)
+                .map_err(|error| {
+                    ServiceFilesError::Read(error.raw_os_error().unwrap_or(libc::EIO))
+                })?
+                == 0
+            {
+                return Ok(false);
+            }
+            if line
+                .len()
+                .checked_add(2)
+                .is_none_or(|needed| needed > capacity)
+            {
+                return Err(ServiceFilesError::Output(libc::ERANGE));
+            }
+            // Embedded NUL ends the text, while the physical record above
+            // still owns the entire read. Leading whitespace is removed from
+            // the returned strings, not from the parser workspace reservation.
+            let text_len = line
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap_or(line.len());
+            let start = line[..text_len]
+                .iter()
+                .take_while(|byte| space(byte))
+                .count();
+            let text = &line[start..text_len];
+            let parsed =
+                frankenlibc_core::resolv::parse_nss_netdb_line(NssNetdbKind::Service, text);
+            let Some(record) = parsed.record else {
+                continue;
+            };
+            let NssNetdbValue::Service { port, protocol } = record.value else {
+                unreachable!("service parser returned a different database record");
+            };
+            // GNU retains a spare pointer beyond the NULL terminator. This
+            // check precedes matching, so an earlier oversized record cannot
+            // be concealed by an indexed lookup of a later short service.
+            let table_offset = text_len
+                .checked_add(1)
+                .and_then(|offset| {
+                    aligned_output_offset(buffer, offset, core::mem::align_of::<*mut c_char>())
+                })
+                .ok_or(ServiceFilesError::Output(libc::ERANGE))?;
+            let table_end = record
+                .alias_count
+                .checked_add(2)
+                .and_then(|slots| slots.checked_mul(core::mem::size_of::<*mut c_char>()))
+                .and_then(|bytes| table_offset.checked_add(bytes))
+                .ok_or(ServiceFilesError::Output(libc::ERANGE))?;
+            if table_end > capacity {
+                return Err(ServiceFilesError::Output(libc::ERANGE));
+            }
+            let matches = match key {
+                ServiceFilesKey::Name(_) => {
+                    let name = name.as_deref().unwrap();
+                    text[record.name.clone()] == *name
+                        || text[record.aliases.clone()]
+                            .split(space)
+                            .any(|alias| !alias.is_empty() && alias == name)
+                }
+                ServiceFilesKey::Port(number) => number == c_int::from(port.to_be()),
+            };
+            if !matches
+                || proto
+                    .as_deref()
+                    .is_some_and(|wanted| wanted != &text[protocol.clone()])
+            {
+                continue;
+            }
+            // SAFETY: the complete physical line plus terminator and aligned
+            // pointer array fit the admitted region. The input snapshots and
+            // temporary line are disjoint from caller output storage.
+            unsafe {
+                std::ptr::copy_nonoverlapping(text.as_ptr(), buffer.cast::<u8>(), text.len());
+                *buffer.add(text.len()) = 0;
+                let bytes = core::slice::from_raw_parts_mut(buffer.cast::<u8>(), text.len() + 1);
+                bytes[parsed.line_end] = 0;
+                let name = nss_account_string(bytes, buffer, Some(record.name));
+                let protocol = nss_account_string(bytes, buffer, Some(protocol));
+                let table = buffer.add(table_offset).cast::<*mut c_char>();
+                let mut index = 0;
+                frankenlibc_core::resolv::split_nss_netdb_aliases(
+                    bytes,
+                    record.aliases,
+                    |offset| {
+                        table.add(index).write(buffer.add(offset));
+                        index += 1;
+                    },
+                );
+                table.add(index).write(std::ptr::null_mut());
+                output.cast::<libc::servent>().write(libc::servent {
+                    s_name: name,
+                    s_aliases: table,
+                    s_port: c_int::from(port.to_be()),
+                    s_proto: protocol,
+                });
+            }
+            return Ok(true);
+        }
+    })();
+    match outcome {
+        Ok(found) => {
+            // Successful scans preserve both error cells, including misses.
+            unsafe { set_abi_errno(saved_errno) };
+            if found {
+                NSS_STATUS_SUCCESS
+            } else {
+                NSS_STATUS_NOTFOUND
+            }
+        }
+        Err(ServiceFilesError::Open(error)) => {
+            unsafe { set_abi_errno(error) };
+            if error == libc::EAGAIN {
+                NSS_STATUS_TRYAGAIN
+            } else {
+                NSS_STATUS_UNAVAIL
+            }
+        }
+        Err(ServiceFilesError::Read(error) | ServiceFilesError::Output(error)) => {
+            // Publish errno first because errnop may alias its canonical cell.
+            unsafe {
+                set_abi_errno(if error == libc::ERANGE && capacity < 2 {
+                    saved_errno
+                } else {
+                    error
+                });
+                nss_set_errnop(errnop, error);
+            }
+            if error == libc::ERANGE || error == libc::EAGAIN {
+                NSS_STATUS_TRYAGAIN
+            } else {
+                NSS_STATUS_UNAVAIL
+            }
+        }
+    }
+}
+
 /// Keep the selected files record until it has been copied successfully.
 struct ServiceFilesCursor {
     reader: Option<std::io::BufReader<std::fs::File>>,
@@ -22795,10 +22996,7 @@ impl ServiceFilesCursor {
     }
 
     fn open(&mut self) -> Result<(), c_int> {
-        let path = crate::stdlib_abi::secure_var_os("FRANKENLIBC_SERVICES_PATH")
-            .filter(|path| !path.is_empty())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(SERVICES_PATH));
+        let path = services_database_path();
         // Recheck secure environment policy before reusing a cached or pending
         // record. A changed source must not replay bytes from the previous file.
         if self.source_path.as_ref() != Some(&path) {
