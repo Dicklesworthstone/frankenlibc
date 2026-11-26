@@ -5120,9 +5120,9 @@ pub static mut __daylight: c_int = 0;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut daylight: c_int = 0;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut __tzname: [*mut c_char; 2] = [std::ptr::null_mut(), std::ptr::null_mut()];
+pub static mut __tzname: [*mut c_char; 2] = [c"GMT".as_ptr().cast_mut(); 2];
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut tzname: [*mut c_char; 2] = [std::ptr::null_mut(), std::ptr::null_mut()];
+pub static mut tzname: [*mut c_char; 2] = [c"GMT".as_ptr().cast_mut(); 2];
 
 // __progname_full (program_invocation_name is in startup_helpers)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

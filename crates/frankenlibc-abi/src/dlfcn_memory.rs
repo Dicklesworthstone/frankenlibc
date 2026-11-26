@@ -20,6 +20,9 @@ mod encoding;
 #[path = "dlfcn_identity.rs"]
 mod identity;
 
+#[path = "dlfcn_calendar.rs"]
+mod calendar;
+
 #[path = "dlfcn_stdio.rs"]
 mod stdio;
 
@@ -41,6 +44,9 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         return Some(address);
     }
     if let Some(address) = identity::address(name, version) {
+        return Some(address);
+    }
+    if let Some(address) = calendar::address(name, version) {
         return Some(address);
     }
     if let Some(address) = semaphore::address(name, version) {
