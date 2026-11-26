@@ -5121,8 +5121,7 @@ pub unsafe extern "C" fn wcsrtombs(
             // SAFETY: `chunk <= ascii_len` and `written + chunk <= len`; every
             // byte in `dst_window` is written within the caller's destination.
             let dst_window = unsafe { std::slice::from_raw_parts_mut(dst_u8.add(written), chunk) };
-            let (chars, bytes) =
-                codec::wcs_simd_prefix(dst_window, &src_slice[idx..idx + chunk]);
+            let (chars, bytes) = codec::wcs_simd_prefix(dst_window, &src_slice[idx..idx + chunk]);
             idx += chars;
             written += bytes;
             if idx >= src_len {
@@ -7417,7 +7416,11 @@ pub(crate) unsafe fn fputwc_unlocked_for_caller(
         // the cell keeps all queued and converted output alive across writes.
         unsafe {
             super::stdio_abi::write_wide_fd_chunk(destination, &[wc], caller)
-                && super::stdio_abi::finish_wide_fd_write(destination, wc == u32::from(b'\n'), caller)
+                && super::stdio_abi::finish_wide_fd_write(
+                    destination,
+                    wc == u32::from(b'\n'),
+                    caller,
+                )
         }
     }) {
         return if written { wc } else { WEOF_VALUE };

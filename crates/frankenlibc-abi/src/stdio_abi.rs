@@ -8561,15 +8561,23 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // GNU position queries account for pending append output without writing
     // it. Seeking the descriptor to EOF discovers where O_APPEND will place
     // those bytes, while the buffer remains pending for fflush/fclose.
-    let wide_pending = s.pending_wide_offset();
+    let wide_pending = if s.pending_wide_output() == 0 {
+        0
+    } else {
+        s.pending_wide_offset(matches!(
+            crate::locale_abi::active_charset(),
+            crate::locale_abi::Charset::Utf8
+        ))
+    };
     let pending = s.pending_flush().len().saturating_add(wide_pending);
-    if s.is_appending() && s.fd() >= 0 && (pending != 0 || s.last_was_write()) {
-        // With no pending bytes, automatic/unbuffered writes have already
-        // advanced the shared descriptor. EOF may have moved again since.
-        let whence = if pending == 0 {
-            libc::SEEK_CUR
-        } else {
+    let has_pending_output = s.pending_wide_output() != 0 || !s.pending_flush().is_empty();
+    if s.is_appending() && s.fd() >= 0 && (has_pending_output || s.last_was_write()) {
+        // Even a wchar whose current transliteration is empty selects EOF.
+        // Only completed automatic/unbuffered writes reuse the fd position.
+        let whence = if has_pending_output {
             libc::SEEK_END
+        } else {
+            libc::SEEK_CUR
         };
         let position = raw_syscall::sys_lseek(s.fd(), 0, whence)
             .and_then(|offset| buffered_stream_position(offset, pending, 0));
@@ -9021,9 +9029,8 @@ pub unsafe extern "C-unwind" fn setvbuf(
         // over unread input) and replaces the buffer. Refusing left programs
         // that unbuffer stdout mid-run fully buffered, their output reordered
         // against stderr.
-        let keep_existing = !s.is_mem_backed()
-            && _buf.is_null()
-            && !matches!(buf_mode, BufMode::None);
+        let keep_existing =
+            !s.is_mem_backed() && _buf.is_null() && !matches!(buf_mode, BufMode::None);
         let accepted = (keep_existing && s.rebuffer(buf_mode, requested_size, true))
             || s.set_buffering(buf_mode, requested_size)
             || (!s.is_mem_backed() && {

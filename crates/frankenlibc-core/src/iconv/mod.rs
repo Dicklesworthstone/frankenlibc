@@ -2940,6 +2940,18 @@ pub enum MultibyteCodec {
 }
 
 impl MultibyteCodec {
+    /// Constant external bytes per source character, when the encoding has
+    /// fixed width. Variable-width streams must measure the actual conversion.
+    #[inline]
+    #[must_use]
+    pub const fn fixed_width(self) -> Option<usize> {
+        match self {
+            Self::Ascii | Self::SingleByte(_) => Some(1),
+            Self::Utf8 => None,
+            Self::Stateless(codec) => codec.fixed_width(),
+        }
+    }
+
     /// Resolve the external encoding requested by GNU stdio's `,ccs=` mode.
     ///
     /// Unlike locale multibyte functions, streams can use fixed-width Unicode
@@ -3088,6 +3100,18 @@ pub struct StatelessMultibyteCodec {
 }
 
 impl StatelessMultibyteCodec {
+    /// Fixed-width Unicode streams use source-character arithmetic for
+    /// position queries. UTF-16 and the East Asian codecs have variable width.
+    #[inline]
+    #[must_use]
+    pub const fn fixed_width(self) -> Option<usize> {
+        match self.encoding {
+            Encoding::Ucs2Le | Encoding::Ucs2Be => Some(2),
+            Encoding::Utf32Le | Encoding::Utf32Be => Some(4),
+            _ => None,
+        }
+    }
+
     /// Resolve a supported stateless locale encoding or one of its aliases.
     #[must_use]
     pub fn from_name(name: &[u8]) -> Option<Self> {

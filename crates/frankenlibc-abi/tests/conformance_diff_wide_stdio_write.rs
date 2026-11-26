@@ -633,9 +633,7 @@ struct BufferedWideOutput {
 impl BufferedWideOutput {
     fn new(mode: &str, buffering: c_int, size: usize, host: bool) -> Self {
         // SAFETY: ownership of a successful anonymous descriptor moves to File.
-        let fd = unsafe {
-            libc::memfd_create(c"buffered-wide-output".as_ptr(), libc::MFD_CLOEXEC)
-        };
+        let fd = unsafe { libc::memfd_create(c"buffered-wide-output".as_ptr(), libc::MFD_CLOEXEC) };
         assert!(fd >= 0);
         // SAFETY: memfd_create returned a valid descriptor owned only here.
         let file = unsafe { std::fs::File::from_raw_fd(fd) };
@@ -722,9 +720,7 @@ impl BufferedWideOutput {
             match (self.host, operation) {
                 (true, WideOutputFinish::Flush) => (host_api().flush)(self.stream),
                 (false, WideOutputFinish::Flush) => flio::fflush(self.stream),
-                (true, WideOutputFinish::Seek) => {
-                    (host_api().seek)(self.stream, 0, libc::SEEK_SET)
-                }
+                (true, WideOutputFinish::Seek) => (host_api().seek)(self.stream, 0, libc::SEEK_SET),
                 (false, WideOutputFinish::Seek) => flio::fseek(self.stream, 0, libc::SEEK_SET),
                 (true, WideOutputFinish::Close) => (host_api().close)(self.stream),
                 (false, WideOutputFinish::Close) => flio::fclose(self.stream),
@@ -854,8 +850,7 @@ fn buffered_wide_line_flush_matches_glibc() {
     for writer in WIDE_WRITERS {
         let run = |host| {
             wide_write_locale("C", host);
-            let mut output =
-                BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOLBF, 4096, host);
+            let mut output = BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOLBF, 4096, host);
             let prefix = output.write(&[0x0301, 0x41], writer);
             assert!(prefix.bytes.is_empty());
             wide_write_locale("C.UTF-8", host);
@@ -908,13 +903,17 @@ fn buffered_wide_line_flush_matches_glibc() {
                 vec![0x41],
                 vec![0x20ac, 0x0301, 0x42, 0x43, 0x0a, 0x0301, 0x44],
             ),
-            ("fitting bulk across chunks", 4096, vec![0x41], crossing.clone()),
+            (
+                "fitting bulk across chunks",
+                4096,
+                vec![0x41],
+                crossing.clone(),
+            ),
             ("overflow across chunks", 1040, vec![0x41], crossing),
         ] {
             let run = |host| {
                 wide_write_locale("C", host);
-                let mut output =
-                    BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOLBF, size, host);
+                let mut output = BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOLBF, size, host);
                 // Do not call an empty writer for the fresh case: the first
                 // operation's direction change is part of the contract.
                 let prefix = if prefix.is_empty() {
@@ -950,8 +949,7 @@ fn buffered_wide_capacity_and_positions_match_glibc() {
         for buffering in [libc::_IOFBF, libc::_IOLBF] {
             let run = |host| {
                 wide_write_locale("C", host);
-                let mut output =
-                    BufferedWideOutput::new("w+,ccs=ASCII", buffering, size, host);
+                let mut output = BufferedWideOutput::new("w+,ccs=ASCII", buffering, size, host);
                 let capacity = size.div_ceil(std::mem::size_of::<i32>());
                 assert_eq!(output.buffer_size(), 0, "wide buffer is allocated lazily");
                 let mut writes = Vec::new();
@@ -993,12 +991,7 @@ fn buffered_wide_capacity_and_positions_match_glibc() {
         // the buffering-mode change. The original caller buffer remains live.
         let changed = unsafe {
             if host {
-                (host_api().set_buffer)(
-                    output.stream,
-                    std::ptr::null_mut(),
-                    libc::_IOLBF,
-                    65536,
-                )
+                (host_api().set_buffer)(output.stream, std::ptr::null_mut(), libc::_IOLBF, 65536)
             } else {
                 flio::setvbuf(output.stream, std::ptr::null_mut(), libc::_IOLBF, 65536)
             }
@@ -1025,6 +1018,132 @@ fn buffered_wide_capacity_and_positions_match_glibc() {
         expected,
         "NULL-buffer mode change before wide I/O"
     );
+
+    for (mode, c_position, utf8_position, c_bytes, utf8_bytes) in [
+        (
+            "w+,ccs=SHIFT_JIS",
+            5,
+            4,
+            b"EUR?A".as_slice(),
+            b"EURA".as_slice(),
+        ),
+        (
+            "w+,ccs=GBK",
+            3,
+            2,
+            b"\x80?A".as_slice(),
+            b"\x80A".as_slice(),
+        ),
+    ] {
+        for conversion in ["C", "C.UTF-8"] {
+            let run = |host| {
+                wide_write_locale("C", host);
+                let mut output = BufferedWideOutput::new(mode, libc::_IOFBF, 128, host);
+                let written = output.write(&[0x20ac, 0x0301, 0x41], WideWriter::String);
+                assert!(written.bytes.is_empty());
+                assert_eq!(written.pending, Some(3));
+                let mut positions = Vec::new();
+                // GNU measures variable-width conversion under the locale
+                // active at ftell, including expansions and empty replacements.
+                // The query must leave the original wide queue untouched.
+                for (locale, expected) in [
+                    ("C", c_position),
+                    ("C.UTF-8", utf8_position),
+                    ("C", c_position),
+                ] {
+                    wide_write_locale(locale, host);
+                    // SAFETY: this isolated thread owns its provider errno cell.
+                    unsafe { *wide_write_errno(host) = 0 };
+                    let position = output.tell();
+                    // SAFETY: the same provider errno cell remains live.
+                    let error = unsafe { *wide_write_errno(host) };
+                    let observed = output.observe(vec![position as i64], error);
+                    assert_eq!(position, expected);
+                    assert_eq!(observed.errno, 0);
+                    assert_eq!(observed.error, Some(false));
+                    assert_eq!(observed.pending, Some(3));
+                    assert!(observed.bytes.is_empty());
+                    positions.push(observed);
+                }
+                wide_write_locale(conversion, host);
+                let flushed = output.finish(WideOutputFinish::Flush);
+                assert_eq!(flushed.returns, [0]);
+                assert_eq!(flushed.pending, Some(0));
+                let expected_bytes = if conversion == "C" {
+                    c_bytes
+                } else {
+                    utf8_bytes
+                };
+                assert_eq!(flushed.bytes, expected_bytes);
+                let final_position = output.tell();
+                assert_eq!(final_position, expected_bytes.len() as libc::c_long);
+                (written, positions, flushed, final_position)
+            };
+            let expected = run(true);
+            assert_eq!(
+                run(false),
+                expected,
+                "pending position {mode}, {conversion}"
+            );
+        }
+    }
+
+    for mode in ["a+,ccs=SHIFT_JIS", "a+,ccs=GBK"] {
+        let run = |host| {
+            wide_write_locale("C", host);
+            let mut output = BufferedWideOutput::new(mode, libc::_IOFBF, 128, host);
+            // The observer has a separate open-file description, so seeding
+            // existing bytes leaves the append FILE's descriptor at zero.
+            output.file.write_all(b"existing").unwrap();
+            // SAFETY: the matching provider owns this live FILE and descriptor.
+            let descriptor = unsafe {
+                if host {
+                    (host_api().fileno)(output.stream)
+                } else {
+                    flio::fileno(output.stream)
+                }
+            };
+            assert!(descriptor >= 0);
+            let cursor = || {
+                frankenlibc_core::syscall::sys_lseek(descriptor, 0, libc::SEEK_CUR).unwrap()
+            };
+            assert_eq!(cursor(), 0);
+            wide_write_locale("C.UTF-8", host);
+            let written = output.write(&[0x0301], WideWriter::Character);
+            assert_eq!(written.errno, 0);
+            assert_eq!(written.error, Some(false));
+            assert_eq!(written.pending, Some(1));
+            assert_eq!(written.bytes, b"existing");
+            assert_eq!(cursor(), 0);
+
+            // This must be the first tell: a preceding C-locale query would
+            // already seek EOF and hide the zero-byte transliteration case.
+            // SAFETY: the provider errno cell belongs to this isolated thread.
+            unsafe { *wide_write_errno(host) = 0 };
+            let position = output.tell();
+            // SAFETY: the same thread-local provider errno cell remains live.
+            let error = unsafe { *wide_write_errno(host) };
+            let observed = output.observe(vec![position as i64], error);
+            assert_eq!(position, 8);
+            assert_eq!(cursor(), 8);
+            assert_eq!(observed.errno, 0);
+            assert_eq!(observed.error, Some(false));
+            assert_eq!(observed.pending, Some(1));
+            assert_eq!(observed.bytes, b"existing");
+            assert_eq!(output.tell(), 8);
+
+            let flushed = output.finish(WideOutputFinish::Flush);
+            assert_eq!(flushed.returns, [0]);
+            assert_eq!(flushed.errno, 0);
+            assert_eq!(flushed.error, Some(false));
+            assert_eq!(flushed.pending, Some(0));
+            assert_eq!(flushed.bytes, b"existing");
+            assert_eq!(output.tell(), 8);
+            (written, observed, flushed)
+        };
+        let expected = run(true);
+        assert_eq!(run(false), expected, "empty append transliteration {mode}");
+    }
 }
 
 #[test]
@@ -1040,8 +1159,7 @@ fn buffered_wide_deferred_errors_match_glibc() {
         for first_locale in ["C", "C.UTF-8"] {
             let run = |host| {
                 wide_write_locale("C", host);
-                let mut output =
-                    BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOFBF, 4096, host);
+                let mut output = BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOFBF, 4096, host);
                 output.redirect(full.as_raw_fd());
                 let written = output.write(&[0x20ac, 0x0301, 0x41], writer);
                 assert_eq!(written.errno, 0);
@@ -1055,10 +1173,7 @@ fn buffered_wide_deferred_errors_match_glibc() {
                 // A failed wide conversion retains the original characters,
                 // so retry after redirect re-encodes in the current locale.
                 output.redirect(output.file.as_raw_fd());
-                wide_write_locale(
-                    if first_locale == "C" { "C.UTF-8" } else { "C" },
-                    host,
-                );
+                wide_write_locale(if first_locale == "C" { "C.UTF-8" } else { "C" }, host);
                 let recovered = output.finish(WideOutputFinish::Flush);
                 assert_eq!(recovered.returns, [0]);
                 assert_eq!(recovered.errno, 0);
@@ -1083,8 +1198,7 @@ fn buffered_wide_deferred_errors_match_glibc() {
         }
         let run_empty = |host| {
             wide_write_locale("C", host);
-            let mut output =
-                BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOFBF, 4096, host);
+            let mut output = BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOFBF, 4096, host);
             output.redirect(full.as_raw_fd());
             let written = output.write(&[0x0301], writer);
             let failed = output.finish(WideOutputFinish::Flush);
@@ -1108,8 +1222,7 @@ fn buffered_wide_deferred_errors_match_glibc() {
         for warmed in [false, true] {
             let run = |host| {
                 wide_write_locale("C", host);
-                let mut output =
-                    BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOLBF, 4096, host);
+                let mut output = BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOLBF, 4096, host);
                 let prefix = if warmed {
                     Some(output.write(&[0x41], writer))
                 } else {
@@ -1166,10 +1279,7 @@ fn buffered_wide_partial_write_retry_matches_glibc() {
             // SAFETY: pipe2 initializes both slots, which File then owns.
             assert_eq!(
                 unsafe {
-                    libc::pipe2(
-                        descriptors.as_mut_ptr(),
-                        libc::O_NONBLOCK | libc::O_CLOEXEC,
-                    )
+                    libc::pipe2(descriptors.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC)
                 },
                 0
             );
@@ -1186,8 +1296,7 @@ fn buffered_wide_partial_write_retry_matches_glibc() {
             let filler = vec![b'x'; capacity as usize - 4096];
             writer.write_all(&filler).unwrap();
             wide_write_locale("C", host);
-            let mut output =
-                BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOFBF, 32768, host);
+            let mut output = BufferedWideOutput::new("w+,ccs=ASCII", libc::_IOFBF, 32768, host);
             output.redirect(writer.as_raw_fd());
             wide_write_locale(first_locale, host);
             let written = output.write(&[0x20ac, 0x0301].repeat(2048), WideWriter::String);
@@ -1205,10 +1314,7 @@ fn buffered_wide_partial_write_retry_matches_glibc() {
                 b"EUR".repeat(2048)
             };
             assert_eq!(first_payload, first_encoding[..4096]);
-            wide_write_locale(
-                if first_locale == "C" { "C.UTF-8" } else { "C" },
-                host,
-            );
+            wide_write_locale(if first_locale == "C" { "C.UTF-8" } else { "C" }, host);
             let recovered = output.finish(WideOutputFinish::Flush);
             assert_eq!(recovered.returns, [0]);
             assert_eq!(recovered.pending, Some(0));

@@ -731,20 +731,38 @@ impl WideOutputBuffer {
         acknowledged
     }
 
-    fn pending_offset(&self, codec: crate::iconv::MultibyteCodec) -> usize {
-        let mut encoded = [0u8; 6];
-        let width = self.characters.iter().fold(0usize, |total, &value| {
-            let width = match codec {
-                crate::iconv::MultibyteCodec::Ascii
-                | crate::iconv::MultibyteCodec::SingleByte(_) => 1,
-                crate::iconv::MultibyteCodec::Utf8
-                | crate::iconv::MultibyteCodec::Stateless(_) => codec
-                    .encode(value, &mut encoded)
-                    .or_else(|| codec.encode(u32::from(b'?'), &mut encoded))
-                    .unwrap_or(0),
-            };
-            total.saturating_add(width)
-        });
+    fn pending_offset(
+        &self,
+        codec: crate::iconv::MultibyteCodec,
+        utf8_transliteration: bool,
+    ) -> usize {
+        let width = if let Some(width) = codec.fixed_width() {
+            self.characters.len().saturating_mul(width)
+        } else {
+            let mut encoded = [0u8; 6];
+            self.characters.iter().fold(0usize, |total, &value| {
+                let width = if let Some(length) = codec.encode(value, &mut encoded) {
+                    length
+                } else {
+                    let mut replacement =
+                        crate::iconv::transliteration(value, utf8_transliteration);
+                    // Match physical output's whole-replacement preflight,
+                    // without allocating or staging bytes during ftell.
+                    if !replacement
+                        .iter()
+                        .all(|&byte| codec.encode(u32::from(byte), &mut encoded).is_some())
+                    {
+                        replacement = b"?";
+                    }
+                    replacement.iter().fold(0usize, |length, &byte| {
+                        length.saturating_add(
+                            codec.encode(u32::from(byte), &mut encoded).unwrap_or(0),
+                        )
+                    })
+                };
+                total.saturating_add(width)
+            })
+        };
         // offset already includes acknowledged descriptor bytes. An ordinary
         // error resets consumed because GNU will replay the retained batch.
         width.saturating_sub(self.consumed)
@@ -1353,15 +1371,16 @@ impl StdioStream {
     }
 
     /// Pending byte-position adjustment without flushing or materializing
-    /// conversion. GNU single-byte streams count source wchar_t units even
-    /// when transliteration will expand them; multibyte streams count encoded
-    /// widths. Acknowledged staged bytes already contribute to offset.
+    /// conversion. GNU fixed-width streams count source wchar_t units times
+    /// their width, even when transliteration expands them. Variable-width
+    /// streams measure conversion under the current locale without staging
+    /// bytes. Acknowledged staged bytes already contribute to offset.
     #[must_use]
-    pub fn pending_wide_offset(&self) -> usize {
+    pub fn pending_wide_offset(&self, utf8_transliteration: bool) -> usize {
         let codec = self
             .wide_codec
             .unwrap_or(crate::iconv::MultibyteCodec::Ascii);
-        self.wide_output.pending_offset(codec)
+        self.wide_output.pending_offset(codec, utf8_transliteration)
     }
 
     /// Buffer a write and return the buffering outcome.
@@ -2440,7 +2459,10 @@ impl StdioStream {
         // Queued pushback precedes the backing's physical position. A relative
         // seek starts at the logical position, then discards that pushback.
         let (offset, whence) = if whence == 1 {
-            let position = self.offset.checked_add(offset).ok_or(crate::errno::EINVAL)?;
+            let position = self
+                .offset
+                .checked_add(offset)
+                .ok_or(crate::errno::EINVAL)?;
             (position, 0)
         } else {
             (offset, whence)
@@ -2507,7 +2529,10 @@ mod tests {
         assert_eq!(stream.wide_output_capacity(), 3);
         assert!(!stream.wide_output_initialized());
         // Newlines are deliberately retained: the ABI chooses line flushes.
-        assert_eq!(stream.buffer_wide_write(&[0x41, 0x0a, 0x20ac, 0x42]), Some(3));
+        assert_eq!(
+            stream.buffer_wide_write(&[0x41, 0x0a, 0x20ac, 0x42]),
+            Some(3)
+        );
         assert_eq!(stream.buffer_wide_write(&[0x43]), Some(0));
         assert_eq!(stream.pending_wide_output(), 3);
         assert!(stream.wide_output_initialized());
@@ -2543,7 +2568,7 @@ mod tests {
         let mut stream = deferred_wide_stream(crate::iconv::MultibyteCodec::Ascii, 16);
         assert_eq!(stream.buffer_wide_write(&[0x20ac, 0x0301, 0xa9]), Some(3));
         assert!(stream.pending_wide_flush().is_empty());
-        assert_eq!(stream.pending_wide_offset(), 3);
+        assert_eq!(stream.pending_wide_offset(false), 3);
         // GNU ASCII output: Euro and copyright expand in both C locales;
         // the combining acute mark disappears only under C.UTF-8.
         assert_eq!(stream.prepare_wide_flush(false), Ok(()));
@@ -2566,7 +2591,7 @@ mod tests {
         assert_eq!(stream.pending_wide_flush(), b"\xe2\x82\xacA");
         stream.consume_wide_flushed_prefix(1);
         assert_eq!(stream.offset(), 1);
-        assert_eq!(stream.pending_wide_offset(), 3);
+        assert_eq!(stream.pending_wide_offset(false), 3);
         assert_eq!(stream.pending_wide_output(), 2);
         // A cleanup flush resumes mid-character without encoding it again.
         assert_eq!(stream.prepare_wide_flush(false), Ok(()));
@@ -2576,7 +2601,7 @@ mod tests {
         assert_eq!(stream.pending_wide_output(), 2);
         stream.consume_wide_flushed_prefix(1);
         assert_eq!(stream.offset(), 4);
-        assert_eq!(stream.pending_wide_offset(), 0);
+        assert_eq!(stream.pending_wide_offset(false), 0);
         assert_eq!(stream.pending_wide_output(), 0);
         assert!(stream.pending_wide_flush().is_empty());
     }
@@ -2591,7 +2616,7 @@ mod tests {
         stream.retry_wide_flush();
         assert_eq!(stream.offset(), 1);
         assert_eq!(stream.pending_wide_output(), 3);
-        assert_eq!(stream.pending_wide_offset(), 3);
+        assert_eq!(stream.pending_wide_offset(false), 3);
         assert_eq!(stream.prepare_wide_flush(true), Ok(()));
         assert_eq!(stream.pending_wide_flush(), b"ABC");
         stream.consume_wide_flushed_prefix(3);
@@ -2662,27 +2687,65 @@ mod tests {
 
     #[test]
     fn wide_output_position_uses_external_codec_widths_without_conversion() {
-        for (codec, characters, expected) in [
-            (crate::iconv::MultibyteCodec::Ascii, vec![0x20ac, 0x0301], 2),
+        for (codec, characters, expected_c, expected_utf8) in [
+            (
+                crate::iconv::MultibyteCodec::Ascii,
+                vec![0x20ac, 0x0301],
+                2,
+                2,
+            ),
             (
                 crate::iconv::MultibyteCodec::for_stream(b"ISO-8859-1").unwrap(),
                 vec![0xe9, 0x20ac, 0],
+                3,
                 3,
             ),
             (
                 crate::iconv::MultibyteCodec::Utf8,
                 vec![0xe9, 0x20ac, 0],
                 6,
+                6,
             ),
             (
                 crate::iconv::MultibyteCodec::for_stream(b"UTF-16LE").unwrap(),
                 vec![0x20ac, 0x1f642, 0],
                 8,
+                8,
+            ),
+            (
+                crate::iconv::MultibyteCodec::for_stream(b"UCS-2BE").unwrap(),
+                vec![0x20ac, 0x0301, 0x41],
+                6,
+                6,
+            ),
+            (
+                crate::iconv::MultibyteCodec::for_stream(b"UTF-32LE").unwrap(),
+                vec![0x20ac, 0x0301, 0x41],
+                12,
+                12,
+            ),
+            (
+                crate::iconv::MultibyteCodec::for_stream(b"SHIFT_JIS").unwrap(),
+                vec![0x20ac, 0x0301, 0x41],
+                5,
+                4,
+            ),
+            (
+                crate::iconv::MultibyteCodec::for_stream(b"GBK").unwrap(),
+                vec![0x20ac, 0x0301, 0x41],
+                3,
+                2,
             ),
         ] {
             let mut stream = deferred_wide_stream(codec, 16);
-            assert_eq!(stream.buffer_wide_write(&characters), Some(characters.len()));
-            assert_eq!(stream.pending_wide_offset(), expected);
+            assert_eq!(
+                stream.buffer_wide_write(&characters),
+                Some(characters.len())
+            );
+            assert_eq!(stream.pending_wide_offset(false), expected_c);
+            assert_eq!(stream.pending_wide_offset(true), expected_utf8);
+            assert_eq!(stream.pending_wide_offset(false), expected_c);
+            assert_eq!(stream.pending_wide_output(), characters.len());
             assert!(stream.pending_wide_flush().is_empty());
             assert_eq!(stream.offset(), 0);
         }
