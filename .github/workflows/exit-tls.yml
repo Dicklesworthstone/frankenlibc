@@ -15,6 +15,7 @@ on:
       - 'tests/integration/fixture_exit_tls*'
       - 'tests/integration/fixture_startup_thread_exit.c'
       - 'tests/integration/fixture_startup.c'
+      - 'tests/integration/fixture_startup_static_pie.c'
       - 'tests/integration/fixture_pthread_cancel.c'
       - 'crates/frankenlibc-abi/tests/conformance_diff_system_signals.rs'
       - 'scripts/check_exit_tls.py'
@@ -68,8 +69,14 @@ jobs:
           grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$root/fork-keys.log"
           cargo test -p frankenlibc-core --lib "${args[@]}" pthread::thread::tests::prepared_thread_ -- --test-threads=1 2>&1 | tee "$root/prepared-threads.log"
           grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/prepared-threads.log"
-          cargo test -p frankenlibc-abi --lib "${args[@]}" startup_helpers::executable_init_tests::fixed_executable_without_phdr_ -- --test-threads=1 2>&1 | tee "$root/executable-layout.log"
-          grep -Eq 'test result: ok\. 7 passed; 0 failed;' "$root/executable-layout.log"
+          cargo test -p frankenlibc-abi --lib "${args[@]}" executable_init_tests:: -- --test-threads=1 2>&1 | tee "$root/executable-layout.log"
+          grep -Eq 'test result: ok\. 9 passed; 0 failed;' "$root/executable-layout.log"
+          cc -O2 -fPIE -static-pie -Wall -Wextra -Werror tests/integration/fixture_startup_static_pie.c -o "$root/static-pie"
+          FRANKENLIBC_STATIC_PIE_PROBE="$PWD/$root/static-pie" \
+            cargo test -p frankenlibc-abi --lib "${args[@]}" \
+              startup_helpers::executable_init_tests::static_pie_linker_and_kernel_agree_with_owned_bias \
+              -- --ignored --exact 2>&1 | tee "$root/static-pie-layout.log"
+          grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$root/static-pie-layout.log"
           python3 scripts/check_startup_thread_exit.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/startup"
           FRANKENLIBC_SMOKE_LIB_PATH="$PWD/target/release/libfrankenlibc_abi.so" \
             scripts/check_owned_startup_default_e2e.sh --legacy-crt-only 2>&1 | tee "$root/legacy-crt.log"

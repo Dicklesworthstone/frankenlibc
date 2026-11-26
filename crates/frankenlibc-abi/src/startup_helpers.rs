@@ -1099,6 +1099,47 @@ mod executable_init_tests {
         );
     }
 
+    // The exit-tls job supplies an executable from the runner's native static
+    // linker. Keep this external-toolchain case separate from hermetic tests.
+    #[test]
+    #[ignore = "requires FRANKENLIBC_STATIC_PIE_PROBE built with cc -static-pie"]
+    fn static_pie_linker_and_kernel_agree_with_owned_bias() {
+        let probe = std::env::var_os("FRANKENLIBC_STATIC_PIE_PROBE").expect("static PIE fixture");
+        let process = std::process::Command::new(&probe).output().expect("execute static PIE");
+        assert!(process.status.success(), "fixture status: {}", process.status);
+        let stdout = std::str::from_utf8(&process.stdout).unwrap();
+        let evidence: Vec<usize> = stdout
+            .split_whitespace()
+            .map(|value| usize::from_str_radix(value, 16).unwrap())
+            .collect();
+        let [phdr_addr, entry, expected_bias]: [usize; 3] = evidence.try_into().unwrap();
+        assert_ne!(expected_bias, 0, "fixture must actually be relocated");
+
+        let file = std::fs::read(probe).unwrap();
+        let header: &[u8; EXECUTABLE_ELF_HEADER_BYTES] =
+            file[..EXECUTABLE_ELF_HEADER_BYTES].try_into().unwrap();
+        assert_eq!(u16::from_le_bytes(header[16..18].try_into().unwrap()), libc::ET_DYN);
+        let offset = u64::from_le_bytes(header[32..40].try_into().unwrap()) as usize;
+        let count = u16::from_le_bytes(header[56..58].try_into().unwrap()) as usize;
+        let size = std::mem::size_of::<libc::Elf64_Phdr>();
+        let headers: Vec<libc::Elf64_Phdr> = file[offset..offset + count * size]
+            .chunks_exact(size)
+            // SAFETY: the chunk covers the complete ELF64 C struct; all
+            // its fields are integers and the file need not be aligned.
+            .map(|chunk| unsafe { chunk.as_ptr().cast::<libc::Elf64_Phdr>().read_unaligned() })
+            .collect();
+        assert!(headers.iter().any(|p| p.p_type == libc::PT_DYNAMIC));
+        assert!(!headers.iter().any(|p| matches!(p.p_type, libc::PT_PHDR | libc::PT_INTERP)));
+        assert_eq!(
+            executable_load_bias_from_header(header, phdr_addr, &headers, entry),
+            Ok(expected_bias)
+        );
+        assert_eq!(
+            executable_load_bias_from_header(header, phdr_addr, &headers, entry + 8),
+            Err(())
+        );
+    }
+
     #[test]
     fn static_pie_without_phdr_matches_entry_and_table_at_one_bias() {
         let (mut header, phdrs, table, entry) = fixed_image(0x2180, 0x2000);
