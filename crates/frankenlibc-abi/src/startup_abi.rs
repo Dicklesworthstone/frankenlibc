@@ -16,7 +16,7 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::startup_helpers::{
     AT_NULL, EXECUTABLE_ELF_HEADER_BYTES, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
-    StartupInvariants, build_invariants, classify_secure_mode, fixed_executable_load_bias,
+    StartupInvariants, build_invariants, classify_secure_mode, executable_load_bias_from_header,
     normalize_argc, startup_path_respects_dag,
 };
 use crate::util::scan_c_string;
@@ -1011,7 +1011,7 @@ fn read_executable_elf_header() -> Result<[u8; EXECUTABLE_ELF_HEADER_BYTES], ()>
 
 /// Resolve the main executable's load bias from its kernel-supplied headers.
 /// Constructor dispatch and native TLS destructor ownership must admit the
-/// same executable classes: PT_PHDR is optional for a verified ET_EXEC image.
+/// same executable classes, including fixed executables and static PIEs without PT_PHDR.
 /// This fallback uses raw I/O only and never enters the host loader.
 pub(crate) fn executable_load_bias(
     phdr_addr: usize,
@@ -1024,10 +1024,10 @@ pub(crate) fn executable_load_bias(
             .checked_sub(usize::try_from(header.p_vaddr).map_err(|_| ())?)
             .ok_or(())
     } else {
-        // A missing program-header segment does not establish a PIE bias.
-        // Match the fixed executable's file header to the actual auxv mapping.
+        // Static PIEs commonly omit PT_PHDR. Match the executable file
+        // header to the kernel's relocated program headers and entry point.
         let header = read_executable_elf_header()?;
-        fixed_executable_load_bias(&header, phdr_addr, phdrs, entry.ok_or(())?)
+        executable_load_bias_from_header(&header, phdr_addr, phdrs, entry.ok_or(())?)
     }
 }
 

@@ -8,11 +8,11 @@ pub const MAX_STARTUP_SCAN: usize = 4096;
 /// Native ELF64 file-header size, shared by raw startup reads and validation.
 pub(crate) const EXECUTABLE_ELF_HEADER_BYTES: usize = 64;
 
-/// Establish the zero load bias of an ET_EXEC image without PT_PHDR. The file
+/// Recover the load bias of an executable without the optional PT_PHDR. The file
 /// header comes from /proc/self/exe; the program headers and addresses come from
 /// the kernel auxv. Matching both views avoids guessing an ELF-header address or
 /// assuming that the program-header table immediately follows the ELF header.
-pub(crate) fn fixed_executable_load_bias(
+pub(crate) fn executable_load_bias_from_header(
     header: &[u8; EXECUTABLE_ELF_HEADER_BYTES],
     phdr_addr: usize,
     phdrs: &[libc::Elf64_Phdr],
@@ -26,9 +26,10 @@ pub(crate) fn fixed_executable_load_bias(
         return Err(());
     };
     let phent = std::mem::size_of::<libc::Elf64_Phdr>();
+    let image_type = u16::from_le_bytes(header[16..18].try_into().map_err(|_| ())?);
     if std::mem::size_of::<usize>() != 8
         || &header[..7] != b"\x7fELF\x02\x01\x01"
-        || u16::from_le_bytes(header[16..18].try_into().map_err(|_| ())?) != libc::ET_EXEC
+        || !matches!(image_type, libc::ET_EXEC | libc::ET_DYN)
         || u16::from_le_bytes(header[18..20].try_into().map_err(|_| ())?) != native_machine
         || u32::from_le_bytes(header[20..24].try_into().map_err(|_| ())?) != 1
         || usize::from(u16::from_le_bytes(
@@ -55,7 +56,11 @@ pub(crate) fn fixed_executable_load_bias(
         header[32..40].try_into().map_err(|_| ())?,
     ))
     .map_err(|_| ())?;
-    if file_entry != entry || phoff < EXECUTABLE_ELF_HEADER_BYTES {
+    // Linux supplies the relocated entry in AT_ENTRY. Accept its displacement
+    // only if a readable, file-backed PT_LOAD maps the complete table to the
+    // independent AT_PHDR address at exactly the same bias.
+    let bias = entry.checked_sub(file_entry).ok_or(())?;
+    if (image_type == libc::ET_EXEC && bias != 0) || phoff < EXECUTABLE_ELF_HEADER_BYTES {
         return Err(());
     }
     let table_bytes = phdrs.len().checked_mul(phent).ok_or(())?;
@@ -64,7 +69,9 @@ pub(crate) fn fixed_executable_load_bias(
     let mut headers_mapped = false;
     let mut entry_mapped = false;
     for segment in phdrs.iter().filter(|p| p.p_type == libc::PT_LOAD) {
-        let start = usize::try_from(segment.p_vaddr).map_err(|_| ())?;
+        let start = bias
+            .checked_add(usize::try_from(segment.p_vaddr).map_err(|_| ())?)
+            .ok_or(())?;
         let memory_size = usize::try_from(segment.p_memsz).map_err(|_| ())?;
         let file_start = usize::try_from(segment.p_offset).map_err(|_| ())?;
         let file_size = usize::try_from(segment.p_filesz).map_err(|_| ())?;
@@ -73,6 +80,7 @@ pub(crate) fn fixed_executable_load_bias(
         if file_size > memory_size
             || (segment.p_align > 1
                 && (!segment.p_align.is_power_of_two()
+                    || !(bias as u64).is_multiple_of(segment.p_align)
                     || segment.p_vaddr % segment.p_align != segment.p_offset % segment.p_align))
         {
             return Err(());
@@ -84,7 +92,7 @@ pub(crate) fn fixed_executable_load_bias(
         entry_mapped |= segment.p_flags & libc::PF_X != 0 && entry >= start && entry < memory_end;
     }
     if headers_mapped && entry_mapped {
-        Ok(0)
+        Ok(bias)
     } else {
         Err(())
     }
@@ -1007,7 +1015,7 @@ mod tests {
 
 #[cfg(test)]
 mod executable_init_tests {
-    use super::{EXECUTABLE_ELF_HEADER_BYTES, fixed_executable_load_bias};
+    use super::{EXECUTABLE_ELF_HEADER_BYTES, executable_load_bias_from_header};
 
     fn fixed_image(
         phoff: u64,
@@ -1075,7 +1083,7 @@ mod executable_init_tests {
         for phoff in [64, 0x180, 0x800] {
             let (header, phdrs, address, entry) = fixed_image(phoff, 0);
             assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, entry),
+                executable_load_bias_from_header(&header, address, &phdrs, entry),
                 Ok(0)
             );
         }
@@ -1086,20 +1094,49 @@ mod executable_init_tests {
         let (header, phdrs, address, entry) = fixed_image(0x2180, 0x2000);
         assert_eq!(address, 0x400180);
         assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry),
+            executable_load_bias_from_header(&header, address, &phdrs, entry),
             Ok(0)
         );
     }
 
     #[test]
-    fn fixed_executable_without_phdr_rejects_pie_and_malformed_headers() {
+    fn static_pie_without_phdr_matches_entry_and_table_at_one_bias() {
+        let (mut header, phdrs, table, entry) = fixed_image(0x2180, 0x2000);
+        header[16..18].copy_from_slice(&libc::ET_DYN.to_le_bytes());
+        for bias in [0x2000, 0x7fab_1200_0000] {
+            assert_eq!(
+                executable_load_bias_from_header(&header, table + bias, &phdrs, entry + bias),
+                Ok(bias)
+            );
+            assert_eq!(
+                executable_load_bias_from_header(&header, table + bias, &phdrs, entry + bias + 8),
+                Err(())
+            );
+        }
+        assert_eq!(
+            executable_load_bias_from_header(&header, table, &phdrs, entry - 1),
+            Err(())
+        );
+        assert_eq!(
+            executable_load_bias_from_header(&header, table + 8, &phdrs, entry + 8),
+            Err(())
+        );
+        header[16..18].copy_from_slice(&libc::ET_EXEC.to_le_bytes());
+        assert_eq!(
+            executable_load_bias_from_header(&header, table + 0x2000, &phdrs, entry + 0x2000),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn executable_without_phdr_rejects_malformed_headers() {
         let (header, phdrs, address, entry) = fixed_image(0x180, 0);
         for (offset, replacement) in [
             (0, b'?'), // Magic.
             (4, 1),    // ELF32.
             (5, 2),    // Big-endian metadata.
             (6, 0),    // Identification version.
-            (16, 3),   // ET_DYN must not use the ET_EXEC fallback.
+            (16, 4),   // ET_CORE is not an executable image.
             (18, 0),   // Wrong machine.
             (20, 0),   // ELF version.
             (52, 63),  // Truncated ELF header layout.
@@ -1109,7 +1146,7 @@ mod executable_init_tests {
             let mut malformed = header;
             malformed[offset] = replacement;
             assert_eq!(
-                fixed_executable_load_bias(&malformed, address, &phdrs, entry),
+                executable_load_bias_from_header(&malformed, address, &phdrs, entry),
                 Err(()),
                 "accepted malformed ELF header field at {offset}"
             );
@@ -1117,7 +1154,7 @@ mod executable_init_tests {
         let mut overlapping = header;
         overlapping[32..40].copy_from_slice(&32u64.to_le_bytes());
         assert_eq!(
-            fixed_executable_load_bias(&overlapping, 0x400020, &phdrs, entry),
+            executable_load_bias_from_header(&overlapping, 0x400020, &phdrs, entry),
             Err(())
         );
     }
@@ -1127,16 +1164,16 @@ mod executable_init_tests {
         let (header, phdrs, address, entry) = fixed_image(0x180, 0);
         for wrong_address in [0, address + 1, address + 8, address + 0x100000] {
             assert_eq!(
-                fixed_executable_load_bias(&header, wrong_address, &phdrs, entry),
+                executable_load_bias_from_header(&header, wrong_address, &phdrs, entry),
                 Err(())
             );
         }
         assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry + 1),
+            executable_load_bias_from_header(&header, address, &phdrs, entry + 1),
             Err(())
         );
         assert_eq!(
-            fixed_executable_load_bias(&header, address, &[], entry),
+            executable_load_bias_from_header(&header, address, &[], entry),
             Err(())
         );
     }
@@ -1160,7 +1197,7 @@ mod executable_init_tests {
                 _ => unreachable!(),
             }
             assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, entry),
+                executable_load_bias_from_header(&header, address, &phdrs, entry),
                 Err(()),
                 "accepted invalid table mapping case {case}"
             );
@@ -1172,14 +1209,14 @@ mod executable_init_tests {
         let (header, mut phdrs, address, entry) = fixed_image(0x180, 0);
         phdrs[1].p_flags = libc::PF_R;
         assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry),
+            executable_load_bias_from_header(&header, address, &phdrs, entry),
             Err(())
         );
         for invalid_entry in [0x400100u64, 0x402000] {
             let (mut header, phdrs, address, _) = fixed_image(0x180, 0);
             header[24..32].copy_from_slice(&invalid_entry.to_le_bytes());
             assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, invalid_entry as usize),
+                executable_load_bias_from_header(&header, address, &phdrs, invalid_entry as usize),
                 Err(())
             );
         }
@@ -1190,12 +1227,12 @@ mod executable_init_tests {
         let (mut header, phdrs, address, entry) = fixed_image(0x180, 0);
         header[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(
-            fixed_executable_load_bias(&header, address, &phdrs, entry),
+            executable_load_bias_from_header(&header, address, &phdrs, entry),
             Err(())
         );
         let (header, phdrs, _, entry) = fixed_image(0x180, 0);
         assert_eq!(
-            fixed_executable_load_bias(&header, usize::MAX - 7, &phdrs, entry),
+            executable_load_bias_from_header(&header, usize::MAX - 7, &phdrs, entry),
             Err(())
         );
         for case in 0..4 {
@@ -1208,7 +1245,7 @@ mod executable_init_tests {
                 _ => unreachable!(),
             }
             assert_eq!(
-                fixed_executable_load_bias(&header, address, &phdrs, entry),
+                executable_load_bias_from_header(&header, address, &phdrs, entry),
                 Err(()),
                 "accepted overflow/alignment case {case}"
             );
