@@ -2080,3 +2080,251 @@ fn getgrent_restarts_when_the_group_file_changes_mid_iteration() {
         );
     });
 }
+
+#[test]
+fn account_file_cache_group_atomic_replacement() {
+    use std::os::unix::fs::MetadataExt;
+
+    const OLD: &[u8] = b"staff:x:4201:alice\n";
+    const NEW: &[u8] = b"staff:x:4201:carol\n";
+    assert_eq!(OLD.len(), NEW.len());
+    for by_gid in [true, false] {
+        with_group_file(OLD, || {
+            let first = unsafe { getgrgid(4201) };
+            assert!(!first.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr(*(*first).gr_mem) }.to_bytes(),
+                b"alice"
+            );
+            let path = std::env::var_os("FRANKENLIBC_GROUP_PATH").unwrap();
+            let previous = std::fs::metadata(&path).unwrap();
+            let replacement = temp_group_path();
+            std::fs::write(&replacement, NEW).unwrap();
+            std::fs::File::open(&replacement)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(previous.modified().unwrap()))
+                .unwrap();
+            let next = std::fs::metadata(&replacement).unwrap();
+            assert_eq!(previous.len(), next.len());
+            assert_eq!(previous.modified().unwrap(), next.modified().unwrap());
+            assert_ne!(previous.ino(), next.ino());
+            std::fs::rename(replacement, &path).unwrap();
+
+            unsafe { *__errno_location() = 719 };
+            let entry = unsafe {
+                if by_gid {
+                    getgrgid(4201)
+                } else {
+                    getgrnam(c"staff".as_ptr())
+                }
+            };
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr(*(*entry).gr_mem) }.to_bytes(),
+                b"carol"
+            );
+            assert_eq!(unsafe { *__errno_location() }, 719);
+
+            let mut output: libc::group = unsafe { std::mem::zeroed() };
+            let mut buffer = [0 as c_char; 256];
+            let mut result = std::ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    getgrgid_r(
+                        4201,
+                        &mut output,
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut result,
+                    )
+                },
+                0
+            );
+            assert_eq!(result, &mut output as *mut libc::group);
+            assert_eq!(
+                unsafe { CStr::from_ptr(*output.gr_mem) }.to_bytes(),
+                b"carol"
+            );
+
+            // Removing a membership must also remove this files provider's
+            // supplementary-group contribution.
+            let mut groups = std::ptr::null_mut();
+            let mut count = 0;
+            let mut capacity = 0;
+            let mut error = 721;
+            assert_eq!(
+                unsafe {
+                    _nss_files_initgroups_dyn(
+                        c"alice".as_ptr(),
+                        0,
+                        &mut count,
+                        &mut capacity,
+                        &mut groups,
+                        -1,
+                        &mut error,
+                    )
+                },
+                0
+            );
+            assert_eq!((count, error), (0, 721));
+            assert!(groups.is_null());
+
+            let retired = temp_group_path();
+            std::fs::rename(&path, retired).unwrap();
+            assert_eq!(
+                unsafe {
+                    _nss_files_getgrgid_r(
+                        4201,
+                        (&raw mut output).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut error,
+                    )
+                },
+                -1
+            );
+            assert_eq!(error, libc::ENOENT);
+        });
+    }
+}
+
+#[test]
+fn account_file_cache_group_in_place_restored_mtime() {
+    use std::os::unix::fs::MetadataExt;
+
+    const OLD: &[u8] = b"staff:x:4201:alice\n";
+    const NEW: &[u8] = b"staff:x:4201:carol\n";
+    for by_gid in [true, false] {
+        with_group_file(OLD, || {
+            assert!(!unsafe { getgrgid(4201) }.is_null());
+            let path = std::env::var_os("FRANKENLIBC_GROUP_PATH").unwrap();
+            let previous = std::fs::metadata(&path).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                std::fs::write(&path, NEW).unwrap();
+                std::fs::File::open(&path)
+                    .unwrap()
+                    .set_times(std::fs::FileTimes::new().set_modified(previous.modified().unwrap()))
+                    .unwrap();
+                let next = std::fs::metadata(&path).unwrap();
+                assert_eq!(previous.ino(), next.ino());
+                assert_eq!(previous.len(), next.len());
+                assert_eq!(previous.modified().unwrap(), next.modified().unwrap());
+                if (previous.ctime(), previous.ctime_nsec()) != (next.ctime(), next.ctime_nsec()) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "filesystem ctime did not advance"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            let entry = unsafe {
+                if by_gid {
+                    getgrgid(4201)
+                } else {
+                    getgrnam(c"staff".as_ptr())
+                }
+            };
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr(*(*entry).gr_mem) }.to_bytes(),
+                b"carol"
+            );
+        });
+    }
+}
+
+#[test]
+fn account_file_cache_group_read_replace_race() {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+
+    const CHILD: &str = "FRANKENLIBC_GROUP_CACHE_RACE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "account_file_cache_group_read_replace_race",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut timed_out = false;
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                timed_out = true;
+                let _ = child.kill();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !timed_out && output.status.success() && stdout.contains("1 passed;"),
+            "group cache race timeout={timed_out} status={}\n{stdout}\n{stderr}",
+            output.status,
+        );
+        return;
+    }
+
+    let path = temp_group_path();
+    let replacement = temp_group_path();
+    std::fs::write(&replacement, b"staff:x:4201:carol\n").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: cpath is a live terminated pathname for this private FIFO.
+    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    with_group_path(&path, || {
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            let mut fifo = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&writer_path)
+                .unwrap();
+            fifo.write_all(b"staff:x:4201:alice\n").unwrap();
+            std::fs::rename(replacement, writer_path).unwrap();
+            // Hold the old descriptor open until the new pathname is visible.
+            drop(fifo);
+        });
+        let first = unsafe { getgrgid(4201) };
+        writer.join().unwrap();
+        assert!(!first.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(*(*first).gr_mem) }.to_bytes(),
+            b"alice"
+        );
+        let second = unsafe { getgrgid(4201) };
+        assert!(!second.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(*(*second).gr_mem) }.to_bytes(),
+            b"carol"
+        );
+        let mut output: libc::group = unsafe { std::mem::zeroed() };
+        let mut buffer = [0 as c_char; 256];
+        let mut result = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                getgrnam_r(
+                    c"staff".as_ptr(),
+                    &mut output,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut result,
+                )
+            },
+            0
+        );
+        assert_eq!(result, &mut output as *mut libc::group);
+        assert_eq!(
+            unsafe { CStr::from_ptr(*output.gr_mem) }.to_bytes(),
+            b"carol"
+        );
+    });
+}

@@ -36,6 +36,70 @@ use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
 const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
 const NSSWITCH_PATH_ENV: &str = "FRANKENLIBC_NSSWITCH_CONF";
 
+/// Identity of a files-provider image. Modification time and length alone do
+/// not detect atomic replacement or an in-place update that restores mtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FilesFingerprint {
+    device: u64,
+    inode: u64,
+    len: u64,
+    modified_sec: i64,
+    modified_nsec: i64,
+    changed_sec: i64,
+    changed_nsec: i64,
+}
+
+impl FilesFingerprint {
+    pub(crate) fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            len: metadata.len(),
+            modified_sec: metadata.mtime(),
+            modified_nsec: metadata.mtime_nsec(),
+            changed_sec: metadata.ctime(),
+            changed_nsec: metadata.ctime_nsec(),
+        }
+    }
+
+    pub(crate) fn from_stat(stat: &libc::stat) -> Option<Self> {
+        Some(Self {
+            device: stat.st_dev,
+            inode: stat.st_ino,
+            len: u64::try_from(stat.st_size).ok()?,
+            modified_sec: stat.st_mtime,
+            modified_nsec: stat.st_mtime_nsec,
+            changed_sec: stat.st_ctime,
+            changed_nsec: stat.st_ctime_nsec,
+        })
+    }
+}
+
+/// Read and identify the same opened file, even when its pathname is replaced
+/// during the read. A fresh pathname stat must never label bytes from an older
+/// descriptor. A concurrent in-place write can still affect the returned bytes,
+/// as with an ordinary files lookup, but changed metadata prevents caching them.
+/// Nonregular and virtual files without a matching size are also read uncached.
+pub(crate) fn read_files_snapshot(
+    path: &std::path::Path,
+) -> std::io::Result<(Vec<u8>, Option<FilesFingerprint>)> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let before = file.metadata().ok().filter(|metadata| metadata.is_file());
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let after = file.metadata().ok().filter(|metadata| metadata.is_file());
+    let fingerprint = before.zip(after).and_then(|(before, after)| {
+        let before = FilesFingerprint::from_metadata(&before);
+        let after = FilesFingerprint::from_metadata(&after);
+        (before == after && after.len == bytes.len() as u64).then_some(after)
+    });
+    Ok((bytes, fingerprint))
+}
+
 /// Initial capacity for module calls that own their scratch budget.
 const INITIAL_SCRATCH: usize = 1024;
 /// Maximum growth for internally owned module scratch buffers.

@@ -4106,3 +4106,211 @@ fn nss_account_parser_rejects_tracked_underallocation_without_writing() {
         free(allocation.cast());
     }
 }
+
+// Account-file caches must follow file identity, not only length and mtime.
+// Keep these public-ABI regressions grouped for the focused resolver workflow.
+#[test]
+fn account_file_cache_passwd_atomic_replacement() {
+    use std::os::unix::fs::MetadataExt;
+
+    const OLD: &[u8] = b"alice:x:4101:4201:Alice:/alpha:/bin/sh\n";
+    const NEW: &[u8] = b"alice:x:4101:4201:Alice:/omega:/bin/sh\n";
+    assert_eq!(OLD.len(), NEW.len());
+    for by_uid in [true, false] {
+        with_passwd_file(OLD, || {
+            // SAFETY: the fixture contains this identity and no output escapes.
+            let first = unsafe { getpwuid(4101) };
+            assert!(!first.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*first).pw_dir) }.to_bytes(),
+                b"/alpha"
+            );
+
+            let path = std::env::var_os("FRANKENLIBC_PASSWD_PATH").unwrap();
+            let previous = std::fs::metadata(&path).unwrap();
+            let replacement = temp_passwd_path();
+            std::fs::write(&replacement, NEW).unwrap();
+            std::fs::File::open(&replacement)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(previous.modified().unwrap()))
+                .unwrap();
+            let next = std::fs::metadata(&replacement).unwrap();
+            assert_eq!(previous.len(), next.len());
+            assert_eq!(previous.modified().unwrap(), next.modified().unwrap());
+            assert_ne!(previous.ino(), next.ino());
+            std::fs::rename(&replacement, &path).unwrap();
+
+            // Exercise both the raw-stat uid fast path and the ordinary
+            // metadata probe before either path can refresh the other's cache.
+            unsafe { *__errno_location() = 719 };
+            let entry = unsafe {
+                if by_uid {
+                    getpwuid(4101)
+                } else {
+                    getpwnam(c"alice".as_ptr())
+                }
+            };
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*entry).pw_dir) }.to_bytes(),
+                b"/omega"
+            );
+            assert_eq!(unsafe { *__errno_location() }, 719);
+
+            let mut output: libc::passwd = unsafe { std::mem::zeroed() };
+            let mut buffer = [0 as c_char; 256];
+            let mut result = ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    getpwuid_r(
+                        4101,
+                        &mut output,
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut result,
+                    )
+                },
+                0
+            );
+            assert_eq!(result, &mut output as *mut libc::passwd);
+            assert_eq!(
+                unsafe { CStr::from_ptr(output.pw_dir) }.to_bytes(),
+                b"/omega"
+            );
+
+            // An unreadable/missing new image must invalidate the cached uid.
+            let retired = temp_passwd_path();
+            std::fs::rename(&path, retired).unwrap();
+            let mut error = 720;
+            assert_eq!(
+                unsafe {
+                    _nss_files_getpwuid_r(
+                        4101,
+                        (&raw mut output).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut error,
+                    )
+                },
+                -1
+            );
+            assert_eq!(error, libc::ENOENT);
+        });
+    }
+}
+
+#[test]
+fn account_file_cache_passwd_in_place_restored_mtime() {
+    use std::os::unix::fs::MetadataExt;
+
+    const OLD: &[u8] = b"alice:x:4101:4201:Alice:/alpha:/bin/sh\n";
+    const NEW: &[u8] = b"alice:x:4101:4201:Alice:/omega:/bin/sh\n";
+    for by_uid in [true, false] {
+        with_passwd_file(OLD, || {
+            let first = unsafe { getpwuid(4101) };
+            assert!(!first.is_null());
+            let path = std::env::var_os("FRANKENLIBC_PASSWD_PATH").unwrap();
+            let previous = std::fs::metadata(&path).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                std::fs::write(&path, NEW).unwrap();
+                std::fs::File::open(&path)
+                    .unwrap()
+                    .set_times(std::fs::FileTimes::new().set_modified(previous.modified().unwrap()))
+                    .unwrap();
+                let next = std::fs::metadata(&path).unwrap();
+                assert_eq!(previous.ino(), next.ino());
+                assert_eq!(previous.len(), next.len());
+                assert_eq!(previous.modified().unwrap(), next.modified().unwrap());
+                if (previous.ctime(), previous.ctime_nsec()) != (next.ctime(), next.ctime_nsec()) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "filesystem ctime did not advance"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            let entry = unsafe {
+                if by_uid {
+                    getpwuid(4101)
+                } else {
+                    getpwnam(c"alice".as_ptr())
+                }
+            };
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*entry).pw_dir) }.to_bytes(),
+                b"/omega"
+            );
+        });
+    }
+}
+
+#[test]
+fn account_file_cache_passwd_read_replace_race() {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+
+    // The existing child runner supplies a hard deadline: a broken reader
+    // must not leave this test process stuck in a FIFO open/read or join.
+    if native_identity_child("account_file_cache_passwd_read_replace_race") {
+        return;
+    }
+    let path = temp_passwd_path();
+    let replacement = temp_passwd_path();
+    std::fs::write(&replacement, b"alice:x:4101:4201:Alice:/omega:/bin/sh\n").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: cpath is a live terminated pathname; this is a private fixture.
+    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    with_passwd_path(&path, || {
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            let mut fifo = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&writer_path)
+                .unwrap();
+            fifo.write_all(b"alice:x:4101:4201:Alice:/alpha:/bin/sh\n")
+                .unwrap();
+            std::fs::rename(replacement, writer_path).unwrap();
+            // EOF is delivered only after the pathname names the new image.
+            drop(fifo);
+        });
+        let first = unsafe { getpwuid(4101) };
+        writer.join().unwrap();
+        assert!(!first.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr((*first).pw_dir) }.to_bytes(),
+            b"/alpha"
+        );
+
+        // The old reader must not have cached its bytes under the replacement's
+        // pathname metadata. The next lookup must read the regular new file.
+        let second = unsafe { getpwuid(4101) };
+        assert!(!second.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr((*second).pw_dir) }.to_bytes(),
+            b"/omega"
+        );
+        let mut output: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buffer = [0 as c_char; 256];
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                getpwnam_r(
+                    c"alice".as_ptr(),
+                    &mut output,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut result,
+                )
+            },
+            0
+        );
+        assert_eq!(result, &mut output as *mut libc::passwd);
+        assert_eq!(
+            unsafe { CStr::from_ptr(output.pw_dir) }.to_bytes(),
+            b"/omega"
+        );
+    });
+}

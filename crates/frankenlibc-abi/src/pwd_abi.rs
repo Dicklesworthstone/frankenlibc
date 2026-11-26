@@ -13,7 +13,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
-use std::time::UNIX_EPOCH;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::nss::{Answer, Database, Service, SourceKind};
@@ -22,7 +21,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
-use crate::nss_module::{self, EntDb};
+use crate::nss_module::{self, EntDb, FilesFingerprint as FileFingerprint};
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
@@ -69,12 +68,6 @@ fn passwd_buffer_needed(entry: &frankenlibc_core::pwd::Passwd) -> Option<usize> 
         .checked_add(1)?
         .checked_add(entry.pw_shell.len())?
         .checked_add(1)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FileFingerprint {
-    len: u64,
-    modified_ns: u128,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -227,30 +220,14 @@ impl PwdStorage {
             return None;
         }
 
-        // SAFETY: libc::stat returned success, so the whole stat buffer is initialized.
+        // SAFETY: newfstatat succeeded, so the stat buffer is initialized.
         let statbuf = unsafe { statbuf.assume_init() };
-        let len = u64::try_from(statbuf.st_size).ok()?;
-        let sec = u128::try_from(statbuf.st_mtime).ok()?;
-        let nsec = u128::try_from(statbuf.st_mtime_nsec).ok()?;
-
-        Some(FileFingerprint {
-            len,
-            modified_ns: sec.saturating_mul(1_000_000_000).saturating_add(nsec),
-        })
+        FileFingerprint::from_stat(&statbuf)
     }
 
     fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
         let metadata = std::fs::metadata(path).ok()?;
-        let modified_ns = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |duration| duration.as_nanos());
-
-        Some(FileFingerprint {
-            len: metadata.len(),
-            modified_ns,
-        })
+        Some(FileFingerprint::from_metadata(&metadata))
     }
 
     fn current_file_fingerprint(&self, prefer_c_stat: bool) -> Option<FileFingerprint> {
@@ -292,19 +269,12 @@ impl PwdStorage {
 
         self.cache_metrics.misses += 1;
 
-        match std::fs::read(&self.source_path) {
-            Ok(bytes) => {
-                let next_fp = self
-                    .current_file_fingerprint(prefer_c_stat)
-                    .or(current_fp)
-                    .unwrap_or(FileFingerprint {
-                        len: bytes.len() as u64,
-                        modified_ns: 0,
-                    });
+        match nss_module::read_files_snapshot(&self.source_path) {
+            Ok((bytes, fingerprint)) => {
                 let had_cache = self.file_cache.is_some();
 
                 self.file_cache = Some(bytes);
-                self.cache_fingerprint = Some(next_fp);
+                self.cache_fingerprint = fingerprint;
                 self.cache_generation = self.cache_generation.wrapping_add(1);
                 self.cache_metrics.reloads += 1;
                 self.last_io_error = None;

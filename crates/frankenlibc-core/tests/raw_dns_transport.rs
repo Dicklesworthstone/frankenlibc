@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use frankenlibc_core::dns_transport::{
-    QueryError, exchange as address_exchange, query as address_query, raw,
+    QueryError, QueryOptions, exchange as address_exchange, query as address_query, raw,
 };
 use frankenlibc_core::resolv::dns::{DnsMessage, qtype, rcode};
 
@@ -214,9 +214,10 @@ fn no_aaaa_address_query_does_not_follow_a_cname_from_the_a_probe() {
         qtype::AAAA,
         endpoint,
         TIMEOUT,
-        false,
-        false,
-        true,
+        QueryOptions {
+            no_aaaa: true,
+            ..QueryOptions::default()
+        },
     )
     .unwrap();
     worker.join().unwrap();

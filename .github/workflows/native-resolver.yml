@@ -37,6 +37,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_protoent_r_aliases.rs'
       - 'crates/frankenlibc-abi/tests/resolver_no_aaaa_test.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/grp_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs'
       - 'crates/frankenlibc-abi/tests/locale_abi_test.rs'
@@ -227,6 +228,30 @@ jobs:
             -- --nocapture --test-threads=1 2>&1 | tee artifacts/services-enumeration/tests.log
           grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
             artifacts/services-enumeration/tests.log
+      - name: Verify account cache refresh across file replacement and concurrent writes
+        if: always()
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          status=0
+          for mode in strict hardened; do
+            for target in pwd_abi_test grp_abi_test; do
+              log="artifacts/services-enumeration/account-cache-$target-$mode.log"
+              if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${features[@]}" \
+                --test "$target" account_file_cache_ \
+                -- --test-threads=1 --nocapture 2>&1 | tee "$log"; then status=1; fi
+              if ! grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"; then
+                status=1
+              fi
+            done
+          done
+          exit "$status"
       - name: Compare reentrant account buffers, source actions, and group merges with GNU
         env:
           CACHE: ${{ matrix.cache }}
