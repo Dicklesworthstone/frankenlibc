@@ -7911,20 +7911,21 @@ unsafe fn fd_seek_locked(
         return Err(SeekErr::WriteFailed);
     }
 
-    // An append write can go straight to the descriptor or flush on a
-    // buffer boundary. Its actual destination was chosen by the kernel.
-    let (target_off, target_whence) = if whence == libc::SEEK_CUR
-        && !(s.is_appending() && s.last_was_write())
-    {
-        match s.offset().checked_add(offset) {
-            Some(off) => (off, libc::SEEK_SET),
-            None => return Err(SeekErr::Errno(errno::EOVERFLOW)),
-        }
+    // SEEK_CUR is relative to the shared open file description, which may
+    // have moved while a synchronized descriptor was active. Only unread
+    // input (including pushback) separates the kernel and FILE positions
+    // once pending output has been flushed.
+    let target_off = if whence == libc::SEEK_CUR {
+        let unread = i64::try_from(s.unread_bytes_for_position())
+            .map_err(|_| SeekErr::Errno(errno::EOVERFLOW))?;
+        offset
+            .checked_sub(unread)
+            .ok_or(SeekErr::Errno(errno::EOVERFLOW))?
     } else {
-        (offset, whence)
+        offset
     };
 
-    let new_off = match raw_syscall::sys_lseek(s.fd(), target_off, target_whence) {
+    let new_off = match raw_syscall::sys_lseek(s.fd(), target_off, whence) {
         Ok(off) => off,
         Err(e) => return Err(SeekErr::Errno(e)),
     };

@@ -120,6 +120,22 @@ static int check_descriptor_association(void) {
         }
     }
 
+    /* Switch between two handles sharing a seekable open file description.
+       After fflush the descriptor can reposition or consume bytes before the
+       FILE resumes. A relative seek must start at that shared position. */
+    FILE *shared = tmpfile();
+    POSITION_CHECK(shared && fputs("abcdefghij", shared) >= 0 && fflush(shared) == 0);
+    int other = dup(fileno(shared));
+    POSITION_CHECK(other >= 0 && lseek(other, 2, SEEK_SET) == 2);
+    POSITION_CHECK(fseeko(shared, 1, SEEK_CUR) == 0 && ftello(shared) == 3);
+    POSITION_CHECK(fgetc(shared) == 'd' && fflush(shared) == 0);
+    char pair[2];
+    POSITION_CHECK(read(other, pair, sizeof pair) == 2 && memcmp(pair, "ef", 2) == 0);
+    POSITION_CHECK(fseeko64(shared, 1, SEEK_CUR) == 0 && ftello64(shared) == 7);
+    POSITION_CHECK(fgetc(shared) == 'h' && ungetc('h', shared) == 'h');
+    POSITION_CHECK(fseek(shared, -2, SEEK_CUR) == 0 && fgetc(shared) == 'f');
+    POSITION_CHECK(fclose(shared) == 0 && close(other) == 0);
+
     const char *modes[] = {"r,+", "rxxx+", "rxxxx+"};
     for (size_t i = 0; i < sizeof modes / sizeof modes[0]; ++i) {
         int fd = open(path, O_RDONLY);
