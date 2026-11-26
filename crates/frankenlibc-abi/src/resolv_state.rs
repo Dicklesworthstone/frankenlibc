@@ -35,6 +35,7 @@ pub const RES_ROTATE: c_ulong = 0x4000;
 pub const RES_USE_EDNS0: c_ulong = 0x0010_0000;
 pub const RES_USE_DNSSEC: c_ulong = 0x0080_0000;
 pub const RES_NOTLDQUERY: c_ulong = 0x0100_0000;
+pub const RES_NORELOAD: c_ulong = 0x0200_0000;
 pub const RES_TRUSTAD: c_ulong = 0x0400_0000;
 pub const RES_NOAAAA: c_ulong = 0x0800_0000;
 const RES_DEFAULT: c_ulong = RES_RECURSE | RES_DEFNAMES | RES_DNSRCH;
@@ -279,6 +280,11 @@ unsafe fn enable_host_refresh(pointer: *mut c_void) -> Result<(), c_int> {
 }
 
 unsafe fn refresh_host_state(pointer: *mut c_void) -> Result<(), c_int> {
+    // SAFETY: this thread owns its initialized state. Check before reading
+    // the file or environment, since no-reload pins the current snapshot.
+    if unsafe { checked_state(pointer)? }.options & RES_NORELOAD != 0 {
+        return Ok(());
+    }
     let eligible = OWNED
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -618,6 +624,16 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
         } else {
             RES_DEFAULT
         };
+    for (setting, flag) in [
+        (config.no_tld_query, RES_NOTLDQUERY),
+        (config.no_reload, RES_NORELOAD),
+    ] {
+        match setting {
+            Some(true) => next.options |= flag,
+            Some(false) => next.options &= !flag,
+            None => {}
+        }
+    }
     if config.use_vc {
         next.options |= RES_USEVC;
     }

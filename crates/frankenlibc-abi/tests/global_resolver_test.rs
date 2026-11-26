@@ -839,7 +839,7 @@ fn global_host_lookup_refreshes_files_and_environment_until_caller_override() {
     // restore automatic refresh after the previous state is closed.
     write_config("original.invalid");
     unsafe { *pointer.cast::<State>() = State::zeroed() };
-    let _cleanup = ApiCleanup(pointer, api.close);
+    let cleanup = ApiCleanup(pointer, api.close);
     assert_eq!(hostname_ipv4(api, c"refresh"), Ok([203, 0, 113, 63]));
     unsafe { *(*pointer.cast::<State>()).dnsrch[0] = b'x' as libc::c_char };
     write_config("must-not-replace-pointee.invalid");
@@ -853,6 +853,43 @@ fn global_host_lookup_refreshes_files_and_environment_until_caller_override() {
             b"refresh.caller.invalid".to_vec(),
             b"refresh.original.invalid".to_vec(),
             b"refresh.xriginal.invalid".to_vec(),
+        ]
+    );
+    drop(cleanup);
+
+    // An implicitly initialized state with no-reload keeps its original
+    // search suffix and search policy even after the file is replaced.
+    let server = HostServer::new(|query| host_reply(query, 3, 0));
+    std::fs::write(
+        &path,
+        b"nameserver 127.0.0.1\nsearch pinned.invalid\noptions no-reload attempts:1\n",
+    )
+    .unwrap();
+    // SAFETY: isolated child. The previous state was closed and the DNS
+    // worker does not read the process environment.
+    unsafe {
+        std::env::set_var("RES_OPTIONS", "no-tld-query");
+        std::env::set_var("FRANKENLIBC_DNS_PORT", server.endpoint.port().to_string());
+        *pointer.cast::<State>() = State::zeroed();
+    }
+    let _cleanup = ApiCleanup(pointer, api.close);
+    assert_eq!(hostname_ipv4(api, c"missing"), Err(libc::EAI_NONAME));
+    write_config("updated.invalid");
+    unsafe { std::env::remove_var("RES_OPTIONS") };
+    assert_eq!(hostname_ipv4(api, c"missing"), Err(libc::EAI_NONAME));
+
+    // Explicit reentrant initialization takes a fresh snapshot. With the
+    // option absent, the final absolute lookup of the bare name returns.
+    let result = unsafe { frankenlibc_abi::glibc_internal_abi::__res_ninit(pointer) };
+    assert_eq!(result, 0);
+    assert_eq!(hostname_ipv4(api, c"missing"), Err(libc::EAI_NONAME));
+    assert_eq!(
+        server.finish(),
+        [
+            b"missing.pinned.invalid".to_vec(),
+            b"missing.pinned.invalid".to_vec(),
+            b"missing.updated.invalid".to_vec(),
+            b"missing".to_vec(),
         ]
     );
 }

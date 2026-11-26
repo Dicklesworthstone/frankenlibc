@@ -97,7 +97,7 @@ impl From<&ResolverConfig> for LookupConfig {
             ndots: config.ndots,
             defnames: true,
             dnsrch: true,
-            no_tld_query: false,
+            no_tld_query: config.no_tld_query.unwrap_or(false),
         }
     }
 }

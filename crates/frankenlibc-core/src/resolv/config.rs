@@ -8,7 +8,7 @@
 //! - `domain <name>`: Local domain name
 //! - `search <name>...`: Search list for hostname lookup
 //! - `options <opt>...`: Various options (ndots, timeout, attempts, rotate,
-//!   use-vc, trust-ad, no-aaaa, edns0)
+//!   use-vc, trust-ad, no-aaaa, edns0, no-tld-query, no-reload)
 //!
 //! # Default Behavior
 //!
@@ -87,6 +87,12 @@ pub struct ResolverConfig {
     /// Advertise EDNS version 0 and a bounded UDP response size. This does
     /// not request DNSSEC records or grant trust to the response's AD bit.
     pub edns0: bool,
+    /// Suppress the final bare single-label lookup after trying search domains.
+    /// None leaves the option previously selected by a legacy caller intact.
+    pub no_tld_query: Option<bool>,
+    /// Keep the initialized configuration across automatic hostname lookups.
+    /// An explicit reinitialization still reads the current configuration.
+    pub no_reload: Option<bool>,
 }
 
 impl Default for ResolverConfig {
@@ -104,6 +110,8 @@ impl Default for ResolverConfig {
             trust_ad: false,
             no_aaaa: false,
             edns0: false,
+            no_tld_query: None,
+            no_reload: None,
         }
     }
 }
@@ -124,6 +132,8 @@ impl ResolverConfig {
             trust_ad: false,
             no_aaaa: false,
             edns0: false,
+            no_tld_query: None,
+            no_reload: None,
         }
     }
 
@@ -280,12 +290,18 @@ impl ResolverConfig {
             self.use_vc = true;
         } else if opt == b"trust-ad" {
             self.trust_ad = true;
-        } else if opt.starts_with(b"no-aaaa") {
-            self.no_aaaa = true;
-        } else if opt.starts_with(b"-no-aaaa") {
-            self.no_aaaa = false;
         } else if opt.starts_with(b"edns0") {
             self.edns0 = true;
+        } else {
+            let name = opt.strip_prefix(b"-").unwrap_or(opt);
+            let enabled = name.len() == opt.len();
+            if name.starts_with(b"no-aaaa") {
+                self.no_aaaa = enabled;
+            } else if name.starts_with(b"no-tld-query") || name.starts_with(b"no_tld_query") {
+                self.no_tld_query = Some(enabled);
+            } else if name.starts_with(b"no-reload") {
+                self.no_reload = Some(enabled);
+            }
         }
         // Other options are silently ignored
     }
@@ -497,6 +513,18 @@ mod tests {
         assert!(config.no_aaaa);
         config.apply_overrides(None, Some(b"-no-aaaa-extra"));
         assert!(!config.no_aaaa);
+    }
+
+    #[test]
+    fn search_and_reload_options_distinguish_absent_set_and_cleared() {
+        let mut config = ResolverConfig::parse(b"options timeout:3\n");
+        assert_eq!((config.no_tld_query, config.no_reload), (None, None));
+        config.apply_overrides(None, Some(b"no_tld_query no-reload"));
+        assert_eq!(config.no_tld_query, Some(true));
+        assert_eq!(config.no_reload, Some(true));
+        config.apply_overrides(None, Some(b"-no-tld-query -no-reload"));
+        assert_eq!(config.no_tld_query, Some(false));
+        assert_eq!(config.no_reload, Some(false));
     }
 
     #[test]
