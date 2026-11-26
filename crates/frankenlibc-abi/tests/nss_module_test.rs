@@ -4696,6 +4696,640 @@ fn hosts_enumeration_files_retry_provider_isolation_and_reentry() {
     }
 }
 
+#[repr(C)]
+struct NetworkRawRecord {
+    name: *mut c_char,
+    aliases: *mut *mut c_char,
+    family: c_int,
+    number: u32,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NetworkRecord {
+    name: Vec<u8>,
+    family: c_int,
+    number: u32,
+    aliases: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NetworkRequest<'a> {
+    Name(&'a CStr),
+    Address(u32, c_int),
+}
+
+struct NetworkApi {
+    name: unsafe extern "C" fn(*const c_char) -> *mut c_void,
+    address: unsafe extern "C" fn(u32, c_int) -> *mut c_void,
+    name_r: unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+        *mut c_int,
+    ) -> c_int,
+    address_r: unsafe extern "C" fn(
+        u32,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+        *mut c_int,
+    ) -> c_int,
+    error: unsafe extern "C" fn() -> *mut c_int,
+    resolver_error: unsafe extern "C" fn() -> *mut c_int,
+}
+
+fn network_api(host: bool) -> NetworkApi {
+    unsafe extern "C" {
+        #[link_name = "getnetbyname"]
+        fn host_name(name: *const c_char) -> *mut c_void;
+        #[link_name = "getnetbyaddr"]
+        fn host_address(number: u32, family: c_int) -> *mut c_void;
+        #[link_name = "getnetbyname_r"]
+        fn host_name_r(
+            name: *const c_char,
+            output: *mut c_void,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut c_void,
+            resolver_error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "getnetbyaddr_r"]
+        fn host_address_r(
+            number: u32,
+            family: c_int,
+            output: *mut c_void,
+            buffer: *mut c_char,
+            capacity: usize,
+            result: *mut *mut c_void,
+            resolver_error: *mut c_int,
+        ) -> c_int;
+        #[link_name = "__h_errno_location"]
+        fn host_resolver_error() -> *mut c_int;
+    }
+    use frankenlibc_abi::{errno_abi as e, resolv_abi as r, unistd_abi as u};
+    assert_ne!(host_name as *const (), u::getnetbyname as *const ());
+    assert_ne!(host_address_r as *const (), u::getnetbyaddr_r as *const ());
+    if host {
+        NetworkApi {
+            name: host_name,
+            address: host_address,
+            name_r: host_name_r,
+            address_r: host_address_r,
+            error: libc::__errno_location,
+            resolver_error: host_resolver_error,
+        }
+    } else {
+        NetworkApi {
+            name: u::getnetbyname,
+            address: u::getnetbyaddr,
+            name_r: u::getnetbyname_r,
+            address_r: u::getnetbyaddr_r,
+            error: e::__errno_location,
+            resolver_error: r::__h_errno_location,
+        }
+    }
+}
+
+unsafe fn network_record(
+    pointer: *mut c_void,
+    bounds: Option<(usize, usize)>,
+) -> Option<NetworkRecord> {
+    if pointer.is_null() {
+        return None;
+    }
+    // SAFETY: successful network calls publish the complete C netent layout.
+    let entry = unsafe { &*pointer.cast::<NetworkRawRecord>() };
+    let string = |pointer: *const c_char| {
+        assert!(!pointer.is_null());
+        if let Some((start, end)) = bounds {
+            let address = pointer as usize;
+            assert!(
+                (start..end).contains(&address),
+                "network string escaped caller buffer"
+            );
+            // SAFETY: the complete remaining range is inside the caller buffer.
+            let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), end - address) };
+            let length = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .expect("terminated network string");
+            bytes[..length].to_vec()
+        } else {
+            // SAFETY: non-reentrant answers own terminated strings.
+            unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec()
+        }
+    };
+    assert!(!entry.aliases.is_null());
+    let mut aliases = Vec::new();
+    for index in 0..4096 {
+        let address = (entry.aliases as usize)
+            .checked_add(index * std::mem::size_of::<usize>())
+            .unwrap();
+        assert_eq!(address % std::mem::align_of::<usize>(), 0);
+        if let Some((start, end)) = bounds {
+            assert!(address >= start && address <= end);
+            assert!(std::mem::size_of::<usize>() <= end - address);
+        }
+        // SAFETY: caller-backed slots were bounded above; owned output follows
+        // the API's NULL-terminated alias-array contract.
+        let alias = unsafe { *(address as *const *const c_char) };
+        if alias.is_null() {
+            return Some(NetworkRecord {
+                name: string(entry.name),
+                family: entry.family,
+                number: entry.number,
+                aliases,
+            });
+        }
+        aliases.push(string(alias));
+    }
+    panic!("network alias array was not terminated");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NetworkOutcome {
+    status: c_int,
+    error: c_int,
+    resolver_error: c_int,
+    global_resolver_error: c_int,
+    answer: Option<NetworkRecord>,
+}
+
+fn network_call(
+    api: &NetworkApi,
+    request: NetworkRequest<'_>,
+    capacity: Option<usize>,
+    offset: usize,
+) -> NetworkOutcome {
+    if let Some(capacity) = capacity {
+        let mut storage = RpcCallerBuffer([0x5a; 8192 + 16]);
+        assert!(offset + capacity <= storage.0.len());
+        let mut output: NetworkRawRecord = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::dangling_mut();
+        let mut resolver_error = 717;
+        let buffer = unsafe { storage.0.as_mut_ptr().add(offset).cast::<c_char>() };
+        unsafe {
+            *(api.error)() = 619;
+            *(api.resolver_error)() = 811;
+        }
+        // SAFETY: all outputs are complete, writable objects; the exact caller
+        // budget may be short or start at an unaligned byte address.
+        let status = unsafe {
+            match request {
+                NetworkRequest::Name(name) => (api.name_r)(
+                    name.as_ptr(),
+                    (&raw mut output).cast(),
+                    buffer,
+                    capacity,
+                    &mut result,
+                    &mut resolver_error,
+                ),
+                NetworkRequest::Address(number, family) => (api.address_r)(
+                    number,
+                    family,
+                    (&raw mut output).cast(),
+                    buffer,
+                    capacity,
+                    &mut result,
+                    &mut resolver_error,
+                ),
+            }
+        };
+        let error = unsafe { *(api.error)() };
+        let global_resolver_error = unsafe { *(api.resolver_error)() };
+        assert!(
+            storage.0[..offset]
+                .iter()
+                .chain(&storage.0[offset + capacity..])
+                .all(|&byte| byte == 0x5a),
+            "network wrote outside the caller's buffer"
+        );
+        if !result.is_null() {
+            assert_eq!(result, (&raw mut output).cast());
+            assert_eq!(status, 0);
+        }
+        let answer =
+            unsafe { network_record(result, Some((buffer as usize, buffer as usize + capacity))) };
+        NetworkOutcome {
+            status,
+            error,
+            resolver_error,
+            global_resolver_error,
+            answer,
+        }
+    } else {
+        unsafe {
+            *(api.error)() = 619;
+            *(api.resolver_error)() = 811;
+        }
+        // SAFETY: names are live C strings and address keys contain scalars.
+        let result = unsafe {
+            match request {
+                NetworkRequest::Name(name) => (api.name)(name.as_ptr()),
+                NetworkRequest::Address(number, family) => (api.address)(number, family),
+            }
+        };
+        let error = unsafe { *(api.error)() };
+        let resolver_error = unsafe { *(api.resolver_error)() };
+        NetworkOutcome {
+            status: 0,
+            error,
+            resolver_error,
+            global_resolver_error: resolver_error,
+            answer: unsafe { network_record(result, None) },
+        }
+    }
+}
+
+fn configure_networks(host: bool, sources: &CStr) {
+    unsafe extern "C" {
+        fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+    }
+    let configure = if host {
+        __nss_configure_lookup
+    } else {
+        frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup
+    };
+    assert_eq!(
+        unsafe { configure(c"networks".as_ptr(), sources.as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn networks_lookups_match_glibc_module_policy() {
+    const TEST: &str = "networks_lookups_match_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_NETWORK_PROVIDER").unwrap() == "host";
+        let sources = std::env::var("FLTEST_NETWORK_SOURCES").unwrap();
+        configure_networks(host, &CString::new(sources.as_str()).unwrap());
+        unsafe { libc::alarm(20) };
+        let api = network_api(host);
+        let mut transcript = String::new();
+        let queries = [
+            NetworkRequest::Name(c"loopback"),
+            NetworkRequest::Name(c"LOOPBACK"),
+            NetworkRequest::Name(c"fltest-network"),
+            NetworkRequest::Name(c"fltest-net"),
+            NetworkRequest::Name(c"shared-network"),
+            NetworkRequest::Name(c"fltest-large-network"),
+            NetworkRequest::Name(c"missing-network"),
+            NetworkRequest::Name(c"fltest-again"),
+            NetworkRequest::Name(c"fltest-internal-again"),
+            NetworkRequest::Name(c"fltest-range-not-internal"),
+            NetworkRequest::Name(c"fltest-unavail"),
+            NetworkRequest::Name(c"fltest-unavail-range"),
+            NetworkRequest::Name(c"fltest-unavail-range-internal"),
+            NetworkRequest::Name(c"fltest-errno-none"),
+            NetworkRequest::Name(c"fltest-errno-again"),
+            NetworkRequest::Name(c"fltest-errno-unavail"),
+            NetworkRequest::Name(c"fltest-errno-success"),
+            NetworkRequest::Name(c"fltest-errno-written"),
+            NetworkRequest::Name(c"fltest-chain-success"),
+            NetworkRequest::Name(c"fltest-chain-notfound"),
+            NetworkRequest::Address(127, libc::AF_INET),
+            NetworkRequest::Address(0xdead_beef, libc::AF_INET),
+            NetworkRequest::Address(0xdead_beef, libc::AF_UNSPEC),
+            NetworkRequest::Address(0xfedc_ba98, libc::AF_INET),
+            NetworkRequest::Address(0xdead_beef, libc::AF_INET6),
+            NetworkRequest::Address(u32::MAX, libc::AF_INET),
+        ];
+        for query in queries {
+            let mut budgets = vec![(Some(8192), 1), (None, 0)];
+            // Native file parsers can need space for preceding unrelated
+            // lines. Compare tiny exact budgets where the module answers.
+            if sources == "fltest" {
+                budgets.splice(0..0, [(Some(0), 0), (Some(7), 1), (Some(96), 3)]);
+            }
+            for (capacity, offset) in budgets {
+                writeln!(
+                    transcript,
+                    "{query:?} {capacity:?}/{offset} {:?}",
+                    network_call(&api, query, capacity, offset)
+                )
+                .unwrap();
+            }
+        }
+        if sources == "fltest" {
+            let pointer_size = std::mem::size_of::<*mut c_char>();
+            let packed_size = 3 * pointer_size
+                + b"fltest-network\0".len()
+                + b"fltest-net\0".len()
+                + b"shared-network\0".len();
+            for offset in 0..pointer_size {
+                let needed = packed_size + (pointer_size - offset) % pointer_size;
+                let short = network_call(
+                    &api,
+                    NetworkRequest::Name(c"fltest-network"),
+                    Some(needed - 1),
+                    offset,
+                );
+                assert_eq!(
+                    (short.status, short.error, short.resolver_error),
+                    (libc::ERANGE, libc::ERANGE, -1)
+                );
+                assert!(short.answer.is_none());
+                let exact = network_call(
+                    &api,
+                    NetworkRequest::Name(c"fltest-network"),
+                    Some(needed),
+                    offset,
+                );
+                assert_eq!(
+                    (exact.status, exact.error, exact.resolver_error),
+                    (0, 0, 717)
+                );
+                assert_eq!(exact.answer.as_ref().unwrap().number, 0xdead_beef);
+                writeln!(transcript, "exact {needed}/{offset} {short:?} {exact:?}").unwrap();
+            }
+            let large = network_call(&api, NetworkRequest::Name(c"fltest-large-network"), None, 0);
+            assert_eq!(large.answer.as_ref().unwrap().aliases[2], vec![b'n'; 3072]);
+        }
+        println!("NETWORK_LOOKUP_BEGIN\n{transcript}NETWORK_LOOKUP_END");
+        unsafe { libc::alarm(0) };
+        return;
+    }
+
+    let dir = host_enumeration_scratch("network-lookups");
+    build_modules(&dir);
+    let cases = [
+        "fltest",
+        "files",
+        "fltest files",
+        "files fltest",
+        "fltest [SUCCESS=continue] files",
+        "fltest [SUCCESS=continue] fltestnoig",
+        "fltest [SUCCESS=continue] flmissing",
+        "fltest fltestnoig",
+        "fltest [SUCCESS=merge] files",
+        "fltest [NOTFOUND=return] files",
+        "fltest [TRYAGAIN=return] files",
+        "fltest [TRYAGAIN=continue] files",
+        "fltest [UNAVAIL=return] files",
+        "flmissing files",
+        "flmissing [UNAVAIL=return] files",
+        "fltest [TRYAGAIN=continue] flmissing",
+        "fltest [NOTFOUND=continue] flmissing",
+        "flmissing",
+        "compat files",
+    ];
+    let mut compared = 0;
+    for (index, sources) in cases.into_iter().enumerate() {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("network-lookup-{index}-{provider}-{mode}");
+            let mut child =
+                host_module_child(TEST, &dir, &format!("networks: {sources}\n"), &label);
+            child
+                .env("FLTEST_NETWORK_PROVIDER", provider)
+                .env("FLTEST_NETWORK_SOURCES", sources)
+                .env("FRANKENLIBC_MODE", mode)
+                .env_remove("FRANKENLIBC_NETWORKS_PATH")
+                .env_remove("LD_PRELOAD")
+                .env_remove("LD_AUDIT");
+            let output = run_child(child, &label);
+            let stdout = std::str::from_utf8(&output.stdout).unwrap();
+            let transcript = stdout
+                .split_once("NETWORK_LOOKUP_BEGIN\n")
+                .and_then(|(_, rest)| rest.split_once("NETWORK_LOOKUP_END"))
+                .map(|(text, _)| text)
+                .expect("executed network lookup transcript")
+                .to_owned();
+            assert!(transcript.lines().count() >= 48);
+            if sources == "fltest" {
+                assert!(
+                    transcript.contains("number: 3735928559")
+                        && transcript.contains("number: 4275878552"),
+                    "modules must preserve complete unsigned network numbers"
+                );
+            }
+            if let Some(expected) = &oracle {
+                assert_eq!(&transcript, expected, "{label}: sources={sources}");
+                compared += 1;
+            } else {
+                oracle = Some(transcript);
+            }
+        }
+    }
+    assert_eq!(compared, 38);
+    eprintln!("Network lookups: {compared} independent GNU/candidate process comparisons");
+}
+
+static NETWORK_REENTRY_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+unsafe extern "C" fn network_lookup_reentry() -> c_int {
+    use frankenlibc_abi::unistd_abi as u;
+    NETWORK_REENTRY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: this independent name lookup runs inside another name callback.
+    // The outer lookup must have released its mutable TLS storage borrow.
+    unsafe {
+        let result = u::getnetbyname(c"fltest-network".as_ptr()).cast::<NetworkRawRecord>();
+        if result.is_null() || (*result).number != 0xdead_beef {
+            return 1;
+        }
+    }
+    0
+}
+
+#[test]
+fn networks_runtime_policy_files_and_callback_isolation() {
+    const TEST: &str = "networks_runtime_policy_files_and_callback_isolation";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        use frankenlibc_abi::unistd_abi as u;
+        unsafe { libc::alarm(20) };
+        let api = network_api(false);
+        let files = NetworkRequest::Name(c"native-alias");
+        let initial = network_call(&api, files, Some(8192), 1);
+        assert_eq!(initial.answer.as_ref().unwrap().number, 0xabcd_ef01);
+        configure_networks(false, c"fltest");
+        assert!(network_call(&api, files, Some(8192), 1).answer.is_none());
+        assert_eq!(
+            network_call(&api, NetworkRequest::Name(c"fltest-net"), None, 0)
+                .answer
+                .as_ref()
+                .unwrap()
+                .number,
+            0xdead_beef
+        );
+
+        unsafe {
+            let previous =
+                u::getnetbyname(c"fltest-growing-key".as_ptr()).cast::<NetworkRawRecord>();
+            assert!(!previous.is_null());
+            // The key lives inside reusable output that must grow during the
+            // next lookup; it must be retained before any possible relocation.
+            let grown = u::getnetbyname((*previous).name);
+            assert_eq!(
+                network_record(grown, None).unwrap().aliases[2],
+                vec![b'n'; 3072]
+            );
+            let by_name = u::getnetbyname(c"fltest-network".as_ptr());
+            let before = network_record(by_name, None).unwrap();
+            let by_address = u::getnetbyaddr(0xfedc_ba98, libc::AF_INET);
+            assert_eq!(
+                network_record(by_address, None).unwrap().number,
+                0xfedc_ba98
+            );
+            assert_eq!(network_record(by_name, None).unwrap(), before);
+        }
+
+        let mut output: NetworkRawRecord = unsafe { std::mem::zeroed() };
+        let mut storage = RpcCallerBuffer([0x5a; 8192 + 16]);
+        let buffer = unsafe { storage.0.as_mut_ptr().add(1).cast::<c_char>() };
+        let mut error = 717;
+        let mut resolver_error = 811;
+        // Direct files providers must never inherit public module overrides.
+        unsafe {
+            *(api.error)() = 619;
+            assert_eq!(
+                u::_nss_files_getnetbyname_r(
+                    c"native-alias".as_ptr(),
+                    (&raw mut output).cast(),
+                    buffer,
+                    8192,
+                    &mut error,
+                    &mut resolver_error,
+                ),
+                1
+            );
+            assert_eq!((*(api.error)(), error, resolver_error), (619, 717, 811));
+            assert_eq!(output.number, 0xabcd_ef01);
+            let record = network_record(
+                (&raw mut output).cast(),
+                Some((buffer as usize, buffer as usize + 8192)),
+            )
+            .unwrap();
+            assert_eq!(record.name, b"native-network");
+            assert_eq!(record.aliases, [b"native-alias".to_vec()]);
+            assert_eq!(
+                u::_nss_files_getnetbyaddr_r(
+                    0xabcd_ef01,
+                    libc::AF_INET,
+                    (&raw mut output).cast(),
+                    buffer,
+                    8192,
+                    &mut error,
+                    &mut resolver_error,
+                ),
+                1
+            );
+            assert_eq!(output.number, 0xabcd_ef01);
+            assert_eq!(
+                u::_nss_files_getnetbyname_r(
+                    c"fltest-net".as_ptr(),
+                    (&raw mut output).cast(),
+                    buffer,
+                    8192,
+                    &mut error,
+                    &mut resolver_error,
+                ),
+                0
+            );
+            assert_eq!((error, resolver_error), (717, 1));
+
+            u::setnetent(0);
+            let published = u::getnetent();
+            let before = network_record(published, None).unwrap();
+            assert_eq!(before.number, 0xabcd_ef01);
+            let keyed = network_call(&api, NetworkRequest::Name(c"fltest-large-network"), None, 0);
+            assert_eq!(keyed.answer.as_ref().unwrap().number, 0xfedc_ba98);
+            assert_eq!(network_record(published, None).unwrap(), before);
+            u::endnetent();
+        }
+
+        configure_networks(false, c"files");
+        assert_eq!(
+            network_call(&api, files, None, 0)
+                .answer
+                .as_ref()
+                .unwrap()
+                .number,
+            0xabcd_ef01
+        );
+        configure_rpc(false, c"flmissing");
+        assert_eq!(
+            network_call(&api, files, None, 0)
+                .answer
+                .as_ref()
+                .unwrap()
+                .number,
+            0xabcd_ef01
+        );
+        configure_networks(false, c"fltest");
+        unsafe {
+            let handle = libc::dlopen(c"libnss_fltest.so.2".as_ptr(), libc::RTLD_NOW);
+            assert!(!handle.is_null());
+            let symbol = libc::dlsym(handle, c"_nss_fltest_set_network_reentry".as_ptr());
+            assert!(!symbol.is_null());
+            let install: unsafe extern "C" fn(Option<unsafe extern "C" fn() -> c_int>) =
+                std::mem::transmute(symbol);
+            install(Some(network_lookup_reentry));
+            let nested = network_call(&api, NetworkRequest::Name(c"fltest-reentry"), None, 0);
+            assert_eq!(nested.answer.as_ref().unwrap().number, 0xdead_beef);
+            assert_eq!(
+                NETWORK_REENTRY_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+                1
+            );
+            install(None);
+            assert_eq!(libc::dlclose(handle), 0);
+        }
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let workers = (0..4)
+            .map(|index| {
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let number = if index % 2 == 0 {
+                        0xdead_beef
+                    } else {
+                        0xfedc_ba98
+                    };
+                    // SAFETY: each thread's non-reentrant answer must remain its
+                    // own while all other threads simultaneously retain answers.
+                    let result = unsafe { u::getnetbyaddr(number, libc::AF_INET) };
+                    assert!(!result.is_null());
+                    barrier.wait();
+                    let record = unsafe { network_record(result, None) }.unwrap();
+                    assert_eq!(record.number, number);
+                    if index % 2 != 0 {
+                        assert_eq!(record.aliases[2], vec![b'n'; 3072]);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        unsafe { libc::alarm(0) };
+        return;
+    }
+    let dir = host_enumeration_scratch("network-isolation");
+    build_modules(&dir);
+    let path = dir.join("networks");
+    std::fs::write(
+        &path,
+        "native-network 171.205.239.1 native-alias\nsecond-network 10\n",
+    )
+    .unwrap();
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(TEST, &dir, "networks: files\n", mode);
+        child
+            .env("FRANKENLIBC_NETWORKS_PATH", &path)
+            .env("FRANKENLIBC_MODE", mode)
+            .env_remove("LD_PRELOAD")
+            .env_remove("LD_AUDIT");
+        run_child(
+            child,
+            &format!("networks files, overrides and callback isolation {mode}"),
+        );
+    }
+}
+
 // RPC has the same scalar field widths as protocols, but a separate public ABI
 // and different errno rules. Keep its provider pointers and result layout
 // explicit so a host/candidate comparison cannot call the same implementation.

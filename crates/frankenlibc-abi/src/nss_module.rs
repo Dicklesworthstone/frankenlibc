@@ -55,12 +55,12 @@ struct ConfigCache {
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 9],
+    parsed: [Option<Arc<Vec<Service>>>; 10],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
     /// Process-local overrides are independent of the on-disk image. A
     /// fingerprint or path change must never erase an explicit selection.
-    overrides: [Option<Arc<Vec<Service>>>; 9],
+    overrides: [Option<Arc<Vec<Service>>>; 10],
     hosts_override: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     hosts_parsed: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     /// GNU freezes the whole configuration on the first successful runtime
@@ -73,9 +73,9 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None, None, None, None, None, None],
+    parsed: [None, None, None, None, None, None, None, None, None, None],
     initgroups_explicit: None,
-    overrides: [None, None, None, None, None, None, None, None, None],
+    overrides: [None, None, None, None, None, None, None, None, None, None],
     hosts_override: None,
     hosts_parsed: None,
     frozen: false,
@@ -108,6 +108,7 @@ pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), Confi
         b"publickey" => Database::Publickey,
         b"services" => Database::Services,
         b"protocols" => Database::Protocols,
+        b"networks" => Database::Networks,
         b"rpc" => Database::Rpc,
         b"netgroup" => Database::Netgroup,
         _ => return Err(ConfigureError::UnknownDatabase),
@@ -130,7 +131,7 @@ fn freeze_config(cache: &mut ConfigCache, read: fn(&ConfigCache) -> Option<Vec<u
     if !cache.frozen {
         cache.snapshot = read(cache);
         cache.frozen = true;
-        cache.parsed = [None, None, None, None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -169,6 +170,7 @@ fn database_slot(database: Database) -> usize {
         Database::Netgroup => 6,
         Database::Protocols => 7,
         Database::Rpc => 8,
+        Database::Networks => 9,
     }
 }
 
@@ -279,7 +281,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -1171,6 +1173,66 @@ pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_
     // SAFETY: these NSS end callbacks take no arguments and return nss_status.
     let function: EndEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function() })
+}
+
+/// Invoke a networks provider with the caller's exact buffer and error slots.
+/// Absence is distinct from a callback returning UNAVAIL: skipping a missing
+/// later module must retain the last callback's status and resolver error.
+///
+/// # Safety
+/// Any name is a live terminated string. The complete netent, buf[..len] and
+/// h_errnop are writable and remain live throughout the foreign callback.
+pub(crate) unsafe fn network_entry_r(
+    service: &[u8],
+    key: crate::unistd_abi::NetworkKey,
+    out: *mut crate::unistd_abi::NetEnt,
+    buf: *mut c_char,
+    len: usize,
+    h_errnop: *mut c_int,
+) -> Option<c_int> {
+    use crate::unistd_abi::{NetEnt, NetworkKey};
+    let function = match key {
+        NetworkKey::Name(_) => "getnetbyname_r",
+        NetworkKey::Address(..) => "getnetbyaddr_r",
+    };
+    // SAFETY: this is the current thread's canonical errno cell.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    let saved_errno = unsafe { *error };
+    let address = module_function(service, function);
+    // Loader bookkeeping is not a provider answer.
+    unsafe { crate::errno_abi::set_abi_errno(saved_errno) };
+    let address = address?;
+    // SAFETY: the selected symbol fixes the NSS callback ABI. The validated
+    // caller storage and owned name remain live across this call.
+    Some(unsafe {
+        match key {
+            NetworkKey::Name(name) => {
+                type ByName = unsafe extern "C" fn(
+                    *const c_char,
+                    *mut NetEnt,
+                    *mut c_char,
+                    usize,
+                    *mut c_int,
+                    *mut c_int,
+                ) -> c_int;
+                let call: ByName = core::mem::transmute(address);
+                call(name, out, buf, len, error, h_errnop)
+            }
+            NetworkKey::Address(number, family) => {
+                type ByAddress = unsafe extern "C" fn(
+                    u32,
+                    c_int,
+                    *mut NetEnt,
+                    *mut c_char,
+                    usize,
+                    *mut c_int,
+                    *mut c_int,
+                ) -> c_int;
+                let call: ByAddress = core::mem::transmute(address);
+                call(number, family, out, buf, len, error, h_errnop)
+            }
+        }
+    })
 }
 
 /// Dispatch an RPC lookup with the caller's exact buffer. Provider errno

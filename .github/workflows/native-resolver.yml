@@ -335,6 +335,24 @@ jobs:
             -- --test-threads=1 --nocapture 2>&1 | tee artifacts/network-database/tests.log
           grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
             artifacts/network-database/tests.log
+      - name: Compare configured network lookups and callback isolation with GNU
+        if: always()
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/network-database
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          # Both tests run strict and hardened candidate subprocesses. The
+          # policy matrix also resolves an independent live GNU provider.
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test networks_ -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/network-database/modules.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+            artifacts/network-database/modules.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

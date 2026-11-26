@@ -28,7 +28,7 @@ pub(crate) struct RpcEnt {
 }
 
 #[repr(C)]
-struct NetEnt {
+pub(crate) struct NetEnt {
     n_name: *mut c_char,
     n_aliases: *mut *mut c_char,
     n_addrtype: c_int,
@@ -23118,6 +23118,10 @@ struct NetIterState {
     pending_line: bool,
     entry: NetEnt,
     entry_buf: Vec<u8>,
+    name_entry: NetEnt,
+    name_buf: Vec<u8>,
+    address_entry: NetEnt,
+    address_buf: Vec<u8>,
 }
 
 impl NetIterState {
@@ -23134,6 +23138,20 @@ impl NetIterState {
                 n_net: 0,
             },
             entry_buf: Vec::new(),
+            name_entry: NetEnt {
+                n_name: std::ptr::null_mut(),
+                n_aliases: std::ptr::null_mut(),
+                n_addrtype: libc::AF_INET,
+                n_net: 0,
+            },
+            name_buf: Vec::new(),
+            address_entry: NetEnt {
+                n_name: std::ptr::null_mut(),
+                n_aliases: std::ptr::null_mut(),
+                n_addrtype: libc::AF_INET,
+                n_net: 0,
+            },
+            address_buf: Vec::new(),
         }
     }
 }
@@ -23331,7 +23349,7 @@ pub unsafe extern "C" fn getnetent() -> *mut c_void {
 }
 
 #[derive(Clone, Copy)]
-enum NetworkKey {
+pub(crate) enum NetworkKey {
     Name(*const c_char),
     Address(u32, c_int),
 }
@@ -23360,43 +23378,265 @@ unsafe fn network_entry(key: NetworkKey) -> Result<Option<NetworkEntry>, c_int> 
 }
 
 unsafe fn network_lookup(key: NetworkKey) -> *mut c_void {
-    // SAFETY: the public caller supplies any name referenced by key.
-    let outcome = unsafe { network_entry(key) }.and_then(|entry| match entry {
-        Some(entry) => with_net_iter_state(|state| {
-            // SAFETY: state owns its complete typed header and answer storage.
-            unsafe { store_network_entry(state, &entry) }
-        }),
-        None => Ok(std::ptr::null_mut()),
-    });
-    // SAFETY: this is the calling thread's canonical h_errno cell.
+    let mut storage = NetworkLookupBuffer::take(key);
+    let mut entry = std::mem::MaybeUninit::<NetEnt>::uninit();
+    let mut capacity = storage.bytes.len().max(1024);
+    // SAFETY: this is the calling thread's canonical resolver error cell.
     let h_errnop = unsafe { crate::resolv_abi::__h_errno_location() };
-    match outcome {
-        Ok(result) => {
-            // SAFETY: GNU keyed lookups clear errno, but preserve h_errno on success.
+    loop {
+        if capacity > storage.bytes.len() {
+            if storage
+                .bytes
+                .try_reserve_exact(capacity - storage.bytes.len())
+                .is_err()
+            {
+                // SAFETY: both error slots belong to the calling thread.
+                unsafe { network_public_lookup_result(Err(libc::ENOMEM), h_errnop) };
+                return std::ptr::null_mut();
+            }
+            storage.bytes.resize(capacity, 0);
+        }
+        let mut result = std::ptr::null_mut();
+        // SAFETY: the complete local header and leased scratch are writable;
+        // no mutable TLS borrow spans the configured provider callbacks.
+        let rc = unsafe {
+            network_configured_lookup_r(
+                key,
+                entry.as_mut_ptr().cast(),
+                storage.bytes.as_mut_ptr().cast(),
+                capacity,
+                &mut result,
+                h_errnop,
+            )
+        };
+        if rc == libc::ERANGE && unsafe { *h_errnop == NSS_NETDB_INTERNAL } {
+            let Some(next) = capacity
+                .checked_mul(2)
+                .filter(|&size| size <= isize::MAX as usize)
+            else {
+                // SAFETY: both error slots belong to the calling thread.
+                unsafe { network_public_lookup_result(Err(libc::ENOMEM), h_errnop) };
+                return std::ptr::null_mut();
+            };
+            capacity = next;
+            continue;
+        }
+        if result.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: only a successful final provider publishes a result.
+        let entry = unsafe { entry.assume_init() };
+        drop(storage);
+        return with_net_iter_state(|state| {
+            let output = match key {
+                NetworkKey::Name(_) => &mut state.name_entry,
+                NetworkKey::Address(..) => &mut state.address_entry,
+            };
+            *output = entry;
+            (output as *mut NetEnt).cast()
+        });
+    }
+}
+
+/// Move keyed-result storage out of TLS before calling a provider. A nested
+/// lookup gets independent scratch. Name, address and enumeration APIs retain
+/// separate buffers, including independent growth and resolver-error history.
+struct NetworkLookupBuffer {
+    bytes: Vec<u8>,
+    address: bool,
+}
+
+impl NetworkLookupBuffer {
+    fn take(key: NetworkKey) -> Self {
+        let saved_errno = current_abi_errno();
+        let address = matches!(key, NetworkKey::Address(..));
+        let bytes = with_net_iter_state(|state| {
+            std::mem::take(if address {
+                &mut state.address_buf
+            } else {
+                &mut state.name_buf
+            })
+        });
+        let storage = Self { bytes, address };
+        // SAFETY: TLS initialization must not replace the caller's errno.
+        unsafe { set_abi_errno(saved_errno) };
+        storage
+    }
+}
+
+impl Drop for NetworkLookupBuffer {
+    fn drop(&mut self) {
+        let saved_errno = current_abi_errno();
+        let buffer = std::mem::take(&mut self.bytes);
+        with_net_iter_state(|state| {
+            if self.address {
+                state.address_buf = buffer;
+            } else {
+                state.name_buf = buffer;
+            }
+        });
+        // SAFETY: restoring storage must preserve the completed lookup error.
+        unsafe { set_abi_errno(saved_errno) };
+    }
+}
+
+/// Follow one immutable networks policy without holding configuration or TLS
+/// borrows across foreign callbacks. Missing symbols participate in UNAVAIL
+/// actions without replacing the last callback's actual answer.
+unsafe fn network_configured_lookup_r(
+    key: NetworkKey,
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+) -> c_int {
+    use frankenlibc_core::nss::{Action, Database, Status};
+    let saved_errno = current_abi_errno();
+    // SAFETY: clear the result before any lookup, even when another output is
+    // invalid. Unlike files parsing, modules must see the exact tiny budget.
+    let prepared = unsafe { network_prepare_result(result_buf, buffer, result) };
+    let mut ignored_herr = 0;
+    let h_errnop = if h_errnop.is_null() {
+        &raw mut ignored_herr
+    } else {
+        h_errnop
+    };
+    if !tracked_object_fits::<c_int>(h_errnop) {
+        // SAFETY: the result is already NULL, and errno is thread-local.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EINVAL;
+    }
+    if let Err(error) = prepared {
+        // SAFETY: the optional resolver slot was validated before any write.
+        return unsafe { network_public_lookup_result(Err(error), h_errnop) };
+    }
+    // Own a stable name before a callback can write into caller output that
+    // aliases it. The original tracked string is scanned only within bounds.
+    let mut name = match key {
+        NetworkKey::Name(pointer) => {
+            let Some(name) = (unsafe { read_c_string_bytes(pointer) }) else {
+                return unsafe { network_public_lookup_result(Err(libc::EINVAL), h_errnop) };
+            };
+            name
+        }
+        NetworkKey::Address(..) => Vec::new(),
+    };
+    let key = match key {
+        NetworkKey::Name(_) => {
+            name.push(0);
+            NetworkKey::Name(name.as_ptr().cast())
+        }
+        key => key,
+    };
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let sources = crate::nss_module::services(Database::Networks);
+    // SAFETY: configuration I/O is not part of the provider's error result.
+    unsafe { set_abi_errno(saved_errno) };
+    let mut status = Status::Unavailable;
+    let mut called = false;
+    for source in sources.iter() {
+        // SAFETY: all output objects are validated, and the owned key remains
+        // live throughout each invocation. Only the final answer is published.
+        let answer = unsafe {
+            if source.name() == b"files" {
+                let error = current_abi_errno();
+                let mut files_result = std::ptr::null_mut();
+                let outcome =
+                    network_lookup_result(key, result_buf, buffer, capacity, &mut files_result);
+                Some(network_nss_result(
+                    outcome,
+                    buffer,
+                    capacity,
+                    crate::errno_abi::__errno_location(),
+                    h_errnop,
+                    error,
+                ))
+            } else {
+                crate::nss_module::network_entry_r(
+                    source.name(),
+                    key,
+                    result_buf.cast(),
+                    buffer,
+                    capacity,
+                    h_errnop,
+                )
+            }
+        };
+        let Some(answer) = answer else {
+            if source.action(Status::Unavailable) != Action::Continue {
+                break;
+            }
+            continue;
+        };
+        called = true;
+        status = Status::from_raw(answer);
+        if status == Status::Success && source.action(status) == Action::Merge {
+            // Networks have no composite-record merge operation. GNU rejects
+            // SUCCESS=merge even when this is the final configured source.
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return libc::EINVAL;
+        }
+        // ERANGE requests buffer growth only with NETDB_INTERNAL. Other
+        // TRYAGAIN answers still follow their configured continuation action.
+        let short_buffer = status == Status::TryAgain
+            && current_abi_errno() == libc::ERANGE
+            && unsafe { *h_errnop == NSS_NETDB_INTERNAL };
+        if short_buffer || source.action(status) != Action::Continue {
+            break;
+        }
+    }
+    if !called {
+        // SAFETY: an entirely unavailable source list has no resolver answer.
+        unsafe { nss_set_herr(h_errnop, NSS_NETDB_INTERNAL) };
+    }
+    match status {
+        Status::Success => {
+            // SAFETY: the last invoked successful provider filled this header.
             unsafe {
+                result.write(result_buf);
                 set_abi_errno(0);
-                if result.is_null() {
-                    nss_set_herr_host_not_found(h_errnop);
-                }
             }
-            result
+            0
         }
-        Err(error) => {
-            // SAFETY: both error slots belong to this thread.
-            unsafe {
-                set_abi_errno(error);
-                nss_set_herr(h_errnop, NSS_NETDB_INTERNAL);
-            }
-            std::ptr::null_mut()
+        Status::NotFound => {
+            // SAFETY: a definitive miss preserves the provider's resolver error.
+            unsafe { set_abi_errno(0) };
+            0
         }
+        Status::TryAgain if unsafe { *h_errnop != NSS_NETDB_INTERNAL } => {
+            // SAFETY: GNU normalizes a resolver retry to EAGAIN in both channels.
+            unsafe { set_abi_errno(libc::EAGAIN) };
+            libc::EAGAIN
+        }
+        Status::Unavailable if current_abi_errno() == libc::ERANGE => {
+            // ERANGE is reserved for a retryable short buffer. An unavailable
+            // provider cannot request growth, regardless of its resolver error.
+            unsafe { set_abi_errno(libc::EINVAL) };
+            libc::EINVAL
+        }
+        Status::TryAgain | Status::Unavailable => current_abi_errno(),
     }
 }
 
 /// `getnetbyname` — match a canonical network name or any alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
-    // SAFETY: forward the public C-string contract to the shared native lookup.
-    unsafe { network_lookup(NetworkKey::Name(name)) }
+    // Own the key before taking or growing the reusable result buffer: callers
+    // may pass a name returned by the previous non-reentrant lookup.
+    let Some(mut name) = (unsafe { read_c_string_bytes(name) }) else {
+        // SAFETY: the canonical resolver error belongs to this thread.
+        unsafe {
+            network_public_lookup_result(
+                Err(libc::EINVAL),
+                crate::resolv_abi::__h_errno_location(),
+            );
+        }
+        return std::ptr::null_mut();
+    };
+    name.push(0);
+    // SAFETY: the owned, terminated name survives every scratch-buffer retry.
+    unsafe { network_lookup(NetworkKey::Name(name.as_ptr().cast())) }
 }
 
 /// `getnetbyaddr` — match a host-order network number and address family.
@@ -33449,6 +33689,19 @@ unsafe fn network_prepare_output(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> Result<(), c_int> {
+    // SAFETY: the shared preflight clears the caller result before any I/O.
+    unsafe { network_prepare_result(result_buf, buf, result) }?;
+    if tracked_output_capacity(buf, buflen) < 3 {
+        return Err(libc::ERANGE);
+    }
+    Ok(())
+}
+
+unsafe fn network_prepare_result(
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
     if !tracked_object_fits::<*mut c_void>(result) {
         return Err(libc::EINVAL);
     }
@@ -33456,9 +33709,6 @@ unsafe fn network_prepare_output(
     unsafe { *result = std::ptr::null_mut() };
     if !tracked_object_fits::<NetEnt>(result_buf.cast()) || buf.is_null() {
         return Err(libc::EINVAL);
-    }
-    if tracked_output_capacity(buf, buflen) < 3 {
-        return Err(libc::ERANGE);
     }
     Ok(())
 }
@@ -33564,17 +33814,16 @@ pub unsafe extern "C" fn getnetbyaddr_r(
     h_errnop: *mut c_int,
 ) -> c_int {
     // SAFETY: forward checked scalar key and caller-owned output objects.
-    let outcome = unsafe {
-        network_lookup_result(
+    unsafe {
+        network_configured_lookup_r(
             NetworkKey::Address(net, addr_type),
             result_buf,
             buf,
             buflen,
             result,
+            h_errnop,
         )
-    };
-    // SAFETY: optional resolver error output is writable when supplied.
-    unsafe { network_public_lookup_result(outcome, h_errnop) }
+    }
 }
 
 /// `getnetbyname_r` — reentrant network lookup by name.
@@ -33588,10 +33837,16 @@ pub unsafe extern "C" fn getnetbyname_r(
     h_errnop: *mut c_int,
 ) -> c_int {
     // SAFETY: the helper bounds the caller's C name and complete output layout.
-    let outcome =
-        unsafe { network_lookup_result(NetworkKey::Name(name), result_buf, buf, buflen, result) };
-    // SAFETY: optional resolver error output is writable when supplied.
-    unsafe { network_public_lookup_result(outcome, h_errnop) }
+    unsafe {
+        network_configured_lookup_r(
+            NetworkKey::Name(name),
+            result_buf,
+            buf,
+            buflen,
+            result,
+            h_errnop,
+        )
+    }
 }
 
 /// `getnetent_r` — reentrant sequential network entry read.

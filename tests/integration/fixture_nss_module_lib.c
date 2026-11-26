@@ -344,6 +344,125 @@ enum nss_status FN(getprotoent_r)(struct protoent *out, char *buf, size_t len,
   return status;
 }
 
+static int (*network_reentry)(void);
+void FN(set_network_reentry)(int (*callback)(void)) { network_reentry = callback; }
+
+/* Network numbers are host-order uint32_t values. Successful callbacks may
+ * preserve either caller error slot, so exercise their independent lifetimes. */
+static enum nss_status fill_network(const char *name, uint32_t number, int large,
+                                   struct netent *out, char *buf, size_t len,
+                                   int *errnop, int *h_errnop) {
+  size_t pad = (sizeof(char *) - (uintptr_t)buf % sizeof(char *)) % sizeof(char *);
+  size_t count = large ? 3 : 2;
+  size_t need = pad + (count + 1) * sizeof(char *) + strlen(name) + 1 +
+                sizeof "fltest-net" + sizeof "shared-network" +
+                (large ? 3073 : 0);
+  if (len < need) {
+    *errnop = ERANGE;
+    *h_errnop = NETDB_INTERNAL;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  char **aliases = (char **)(buf + pad);
+  char *cur = (char *)(aliases + count + 1), *end = buf + len;
+  out->n_name = put(&cur, end, name);
+  out->n_addrtype = AF_INET;
+  out->n_net = number;
+  out->n_aliases = aliases;
+  aliases[0] = put(&cur, end, "fltest-net");
+  aliases[1] = put(&cur, end, "shared-network");
+  if (large) {
+    aliases[2] = cur;
+    memset(cur, 'n', 3072);
+    cur[3072] = '\0';
+  }
+  aliases[count] = NULL;
+  *errnop = 0;
+  return NSS_STATUS_SUCCESS;
+}
+enum nss_status FN(getnetbyname_r)(const char *name, struct netent *out,
+                                  char *buf, size_t len, int *errnop,
+                                  int *h_errnop) {
+  trace("getnetbyname_r", name);
+  enum nss_status status;
+  if (forced(&status, errnop)) {
+    *h_errnop = status == NSS_STATUS_TRYAGAIN ? TRY_AGAIN : NO_RECOVERY;
+    return status;
+  }
+  if (!strcmp(name, "fltest-reentry")) {
+    if (network_reentry && network_reentry()) {
+      *errnop = EIO; *h_errnop = NETDB_INTERNAL; return NSS_STATUS_UNAVAIL;
+    }
+    return fill_network("fltest-network", 0xdeadbeefU, 0, out, buf, len,
+                        errnop, h_errnop);
+  }
+  if (!strcmp(name, "fltest-errno-none")) return NSS_STATUS_NOTFOUND;
+  if (!strcmp(name, "fltest-errno-again")) return NSS_STATUS_TRYAGAIN;
+  if (!strcmp(name, "fltest-errno-unavail")) return NSS_STATUS_UNAVAIL;
+  if (!strcmp(name, "fltest-again")) {
+    *errnop = EIO; *h_errnop = TRY_AGAIN; return NSS_STATUS_TRYAGAIN;
+  }
+  if (!strcmp(name, "fltest-internal-again")) {
+    *errnop = EIO; *h_errnop = NETDB_INTERNAL; return NSS_STATUS_TRYAGAIN;
+  }
+  if (!strcmp(name, "fltest-unavail")) {
+    *errnop = ENOSYS; *h_errnop = NO_RECOVERY; return NSS_STATUS_UNAVAIL;
+  }
+  if (!strcmp(name, "fltest-unavail-range")) {
+    *errnop = ERANGE; *h_errnop = NO_RECOVERY; return NSS_STATUS_UNAVAIL;
+  }
+  if (!strcmp(name, "fltest-unavail-range-internal")) {
+    *errnop = ERANGE; *h_errnop = NETDB_INTERNAL; return NSS_STATUS_UNAVAIL;
+  }
+  if (!strcmp(name, "fltest-range-not-internal")) {
+    *errnop = ERANGE; *h_errnop = TRY_AGAIN; return NSS_STATUS_TRYAGAIN;
+  }
+  if (!strcmp(name, "fltest-errno-success") || !strcmp(name, "fltest-errno-written")) {
+    int saved = *errnop;
+    status = fill_network("errno-unchanged", 0xdeadbeefU, 0, out, buf, len,
+                          errnop, h_errnop);
+    if (status == NSS_STATUS_SUCCESS)
+      *errnop = !strcmp(name, "fltest-errno-written") ? EIO : saved;
+    return status;
+  }
+  if (!strcmp(name, "fltest-chain-success") || !strcmp(name, "fltest-chain-notfound")) {
+    if (strcmp(STR(SERVICE), "fltest")) return NSS_STATUS_UNAVAIL;
+    if (!strcmp(name, "fltest-chain-notfound")) {
+      *errnop = EIO; *h_errnop = NO_DATA; return NSS_STATUS_NOTFOUND;
+    }
+    status = fill_network("chain", 0xdeadbeefU, 0, out, buf, len, errnop, h_errnop);
+    if (status == NSS_STATUS_SUCCESS) *errnop = EIO;
+    return status;
+  }
+  if (!strcmp(name, "loopback"))
+    return fill_network("module-loopback", 127, 0, out, buf, len, errnop, h_errnop);
+  if (!strcmp(name, "fltest-growing-key"))
+    return fill_network("fltest-large-network", 0xdeadbeefU, 0, out, buf, len,
+                        errnop, h_errnop);
+  int large = !strcmp(name, "fltest-large-network");
+  if (!large && strcmp(name, "fltest-network") && strcmp(name, "fltest-net") &&
+      strcmp(name, "shared-network")) {
+    *errnop = ENOENT; *h_errnop = HOST_NOT_FOUND; return NSS_STATUS_NOTFOUND;
+  }
+  return fill_network("fltest-network", large ? 0xfedcba98U : 0xdeadbeefU,
+                      large, out, buf, len, errnop, h_errnop);
+}
+enum nss_status FN(getnetbyaddr_r)(uint32_t number, int family, struct netent *out,
+                                  char *buf, size_t len, int *errnop,
+                                  int *h_errnop) {
+  trace("getnetbyaddr_r", NULL);
+  enum nss_status status;
+  if (forced(&status, errnop)) {
+    *h_errnop = status == NSS_STATUS_TRYAGAIN ? TRY_AGAIN : NO_RECOVERY;
+    return status;
+  }
+  if ((family != AF_INET && family != AF_UNSPEC) ||
+      (number != 127 && number != 0xdeadbeefU && number != 0xfedcba98U)) {
+    *errnop = ENOENT; *h_errnop = HOST_NOT_FOUND; return NSS_STATUS_NOTFOUND;
+  }
+  return fill_network(number == 127 ? "module-loopback" : "fltest-network",
+                      number, number == 0xfedcba98U, out, buf, len, errnop, h_errnop);
+}
+
 static enum nss_status fill_rpc(const char *name, int number, int large,
                                struct rpcent *out, char *buf, size_t len,
                                int *errnop) {
