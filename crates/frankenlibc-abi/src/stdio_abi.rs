@@ -10963,14 +10963,23 @@ unsafe extern "C-unwind" fn extension_snprintf_write(
 }
 
 fn extension_bounded_writer(stream: *mut c_void) -> Option<*mut StrictDirectSnprintfWriter> {
-    if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+    if stream.is_null() || !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
         return None;
     }
     let id = canonical_stream_id(stream);
+    let writer = |info: &CookieStreamInfo| {
+        (info.funcs.write? as usize == extension_snprintf_write as *const () as usize)
+            .then_some(info.cookie.cast())
+    };
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        return (aux.id == id)
+            .then_some(aux.cookie.as_ref())
+            .flatten()
+            .and_then(writer);
+    }
     let registry = lock_cookie_registry();
-    let info = registry.as_ref()?.get(&id)?;
-    (info.funcs.write? as usize == extension_snprintf_write as *const () as usize)
-        .then_some(info.cookie.cast())
+    registry.as_ref()?.get(&id).and_then(writer)
 }
 
 unsafe extern "C-unwind" fn extension_descriptor_write(

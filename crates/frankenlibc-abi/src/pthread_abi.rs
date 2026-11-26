@@ -4049,7 +4049,8 @@ fn ext_pi_acquire(
             // A normal PI mutex may report a wait cycle (including self
             // locking) or a vanished non-robust owner. Neither grants the
             // mutex, but a timed caller must still finish at its deadline.
-            (Err(error), Some(d)) if error == libc::EDEADLK || (!robust && error == libc::ESRCH) =>
+            (Err(error), Some(d))
+                if error == libc::EDEADLK || (!robust && error == libc::ESRCH) =>
             {
                 loop {
                     // SAFETY: d.time is the caller's live absolute deadline.
@@ -7454,7 +7455,10 @@ fn current_native_cancellation_wait() -> Option<CancellationWait> {
     if let Some(wait) = core_current_cancellation_wait() {
         return Some(wait);
     }
-    if host_cancellation_thread() {
+    // A registered native thread returning no wait descriptor is disabled or
+    // exiting. Its owned state is authoritative; inherited TLS must not create
+    // a second, unregistered wait word for the same thread.
+    if core_current_thread_handle().is_some() || host_cancellation_thread() {
         return None;
     }
     let enabled = with_pthread_tls(|tls| {
@@ -11293,7 +11297,11 @@ unsafe fn mutex_timedlock(
     timed_futex_lock_normal(word, clock, abstime)
 }
 
-fn timed_futex_lock_normal(word: &AtomicI32, clock: c_int, abstime: *const libc::timespec) -> c_int {
+fn timed_futex_lock_normal(
+    word: &AtomicI32,
+    clock: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
     if word
         .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
@@ -11821,12 +11829,8 @@ pub unsafe extern "C" fn pthread_sigqueue(
     match resolve_thread_tid(thread) {
         Some(tid) => {
             let pid = raw_syscall::sys_getpid();
-            let info = crate::signal_abi::queued_signal_info(
-                sig,
-                pid,
-                raw_syscall::sys_getuid(),
-                value,
-            );
+            let info =
+                crate::signal_abi::queued_signal_info(sig, pid, raw_syscall::sys_getuid(), value);
             match unsafe {
                 raw_syscall::sys_rt_tgsigqueueinfo(
                     pid,
