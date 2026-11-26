@@ -2971,19 +2971,7 @@ pub unsafe extern "C" fn user_from_uid(uid: libc::uid_t, nouser: c_int) -> *cons
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub fn with_identity_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> R {
-    with_pwd_storage(|_| {
-        with_shadow_storage(|_| {
-            with_gshadow_storage(|_| {
-                with_pw_pending(|pending| {
-                    let _passwd = pending.borrow_mut();
-                    with_sp_pending(|pending| {
-                        let _shadow = pending.borrow_mut();
-                        f()
-                    })
-                })
-            })
-        })
-    })
+    with_pwd_storage(|_| with_shadow_storage(|_| with_gshadow_storage(|_| f())))
 }
 
 // Unit tests for this module are in tests/pwd_abi_test.rs.

@@ -466,6 +466,87 @@ enum nss_status FN(getnetbyaddr_r)(uint32_t number, int family, struct netent *o
                       number, number == 0xfedcba98U, out, buf, len, errnop, h_errnop);
 }
 
+/* Network enumeration has its own cursor, independent from keyed lookups.
+ * Providers receive both error slots, including exact tiny caller buffers. */
+static size_t network_enum_cursor;
+static int (*network_enum_reentry)(void);
+static int network_enum_callback_ran;
+
+void FN(set_network_enum_reentry)(int (*callback)(void)) {
+  network_enum_reentry = callback;
+}
+
+#ifndef NO_NETWORK_SET
+enum nss_status FN(setnetent)(int stayopen) {
+  (void)stayopen;
+  trace("setnetent", "");
+  network_enum_cursor = 0;
+  network_enum_callback_ran = 0;
+  return netdb_enum_status("FLTEST_NETWORK_ENUM", "set", &errno);
+}
+#endif
+
+#ifndef NO_NETWORK_END
+enum nss_status FN(endnetent)(void) {
+  trace("endnetent", "");
+  network_enum_cursor = 0;
+  return NSS_STATUS_SUCCESS;
+}
+#endif
+
+enum nss_status FN(getnetent_r)(struct netent *out, char *buf, size_t len,
+                               int *errnop, int *h_errnop) {
+  trace("getnetent_r", "");
+  const char *scenario = getenv("FLTEST_NETWORK_ENUM");
+  if (scenario && !strcmp(STR(SERVICE), "fltest")) {
+    if (!strcmp(scenario, "get-nomem-internal") || !strcmp(scenario, "get-io-internal")) {
+      *errnop = !strcmp(scenario, "get-nomem-internal") ? ENOMEM : EIO;
+      *h_errnop = NETDB_INTERNAL;
+      return NSS_STATUS_TRYAGAIN;
+    }
+    if (!strcmp(scenario, "get-range-internal") && len < 4096) {
+      *errnop = ERANGE;
+      *h_errnop = NETDB_INTERNAL;
+      return NSS_STATUS_TRYAGAIN;
+    }
+    if (!strcmp(scenario, "get-range-again") && len < 4096) {
+      *errnop = ERANGE;
+      *h_errnop = TRY_AGAIN;
+      return NSS_STATUS_TRYAGAIN;
+    }
+  }
+  enum nss_status status = netdb_enum_status("FLTEST_NETWORK_ENUM", "get", errnop);
+  if (status != NSS_STATUS_SUCCESS) {
+    if (!scenario || strcmp(scenario, "get-quiet-again"))
+      *h_errnop = status == NSS_STATUS_TRYAGAIN ? TRY_AGAIN
+                 : status == NSS_STATUS_NOTFOUND ? HOST_NOT_FOUND : NO_RECOVERY;
+    return status;
+  }
+  if (network_enum_cursor >= 2) {
+    *h_errnop = HOST_NOT_FOUND;
+    return NSS_STATUS_NOTFOUND;
+  }
+  if (network_enum_reentry && !network_enum_callback_ran) {
+    network_enum_callback_ran = 1;
+    if (network_enum_reentry()) {
+      *errnop = EIO; *h_errnop = NETDB_INTERNAL; return NSS_STATUS_UNAVAIL;
+    }
+  }
+  int large = network_enum_cursor != 0;
+  int saved_error = *errnop, saved_h_error = *h_errnop;
+  status = fill_network(large ? STR(SERVICE) "-net-large" : STR(SERVICE) "-net-small",
+                        large ? 0xfedcba98U : 0xdeadbeefU, large,
+                        out, buf, len, errnop, h_errnop);
+  if (status == NSS_STATUS_SUCCESS) {
+    ++network_enum_cursor;
+    if (scenario && !strcmp(scenario, "get-success-quiet")) {
+      *errnop = saved_error;
+      *h_errnop = saved_h_error;
+    }
+  }
+  return status;
+}
+
 static enum nss_status fill_rpc(const char *name, int number, int large,
                                struct rpcent *out, char *buf, size_t len,
                                int *errnop) {

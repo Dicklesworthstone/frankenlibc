@@ -1069,6 +1069,7 @@ pub(crate) enum NetdbDatabase {
     Passwd,
     Group,
     Shadow,
+    Networks,
 }
 
 impl NetdbDatabase {
@@ -1081,6 +1082,7 @@ impl NetdbDatabase {
             Self::Passwd => services(Database::Passwd),
             Self::Group => services(Database::Group),
             Self::Shadow => services(Database::Shadow),
+            Self::Networks => services(Database::Networks),
         }
     }
 
@@ -1100,6 +1102,7 @@ impl NetdbDatabase {
             Self::Passwd => ("setpwent", "getpwent_r", "endpwent"),
             Self::Group => ("setgrent", "getgrent_r", "endgrent"),
             Self::Shadow => ("setspent", "getspent_r", "endspent"),
+            Self::Networks => ("setnetent", "getnetent_r", "endnetent"),
         }
     }
 }
@@ -1162,6 +1165,25 @@ impl NetdbEnumeration {
                     let next: GetHostEntFn = core::mem::transmute(self.next);
                     // GNU public enumeration supplies global h_errno to the
                     // provider, leaving gethostent_r's explicit slot untouched.
+                    next(
+                        output.cast(),
+                        buffer,
+                        capacity,
+                        error,
+                        crate::resolv_abi::__h_errno_location(),
+                    )
+                }
+                NetdbDatabase::Networks => {
+                    type GetNetEntFn = unsafe extern "C" fn(
+                        *mut crate::unistd_abi::NetEnt,
+                        *mut c_char,
+                        usize,
+                        *mut c_int,
+                        *mut c_int,
+                    ) -> c_int;
+                    let next: GetNetEntFn = core::mem::transmute(self.next);
+                    // Like host enumeration, GNU's network wrapper passes the
+                    // canonical resolver error cell, not its explicit output.
                     next(
                         output.cast(),
                         buffer,

@@ -12172,8 +12172,7 @@ nss_files_end_stub!(_nss_files_endetherent);
 /// Close the native networks cursor, including any short-buffer retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endnetent() -> c_int {
-    // SAFETY: this closes only the calling thread's native files cursor.
-    unsafe { endnetent() };
+    files_endnetent();
     NSS_STATUS_SUCCESS
 }
 /// Close the native RPC enumeration source and discard any pending retry.
@@ -14256,7 +14255,17 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname_r(
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { _nss_dns_gethostbyname2_r(name, libc::AF_INET, result, buffer, buflen, errnop, h_errnop) }
+    unsafe {
+        _nss_dns_gethostbyname2_r(
+            name,
+            libc::AF_INET,
+            result,
+            buffer,
+            buflen,
+            errnop,
+            h_errnop,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -14271,8 +14280,15 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname2_r(
 ) -> c_int {
     unsafe {
         _nss_dns_gethostbyname3_r(
-            name, af, result, buffer, buflen, errnop, h_errnop,
-            std::ptr::null_mut(), std::ptr::null_mut(),
+            name,
+            af,
+            result,
+            buffer,
+            buflen,
+            errnop,
+            h_errnop,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
         )
     }
 }
@@ -14321,17 +14337,43 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname3_r(
         // family's width. The writer bounds all caller-buffer accesses.
         unsafe {
             crate::resolv_abi::write_reentrant_hostent_family(
-                &answer.name, &answer.metadata.aliases, addresses, af, result,
-                buffer, buflen, &mut resolved,
+                &answer.name,
+                &answer.metadata.aliases,
+                addresses,
+                af,
+                result,
+                buffer,
+                buflen,
+                &mut resolved,
             )
         }
     };
     let packed = if af == libc::AF_INET {
-        let octets: Vec<_> = answer.addresses.ipv4.iter().map(std::net::Ipv4Addr::octets).collect();
-        pack(&octets.iter().map(|bytes| bytes.as_slice()).collect::<Vec<_>>())
+        let octets: Vec<_> = answer
+            .addresses
+            .ipv4
+            .iter()
+            .map(std::net::Ipv4Addr::octets)
+            .collect();
+        pack(
+            &octets
+                .iter()
+                .map(|bytes| bytes.as_slice())
+                .collect::<Vec<_>>(),
+        )
     } else {
-        let octets: Vec<_> = answer.addresses.ipv6.iter().map(std::net::Ipv6Addr::octets).collect();
-        pack(&octets.iter().map(|bytes| bytes.as_slice()).collect::<Vec<_>>())
+        let octets: Vec<_> = answer
+            .addresses
+            .ipv6
+            .iter()
+            .map(std::net::Ipv6Addr::octets)
+            .collect();
+        pack(
+            &octets
+                .iter()
+                .map(|bytes| bytes.as_slice())
+                .collect::<Vec<_>>(),
+        )
     };
     if let Err(error) = packed {
         return unsafe { nss_files_host_status(Err(error), errnop, h_errnop) };
@@ -14392,20 +14434,28 @@ pub unsafe extern "C" fn _nss_dns_gethostbyname4_r(
     {
         return NSS_STATUS_UNAVAIL;
     }
-    if !tracked_object_fits(pat) || buffer.is_null() || (!ttlp.is_null() && !tracked_object_fits(ttlp)) {
+    if !tracked_object_fits(pat)
+        || buffer.is_null()
+        || (!ttlp.is_null() && !tracked_object_fits(ttlp))
+    {
         return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     }
     let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
         return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     };
     let answer = match crate::resolv_abi::native_dns_hostent(
-        &name, frankenlibc_core::addrinfo::Family::Unspecified,
+        &name,
+        frankenlibc_core::addrinfo::Family::Unspecified,
     ) {
         Ok(answer) => answer,
         Err(error) => return unsafe { nss_dns_lookup_error(error, errnop, h_errnop) },
     };
     let mut addresses = Vec::new();
-    let count = answer.addresses.ipv4.len().saturating_add(answer.addresses.ipv6.len());
+    let count = answer
+        .addresses
+        .ipv4
+        .len()
+        .saturating_add(answer.addresses.ipv6.len());
     if addresses.try_reserve_exact(count).is_err() {
         return unsafe { nss_files_host_status(Err(libc::ENOMEM), errnop, h_errnop) };
     }
@@ -14440,7 +14490,15 @@ pub unsafe extern "C" fn _nss_dns_gethostbyaddr_r(
     // SAFETY: the legacy provider has the same caller objects and omits TTL.
     unsafe {
         _nss_dns_gethostbyaddr2_r(
-            addr, len, af, result, buffer, buflen, errnop, h_errnop, std::ptr::null_mut(),
+            addr,
+            len,
+            af,
+            result,
+            buffer,
+            buflen,
+            errnop,
+            h_errnop,
+            std::ptr::null_mut(),
         )
     }
 }
@@ -14482,7 +14540,8 @@ pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
         _ => return unsafe { nss_files_host_status(Err(libc::EAFNOSUPPORT), errnop, h_errnop) },
     }
     // Copy before writing: a caller can reuse the input space for its answer.
-    let Ok(address) = (unsafe { crate::resolv_abi::read_reverse_host_address(addr, len, af) }) else {
+    let Ok(address) = (unsafe { crate::resolv_abi::read_reverse_host_address(addr, len, af) })
+    else {
         return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     };
     let address = match address {
@@ -14503,7 +14562,12 @@ pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
     // SAFETY: the hostent fits, and the writer bounds each scratch-buffer access.
     if let Err(code) = unsafe {
         crate::resolv_abi::write_reentrant_reverse_hostent(
-            &name, address, result, buffer, buflen, &mut resolved,
+            &name,
+            address,
+            result,
+            buffer,
+            buflen,
+            &mut resolved,
         )
     } {
         return unsafe { nss_files_host_status(Err(code), errnop, h_errnop) };
@@ -22792,7 +22856,7 @@ impl ServiceFilesCursor {
 }
 
 /// Public enumeration follows one immutable source-policy snapshot. Foreign
-/// callbacks run only after this state has been leased out of thread storage.
+/// callbacks run only after this state has been leased out of its registry.
 pub(crate) struct NetdbIteration {
     database: crate::nss_module::NetdbDatabase,
     sources: Option<std::sync::Arc<Vec<frankenlibc_core::nss::Service>>>,
@@ -22839,6 +22903,7 @@ impl NetdbIteration {
                 crate::nss_module::NetdbDatabase::Passwd => crate::pwd_abi::files_setpwent(),
                 crate::nss_module::NetdbDatabase::Group => crate::grp_abi::files_setgrent(),
                 crate::nss_module::NetdbDatabase::Shadow => crate::pwd_abi::files_setspent(),
+                crate::nss_module::NetdbDatabase::Networks => files_setnetent(),
             };
             Some(match error {
                 0 => NSS_STATUS_SUCCESS,
@@ -22910,6 +22975,7 @@ impl NetdbIteration {
                     crate::nss_module::NetdbDatabase::Passwd => crate::pwd_abi::files_endpwent(),
                     crate::nss_module::NetdbDatabase::Group => crate::grp_abi::files_endgrent(),
                     crate::nss_module::NetdbDatabase::Shadow => crate::pwd_abi::files_endspent(),
+                    crate::nss_module::NetdbDatabase::Networks => files_endnetent(),
                 }
                 true
             } else {
@@ -23053,6 +23119,18 @@ impl NetdbIteration {
                         crate::errno_abi::__errno_location(),
                     )
                 }
+            } else if matches!(self.database, crate::nss_module::NetdbDatabase::Networks) {
+                // SAFETY: network callers supply a complete netent and exact
+                // writable buffer. Files and public enumeration share a cursor.
+                unsafe {
+                    _nss_files_getnetent_r(
+                        output,
+                        buffer,
+                        capacity,
+                        crate::errno_abi::__errno_location(),
+                        crate::resolv_abi::__h_errno_location(),
+                    )
+                }
             } else if matches!(self.database, crate::nss_module::NetdbDatabase::Hosts) {
                 // SAFETY: host callers supply a checked hostent and writable
                 // buffer. The direct files provider preserves GNU's distinct
@@ -23086,6 +23164,9 @@ impl NetdbIteration {
                     crate::nss_module::NetdbDatabase::Passwd
                     | crate::nss_module::NetdbDatabase::Group
                     | crate::nss_module::NetdbDatabase::Shadow => unreachable!("accounts handled above"),
+                    crate::nss_module::NetdbDatabase::Networks => {
+                        unreachable!("networks handled above")
+                    }
                 };
                 match outcome {
                     Ok(found) => {
@@ -23109,7 +23190,7 @@ impl NetdbIteration {
             let action = Self::action(source, status);
             let buffer_retry = status == NSS_STATUS_TRYAGAIN
                 && current_abi_errno() == libc::ERANGE
-                && (!matches!(self.database, crate::nss_module::NetdbDatabase::Hosts)
+                && (!matches!(self.database, crate::nss_module::NetdbDatabase::Hosts | crate::nss_module::NetdbDatabase::Networks)
                     // SAFETY: the canonical resolver error cell is live for
                     // this thread. Only NETDB_INTERNAL marks buffer retries.
                     || unsafe { *crate::resolv_abi::__h_errno_location() } == NSS_NETDB_INTERNAL);
@@ -23324,11 +23405,37 @@ fn networks_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from(NETWORKS_PATH))
 }
 
-struct NetIterState {
+/// The files provider has one process-wide cursor, shared by direct provider
+/// calls and public enumeration when the configured source is files.
+struct NetworkFilesCursor {
     reader: Option<std::io::BufReader<std::fs::File>>,
     source_path: Option<std::path::PathBuf>,
     line_buf: Vec<u8>,
     pending_line: bool,
+}
+
+impl NetworkFilesCursor {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            source_path: None,
+            line_buf: Vec::new(),
+            pending_line: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reader = None;
+        self.source_path = None;
+        self.line_buf.clear();
+        self.pending_line = false;
+    }
+}
+
+static NETWORK_FILES: std::sync::Mutex<NetworkFilesCursor> =
+    std::sync::Mutex::new(NetworkFilesCursor::new());
+
+struct NetIterState {
     entry: NetEnt,
     entry_buf: Vec<u8>,
     name_entry: NetEnt,
@@ -23340,10 +23447,6 @@ struct NetIterState {
 impl NetIterState {
     const fn new() -> Self {
         Self {
-            reader: None,
-            source_path: None,
-            line_buf: Vec::new(),
-            pending_line: false,
             entry: NetEnt {
                 n_name: std::ptr::null_mut(),
                 n_aliases: std::ptr::null_mut(),
@@ -23409,10 +23512,80 @@ fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
     }
 }
 
+/// Serialize the process-wide policy position without holding a mutex across
+/// module callbacks. Same-thread recursion cannot borrow the active cursor.
+struct NetworkEnumerationState {
+    owner: c_int,
+    iteration: NetdbIteration,
+}
+
+static NETWORK_ENUMERATION: std::sync::Mutex<NetworkEnumerationState> =
+    std::sync::Mutex::new(NetworkEnumerationState {
+        owner: 0,
+        iteration: NetdbIteration::new(crate::nss_module::NetdbDatabase::Networks),
+    });
+static NETWORK_ENUMERATION_AVAILABLE: std::sync::Condvar = std::sync::Condvar::new();
+
+struct NetworkIterationLease {
+    iteration: NetdbIteration,
+    buffer: Vec<u8>,
+}
+
+impl NetworkIterationLease {
+    fn acquire() -> Option<Self> {
+        let saved_errno = current_abi_errno();
+        let owner = syscall::sys_gettid() as c_int;
+        let mut state = NETWORK_ENUMERATION
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.owner == owner {
+            // SAFETY: synchronization must not replace the caller's errno.
+            unsafe { set_abi_errno(saved_errno) };
+            return None;
+        }
+        while state.owner != 0 {
+            state = NETWORK_ENUMERATION_AVAILABLE
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        state.owner = owner;
+        let iteration = std::mem::replace(
+            &mut state.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Networks),
+        );
+        drop(state);
+        let buffer = with_net_iter_state(|state| std::mem::take(&mut state.entry_buf));
+        // SAFETY: TLS initialization must not change the provider's errno.
+        unsafe { set_abi_errno(saved_errno) };
+        Some(Self { iteration, buffer })
+    }
+}
+
+impl Drop for NetworkIterationLease {
+    fn drop(&mut self) {
+        let saved_errno = current_abi_errno();
+        let iteration = std::mem::replace(
+            &mut self.iteration,
+            NetdbIteration::new(crate::nss_module::NetdbDatabase::Networks),
+        );
+        let buffer = std::mem::take(&mut self.buffer);
+        with_net_iter_state(|state| state.entry_buf = buffer);
+        let mut state = NETWORK_ENUMERATION
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.iteration = iteration;
+        state.owner = 0;
+        drop(state);
+        NETWORK_ENUMERATION_AVAILABLE.notify_one();
+        // SAFETY: publishing the cursor must preserve the completed error.
+        unsafe { set_abi_errno(saved_errno) };
+    }
+}
+
 /// Keep source selection and cached enumeration under the same environment
 /// policy. Changing the selected path discards a pending record from the old
 /// source, including when startup evidence no longer permits an override.
-fn net_iter_open(state: &mut NetIterState) -> Result<(), c_int> {
+fn net_iter_open(state: &mut NetworkFilesCursor) -> Result<(), c_int> {
     let path = networks_path();
     if state.source_path.as_ref() != Some(&path) {
         state.reader = None;
@@ -23431,7 +23604,7 @@ fn net_iter_open(state: &mut NetIterState) -> Result<(), c_int> {
 
 /// Read without consuming a valid record until its output has been published.
 /// Both public entrypoints and the NSS files provider use this cursor.
-fn net_iter_entry(state: &mut NetIterState) -> Result<Option<NetworkEntry>, c_int> {
+fn net_iter_entry(state: &mut NetworkFilesCursor) -> Result<Option<NetworkEntry>, c_int> {
     use std::io::BufRead;
     net_iter_open(state)?;
     loop {
@@ -23469,93 +23642,113 @@ fn network_output_layout(entry: &NetworkEntry, buf: *const c_char) -> Option<(us
     Some((table, table.checked_add(pointers)?))
 }
 
-/// Nonreentrant answers use a typed header and growable, per-thread storage.
-/// No fixed name length or alias count can silently truncate a valid record.
-unsafe fn store_network_entry(
-    state: &mut NetIterState,
-    entry: &NetworkEntry,
-) -> Result<*mut c_void, c_int> {
-    let (_, aligned_size) = network_output_layout(entry, std::ptr::null()).ok_or(libc::ERANGE)?;
-    let needed = aligned_size
-        .checked_add(core::mem::align_of::<*mut c_char>() - 1)
-        .ok_or(libc::ERANGE)?;
-    if state.entry_buf.len() < needed {
-        state
-            .entry_buf
-            .try_reserve(needed - state.entry_buf.len())
-            .map_err(|_| libc::ENOMEM)?;
-        state.entry_buf.resize(needed, 0);
+/// Grow private output only for the provider's ERANGE/NETDB_INTERNAL contract.
+/// The complete pending record survives each retry, including long aliases.
+unsafe fn network_iter_next(lease: &mut NetworkIterationLease) -> Result<Option<NetEnt>, c_int> {
+    let mut entry = std::mem::MaybeUninit::<NetEnt>::uninit();
+    let mut capacity = lease.buffer.len().max(1024);
+    loop {
+        if capacity > lease.buffer.len() {
+            lease
+                .buffer
+                .try_reserve_exact(capacity - lease.buffer.len())
+                .map_err(|_| libc::ENOMEM)?;
+            lease.buffer.resize(capacity, 0);
+        }
+        // SAFETY: the complete typed output and leased buffer survive every
+        // callback; no mutable TLS reference spans foreign code.
+        let status = unsafe {
+            lease.iteration.next_r(
+                entry.as_mut_ptr().cast(),
+                lease.buffer.as_mut_ptr().cast(),
+                capacity,
+            )
+        };
+        if status == NSS_STATUS_SUCCESS {
+            // SAFETY: a successful provider initialized the complete record.
+            return Ok(Some(unsafe { entry.assume_init() }));
+        }
+        if status != NSS_STATUS_TRYAGAIN
+            || current_abi_errno() != libc::ERANGE
+            || unsafe { *crate::resolv_abi::__h_errno_location() } != NSS_NETDB_INTERNAL
+        {
+            return Ok(None);
+        }
+        capacity = capacity
+            .checked_mul(2)
+            .filter(|&size| size <= isize::MAX as usize)
+            .ok_or(libc::ENOMEM)?;
     }
-    let mut resolved = std::ptr::null_mut();
-    // SAFETY: entry is an aligned typed object and the buffer was sized for
-    // every string, alias pointer and possible alignment padding above.
-    let rc = unsafe {
-        fill_netent_r(
-            entry,
-            (&raw mut state.entry).cast(),
-            state.entry_buf.as_mut_ptr().cast(),
-            state.entry_buf.len(),
-            &mut resolved,
-        )
-    };
-    if rc == 0 { Ok(resolved) } else { Err(rc) }
 }
 
 fn files_setnetent() -> c_int {
-    with_net_iter_state(|state| {
-        state.reader = None;
-        state.source_path = None;
-        state.pending_line = false;
-        state.line_buf.clear();
-        net_iter_open(state).err().unwrap_or(0)
-    })
+    let saved_errno = current_abi_errno();
+    let mut state = NETWORK_FILES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state.reset();
+    let error = net_iter_open(&mut state).err().unwrap_or(0);
+    // SAFETY: opening or rewinding files preserves errno on success.
+    unsafe { set_abi_errno(if error == 0 { saved_errno } else { error }) };
+    error
 }
 
-/// `setnetent` — open or rewind the native networks source.
+/// `setnetent` — select and rewind the configured NSS networks source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setnetent(_stayopen: c_int) {
-    let saved_errno = current_abi_errno();
-    let rc = files_setnetent();
-    // SAFETY: errno belongs to the calling thread.
-    unsafe { set_abi_errno(if rc == 0 { saved_errno } else { rc }) };
+pub unsafe extern "C" fn setnetent(stayopen: c_int) {
+    let Some(mut lease) = NetworkIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot alias the active traversal.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.rewind(stayopen);
 }
 
-/// `endnetent` — close enumeration and discard any pending retry.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endnetent() {
+fn files_endnetent() {
     let saved_errno = current_abi_errno();
-    with_net_iter_state(|state| {
-        state.reader = None;
-        state.source_path = None;
-        state.line_buf.clear();
-        state.pending_line = false;
-    });
+    NETWORK_FILES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .reset();
     // SAFETY: successful close must not leak a destructor's internal errno.
     unsafe { set_abi_errno(saved_errno) };
 }
 
-/// `getnetent` — return a complete native network record without truncation.
+/// `endnetent` — close configured providers without invalidating the last answer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endnetent() {
+    let Some(mut lease) = NetworkIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot alias the active traversal.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.end();
+}
+
+/// `getnetent` — enumerate configured networks with complete private storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetent() -> *mut c_void {
-    let saved_errno = current_abi_errno();
-    let outcome = with_net_iter_state(|state| {
-        let Some(entry) = net_iter_entry(state)? else {
-            return Ok(std::ptr::null_mut());
-        };
-        // SAFETY: state owns the typed result and its growable answer storage.
-        let result = unsafe { store_network_entry(state, &entry) }?;
-        state.pending_line = false;
-        Ok(result)
-    });
-    match outcome {
-        Ok(result) => {
-            // SAFETY: enumeration preserves the caller's errno on success/EOF.
-            unsafe { set_abi_errno(saved_errno) };
-            result
+    let Some(mut lease) = NetworkIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot borrow an active answer buffer.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return std::ptr::null_mut();
+    };
+    // SAFETY: the lease owns provider traversal and the growable answer buffer.
+    match unsafe { network_iter_next(&mut lease) } {
+        Ok(Some(entry)) => {
+            drop(lease);
+            with_net_iter_state(|state| {
+                state.entry = entry;
+                (&raw mut state.entry).cast()
+            })
         }
+        Ok(None) => std::ptr::null_mut(),
         Err(error) => {
-            // SAFETY: errno belongs to the calling thread.
-            unsafe { set_abi_errno(error) };
+            // SAFETY: allocation failure belongs to the calling thread.
+            unsafe {
+                set_abi_errno(error);
+                *crate::resolv_abi::__h_errno_location() = NSS_NETDB_INTERNAL;
+            }
             std::ptr::null_mut()
         }
     }
@@ -33964,18 +34157,19 @@ unsafe fn network_next_result(
 ) -> Result<bool, c_int> {
     // SAFETY: validate result and buffer before advancing the native cursor.
     unsafe { network_prepare_output(result_buf, buf, buflen, result) }?;
-    with_net_iter_state(|state| {
-        let Some(entry) = net_iter_entry(state)? else {
-            return Ok(false);
-        };
-        // SAFETY: output objects were checked and the packer bounds all writes.
-        let rc = unsafe { fill_netent_r(&entry, result_buf, buf, buflen, result) };
-        if rc != 0 {
-            return Err(rc);
-        }
-        state.pending_line = false;
-        Ok(true)
-    })
+    let mut state = NETWORK_FILES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let Some(entry) = net_iter_entry(&mut state)? else {
+        return Ok(false);
+    };
+    // SAFETY: output objects were checked and the packer bounds all writes.
+    let rc = unsafe { fill_netent_r(&entry, result_buf, buf, buflen, result) };
+    if rc != 0 {
+        return Err(rc);
+    }
+    state.pending_line = false;
+    Ok(true)
 }
 
 unsafe fn network_nss_result(
@@ -34074,7 +34268,7 @@ pub unsafe extern "C" fn getnetbyname_r(
     }
 }
 
-/// `getnetent_r` — reentrant sequential network entry read.
+/// `getnetent_r` — read configured networks into exact caller-owned storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetent_r(
     result_buf: *mut c_void,
@@ -34083,20 +34277,32 @@ pub unsafe extern "C" fn getnetent_r(
     result: *mut *mut c_void,
     _h_errnop: *mut c_int,
 ) -> c_int {
-    let saved_errno = current_abi_errno();
-    // SAFETY: validate all caller output before reading or publishing a record.
-    let outcome = unsafe { network_next_result(result_buf, buf, buflen, result) };
-    match outcome {
-        Ok(found) => {
-            // SAFETY: GNU enumeration preserves errno and h_errno on success/EOF.
-            unsafe { set_abi_errno(saved_errno) };
-            if found { 0 } else { libc::ENOENT }
+    // SAFETY: clear and validate every output before selecting a provider.
+    if let Err(error) = unsafe { network_prepare_result(result_buf, buf, result) } {
+        unsafe { set_abi_errno(error) };
+        return error;
+    }
+    let Some(mut lease) = NetworkIterationLease::acquire() else {
+        // SAFETY: recursive enumeration cannot alias the active traversal.
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return libc::EDEADLK;
+    };
+    let capacity = tracked_output_capacity(buf, buflen);
+    // SAFETY: complete caller storage is live; no mutex or mutable TLS borrow
+    // spans the callback. GNU passes global h_errno, leaving _h_errnop alone.
+    let status = unsafe { lease.iteration.next_r(result_buf, buf, capacity) };
+    if status == NSS_STATUS_SUCCESS {
+        // SAFETY: the successful provider initialized the validated record.
+        unsafe { result.write(result_buf) };
+        0
+    } else if status == NSS_STATUS_TRYAGAIN {
+        if unsafe { *crate::resolv_abi::__h_errno_location() } == NSS_NETDB_INTERNAL {
+            current_abi_errno()
+        } else {
+            libc::EAGAIN
         }
-        Err(error) => {
-            // SAFETY: enumeration reports errno but preserves caller h_errno.
-            unsafe { set_abi_errno(error) };
-            error
-        }
+    } else {
+        libc::ENOENT
     }
 }
 
