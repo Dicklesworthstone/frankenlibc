@@ -4975,12 +4975,17 @@ impl Drop for RefillTmpGuard {
     }
 }
 
-/// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
-unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
+/// Fill a stream's read buffer from its fd. Ordinary I/O returns bytes read,
+/// zero on EOF, or -1 on error. Allocation errors remain distinct so line
+/// input cannot turn a failed refill allocation into a successful partial line.
+unsafe fn refill_stream(
+    stream: &mut StdioStream,
+    caller: usize,
+) -> Result<isize, std::collections::TryReserveError> {
     let io_caller = stream_io_caller(stream, caller);
     let capacity = stream.buffer_capacity();
     if capacity == 0 {
-        return 0; // Cannot buffer anything.
+        return Ok(0); // Cannot buffer anything.
     }
     let want = capacity.min(8192);
     // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
@@ -4992,6 +4997,19 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
         RefillTmpGuard::take()
     };
     let tmp = &mut guard.0;
+    // Reserve both the bounce buffer and the destination before consuming
+    // descriptor bytes. fill_read_buffer lazily materializes its storage;
+    // reserving it here prevents an allocation failure after a successful read.
+    let additional = want.saturating_sub(tmp.len());
+    if let Err(error) = tmp
+        .try_reserve(additional)
+        .and_then(|()| stream.try_reserve_read_buffer())
+    {
+        stream.set_error();
+        // SAFETY: only the calling thread's errno slot is modified.
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return Err(error);
+    }
     if tmp.len() < want {
         tmp.resize(want, 0);
     }
@@ -5010,24 +5028,24 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
             StreamPolicyAction::Retry => continue,
             StreamPolicyAction::Buffer => {
                 stream.fill_read_buffer(&tmp[..rc as usize]);
-                return rc;
+                return Ok(rc);
             }
             StreamPolicyAction::Yield => {
                 if rc == 0 {
                     stream.set_eof();
                 }
-                return 0;
+                return Ok(0);
             }
             StreamPolicyAction::Escalate => {
                 stream.set_error();
-                return -1;
+                return Ok(-1);
             }
             StreamPolicyAction::Flush => {
                 if rc > 0 {
                     stream.fill_read_buffer(&tmp[..rc as usize]);
-                    return rc;
+                    return Ok(rc);
                 }
-                return 0;
+                return Ok(0);
             }
         }
     }
@@ -6324,17 +6342,17 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
         return libc::EOF;
     }
 
-    let rc = unsafe { refill_stream(s, caller) };
+    let rc = unsafe { refill_stream(s, caller) }.unwrap_or(-1);
     if rc <= 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;
     }
 
-    let data = s.buffered_read(1);
-    let result = if data.is_empty() {
+    let mut byte = [0u8; 1];
+    let result = if s.buffered_read_into(&mut byte) == 0 {
         libc::EOF
     } else {
-        data[0] as c_int
+        byte[0] as c_int
     };
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, result == libc::EOF);
     result
@@ -6595,7 +6613,7 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
                         break;
                     }
                 } else {
-                    let rc = unsafe { refill_stream(s, caller) };
+                    let rc = unsafe { refill_stream(s, caller) }.unwrap_or(-1);
                     if rc <= 0 {
                         had_error = rc < 0;
                         break;
@@ -6658,7 +6676,7 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
                 unsafe { set_abi_errno(errno::EBADF) };
                 break;
             }
-            let rc = unsafe { refill_stream(s, caller) };
+            let rc = unsafe { refill_stream(s, caller) }.unwrap_or(-1);
             if rc > 0 {
                 continue;
             }
@@ -6752,7 +6770,7 @@ unsafe fn read_cached_ascii_line_wide_inner(
             if s.buffer_capacity() == 0 {
                 return None;
             }
-            if unsafe { refill_stream(s, caller) } <= 0 {
+            if unsafe { refill_stream(s, caller) }.unwrap_or(-1) <= 0 {
                 return Some((0, s.is_error()));
             }
             match s.read_ascii_line_into_wide(dst) {
@@ -18856,7 +18874,7 @@ unsafe fn getdelim_fill_stream(
                         s.set_error();
                         break;
                     }
-                } else if unsafe { refill_stream(s, caller) } <= 0 {
+                } else if unsafe { refill_stream(s, caller) }? <= 0 {
                     break;
                 }
             }

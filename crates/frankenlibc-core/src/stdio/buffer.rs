@@ -422,6 +422,14 @@ impl StreamBuffer {
         self.read_pos = (self.read_pos + n).min(self.read_filled);
     }
 
+    /// Reserve storage for a later fill without changing buffered bytes or
+    /// cursor positions. Retain exclusive access until fill completes so the
+    /// configured capacity cannot change between reservation and use.
+    pub fn try_reserve_storage(&mut self) -> Result<(), std::collections::TryReserveError> {
+        self.data
+            .try_reserve(self.capacity.saturating_sub(self.data.len()))
+    }
+
     /// Fill the read buffer with data from an external source.
     /// Resets position to 0. Returns the number of bytes accepted.
     pub fn fill(&mut self, data: &[u8]) -> usize {

@@ -656,9 +656,13 @@ fn getline_allocation_failure_is_a_stream_error() {
         for provider in ["host", "native"] {
             for kind in ["buffered", "cached", "unbuffered", "cookie"] {
                 let child_case = format!("{provider}:{kind}");
+                // Secondary GNU arenas can reserve address space before the
+                // limit is installed. One arena makes line growth request
+                // new mappings, which the real RLIMIT_AS can then reject.
                 let output = std::process::Command::new(&executable)
                     .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
                     .env(CHILD_ENV, &child_case)
+                    .env("GLIBC_TUNABLES", "glibc.malloc.arena_max=1")
                     .output()
                     .expect("start isolated allocation-failure child");
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -886,6 +890,200 @@ fn getline_allocation_failure_is_a_stream_error() {
         }
     };
     assert_eq!(next, 0, "{case}: recover unread input after clearerr");
+    assert_eq!(closed, 0);
+}
+
+#[test]
+fn getline_cold_refill_allocation_failure_is_a_stream_error() {
+    use frankenlibc_abi::{malloc_abi as malloc, stdio_abi as fl};
+
+    const CHILD_ENV: &str = "FRANKENLIBC_GETLINE_COLD_REFILL_CHILD";
+    const TEST_NAME: &str = "getline_cold_refill_allocation_failure_is_a_stream_error";
+
+    let Ok(case) = std::env::var(CHILD_ENV) else {
+        // Rust's System allocator and this pressure loop must use the same
+        // independent GNU allocator in the hosted debug integration test.
+        unsafe {
+            let mut info: libc::Dl_info = std::mem::zeroed();
+            assert_ne!(libc::dladdr(libc::malloc as *const c_void, &mut info), 0);
+            assert!(!info.dli_fname.is_null());
+            let path = std::ffi::CStr::from_ptr(info.dli_fname).to_bytes();
+            assert_eq!(
+                path.rsplit(|&byte| byte == b'/').next(),
+                Some(&b"libc.so.6"[..])
+            );
+        }
+
+        let executable = std::env::current_exe().expect("current test executable");
+        let mut executed = 0;
+        for case in ["bounce", "storage"] {
+            let output = std::process::Command::new(&executable)
+                .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
+                .env(CHILD_ENV, case)
+                .env("GLIBC_TUNABLES", "glibc.malloc.arena_max=1")
+                // The storage case deliberately reuses a warmed TLS bounce
+                // buffer; native-thread admission disables that reuse.
+                .env("FRANKENLIBC_THREAD_NATIVE", "0")
+                .output()
+                .expect("start isolated cold-refill child");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success(),
+                "{case}: child failed with {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                output.status
+            );
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{case}: the requested child test did not execute\n{stdout}\n{stderr}"
+            );
+            executed += 1;
+        }
+        assert_eq!(executed, 2);
+        return;
+    };
+
+    assert!(matches!(case.as_str(), "bounce" | "storage"));
+    malloc::signal_runtime_ready_for_tests();
+    unsafe { libc::alarm(45) };
+
+    let open_input = || unsafe {
+        let mut descriptors = [-1; 2];
+        assert_eq!(libc::pipe(descriptors.as_mut_ptr()), 0);
+        assert_eq!(libc::write(descriptors[1], b"A\n".as_ptr().cast(), 2), 2);
+        assert_eq!(libc::close(descriptors[1]), 0);
+        let stream = fl::fdopen(descriptors[0], c"r".as_ptr());
+        assert!(!stream.is_null());
+        stream
+    };
+    let stream = open_input();
+    let warm_stream = if case == "storage" {
+        let auxiliary = open_input();
+        // A real descriptor refill warms REFILL_TMP, but the target FILE
+        // still has no allocated core read-buffer storage.
+        assert_eq!(unsafe { fl::fgetc(auxiliary) }, b'A' as c_int);
+        auxiliary
+    } else {
+        stream
+    };
+
+    let mut line = std::ptr::null_mut();
+    let mut capacity = 0usize;
+    // Pushback warms the line scratch, caller buffer and stream cache without
+    // a descriptor read. In the bounce case it also allocates the target's
+    // core storage, isolating the still-cold refill bounce buffer.
+    assert_eq!(
+        unsafe { fl::ungetc(b'\n' as c_int, warm_stream) },
+        b'\n' as c_int
+    );
+    assert_eq!(
+        unsafe { fl::getline(&mut line, &mut capacity, warm_stream) },
+        1
+    );
+    assert!(capacity >= 2);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(line.cast::<u8>(), 2) },
+        b"\n\0"
+    );
+    if case == "storage" {
+        assert_eq!(unsafe { fl::fclose(warm_stream) }, 0);
+    } else {
+        // Returning ordinary I/O failure from refill would incorrectly turn
+        // this prefix into a successful partial line instead of ENOMEM.
+        assert_eq!(unsafe { fl::ungetc(b'P' as c_int, stream) }, b'P' as c_int);
+    }
+
+    let original_line = line;
+    let original_capacity = capacity;
+    let refill_size = unsafe { frankenlibc_abi::glibc_internal_abi::__fbufsize(stream) }.min(8192);
+    assert!(refill_size > 0);
+    // A bounded retention vector is allocated before the limit. Retaining
+    // same-sized malloc blocks drains reusable arena space as well as proving
+    // that the real address-space limit prevents further allocations.
+    let mut retained = Vec::with_capacity(65_536);
+    let errno_slot = unsafe { frankenlibc_abi::errno_abi::__errno_location() };
+    let mut original: libc::rlimit = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut original) },
+        0
+    );
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0);
+    let statm = std::fs::read_to_string("/proc/self/statm").expect("read mapped size");
+    let pages = statm
+        .split_whitespace()
+        .next()
+        .expect("mapped page count")
+        .parse::<u64>()
+        .expect("numeric mapped page count");
+    let mapped = pages
+        .checked_mul(page_size as u64)
+        .expect("mapped address-space size");
+    assert!(original.rlim_cur >= mapped);
+    let limited = libc::rlimit {
+        rlim_cur: mapped,
+        rlim_max: original.rlim_max,
+    };
+    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &limited) }, 0);
+
+    // No assertions, formatting, or test-side heap growth occur until the
+    // original limit has been restored. A fixture that fails to exhaust its
+    // bounded allocation slots is a failure, never a skipped positive result.
+    let (exhausted, result, saved_errno, error, eof, restored) = unsafe {
+        let mut exhausted = false;
+        while retained.len() < retained.capacity() {
+            let allocation = libc::malloc(refill_size);
+            if allocation.is_null() {
+                exhausted = true;
+                break;
+            }
+            retained.push(allocation);
+        }
+        *errno_slot = 0;
+        let result = if exhausted {
+            fl::getline(&mut line, &mut capacity, stream)
+        } else {
+            0
+        };
+        let saved_errno = *errno_slot;
+        let error = fl::ferror(stream);
+        let eof = fl::feof(stream);
+        let restored = libc::setrlimit(libc::RLIMIT_AS, &original);
+        libc::alarm(0);
+        (exhausted, result, saved_errno, error, eof, restored)
+    };
+    for allocation in retained {
+        unsafe { libc::free(allocation) };
+    }
+    assert_eq!(restored, 0, "restore child address-space limit");
+    assert!(
+        exhausted,
+        "{case}: allocation pressure did not reach ENOMEM"
+    );
+    assert_eq!(result, -1, "{case}: do not return an accumulated prefix");
+    assert_eq!(saved_errno, libc::ENOMEM, "{case}: allocation errno");
+    assert_ne!(error, 0, "{case}: allocation failure must set ferror");
+    assert_eq!(eof, 0, "{case}: allocation failure is not EOF");
+    assert_eq!(line, original_line, "{case}: retain the caller buffer");
+    assert_eq!(
+        capacity, original_capacity,
+        "{case}: retain caller capacity"
+    );
+
+    // Both reserves must happen before the syscall. Exact nonzero bytes make
+    // lost descriptor input visible, unlike an inexhaustible zero-filled fd.
+    let (first, second, end, closed) = unsafe {
+        fl::clearerr(stream);
+        let first = fl::fgetc(stream);
+        let second = fl::fgetc(stream);
+        let end = fl::fgetc(stream);
+        let closed = fl::fclose(stream);
+        malloc::free(line.cast());
+        (first, second, end, closed)
+    };
+    assert_eq!(first, b'A' as c_int, "{case}: preserve the first fd byte");
+    assert_eq!(second, b'\n' as c_int, "{case}: preserve the next fd byte");
+    assert_eq!(end, libc::EOF);
     assert_eq!(closed, 0);
 }
 

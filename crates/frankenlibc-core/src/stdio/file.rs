@@ -1859,6 +1859,12 @@ impl StdioStream {
         None
     }
 
+    /// Reserve the read buffer before consuming descriptor input, leaving
+    /// buffered bytes and cursor positions unchanged.
+    pub fn try_reserve_read_buffer(&mut self) -> Result<(), std::collections::TryReserveError> {
+        self.buffer.try_reserve_storage()
+    }
+
     /// Fill the read buffer with externally-fetched data.
     /// Returns the number of bytes actually buffered.
     pub fn fill_read_buffer(&mut self, data: &[u8]) -> usize {
