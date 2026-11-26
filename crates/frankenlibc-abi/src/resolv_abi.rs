@@ -2017,7 +2017,7 @@ fn resolve_gethostbyname6_target(
     files_only: bool,
 ) -> Result<Host6Target, c_int> {
     use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
-    use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+    use frankenlibc_core::addrinfo::Family;
     let name_cstr = name
         .filter(|name| !name.to_bytes().is_empty())
         .ok_or(libc::EAI_NONAME)?;
@@ -2071,27 +2071,9 @@ fn resolve_gethostbyname6_target(
     };
     // The backend snapshot borrow ends before network I/O.
     let dns_lookup = || -> BackendResult<Host6Target, c_int> {
-        let (addresses, canonical_name) = match dns_backend_result(native_dns_resolve(
-            name_cstr.to_bytes(),
-            AddressPolicy::new(Family::Inet6, false, false),
-        )) {
-            BackendResult::Success(found) => found,
-            BackendResult::NotFound(code) => return BackendResult::NotFound(code),
-            BackendResult::Unavailable(code) => return BackendResult::Unavailable(code),
-            BackendResult::TryAgain(code) => return BackendResult::TryAgain(code),
-        };
-        if addresses.ipv6.is_empty() {
-            return BackendResult::NotFound(libc::EAI_NONAME);
-        }
-        let query_name = name_cstr.to_bytes();
-        let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
-        let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
-        let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
-            Vec::new()
-        } else {
-            vec![query_name.to_vec()]
-        };
-        BackendResult::Success((canonical_name, aliases, addresses.ipv6))
+        dns_backend_result(native_dns_hostent(name_cstr.to_bytes(), Family::Inet6)).map(|answer| {
+            (answer.name, answer.metadata.aliases, answer.addresses.ipv6)
+        })
     };
     // The same nsswitch `hosts:` policy as the IPv4 and getaddrinfo paths;
     // this path used to hard-code files-then-DNS (bd-smc8xs).
@@ -2193,7 +2175,7 @@ fn resolve_gethostbyname_target(
     name: Option<&CStr>,
     files_only: bool,
 ) -> Result<GethostbynameTarget, c_int> {
-    use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+    use frankenlibc_core::addrinfo::Family;
     let name_cstr = name
         .filter(|name| !name.to_bytes().is_empty())
         .ok_or(libc::EAI_NONAME)?;
@@ -2237,32 +2219,12 @@ fn resolve_gethostbyname_target(
         }
     };
     let dns_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
-        // Ordinary lookup failure is not memory corruption. Neither mode
-        // may silently redirect a missing DNS name to localhost.
-        let (addresses, canonical_name) = match dns_backend_result(native_dns_resolve(
-            name_cstr.to_bytes(),
-            AddressPolicy::new(Family::Inet, false, false),
-        )) {
-            BackendResult::Success(found) => found,
-            BackendResult::NotFound(code) => return BackendResult::NotFound(code),
-            BackendResult::Unavailable(code) => return BackendResult::Unavailable(code),
-            BackendResult::TryAgain(code) => return BackendResult::TryAgain(code),
-        };
-        if addresses.ipv4.is_empty() {
-            return BackendResult::NotFound(libc::EAI_NONAME);
-        }
-        let query_name = name_cstr.to_bytes();
-        let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
-        let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
-        let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
-            Vec::new()
-        } else {
-            vec![query_name.to_vec()]
-        };
-        BackendResult::Success(GethostbynameTarget {
-            name: canonical_name,
-            aliases,
-            addresses: addresses.ipv4,
+        dns_backend_result(native_dns_hostent(name_cstr.to_bytes(), Family::Inet)).map(|answer| {
+            GethostbynameTarget {
+                name: answer.name,
+                aliases: answer.metadata.aliases,
+                addresses: answer.addresses.ipv4,
+            }
         })
     };
     // The same nsswitch `hosts:` policy as getaddrinfo, so both APIs agree
@@ -3012,6 +2974,7 @@ fn native_dns_query(
     server: std::net::SocketAddr,
     timeout: std::time::Duration,
     options: frankenlibc_core::dns_transport::QueryOptions,
+    metadata: Option<&mut frankenlibc_core::dns_transport::HostentMetadata>,
 ) -> Result<frankenlibc_core::dns_transport::QueryReply, frankenlibc_core::dns_transport::QueryError>
 {
     use frankenlibc_core::dns_transport::QueryError;
@@ -3030,8 +2993,9 @@ fn native_dns_query(
         server.set_port(port);
     }
 
-    let result =
-        frankenlibc_core::dns_transport::query(hostname, qtype_val, server, timeout, options);
+    let result = frankenlibc_core::dns_transport::query_with_hostent_metadata(
+        hostname, qtype_val, server, timeout, options, metadata,
+    );
     let counter = match &result {
         Ok(reply) if reply.rcode == rcode::NXDOMAIN => &DNS_METRICS.queries_nxdomain,
         Ok(_) => &DNS_METRICS.queries_success,
@@ -3133,10 +3097,33 @@ pub(crate) fn resolver_config_contents() -> Vec<u8> {
     std::fs::read(path).unwrap_or_default()
 }
 
+pub(crate) struct DnsHostEntry {
+    pub name: Vec<u8>,
+    pub metadata: frankenlibc_core::dns_transport::HostentMetadata,
+    pub addresses: frankenlibc_core::resolv::dns::DnsResolution,
+}
+
+/// A single family has one successful search candidate and one validated
+/// CNAME chain. Both public hostent lookups and direct NSS entry points use it.
+pub(crate) fn native_dns_hostent(
+    name: &[u8],
+    family: frankenlibc_core::addrinfo::Family,
+) -> Result<DnsHostEntry, c_int> {
+    let mut metadata = frankenlibc_core::dns_transport::HostentMetadata::default();
+    let policy = frankenlibc_core::addrinfo::AddressPolicy::new(family, false, false);
+    let (addresses, canonical) = native_dns_resolve(name, policy, Some(&mut metadata))?;
+    Ok(DnsHostEntry {
+        name: canonical.ok_or(libc::EAI_NONAME)?,
+        metadata,
+        addresses,
+    })
+}
+
 /// Preserve the difference between a missing name and a temporary DNS failure.
 fn native_dns_resolve(
     hostname: &[u8],
     policy: frankenlibc_core::addrinfo::AddressPolicy,
+    mut metadata: Option<&mut frankenlibc_core::dns_transport::HostentMetadata>,
 ) -> Result<
     (
         frankenlibc_core::resolv::dns::DnsResolution,
@@ -3163,7 +3150,7 @@ fn native_dns_resolve(
                 want_v6,
                 &lookup.config,
                 |name, kind, server, timeout, _, _| {
-                    native_dns_query(name, kind, server, timeout, lookup.options)
+                    native_dns_query(name, kind, server, timeout, lookup.options, metadata.as_deref_mut())
                 },
             )?;
             // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
@@ -3249,7 +3236,7 @@ pub(crate) fn native_dns_ptr(address: std::net::IpAddr) -> Result<(Vec<u8>, u32)
         address,
         &lookup.config.transport,
         |name, kind, server, timeout, _, _| {
-            native_dns_query(name, kind, server, timeout, lookup.options)
+            native_dns_query(name, kind, server, timeout, lookup.options, None)
         },
     )
     .map_err(|error| match error {
@@ -3824,7 +3811,7 @@ pub unsafe extern "C" fn getaddrinfo(
                     // A missing name or an unavailable DNS server is a defined
                     // lookup failure, not memory corruption. Even hardened mode
                     // must not redirect it to localhost.
-                    match dns_backend_result(native_dns_resolve(text.as_bytes(), address_policy)) {
+                    match dns_backend_result(native_dns_resolve(text.as_bytes(), address_policy, None)) {
                         BackendResult::Success((resolution, _))
                             if resolution.ipv4.is_empty() && resolution.ipv6.is_empty() =>
                         {

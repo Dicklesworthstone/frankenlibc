@@ -644,7 +644,27 @@ pub fn query(
     timeout: Duration,
     options: QueryOptions,
 ) -> Result<QueryReply, QueryError> {
-    query_with_exchange(hostname, record_type, timeout, options, |wire, deadline| {
+    query_with_hostent_metadata(hostname, record_type, server, timeout, options, None)
+}
+
+/// Extra outputs for the legacy hostent APIs. Only a successful address
+/// response publishes metadata, so a failed search suffix cannot supply it.
+#[derive(Debug, Default)]
+pub struct HostentMetadata {
+    pub aliases: Vec<Vec<u8>>,
+    pub ttl: u32,
+}
+
+/// Query one server and optionally retain the validated hostent aliases and TTL.
+pub fn query_with_hostent_metadata(
+    hostname: &[u8],
+    record_type: u16,
+    server: SocketAddr,
+    timeout: Duration,
+    options: QueryOptions,
+    metadata: Option<&mut HostentMetadata>,
+) -> Result<QueryReply, QueryError> {
+    exchange_host_query(hostname, record_type, timeout, options, metadata, |wire, deadline| {
         if options.no_aaaa && record_type == qtype::AAAA {
             let translated = raw::no_aaaa_query(wire).ok_or(QueryError::InvalidQuery)?;
             let packet = exchange_until(
@@ -667,11 +687,26 @@ pub fn query(
     })
 }
 
+#[cfg(test)]
 fn query_with_exchange<F>(
     hostname: &[u8],
     record_type: u16,
     timeout: Duration,
     options: QueryOptions,
+    exchange: F,
+) -> Result<QueryReply, QueryError>
+where
+    F: FnMut(&[u8], Instant) -> Result<Vec<u8>, QueryError>,
+{
+    exchange_host_query(hostname, record_type, timeout, options, None, exchange)
+}
+
+fn exchange_host_query<F>(
+    hostname: &[u8],
+    record_type: u16,
+    timeout: Duration,
+    options: QueryOptions,
+    metadata: Option<&mut HostentMetadata>,
     mut exchange: F,
 ) -> Result<QueryReply, QueryError>
 where
@@ -732,7 +767,28 @@ where
             &mut ttl_limit,
             &mut canonical_name,
         )? {
-            AddressAnswer::Complete(reply) => return Ok(reply),
+            AddressAnswer::Complete(reply) => {
+                if let Some(metadata) = metadata
+                    && let Some(ttl) = reply.records.iter().map(|record| record.ttl).min()
+                {
+                    metadata.ttl = ttl;
+                    metadata.aliases.clear();
+                    // Each name preceding the terminal owner was reached by a
+                    // validated CNAME, potentially in a previous packet.
+                    for owner in visited.iter().take(visited.len() - 1) {
+                        let mut end = 0;
+                        while owner[end] != 0 {
+                            end += usize::from(owner[end]) + 1;
+                        }
+                        if let Some(alias) = ptr_hostname(&owner[..=end])
+                            && !alias.eq_ignore_ascii_case(&canonical_name)
+                        {
+                            metadata.aliases.push(alias);
+                        }
+                    }
+                }
+                return Ok(reply);
+            }
             AddressAnswer::Follow(next) => {
                 // Already validated, uncompressed wire name. Re-encode without
                 // a presentation round trip so embedded dots/NULs retain their
@@ -2543,27 +2599,26 @@ mod tests {
     fn canonical_name_survives_cross_packet_alias_followup() {
         let config = ResolverConfig::default();
         let mut calls = 0;
+        let mut metadata = HostentMetadata::default();
         let result = resolve_with_canonical(
             b"alias.test.",
             false,
             true,
             &config,
             |owner, kind, _, _, _, _| {
-                query_with_exchange(
+                exchange_host_query(
                     owner,
                     kind,
                     Duration::from_secs(1),
                     QueryOptions::default(),
+                    Some(&mut metadata),
                     |sent, _| {
                         calls += 1;
                         let records = if calls == 1 {
-                            vec![rr(
-                                &[0xc0, 12],
-                                qtype::CNAME,
-                                1,
-                                60,
-                                &name(b"v6-canonical.test"),
-                            )]
+                            vec![
+                                rr(&[0xc0, 12], qtype::CNAME, 1, 19, &name(b"middle.test")),
+                                rr(&name(b"middle.test"), qtype::CNAME, 1, 37, &name(b"v6-canonical.test")),
+                            ]
                         } else {
                             assert_eq!(calls, 2);
                             vec![rr(
@@ -2581,6 +2636,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 2);
+        assert_eq!(metadata.ttl, 19);
+        assert_eq!(metadata.aliases, [b"alias.test".to_vec(), b"middle.test".to_vec()]);
         assert_eq!(result.canonical_name, b"v6-canonical.test");
         assert_eq!(result.addresses.ipv6, [Ipv6Addr::LOCALHOST]);
     }

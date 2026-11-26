@@ -953,6 +953,7 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
     let cases: Vec<(Vec<&[u8]>, &[u8])> = vec![
         (vec![], b"origin.hostname.invalid"),
         (vec![b"Canonical.test"], b"Canonical.test"),
+        (vec![b"Middle.test", b"Final.test"], b"Final.test"),
         (vec![br"edge\.test"], b"origin.hostname.invalid"),
         (vec![br"zero.a\000b"], b"origin.hostname.invalid"),
         (vec![b"bad.x y"], b"origin.hostname.invalid"),
@@ -967,6 +968,7 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
     for (targets, expected) in cases {
         let mut observations = Vec::new();
         for api in host_apis() {
+            let valid_chain = targets.as_slice() == [b"Middle.test".as_slice(), b"Final.test".as_slice()];
             let targets: Vec<Vec<u8>> = targets.iter().map(|name| name.to_vec()).collect();
             let server = HostServer::new(move |query| {
                 let message = DnsMessage::decode(query).unwrap();
@@ -1026,6 +1028,15 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
                 let first_address = (*(*legacy).h_addr_list).cast::<u8>();
                 assert!(!first_address.is_null());
                 assert_eq!(std::slice::from_raw_parts(first_address, 4), [192, 0, 2, 7]);
+                if valid_chain {
+                    let aliases = (*legacy).h_aliases;
+                    assert!(!aliases.is_null());
+                    assert!(!(*aliases).is_null());
+                    assert_eq!(std::ffi::CStr::from_ptr(*aliases).to_bytes(), b"origin.hostname.invalid");
+                    assert!(!(*aliases.add(1)).is_null());
+                    assert_eq!(std::ffi::CStr::from_ptr(*aliases.add(1)).to_bytes(), b"Middle.test");
+                    assert!((*aliases.add(2)).is_null());
+                }
                 observations.push((canonical, legacy_name));
             }
             assert!(
@@ -1036,6 +1047,7 @@ fn global_host_canonical_names_match_gnu_for_binary_cname_labels() {
         assert_eq!(observations[0], observations[1], "targets={targets:?}");
         assert_eq!(observations[1], (expected.to_vec(), expected.to_vec()));
     }
+    check_direct_dns_forward_provider(host_apis()[0]);
 }
 
 fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
@@ -1103,4 +1115,60 @@ fn check_direct_dns_ptr_provider(api: HostApi, candidate: bool) {
     assert_eq!(queries[0], b"77.113.0.203.in-addr.arpa");
     assert!(queries[1].ends_with(b".ip6.arpa"));
     assert_eq!(queries[2], queries[0]);
+}
+
+fn check_direct_dns_forward_provider(api: HostApi) {
+    use frankenlibc_abi::unistd_abi::_nss_dns_gethostbyname3_r;
+
+    let server = HostServer::new(|query| {
+        let kind = DnsMessage::decode(query).unwrap().questions[0].qtype;
+        let mut response = host_reply(query, 3, 0);
+        let address = match kind {
+            1 => vec![192, 0, 2, 17],
+            28 => std::net::Ipv6Addr::LOCALHOST.octets().to_vec(),
+            _ => panic!("expected A or AAAA"),
+        };
+        response[3] = 0x80;
+        response[7] = 1;
+        response.extend_from_slice(&[0xc0, 12]);
+        response.extend_from_slice(&kind.to_be_bytes());
+        response.extend_from_slice(&[0, 1, 0, 0, 0, 31]);
+        response.extend_from_slice(&(address.len() as u16).to_be_bytes());
+        response.extend_from_slice(&address);
+        response
+    });
+    let _cleanup = configure_host(api, server.endpoint);
+    assert_eq!(unsafe { (api.select)(c"hosts".as_ptr(), c"files".as_ptr()) }, 0);
+    for (family, expected, initial_ttl) in [
+        (libc::AF_INET, vec![192u8, 0, 2, 17], 100),
+        (libc::AF_INET6, std::net::Ipv6Addr::LOCALHOST.octets().to_vec(), 7),
+    ] {
+        let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
+        let mut scratch = [0u8; 1024];
+        let (mut error, mut host_error, mut ttl) = (0, -1, initial_ttl);
+        let mut canon = std::ptr::null_mut();
+        // SAFETY: the provider fills independent caller-owned objects. Read
+        // the hostent and its nested pointers only after a successful return.
+        unsafe {
+            assert_eq!(
+                _nss_dns_gethostbyname3_r(
+                    c"forward.provider.invalid.".as_ptr(), family, entry.as_mut_ptr().cast(),
+                    scratch.as_mut_ptr().cast(), scratch.len(), &mut error, &mut host_error,
+                    &mut ttl, &mut canon,
+                ),
+                1
+            );
+            let entry = entry.assume_init();
+            assert_eq!(entry.h_name, canon);
+            assert!(!canon.is_null());
+            assert_eq!(std::ffi::CStr::from_ptr(canon).to_bytes(), b"forward.provider.invalid");
+            assert_eq!(entry.h_addrtype, family);
+            assert_eq!(entry.h_length as usize, expected.len());
+            assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), expected.len()), expected);
+            assert!((*entry.h_addr_list.add(1)).is_null());
+            assert!((*entry.h_aliases).is_null());
+            assert_eq!((ttl, host_error), (31.min(initial_ttl), 0));
+        }
+    }
+    assert_eq!(server.finish(), vec![b"forward.provider.invalid".to_vec(); 2]);
 }

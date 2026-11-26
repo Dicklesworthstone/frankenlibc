@@ -14206,8 +14206,8 @@ nss_files_parse_account!(_nss_files_parse_sgent, Gshadow);
 // _nss_dns_* NSS DNS provider entry points
 // ---------------------------------------------------------------------------
 //
-// The reverse host provider uses the native PTR transport. The remaining
-// fallback entry points report NOTFOUND to the NSS dispatcher.
+// The hostent providers use the native A, AAAA and PTR transports. Other
+// fallback entry points below report NOTFOUND to the NSS dispatcher.
 
 #[inline]
 unsafe fn nss_set_h_errnop_host_not_found(h_errnop: *mut c_int) {
@@ -14236,49 +14236,124 @@ pub unsafe extern "C" fn _nss_dns_getcanonname_r(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_dns_gethostbyname_r(
-    _name: *const c_char,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    unsafe { _nss_dns_gethostbyname2_r(name, libc::AF_INET, result, buffer, buflen, errnop, h_errnop) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_dns_gethostbyname2_r(
-    _name: *const c_char,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    unsafe {
+        _nss_dns_gethostbyname3_r(
+            name, af, result, buffer, buflen, errnop, h_errnop,
+            std::ptr::null_mut(), std::ptr::null_mut(),
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_dns_gethostbyname3_r(
-    _name: *const c_char,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    _ttlp: *mut i32,
-    _canonp: *mut *mut c_char,
+    ttlp: *mut i32,
+    canonp: *mut *mut c_char,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    use frankenlibc_core::addrinfo::Family;
+    if (!errnop.is_null() && !tracked_object_fits(errnop))
+        || (!h_errnop.is_null() && !tracked_object_fits(h_errnop))
+    {
+        return NSS_STATUS_UNAVAIL;
+    }
+    if !tracked_object_fits(result.cast::<libc::hostent>())
+        || buffer.is_null()
+        || (!ttlp.is_null() && !tracked_object_fits(ttlp))
+        || (!canonp.is_null() && !tracked_object_fits(canonp))
+    {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    }
+    let family = match af {
+        libc::AF_INET => Family::Inet,
+        libc::AF_INET6 => Family::Inet6,
+        _ => return unsafe { nss_files_host_status(Err(libc::EAFNOSUPPORT), errnop, h_errnop) },
+    };
+    let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    };
+    let answer = match crate::resolv_abi::native_dns_hostent(&name, family) {
+        Ok(answer) => answer,
+        Err(error) => return unsafe { nss_dns_lookup_error(error, errnop, h_errnop) },
+    };
+    let mut resolved = std::ptr::null_mut();
+    let mut pack = |addresses: &[&[u8]]| {
+        // SAFETY: the initialized addresses below have exactly the requested
+        // family's width. The writer bounds all caller-buffer accesses.
+        unsafe {
+            crate::resolv_abi::write_reentrant_hostent_family(
+                &answer.name, &answer.metadata.aliases, addresses, af, result,
+                buffer, buflen, &mut resolved,
+            )
+        }
+    };
+    let packed = if af == libc::AF_INET {
+        let octets: Vec<_> = answer.addresses.ipv4.iter().map(std::net::Ipv4Addr::octets).collect();
+        pack(&octets.iter().map(|bytes| bytes.as_slice()).collect::<Vec<_>>())
+    } else {
+        let octets: Vec<_> = answer.addresses.ipv6.iter().map(std::net::Ipv6Addr::octets).collect();
+        pack(&octets.iter().map(|bytes| bytes.as_slice()).collect::<Vec<_>>())
+    };
+    if let Err(error) = packed {
+        return unsafe { nss_files_host_status(Err(error), errnop, h_errnop) };
+    }
+    // Publish the optional outputs only after the complete hostent fits.
+    unsafe {
+        nss_set_herr(h_errnop, 0);
+        if !canonp.is_null() {
+            *canonp = (*resolved.cast::<libc::hostent>()).h_name;
+        }
+        if !ttlp.is_null() {
+            *ttlp = (*ttlp).min(i32::try_from(answer.metadata.ttl).unwrap_or(0));
+        }
+    }
+    NSS_STATUS_SUCCESS
+}
+
+unsafe fn nss_dns_lookup_error(code: c_int, errnop: *mut c_int, h_errnop: *mut c_int) -> c_int {
+    match code {
+        libc::EAI_NONAME => unsafe { nss_hostent_notfound(errnop, h_errnop) },
+        libc::EAI_AGAIN => {
+            unsafe {
+                nss_set_errnop(errnop, libc::EAGAIN);
+                nss_set_herr(h_errnop, 2); // TRY_AGAIN
+            }
+            NSS_STATUS_TRYAGAIN
+        }
+        _ => {
+            unsafe {
+                nss_set_errnop(errnop, libc::EIO);
+                nss_set_herr(h_errnop, NSS_NO_RECOVERY);
+            }
+            NSS_STATUS_UNAVAIL
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -14355,23 +14430,7 @@ pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
     // process has configured files or another module as its only hosts source.
     let (name, ttl) = match crate::resolv_abi::native_dns_ptr(address) {
         Ok(answer) => answer,
-        Err(code) if code == libc::EAI_NONAME => {
-            return unsafe { nss_hostent_notfound(errnop, h_errnop) };
-        }
-        Err(code) if code == libc::EAI_AGAIN => {
-            unsafe {
-                nss_set_errnop(errnop, libc::EAGAIN);
-                nss_set_herr(h_errnop, 2); // TRY_AGAIN
-            }
-            return NSS_STATUS_TRYAGAIN;
-        }
-        Err(_) => {
-            unsafe {
-                nss_set_errnop(errnop, libc::EIO);
-                nss_set_herr(h_errnop, NSS_NO_RECOVERY);
-            }
-            return NSS_STATUS_UNAVAIL;
-        }
+        Err(error) => return unsafe { nss_dns_lookup_error(error, errnop, h_errnop) },
     };
     let mut resolved = std::ptr::null_mut();
     // SAFETY: the hostent fits, and the writer bounds each scratch-buffer access.
