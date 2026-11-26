@@ -393,6 +393,89 @@ fn wide_file_jump_table_stream_helpers_roundtrip_wide_chars() {
 }
 
 #[test]
+fn wide_file_bridge_overflow_defers_characters_until_weof() {
+    use frankenlibc_abi::{glibc_internal_abi, stdio_abi};
+
+    // SAFETY: The FILE stays live through fclose, and its caller-supplied buffer
+    // stays allocated throughout. The native vtable is read-only here. The fd
+    // belongs to this FILE, and pread receives the live output array's bounds.
+    unsafe {
+        let stream = stdio_abi::tmpfile();
+        assert!(!stream.is_null());
+        let mut buffer = [0 as c_char; 64];
+        assert_eq!(
+            stdio_abi::setvbuf(stream, buffer.as_mut_ptr(), libc::_IOFBF, buffer.len()),
+            0
+        );
+        assert!(glibc_internal_abi::fwide(stream, 1) > 0);
+        let fd = stdio_abi::fileno(stream);
+        let wide = &*(_IO_wfile_jumps_get().cast::<_IO_jump_t>());
+
+        for (index, character) in [b'A', b'B'].into_iter().enumerate() {
+            assert_eq!(
+                (wide.__overflow)(stream, c_int::from(character)),
+                c_int::from(character)
+            );
+            assert_eq!(glibc_internal_abi::__fpending(stream), index + 1);
+            assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR), Ok(0));
+        }
+
+        assert_eq!((wide.__overflow)(stream, -1), 0);
+        assert_eq!(glibc_internal_abi::__fpending(stream), 0);
+        assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR), Ok(2));
+        let mut output = [0u8; 2];
+        assert_eq!(libc::pread(fd, output.as_mut_ptr().cast(), output.len(), 0), 2);
+        assert_eq!(&output, b"AB");
+        assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR), Ok(2));
+        assert_eq!(stdio_abi::fclose(stream), 0);
+    }
+}
+
+#[test]
+fn wide_file_bridge_seekoff_distinguishes_tell_from_seek() {
+    use frankenlibc_abi::{glibc_internal_abi, stdio_abi, wchar_abi};
+
+    // SAFETY: All operations use the same live FILE before its final fclose.
+    // Its caller-supplied buffer remains allocated, the native vtable is only
+    // read, and pread receives a live array with its exact writable length.
+    unsafe {
+        let stream = stdio_abi::tmpfile();
+        assert!(!stream.is_null());
+        let mut buffer = [0 as c_char; 64];
+        assert_eq!(
+            stdio_abi::setvbuf(stream, buffer.as_mut_ptr(), libc::_IOFBF, buffer.len()),
+            0
+        );
+        assert!(glibc_internal_abi::fwide(stream, 1) > 0);
+        let fd = stdio_abi::fileno(stream);
+        let wide = &*(_IO_wfile_jumps_get().cast::<_IO_jump_t>());
+        for character in [b'A', b'B', b'C'] {
+            assert_eq!(
+                wchar_abi::fputwc(u32::from(character), stream),
+                u32::from(character)
+            );
+        }
+        assert_eq!(glibc_internal_abi::__fpending(stream), 3);
+
+        assert_eq!((wide.__seekoff)(stream, 0, libc::SEEK_CUR, 0), 3);
+        // A mode-zero query ignores the seek arguments, just as GNU libio does.
+        assert_eq!((wide.__seekoff)(stream, 99, libc::SEEK_SET, 0), 3);
+        assert_eq!(glibc_internal_abi::__fpending(stream), 3);
+        assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR), Ok(0));
+
+        assert_eq!((wide.__seekoff)(stream, 1, libc::SEEK_SET, 3), 1);
+        assert_eq!(glibc_internal_abi::__fpending(stream), 0);
+        assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR), Ok(1));
+        let mut output = [0u8; 3];
+        assert_eq!(libc::pread(fd, output.as_mut_ptr().cast(), output.len(), 0), 3);
+        assert_eq!(&output, b"ABC");
+        assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR), Ok(1));
+        assert_eq!(wchar_abi::fgetwc(stream), u32::from(b'B'));
+        assert_eq!(stdio_abi::fclose(stream), 0);
+    }
+}
+
+#[test]
 fn vtable_struct_size() {
     assert_eq!(
         std::mem::size_of::<NativeFileVtable>(),

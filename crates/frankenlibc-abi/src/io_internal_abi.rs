@@ -5427,37 +5427,46 @@ pub unsafe extern "C" fn _IO_wdoallocbuf(_fp: *mut c_void) {
 
 /// `_IO_wfile_overflow` — handle wide write buffer overflow.
 ///
-/// Native: flushes the file stream, then delegates the wide character write to
-/// the public wide-stream layer.
+/// Native: WEOF requests a flush; character writes retain the public wide
+/// writer's full-buffer and line-buffer rules.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_wfile_overflow(fp: *mut c_void, wch: u32) -> u32 {
     if fp.is_null() {
         return WEOF_U32;
     }
-    if unsafe { stdio_abi::fflush(fp) } != 0 {
-        return WEOF_U32;
-    }
     if wch == WEOF_U32 {
-        0
+        // SAFETY: The public flush path validates and locks the forwarded FILE handle.
+        if unsafe { stdio_abi::fflush(fp) } == 0 {
+            0
+        } else {
+            WEOF_U32
+        }
     } else {
+        // SAFETY: The public wide writer validates and locks the forwarded FILE handle.
         unsafe { crate::wchar_abi::fputwc(wch, fp) }
     }
 }
 
 /// `_IO_wfile_seekoff` — seek on wide file.
 ///
-/// Native: delegates to the narrow file seek via fseeko/ftello which
-/// handles both narrow and wide streams.
+/// Native: a zero mode queries the position without synchronizing buffers;
+/// actual seeks delegate to the public positioning layer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_wfile_seekoff(
     fp: *mut c_void,
     offset: i64,
     dir: c_int,
-    _mode: c_int,
+    mode: c_int,
 ) -> i64 {
+    if mode == 0 {
+        // SAFETY: The public tell path validates and locks the forwarded FILE handle.
+        return unsafe { stdio_abi::ftello(fp) };
+    }
+    // SAFETY: The public seek path validates the FILE handle and positioning arguments.
     if unsafe { stdio_abi::fseeko(fp, offset, dir) } != 0 {
         return -1;
     }
+    // SAFETY: The successfully sought FILE remains live for the public position query.
     unsafe { stdio_abi::ftello(fp) }
 }
 
