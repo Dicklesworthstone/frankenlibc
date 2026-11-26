@@ -8445,27 +8445,20 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
     }
-    // ST fast path: a cache hit is a non-mem fd stream whose offset is tracked inline;
-    // sync_fast_fixed_mem_read_to_stream is a no-op and decide()==Allow in strict, so
-    // returning `offset()` directly is byte-identical (matches the existing cache-hit
-    // fast paths that skip decide). Skips the 3 per-call locks.
-    if let Some(p) = write_cache_lookup_by_stream(stream)
-        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
-        && !unsafe { (*p).is_appending() }
-        && unsafe { (*p).seekability() } == 1
-    {
-        // SAFETY: as above.
-        return unsafe { (*p).offset() } as c_long;
+    // Cache the FILE lookup only. A synchronized descriptor can advance
+    // between calls, even when the same thread retains this stream cell.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: a generation-checked single-threaded cache hit gives
+        // exclusive access to a live non-cookie descriptor stream.
+        let state = unsafe { &mut *p };
+        if !state.is_appending() && state.seekability() == 1 {
+            return tell_result(native_stream_position(state));
+        }
     }
-    // MT-safe cell-cache fast path (see feof): the ST cache above is `__libc_single_threaded`-
-    // gated, so a threaded position-tracking loop otherwise pays the registry map lock per call.
-    // Cached cells are non-mem fd (sync is a no-op) and decide()==Allow in strict, so returning
-    // `offset()` under this stream's lock is byte-identical to the slow path (same reasoning the
-    // ST fast path uses to skip decide/observe).
     if let Some(cell) = stream_cell_cache_lookup(stream) {
-        let s = cell.lock();
-        if !s.is_appending() && s.seekability() == 1 {
-            return s.offset() as c_long;
+        let mut state = cell.lock();
+        if !state.is_appending() && state.seekability() == 1 {
+            return tell_result(native_stream_position(&mut state));
         }
     }
     let id = canonical_stream_id(stream);
@@ -8535,79 +8528,64 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     let s = &mut *s_guard;
 
     let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-    // A pipe, socket or terminal has no position: glibc's ftell fails with
-    // ESPIPE there (its lseek does); fl returned its byte counter. Probed once.
-    if s.fd() >= 0 && !s.is_mem_backed() {
-        if s.seekability() == 0 {
-            match raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_CUR) {
-                Ok(_) => s.set_seekability(1),
-                Err(e) if e == libc::ESPIPE => s.set_seekability(2),
-                // Like glibc, whose ftell on a stream with no cached offset is
-                // an lseek: a descriptor closed behind stdio's back reports
-                // EBADF (gnulib test-ftello4); nothing is cached.
-                Err(e) => {
-                    unsafe { set_abi_errno(e) };
-                    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-                    return -1;
-                }
-            }
-        }
-        if s.seekability() == 2 {
-            unsafe { set_abi_errno(errno::ESPIPE) };
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-            return -1;
+    let position = native_stream_position(s);
+    drop(s_guard);
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, position.is_err());
+    tell_result(position)
+}
+
+fn tell_result(position: Result<i64, c_int>) -> c_long {
+    match position {
+        Ok(value) => value as c_long,
+        Err(error) => {
+            // SAFETY: only the calling thread's errno slot is modified.
+            unsafe { set_abi_errno(error) };
+            -1
         }
     }
-    // GNU position queries account for pending append output without writing
-    // it. Seeking the descriptor to EOF discovers where O_APPEND will place
-    // those bytes, while the buffer remains pending for fflush/fclose.
-    let wide_pending = if s.pending_wide_output() == 0 {
+}
+
+fn native_stream_position(stream: &mut StdioStream) -> Result<i64, c_int> {
+    let wide_pending = if stream.pending_wide_output() == 0 {
         0
     } else {
-        s.pending_wide_offset(matches!(
+        stream.pending_wide_offset(matches!(
             crate::locale_abi::active_charset(),
             crate::locale_abi::Charset::Utf8
         ))
     };
-    let pending = s.pending_flush().len().saturating_add(wide_pending);
-    let has_pending_output = s.pending_wide_output() != 0 || !s.pending_flush().is_empty();
-    if s.is_appending() && s.fd() >= 0 && (has_pending_output || s.last_was_write()) {
-        // Even a wchar whose current transliteration is empty selects EOF.
-        // Only completed automatic/unbuffered writes reuse the fd position.
-        let whence = if has_pending_output {
-            libc::SEEK_END
+    if stream.fd() < 0 || stream.is_mem_backed() {
+        return if wide_pending == 0 {
+            Ok(stream.offset())
         } else {
-            libc::SEEK_CUR
+            buffered_stream_position(stream.offset(), wide_pending, 0)
         };
-        let position = raw_syscall::sys_lseek(s.fd(), 0, whence)
-            .and_then(|offset| buffered_stream_position(offset, pending, 0));
-        match position {
-            Ok(position) => {
-                // Wide characters are not part of offset until their bytes
-                // reach the descriptor. Keep repeated tell queries idempotent.
-                s.set_offset(position.saturating_sub(wide_pending as i64));
-            }
-            Err(error) => {
-                unsafe { set_abi_errno(error) };
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-                return -1;
-            }
-        }
     }
-    let off = if wide_pending == 0 {
-        s.offset()
+
+    // POSIX lets a caller fflush the stream, use a descriptor sharing its
+    // open file description, then resume stdio. The logical position is the
+    // kernel cursor adjusted for bytes still held by the stream. Reading
+    // this cursor also reports ESPIPE/EBADF without changing FILE status.
+    let pending = stream.pending_flush().len().saturating_add(wide_pending);
+    // Even a wchar whose current transliteration is empty selects append EOF.
+    let append_pending = stream.is_appending()
+        && (stream.pending_wide_output() != 0 || !stream.pending_flush().is_empty());
+    let whence = if append_pending {
+        libc::SEEK_END
     } else {
-        match buffered_stream_position(s.offset(), wide_pending, 0) {
-            Ok(position) => position,
-            Err(error) => {
-                unsafe { set_abi_errno(error) };
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-                return -1;
-            }
-        }
+        libc::SEEK_CUR
     };
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-    off as c_long
+    let backend = raw_syscall::sys_lseek(stream.fd(), 0, whence)?;
+    let unread = if append_pending {
+        0
+    } else {
+        stream.unread_bytes_for_position()
+    };
+    let position = buffered_stream_position(backend, pending, unread)?;
+    stream.set_seekability(1);
+    // Unconverted characters advance offset only when their bytes are written.
+    stream.set_offset(position - wide_pending as i64);
+    Ok(position)
 }
 
 /// Reconcile a backend cursor with bytes still owned by stdio. Checked

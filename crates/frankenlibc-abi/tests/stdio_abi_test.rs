@@ -2472,6 +2472,40 @@ fn fgetpos_fsetpos_save_and_restore_position() {
 }
 
 #[test]
+fn position_tracks_a_descriptor_between_synchronized_stream_operations() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    // SAFETY: the FILE owns fd and is flushed before handing it to descriptor I/O.
+    unsafe {
+        assert!(fputs(c"ab".as_ptr(), stream) >= 0);
+        assert_eq!(ftell(stream), 2);
+        assert_eq!(fflush(stream), 0);
+        assert_eq!(libc::write(fd, b"cde".as_ptr().cast(), 3), 3);
+        assert_eq!(ftell(stream), 5);
+        assert_eq!(fputc(i32::from(b'f'), stream), i32::from(b'f'));
+        assert_eq!(ftello(stream), 6);
+
+        assert_eq!(fseek(stream, 0, libc::SEEK_SET), 0);
+        assert_eq!(fgetc(stream), i32::from(b'a'));
+        assert_eq!(fflush(stream), 0);
+        let mut byte = 0_u8;
+        assert_eq!(libc::read(fd, (&mut byte as *mut u8).cast(), 1), 1);
+        assert_eq!(byte, b'b');
+
+        let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+        assert_eq!(fgetpos(stream, pos.as_mut_ptr()), 0);
+        assert_eq!(fgetc(stream), i32::from(b'c'));
+        assert_eq!(ftell(stream), 3);
+        assert_eq!(fsetpos(stream, pos.as_ptr()), 0);
+        assert_eq!(fgetc(stream), i32::from(b'c'));
+        assert_eq!(fclose(stream), 0);
+    }
+}
+
+#[test]
 fn fgetpos_rejects_null_arguments() {
     let path = temp_path("fpos_null");
     let _ = fs::remove_file(&path);
