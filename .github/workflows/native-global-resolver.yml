@@ -65,9 +65,9 @@ jobs:
           cargo test --locked -p frankenlibc-core --lib dns_transport::tests:: -- --nocapture 2>&1 | tee artifacts/global-resolver/transport.log
           grep -Eq 'test result: ok\. 49 passed; 0 failed; 0 ignored;' artifacts/global-resolver/transport.log
           cargo test --locked -p frankenlibc-abi --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global.log
-          grep -Eq 'test result: ok\. 15 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global.log
+          grep -Eq 'test result: ok\. 16 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global.log
           cargo test --locked -p frankenlibc-abi --features owned-tls-cache --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global-owned-tls.log
-          grep -Eq 'test result: ok\. 15 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global-owned-tls.log
+          grep -Eq 'test result: ok\. 16 passed; 0 failed; 0 ignored;' artifacts/global-resolver/global-owned-tls.log
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/state.log
           grep -Eq 'test result: ok\. 14 passed; 0 failed; 0 ignored;' artifacts/global-resolver/state.log
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_edns_test -- --nocapture 2>&1 | tee artifacts/global-resolver/edns.log
@@ -224,8 +224,9 @@ jobs:
           run_case getrandom 6 cargo test --locked -p frankenlibc-abi "${features[@]}" --test conformance_diff_vdso_getrandom -- --test-threads=1
           require_cases getrandom native_ownership::native_getrandom_ 2
           for mode in strict hardened; do
-            run_case "global-$mode" 15 env "FRANKENLIBC_MODE=$mode" cargo test --locked -p frankenlibc-abi "${features[@]}" --test global_resolver_test -- --test-threads=1
+            run_case "global-$mode" 16 env "FRANKENLIBC_MODE=$mode" cargo test --locked -p frankenlibc-abi "${features[@]}" --test global_resolver_test -- --test-threads=1
             require_cases "global-$mode" global_host_canonical_names_match_gnu_for_binary_cname_labels 1
+            require_cases "global-$mode" ipv4_dns_answers_follow_public_sortlist_in_stable_order 1
             run_case "locale-$mode" 3 env "FRANKENLIBC_MODE=$mode" cargo test --locked -p frankenlibc-abi "${features[@]}" --test locale_abi_test locale_native_tls_ -- --test-threads=1
           done
           test "$failed" -eq 0
