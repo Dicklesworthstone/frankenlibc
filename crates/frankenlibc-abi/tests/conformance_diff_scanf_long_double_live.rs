@@ -173,6 +173,18 @@ const CASES: &[(&str, &str)] = &[
     ),
     ("0x1p-16400", "hex subnormal at the bottom of the format"),
     ("-0x0.8p+1", "hex with a fractional part and a sign"),
+    (
+        "0x10000000000000000",
+        "seventeenth integer digit changes scale",
+    ),
+    (
+        "0x1.0000000000000800000000000001p0",
+        "distant sticky bit breaks a binary64 midpoint",
+    ),
+    (
+        "0x1.0000000000001p-1075",
+        "above the zero/subnormal midpoint",
+    ),
     // --- the specials, which must not become collateral damage ---
     ("inf", "infinity keyword"),
     ("-inf", "signed infinity"),
@@ -322,6 +334,62 @@ fn plain_float_conversions_are_unchanged() {
         failures.len(),
         failures.join("\n  ")
     );
+}
+
+/// Compare bytes and the consumed count against the live host in each x86
+/// rounding mode. The trailing sentinel detects consuming beyond the field.
+#[test]
+fn floats_respect_the_callers_rounding_direction() {
+    use frankenlibc_abi::fenv_abi::{fegetround, fesetround};
+
+    struct RestoreRounding(c_int);
+    impl Drop for RestoreRounding {
+        fn drop(&mut self) {
+            unsafe { fesetround(self.0) };
+        }
+    }
+
+    let host = host_sscanf();
+    let fl = frankenlibc_abi::stdio_abi::sscanf as SscanfFn;
+    let _restore = RestoreRounding(unsafe { fegetround() });
+    for mode in [0, 0x400, 0x800, 0xc00] {
+        assert_eq!(unsafe { fesetround(mode) }, 0);
+        for (format, bytes) in [(c"%f%n", 4), (c"%lf%n", 8), (c"%Lf%n", 10)] {
+            for input in [
+                c"1.1!",
+                c"-1.1!",
+                c"0x1.0000000000000000801p0!",
+                c"-0x1.0000000000000000801p0!",
+                c"0x10000000000000000p+!",
+            ] {
+                let scan = |f: SscanfFn| {
+                    let mut slot = LongDouble::poisoned();
+                    let mut consumed: c_int = -1;
+                    // The aligned slot accommodates each floating type. %n
+                    // receives its own writable int.
+                    let count = unsafe {
+                        f(
+                            input.as_ptr(),
+                            format.as_ptr(),
+                            (&raw mut slot).cast::<c_void>(),
+                            &raw mut consumed,
+                        )
+                    };
+                    (count, consumed, slot.0)
+                };
+                let (count, consumed, expected) = scan(host);
+                assert_eq!(count, 1);
+                assert_eq!(consumed as usize, input.to_bytes().len() - 1);
+                let (actual_count, actual_consumed, actual) = scan(fl);
+                assert_eq!((actual_count, actual_consumed), (count, consumed));
+                assert_eq!(
+                    actual[..bytes],
+                    expected[..bytes],
+                    "input {input:?}, format {format:?}, mode {mode:#x}"
+                );
+            }
+        }
+    }
 }
 
 /// A conversion AFTER the long double must read its own argument.

@@ -709,7 +709,7 @@ fn encode_x87(negative: bool, significand: u64, exp_field: u16) -> [u8; 10] {
     out
 }
 
-fn x87_storage(bits: u128) -> [u8; 10] {
+pub(crate) fn x87_storage(bits: u128) -> [u8; 10] {
     encode_x87(
         bits & (1u128 << 79) != 0,
         bits as u64,
@@ -883,19 +883,27 @@ pub fn hex_to_binary(
     format: BinaryFormat,
     rounding: RoundingMode,
 ) -> BinaryConversion {
-    let mut m = BigUint { limbs: Vec::new() };
-    let mut any = false;
+    // Keep at least 117 significant bits: binary128, the widest destination,
+    // needs 113 plus a halfway bit. Digits below this window can affect a
+    // rounding decision only by making the discarded remainder nonzero.
+    let mut prefix = 0u128;
+    let mut omitted = 0i64;
+    let mut sticky = false;
     for &h in int_hex.iter().chain(frac_hex.iter()) {
-        let d = (h as char).to_digit(16).unwrap_or(0);
-        m.mul_small(16);
-        m.add_small(d);
-        any |= d != 0;
+        let digit = (h as char).to_digit(16).unwrap_or(0);
+        if prefix < 1 << 116 {
+            prefix = (prefix << 4) | u128::from(digit);
+        } else {
+            omitted += 1;
+            sticky |= digit != 0;
+        }
     }
-    if !any {
+    if prefix == 0 {
         return exact_binary(format.sign(negative));
     }
-    // value = M · 2^e2.
-    let e2 = binexp.saturating_sub((frac_hex.len() as i64).saturating_mul(4));
+    let m = BigUint::from_u128(prefix | u128::from(sticky));
+    let shift = (omitted - frac_hex.len() as i64).saturating_mul(4);
+    let e2 = binexp.saturating_add(shift);
     let order = e2.saturating_add(m.bit_len() as i64 - 1);
     // Bound the magnitude before constructing a denominator or shifting. The
     // exponent alone is insufficient: a long significand can cancel a large
@@ -2697,6 +2705,50 @@ mod tests {
                     assert_eq!(parsed.status, FloatStatus::default());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn long_hex_significands_keep_scale_and_halfway_information() {
+        for format in [
+            BinaryFormat::Binary32,
+            BinaryFormat::Binary64,
+            BinaryFormat::X87,
+            BinaryFormat::Binary128,
+        ] {
+            // At 1 the halfway bit has weight 2^-precision. Extend the
+            // significand by thousands of nibbles before breaking the tie.
+            let precision = format.precision() as usize;
+            let zeros = (precision - 1) / 4;
+            let halfway = b"8421"[(precision - 1) % 4] as char;
+            let tie = format!("0x1.{}{halfway}", "0".repeat(zeros));
+            let tail = "0".repeat(4096);
+            let one = parse_binary_c(b"1", format, RoundingMode::Nearest).bits;
+            for rounding in [
+                RoundingMode::Nearest,
+                RoundingMode::Upward,
+                RoundingMode::Downward,
+                RoundingMode::TowardZero,
+            ] {
+                let long_tie = parse_binary_c(format!("{tie}{tail}").as_bytes(), format, rounding);
+                let above = parse_binary_c(format!("{tie}{tail}1").as_bytes(), format, rounding);
+                assert_eq!(
+                    long_tie.bits,
+                    one + u128::from(rounding == RoundingMode::Upward)
+                );
+                assert_eq!(
+                    above.bits,
+                    one + u128::from(matches!(
+                        rounding,
+                        RoundingMode::Nearest | RoundingMode::Upward
+                    ))
+                );
+                assert!(long_tie.status.inexact && above.status.inexact);
+            }
+            let cancelling = format!("0x1{tail}p-{}", 4 * tail.len());
+            let exact = parse_binary_c(cancelling.as_bytes(), format, RoundingMode::Nearest);
+            assert_eq!(exact.bits, one);
+            assert_eq!(exact.status, FloatStatus::default());
         }
     }
 

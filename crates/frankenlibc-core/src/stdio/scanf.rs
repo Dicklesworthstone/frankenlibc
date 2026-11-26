@@ -11,6 +11,7 @@
 //! excludes `%n`, matching POSIX/glibc.
 
 use super::printf::LengthMod;
+use crate::float128::{BinaryFormat, RoundingMode, parse_binary_c, x87_storage};
 use core::num::NonZeroU32;
 
 /// Whitespace test matching C's `isspace` in the C locale. POSIX scanf
@@ -2890,26 +2891,28 @@ fn digit_value(b: u8, base: u32) -> Option<u32> {
     if val < base { Some(val) } else { None }
 }
 
-/// Wrap a scanned float value, carrying full x87 precision for `%Lf`.
-///
-/// The engine parses every float to `f64`, which is the right width for `%f`
-/// and `%lf` and the WRONG one for `%Lf`: the significand is truncated to 53
-/// bits before any writer sees the value, and widening at the ABI cannot
-/// recover digits the parse already threw away. For a long-double conversion
-/// the accepted token is re-read with [`crate::float128::strtold_scan`] — the
-/// same front end `strtold` uses, verified against glibc over 625 vectors.
-///
-/// `token` is the byte range this conversion ACCEPTED: sign included, field
-/// width already applied, trailing garbage already excluded. Passing the token
-/// rather than the remaining input is what keeps the two scanners from
-/// disagreeing about where the number ends — matching, backtracking and the
-/// consumed count all stay with the caller, and only the value's precision
-/// changes here.
-#[inline]
-fn float_scan_value(spec: &ScanSpec, val: f64, token: &[u8]) -> ScanValue {
+/// Round an already matched numeric token to its destination precision.
+fn exact_scan_float(token: &[u8], length: LengthMod, rounding: RoundingMode) -> ScanValue {
+    match length {
+        LengthMod::None => {
+            let bits = parse_binary_c(token, BinaryFormat::Binary32, rounding).bits;
+            ScanValue::Float(f64::from(f32::from_bits(bits as u32)))
+        }
+        LengthMod::BigL => {
+            let bits = parse_binary_c(token, BinaryFormat::X87, rounding).bits;
+            ScanValue::LongDouble(x87_storage(bits))
+        }
+        _ => {
+            let bits = parse_binary_c(token, BinaryFormat::Binary64, rounding).bits;
+            ScanValue::Float(f64::from_bits(bits as u64))
+        }
+    }
+}
+
+/// Preserve the scanner's low-bit NaN payload convention for both float widths.
+fn special_scan_float(spec: &ScanSpec, val: f64, token: &[u8]) -> ScanValue {
     if spec.length == LengthMod::BigL {
-        // The token is already in C form (see `scan_float`).
-        ScanValue::LongDouble(crate::float128::strtold_scan_c(token).bytes)
+        exact_scan_float(token, spec.length, RoundingMode::Nearest)
     } else {
         ScanValue::Float(val)
     }
@@ -3052,7 +3055,7 @@ fn scan_float_c_radix(
             } else {
                 f64::INFINITY
             };
-            return Some((Some(float_scan_value(spec, val, &input[pos..i])), i));
+            return Some((Some(special_scan_float(spec, val, &input[pos..i])), i));
         }
         if remaining.len() >= 3 && remaining[..3].eq_ignore_ascii_case(b"nan") {
             // glibc's strtod accepts an optional `(n-char-sequence)` payload
@@ -3095,7 +3098,10 @@ fn scan_float_c_radix(
             // glibc's value with no second encoding step. Sharing it also keeps
             // scanf and strtod from drifting apart on the same grammar.
             let val = crate::stdlib::conversion::nan_f64(payload, negative);
-            return Some((Some(float_scan_value(spec, val, &input[pos..i + j])), i + j));
+            return Some((
+                Some(special_scan_float(spec, val, &input[pos..i + j])),
+                i + j,
+            ));
         }
     }
 
@@ -3118,19 +3124,7 @@ fn scan_float_c_radix(
         return None;
     }
 
-    // Decimal float: digits, decimal point, exponent.
-    //
-    // The accepted token is CONTIGUOUS in `input`, so it is parsed in place.
-    // This used to copy it byte by byte into a `Vec::with_capacity(64)` just to
-    // hand a slice to `str::parse` -- one heap allocation and one push per
-    // character on every float conversion, where glibc allocates nothing at all.
-    //
-    // The sign is applied AFTER parsing the magnitude rather than being
-    // prepended to a buffer, which is what lets the token be read straight out
-    // of `input`. That is exact for the cases that matter: "0.0" negated is
-    // -0.0, and "1e400" negated is -inf, matching what parsing "-0.0" and
-    // "-1e400" produced before.
-    let tok_start = i;
+    // Decimal significand and optional exponent.
     let mut any_digit = false;
     let mut seen_dot = false;
     let mut value_end = None;
@@ -3177,21 +3171,23 @@ fn scan_float_c_radix(
         return None;
     }
 
-    // Parse the accepted token straight out of `input`.
-    // For single-precision `%f` (`LengthMod::None`), parse directly to `f32`
-    // and widen losslessly (`f64::from`) so borderline midpoints and subnormals
-    // never suffer intermediate `f64` double rounding.
-    let s = core::str::from_utf8(input.get(tok_start..value_end.unwrap_or(i))?).ok()?;
-    let val = if spec.length == LengthMod::None {
-        let magnitude: f32 = s.parse().ok()?;
-        let signed = if negative { -magnitude } else { magnitude };
-        f64::from(signed)
+    // A dangling exponent still counts toward the scanf input item. Only the
+    // complete numerical prefix participates in conversion.
+    let token = &input[pos..value_end.unwrap_or(i)];
+    let rounding = RoundingMode::current();
+    let value = if spec.length == LengthMod::BigL || rounding != RoundingMode::Nearest {
+        exact_scan_float(token, spec.length, rounding)
     } else {
-        let magnitude: f64 = s.parse().ok()?;
-        if negative { -magnitude } else { magnitude }
+        // Keep the ordinary nearest-mode decimal path allocation-free.
+        let text = core::str::from_utf8(token).ok()?;
+        let value = if spec.length == LengthMod::None {
+            f64::from(text.parse::<f32>().ok()?)
+        } else {
+            text.parse::<f64>().ok()?
+        };
+        ScanValue::Float(value)
     };
-
-    Some((Some(float_scan_value(spec, val, &input[pos..i])), i))
+    Some((Some(value), i))
 }
 
 /// Scan a hex float (0x[h...h][.h...h][pN]) per C11 7.21.6.2.
@@ -3210,37 +3206,15 @@ fn scan_hex_float(
     chars_read += 2;
 
     // Parse hex significand: integer part, optional '.', fractional part.
-    let mut significand: u64 = 0;
-    let mut frac_digits: i32 = 0;
     let mut any_hex_digit = false;
-    let mut in_fraction = false;
     let mut saw_decimal_point = false;
-
     while i < input.len() && chars_read < max_chars {
-        let c = input[i];
-        if c == b'.' && !in_fraction {
+        if input[i].is_ascii_hexdigit() {
+            any_hex_digit = true;
+        } else if input[i] == b'.' && !saw_decimal_point {
             saw_decimal_point = true;
-            in_fraction = true;
-            i += 1;
-            chars_read += 1;
-            continue;
-        }
-        let digit_val = match c {
-            b'0'..=b'9' => (c - b'0') as u64,
-            b'a'..=b'f' => (c - b'a' + 10) as u64,
-            b'A'..=b'F' => (c - b'A' + 10) as u64,
-            _ => break,
-        };
-        any_hex_digit = true;
-        // Each hex digit is 4 bits. Guard against overflow by checking high bits.
-        if significand < (1u64 << 60) {
-            significand = (significand << 4) | digit_val;
-            if in_fraction {
-                frac_digits += 1;
-            }
-        } else if !in_fraction {
-            // Overflow in integer part - this is a very large number.
-            // Keep consuming digits but don't shift anymore.
+        } else {
+            break;
         }
         i += 1;
         chars_read += 1;
@@ -3251,83 +3225,28 @@ fn scan_hex_float(
         // or `0xyz` as matching failures.
         if saw_decimal_point {
             let val = if negative { -0.0 } else { 0.0 };
-            return Some((Some(float_scan_value(spec, val, &input[start_pos..i])), i));
+            return Some((Some(special_scan_float(spec, val, &input[start_pos..i])), i));
         }
         return None;
     }
 
-    // Parse binary exponent (p/P followed by optional sign and decimal digits).
-    let mut hex_value_end = i;
-    let mut bin_exp: i32 = 0;
-    if i < input.len() && chars_read < max_chars && (input[i] == b'p' || input[i] == b'P') {
+    // GNU scanf consumes an incomplete exponent marker and optional sign.
+    // The exact parser assigns the mantissa when the exponent lacks digits.
+    if i < input.len() && chars_read < max_chars && matches!(input[i], b'p' | b'P') {
         i += 1;
         chars_read += 1;
-
-        let exp_negative;
-        if i < input.len() && chars_read < max_chars {
-            if input[i] == b'-' {
-                exp_negative = true;
-                i += 1;
-                chars_read += 1;
-            } else if input[i] == b'+' {
-                exp_negative = false;
-                i += 1;
-                chars_read += 1;
-            } else {
-                exp_negative = false;
-            }
-        } else {
-            exp_negative = false;
-        }
-
-        let exp_digits_start = i;
-        while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
-            let d = (input[i] - b'0') as i32;
-            bin_exp = bin_exp.saturating_mul(10).saturating_add(d);
+        if i < input.len() && chars_read < max_chars && matches!(input[i], b'+' | b'-') {
             i += 1;
             chars_read += 1;
         }
-        if i > exp_digits_start {
-            hex_value_end = i;
-        }
-
-        // As for decimal exponents, GNU scanf consumes an incomplete `p`/`P`
-        // suffix and optional sign, retaining the significand with exponent 0.
-        if exp_negative {
-            bin_exp = -bin_exp;
+        while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
+            i += 1;
+            chars_read += 1;
         }
     }
 
-    let val = if spec.length == LengthMod::None {
-        // Round hex floats directly to binary32 so sticky bits beyond bit 53
-        // cannot double-round through an intermediate `f64`.
-        let parsed = crate::float128::parse_binary_c(
-            &input[start_pos..hex_value_end],
-            crate::float128::BinaryFormat::Binary32,
-            crate::float128::RoundingMode::Nearest,
-        );
-        f64::from(f32::from_bits(parsed.bits as u32))
-    } else {
-        // Convert to f64: value = significand * 2^(bin_exp - 4*frac_digits). Each
-        // hex fractional digit shifts the binary point 4 bits. Scale with
-        // `libm::ldexp` (== scalbn) rather than `* 2_f64.powi(n)`: for a large
-        // negative exponent `powi` evaluates 1/2^|n|, and 2^1074 overflows to inf,
-        // so the smallest subnormal `0x1p-1074` (5e-324) wrongly underflowed to 0.
-        // ldexp handles the full subnormal/overflow range correctly.
-        //
-        // Restored under bd-2g7oyh: 8f0dda241 fixed this and 73c8da5cd reverted it
-        // (1424 insertions against 9431 deletions). The saturating arithmetic went
-        // with it — plain `bin_exp - frac_digits * 4` can overflow on an input with
-        // enough fractional digits, which is reachable from untrusted text.
-        let total_exp = bin_exp.saturating_sub(frac_digits.saturating_mul(4));
-        let mut v = libm::ldexp(significand as f64, total_exp);
-        if negative {
-            v = -v;
-        }
-        v
-    };
-
-    Some((Some(float_scan_value(spec, val, &input[start_pos..i])), i))
+    let value = exact_scan_float(&input[start_pos..i], spec.length, RoundingMode::current());
+    Some((Some(value), i))
 }
 
 /// Byte length of the UTF-8 sequence beginning with `b`. Returns 1 for ASCII or
