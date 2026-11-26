@@ -51,6 +51,12 @@ jobs:
           localedef --no-archive --no-warnings=ascii -i ja_JP -f SHIFT_JIS artifacts/locale-results/locales/ja_JP.SJIS
           localedef --no-archive -i ja_JP -f EUC-JP artifacts/locale-results/locales/ja_JP.EUC-JP
           localedef --no-archive -i zh_CN -f GB18030 artifacts/locale-results/locales/zh_CN.GB18030
+          localedef --no-archive -i zh_TW -f BIG5 artifacts/locale-results/locales/zh_TW.BIG5
+          localedef --no-archive -i zh_CN -f GBK artifacts/locale-results/locales/zh_CN.GBK
+          localedef --no-archive -i zh_CN -f GB2312 artifacts/locale-results/locales/zh_CN.GB2312
+          localedef --no-archive -i ko_KR -f EUC-KR artifacts/locale-results/locales/ko_KR.EUC-KR
+          localedef --no-archive -i ko_KR -f CP949 artifacts/locale-results/locales/ko_KR.CP949
+          localedef --no-archive -i ja_JP -f WINDOWS-31J artifacts/locale-results/locales/ja_JP.WINDOWS-31J
       - name: Preserve reproducible offline diagnosis inputs
         if: github.run_number == 1
         run: |
@@ -121,10 +127,11 @@ jobs:
           candidate="$(realpath target/release/libfrankenlibc_abi.so)"
           host="$("$probe" provider)"
           failed=0
-          for case in multibyte-sjis multibyte-eucjp multibyte-gb18030; do
+          for case in multibyte-sjis multibyte-eucjp multibyte-gb18030 \
+                      multibyte-big5 multibyte-gbk multibyte-gb2312 multibyte-euckr multibyte-cp949 multibyte-cp932; do
             host_log="artifacts/locale-results/$case.host"
             if ! timeout 30 "$probe" "$case" "$host" > "$host_log" 2>&1; then failed=1; fi
-            if ! grep -Eq '^multibyte-(SHIFT_JIS|EUC-JP|GB18030): ok$' "$host_log"; then failed=1; fi
+            if ! grep -Eq '^multibyte-(SHIFT_JIS|EUC-JP|GB18030|BIG5|GBK|GB2312|EUC-KR|CP949|WINDOWS-31J): ok$' "$host_log"; then failed=1; fi
             for mode in strict hardened; do
               log="artifacts/locale-results/$case.$mode"
               if ! timeout 30 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$candidate" "$probe" "$case" "$candidate" > "$log" 2>&1; then failed=1; fi

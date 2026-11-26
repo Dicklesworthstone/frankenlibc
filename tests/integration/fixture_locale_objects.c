@@ -516,9 +516,10 @@ struct codec_case {
     const char *name;
     const char *codeset;
     size_t width;
+    unsigned char invalid_byte;
     const struct codec_vector *vectors;
     size_t count;
-    wchar_t last;
+    wchar_t middle, last;
     const char *text;
     const char *utf8;
 };
@@ -537,16 +538,52 @@ static const struct codec_vector gb18030_vectors[] = {
     {L'A', "A", 1}, {0x3042, "\xa4\xa2", 2}, {0x4e00, "\xd2\xbb", 2},
     {0x4e02, "\x81\x40", 2}, {0x1f600, "\x94\x39\xfc\x36", 4},
 };
+static const struct codec_vector big5_vectors[] = {
+    {0x4e2d, "\xa4\xa4", 2}, {0x6587, "\xa4\xe5", 2}, {0x20ac, "\xa3\xe1", 2},
+};
+static const struct codec_vector gbk_vectors[] = {
+    {0x4e2d, "\xd6\xd0", 2}, {0x4e02, "\x81\x40", 2}, {0x20ac, "\x80", 1},
+};
+static const struct codec_vector gb2312_vectors[] = {
+    {0x4e2d, "\xd6\xd0", 2}, {0x6587, "\xce\xc4", 2},
+};
+static const struct codec_vector euckr_vectors[] = {
+    {0xac00, "\xb0\xa1", 2}, {0xd55c, "\xc7\xd1", 2}, {0x20ac, "\xa2\xe6", 2},
+};
+static const struct codec_vector cp949_vectors[] = {
+    {0xac00, "\xb0\xa1", 2}, {0xac02, "\x81\x41", 2},
+};
+static const struct codec_vector cp932_vectors[] = {
+    {0x3042, "\x82\xa0", 2}, {0x8a9e, "\x8c\xea", 2}, {0xff71, "\xb1", 1},
+};
 static const struct codec_case codec_cases[] = {
-    {"ja_JP.SJIS", "SHIFT_JIS", 2, sjis_vectors,
-     sizeof sjis_vectors / sizeof *sjis_vectors, 0x4e00,
+    {"ja_JP.SJIS", "SHIFT_JIS", 2, 0xff, sjis_vectors,
+     sizeof sjis_vectors / sizeof *sjis_vectors, 0x3042, 0x4e00,
      "A\x82\xa0\x88\xea", "A\xe3\x81\x82\xe4\xb8\x80"},
-    {"ja_JP.EUC-JP", "EUC-JP", 3, eucjp_vectors,
-     sizeof eucjp_vectors / sizeof *eucjp_vectors, 0x4e02,
+    {"ja_JP.EUC-JP", "EUC-JP", 3, 0xff, eucjp_vectors,
+     sizeof eucjp_vectors / sizeof *eucjp_vectors, 0x3042, 0x4e02,
      "A\xa4\xa2\x8f\xb0\xa1", "A\xe3\x81\x82\xe4\xb8\x82"},
-    {"zh_CN.GB18030", "GB18030", 4, gb18030_vectors,
-     sizeof gb18030_vectors / sizeof *gb18030_vectors, 0x1f600,
+    {"zh_CN.GB18030", "GB18030", 4, 0xff, gb18030_vectors,
+     sizeof gb18030_vectors / sizeof *gb18030_vectors, 0x3042, 0x1f600,
      "A\xa4\xa2\x94\x39\xfc\x36", "A\xe3\x81\x82\xf0\x9f\x98\x80"},
+    {"zh_TW.BIG5", "BIG5", 2, 0xff, big5_vectors,
+     sizeof big5_vectors / sizeof *big5_vectors, 0x4e2d, 0x6587,
+     "A\xa4\xa4\xa4\xe5", "A\xe4\xb8\xad\xe6\x96\x87"},
+    {"zh_CN.GBK", "GBK", 2, 0xff, gbk_vectors,
+     sizeof gbk_vectors / sizeof *gbk_vectors, 0x4e2d, 0x4e02,
+     "A\xd6\xd0\x81\x40", "A\xe4\xb8\xad\xe4\xb8\x82"},
+    {"zh_CN.GB2312", "GB2312", 2, 0xff, gb2312_vectors,
+     sizeof gb2312_vectors / sizeof *gb2312_vectors, 0x4e2d, 0x6587,
+     "A\xd6\xd0\xce\xc4", "A\xe4\xb8\xad\xe6\x96\x87"},
+    {"ko_KR.EUC-KR", "EUC-KR", 2, 0xa0, euckr_vectors,
+     sizeof euckr_vectors / sizeof *euckr_vectors, 0xac00, 0xd55c,
+     "A\xb0\xa1\xc7\xd1", "A\xea\xb0\x80\xed\x95\x9c"},
+    {"ko_KR.CP949", "CP949", 2, 0xff, cp949_vectors,
+     sizeof cp949_vectors / sizeof *cp949_vectors, 0xac00, 0xac02,
+     "A\xb0\xa1\x81\x41", "A\xea\xb0\x80\xea\xb0\x82"},
+    {"ja_JP.WINDOWS-31J", "WINDOWS-31J", 2, 0xff, cp932_vectors,
+     sizeof cp932_vectors / sizeof *cp932_vectors, 0x3042, 0x8a9e,
+     "A\x82\xa0\x8c\xea", "A\xe3\x81\x82\xe8\xaa\x9e"},
 };
 
 /* GNU headers contain constant-argument inlines for these two APIs. Force
@@ -634,13 +671,15 @@ static void codec_scalars(const struct codec_case *test) {
     CHECK(mbrtowc(NULL, NULL, 0, &state) == 0);
     CHECK(codec_btowc(EOF) == WEOF && codec_wctob(WEOF) == EOF);
     errno = 717;
-    CHECK(mbrtowc(&value, "\xff", 1, &state) == (size_t)-1 && errno == EILSEQ);
+    char invalid_byte = (char)test->invalid_byte;
+    CHECK(mbrtowc(&value, &invalid_byte, 1, &state) == (size_t)-1 && errno == EILSEQ);
     memset(&state, 0, sizeof state);
     char encoded[16];
     errno = 717;
     CHECK(wcrtomb(encoded, 0x110000, &state) == (size_t)-1 && errno == EILSEQ);
     memset(&state, 0, sizeof state);
-    const char *invalid = test->width == 2 ? "\x82\x00" :
+    const char invalid_pair[] = {test->text[1], 0};
+    const char *invalid = test->width == 2 ? invalid_pair :
                           test->width == 3 ? "\x8f\x00" : "\x81\x30\x00\x30";
     size_t length = test->width == 4 ? 4 : 2;
     errno = 717;
@@ -711,7 +750,7 @@ static void codec_guard_pages(const struct codec_case *test) {
     mapping[page - 1] = 0;
     CHECK(mbrtowc(&value, mapping + page - 1, (size_t)-1, &state) == 0);
     CHECK(value == 0 && mbsinit(&state));
-    mapping[page - 1] = (char)0xff;
+    mapping[page - 1] = (char)test->invalid_byte;
     value = 0xdddd;
     errno = 717;
     CHECK(mbrtowc(&value, mapping + page - 1, (size_t)-1, &state) == (size_t)-1);
@@ -719,7 +758,8 @@ static void codec_guard_pages(const struct codec_case *test) {
 
     /* These prefixes become invalid at byte two; no decoder may inspect the
      * inaccessible byte three even though the caller's bound is SIZE_MAX. */
-    const char *invalid = test->width == 2 ? "\x82\x00" :
+    const char invalid_pair[] = {test->text[1], 0};
+    const char *invalid = test->width == 2 ? invalid_pair :
                           test->width == 3 ? "\x8f\x00" : "\x81\x20";
     memcpy(mapping + page - 2, invalid, 2);
     memset(&state, 0, sizeof state);
@@ -736,7 +776,7 @@ static void codec_guard_pages(const struct codec_case *test) {
 }
 
 static void codec_bulk(const struct codec_case *test) {
-    wchar_t wide[] = {L'A', 0x3042, test->last, 0};
+    wchar_t wide[] = {L'A', test->middle, test->last, 0};
     wchar_t decoded[8] = {0};
     const size_t bytes = strlen(test->text);
     mbstate_t state = {0};
@@ -775,7 +815,7 @@ static void codec_bulk(const struct codec_case *test) {
 }
 
 static void codec_streams(const struct codec_case *test, locale_t selected) {
-    wchar_t wide[] = {L'A', 0x3042, test->last, 0};
+    wchar_t wide[] = {L'A', test->middle, test->last, 0};
     size_t bytes = strlen(test->text);
     locale_t utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", (locale_t)0);
     CHECK(utf8);
@@ -870,6 +910,12 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "multibyte-sjis")) { CHECK(argc == 3); multibyte(0, argv[2]); }
     else if (!strcmp(argv[1], "multibyte-eucjp")) { CHECK(argc == 3); multibyte(1, argv[2]); }
     else if (!strcmp(argv[1], "multibyte-gb18030")) { CHECK(argc == 3); multibyte(2, argv[2]); }
+    else if (!strcmp(argv[1], "multibyte-big5")) { CHECK(argc == 3); multibyte(3, argv[2]); }
+    else if (!strcmp(argv[1], "multibyte-gbk")) { CHECK(argc == 3); multibyte(4, argv[2]); }
+    else if (!strcmp(argv[1], "multibyte-gb2312")) { CHECK(argc == 3); multibyte(5, argv[2]); }
+    else if (!strcmp(argv[1], "multibyte-euckr")) { CHECK(argc == 3); multibyte(6, argv[2]); }
+    else if (!strcmp(argv[1], "multibyte-cp949")) { CHECK(argc == 3); multibyte(7, argv[2]); }
+    else if (!strcmp(argv[1], "multibyte-cp932")) { CHECK(argc == 3); multibyte(8, argv[2]); }
     else if (!strcmp(argv[1], "provider")) {
         Dl_info info = {0};
         CHECK(dladdr((const void *)mbrtowc, &info) && info.dli_fname);

@@ -3093,7 +3093,13 @@ impl StatelessMultibyteCodec {
     pub fn from_name(name: &[u8]) -> Option<Self> {
         let encoding = classify_encoding(name).encoding?;
         let max_width = match encoding {
-            Encoding::ShiftJis => 2,
+            Encoding::ShiftJis
+            | Encoding::Cp932
+            | Encoding::Big5
+            | Encoding::Gbk
+            | Encoding::Gb2312
+            | Encoding::EucKr
+            | Encoding::Cp949 => 2,
             Encoding::EucJp => 3,
             Encoding::Gb18030 => 4,
             _ => return None,
@@ -51526,6 +51532,12 @@ mod tests {
         use crate::string::wchar::Utf8Step;
         let cases: &[(&[u8], usize, u32, &[u8])] = &[
             (b"SHIFT_JIS", 2, 0x3042, &[0x82, 0xa0]),
+            (b"BIG5", 2, 0x6587, &[0xa4, 0xe5]),
+            (b"GBK", 2, 0x4e02, &[0x81, 0x40]),
+            (b"GB2312", 2, 0x6587, &[0xce, 0xc4]),
+            (b"EUC-KR", 2, 0xd55c, &[0xc7, 0xd1]),
+            (b"CP949", 2, 0xac02, &[0x81, 0x41]),
+            (b"WINDOWS-31J", 2, 0x8a9e, &[0x8c, 0xea]),
             (b"EUC-JP", 3, 0x2d8, &[0x8f, 0xa2, 0xaf]),
             (b"GB18030", 4, 0x1f600, &[0x94, 0x39, 0xfc, 0x36]),
         ];
@@ -51546,7 +51558,9 @@ mod tests {
                     len: external.len()
                 }
             );
-            assert_eq!(codec.decode(&[0xff]), Utf8Step::Invalid);
+            // EUC-KR defers 0xff until it sees a second byte.
+            let invalid = if name == b"EUC-KR" { 0xa0 } else { 0xff };
+            assert_eq!(codec.decode(&[invalid]), Utf8Step::Invalid);
             assert_eq!(codec.decode(&[external[0], 0]), Utf8Step::Invalid);
             let mut bytes = [0xa5; 6];
             assert_eq!(codec.encode(wc, &mut bytes), Some(external.len()));
