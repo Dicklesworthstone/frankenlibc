@@ -1032,8 +1032,9 @@ pub(crate) fn executable_load_bias(
 }
 
 /// Invoke the main ELF64 executable's constructors after relocation and runtime
-/// bootstrap. The interpreter has already handled DSO constructors and the
-/// executable's preinit array; neither belongs in this pass.
+/// bootstrap. With an ELF interpreter, its startup has already handled DSO
+/// constructors and the executable's preinit array. Without one, this pass
+/// owns preinitialization too. Callback pointers must already be relocated.
 ///
 /// SAFETY: `auxv` is the real kernel startup vector, not a phase-0 fixture.
 /// Its program headers describe the still-mapped main executable. The caller
@@ -1086,6 +1087,10 @@ unsafe fn call_executable_init(
     if !mapped(dynamic_addr, dynamic_len, libc::PF_R) {
         return Err(());
     }
+    let owns_preinit = !phdrs.iter().any(|p| p.p_type == libc::PT_INTERP)
+        && aux(libc::AT_BASE as usize).unwrap_or(0) == 0;
+    let mut preinit = 0usize;
+    let mut preinit_bytes = 0usize;
     let mut init = 0usize;
     let mut array = 0usize;
     let mut array_bytes = 0usize;
@@ -1103,10 +1108,12 @@ unsafe fn call_executable_init(
             12 => init = value as usize,        // DT_INIT
             25 => array = value as usize,       // DT_INIT_ARRAY
             27 => array_bytes = value as usize, // DT_INIT_ARRAYSZ
+            32 if owns_preinit => preinit = value as usize,       // DT_PREINIT_ARRAY
+            33 if owns_preinit => preinit_bytes = value as usize, // DT_PREINIT_ARRAYSZ
             _ => {}
         }
     }
-    if !terminated || !array_bytes.is_multiple_of(std::mem::size_of::<usize>()) {
+    if !terminated {
         return Err(());
     }
     let init_addr = if init == 0 {
@@ -1117,34 +1124,124 @@ unsafe fn call_executable_init(
     if init_addr != 0 && !mapped(init_addr, 1, libc::PF_X) {
         return Err(());
     }
-    let array_addr = bias.checked_add(array).ok_or(())?;
-    if array_bytes != 0 && (array == 0 || !mapped(array_addr, array_bytes, libc::PF_R)) {
-        return Err(());
-    }
+    let array_range = |address: usize, bytes: usize| -> Result<_, ()> {
+        if !bytes.is_multiple_of(std::mem::size_of::<usize>()) {
+            return Err(());
+        }
+        let start = bias.checked_add(address).ok_or(())?;
+        if bytes != 0 && (address == 0 || !mapped(start, bytes, libc::PF_R)) {
+            return Err(());
+        }
+        Ok((start..start.checked_add(bytes).ok_or(())?).step_by(std::mem::size_of::<usize>()))
+    };
+    let preinit_entries = array_range(preinit, preinit_bytes)?;
+    let init_entries = array_range(array, array_bytes)?;
+    let run_entries = |entries: std::iter::StepBy<std::ops::Range<usize>>| -> Result<(), ()> {
+        for slot in entries {
+            // SAFETY: array_range validated the entire readable table.
+            let address = unsafe { std::ptr::read_unaligned(slot as *const usize) };
+            if address == 0 || address == usize::MAX {
+                continue;
+            }
+            // In a static executable there is no interpreter to supply targets
+            // in another DSO. An unrelocated link-time address is not callable.
+            if owns_preinit && !mapped(address, 1, libc::PF_X) {
+                return Err(());
+            }
+            // SAFETY: the relocated array contains SysV startup callbacks.
+            let callback: InitFn = unsafe { std::mem::transmute(address) };
+            unsafe { callback(argc, argv, envp) };
+        }
+        Ok(())
+    };
+    run_entries(preinit_entries)?;
     if init_addr != 0 {
         // SAFETY: DT_INIT names executable code in this loaded image. The SysV
         // startup convention supplies argc/argv/envp, also accepted by void hooks.
         let callback: InitFn = unsafe { std::mem::transmute(init_addr) };
-        // SAFETY: arguments retain the real startup vectors for process lifetime.
         unsafe { callback(argc, argv, envp) };
     }
-    for offset in
-        (0..array_bytes / std::mem::size_of::<usize>()).map(|i| i * std::mem::size_of::<usize>())
-    {
-        // SAFETY: the array's entire storage was checked above. The interpreter
-        // has relocated its function pointers, which may point into another DSO;
-        // unlike the dynamic tag, these entries must NOT receive the load bias.
-        let address = unsafe { std::ptr::read_unaligned((array_addr + offset) as *const usize) };
-        if address == 0 || address == usize::MAX {
-            continue;
-        }
-        // SAFETY: the loaded executable's init-array ABI declares function
-        // pointers of this calling convention, resolved by the interpreter.
-        let callback: InitFn = unsafe { std::mem::transmute(address) };
-        // SAFETY: same live startup vectors as for DT_INIT above.
-        unsafe { callback(argc, argv, envp) };
-    }
+    run_entries(init_entries)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod executable_init_tests {
+    use super::*;
+
+    #[test]
+    fn preinit_runs_before_init_only_for_an_image_without_an_interpreter() {
+        // Pass the trace through the C vectors to exercise the callback ABI.
+        unsafe fn record(argv: *mut *mut c_char, digit: u8) {
+            let value = unsafe { (*argv).cast::<u8>() };
+            unsafe { *value = *value * 10 + digit };
+        }
+        unsafe extern "C" fn preinit(_: c_int, argv: *mut *mut c_char, _: *mut *mut c_char) {
+            unsafe { record(argv, 1) };
+        }
+        unsafe extern "C" fn init(_: c_int, argv: *mut *mut c_char, _: *mut *mut c_char) {
+            unsafe { record(argv, 2) };
+        }
+        unsafe extern "C" fn constructor(_: c_int, argv: *mut *mut c_char, _: *mut *mut c_char) {
+            unsafe { record(argv, 3) };
+        }
+
+        let preinit_array = [preinit as *const () as usize];
+        let init_array = [constructor as *const () as usize];
+        let dynamic = [
+            [32usize, preinit_array.as_ptr() as usize],
+            [33, std::mem::size_of_val(&preinit_array)],
+            [12, init as *const () as usize],
+            [25, init_array.as_ptr() as usize],
+            [27, std::mem::size_of_val(&init_array)],
+            [0, 0],
+        ];
+        // Model the validated mappings with one data range and one code range.
+        let data_start = (dynamic.as_ptr() as usize)
+            .min(preinit_array.as_ptr() as usize)
+            .min(init_array.as_ptr() as usize);
+        let data_end = (dynamic.as_ptr() as usize + std::mem::size_of_val(&dynamic))
+            .max(preinit_array.as_ptr() as usize + std::mem::size_of_val(&preinit_array))
+            .max(init_array.as_ptr() as usize + std::mem::size_of_val(&init_array));
+        let code = [preinit_array[0], dynamic[2][1], init_array[0]];
+        let (code_start, code_end) = (*code.iter().min().unwrap(), *code.iter().max().unwrap());
+        // SAFETY: the ELF C integer fields all admit zero (PT_NULL).
+        let mut headers: [libc::Elf64_Phdr; 5] = unsafe { std::mem::zeroed() };
+        headers[0].p_type = libc::PT_PHDR;
+        headers[0].p_vaddr = headers.as_ptr() as u64;
+        headers[1].p_type = libc::PT_LOAD;
+        headers[1].p_flags = libc::PF_R;
+        headers[1].p_vaddr = data_start as u64;
+        headers[1].p_memsz = (data_end - data_start) as u64;
+        headers[2].p_type = libc::PT_LOAD;
+        headers[2].p_flags = libc::PF_X;
+        headers[2].p_vaddr = code_start as u64;
+        headers[2].p_memsz = (code_end - code_start + 1) as u64;
+        headers[3].p_type = libc::PT_DYNAMIC;
+        headers[3].p_vaddr = dynamic.as_ptr() as u64;
+        headers[3].p_memsz = std::mem::size_of_val(&dynamic) as u64;
+
+        for (segment_type, interpreter_base, expected) in [
+            (libc::PT_NULL, 0, 123),
+            (libc::PT_INTERP, 0, 23),
+            (libc::PT_NULL, 0x7000, 23),
+        ] {
+            headers[4].p_type = segment_type;
+            let auxv = [
+                (libc::AT_PHDR as usize, headers.as_ptr() as usize),
+                (libc::AT_PHENT as usize, std::mem::size_of::<libc::Elf64_Phdr>()),
+                (libc::AT_PHNUM as usize, headers.len()),
+                (libc::AT_BASE as usize, interpreter_base),
+            ];
+            let mut trace = [0u8; 2];
+            let mut argv = [trace.as_mut_ptr().cast(), std::ptr::null_mut()];
+            let mut envp = [std::ptr::null_mut()];
+            // SAFETY: every described object and callback outlives the call.
+            unsafe { call_executable_init(&auxv, 1, argv.as_mut_ptr(), envp.as_mut_ptr()) }
+                .expect("valid constructor tables");
+            assert_eq!(trace[0], expected);
+        }
+    }
 }
 
 /// Bytes of stack below the startup frame cleared before `main` runs.
