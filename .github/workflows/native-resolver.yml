@@ -243,6 +243,38 @@ jobs:
             2>&1 | tee artifacts/services-enumeration/accounts.log
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
             artifacts/services-enumeration/accounts.log
+      - name: Compare account enumeration buffers and source lifecycle with GNU
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test accounts_enumeration_matches_glibc_module_policy \
+            -- --exact --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/services-enumeration/accounts-enumeration.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/services-enumeration/accounts-enumeration.log
+      - name: Exercise shared account files cursors and short-buffer retries
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/services-enumeration
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test accounts_enumeration_shares_files_provider_cursor \
+            -- --exact --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/services-enumeration/accounts-enumeration-files.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/services-enumeration/accounts-enumeration-files.log
       - name: Compare protocol modules, source actions, retries, and reentry with GNU
         env:
           CACHE: ${{ matrix.cache }}

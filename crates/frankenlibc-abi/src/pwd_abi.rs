@@ -6,7 +6,7 @@
 //! Returns pointers to thread-local static storage, matching glibc behavior
 //! where each call overwrites the previous result.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
@@ -16,13 +16,13 @@ use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::time::UNIX_EPOCH;
 
 use frankenlibc_core::errno;
-use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
+use frankenlibc_core::nss::{Answer, Database, Service, SourceKind};
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
-use crate::nss_module::{self, EntCursor, EntDb, EntStep};
+use crate::nss_module::{self, EntDb};
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
@@ -703,99 +703,6 @@ unsafe fn reentrant_passwd(
     unsafe { nss_module::finish_account_r(answer, pwd, result) }
 }
 
-impl PwdStorage {
-    /// The next entry of a files source being enumerated as one source among
-    /// several; `restart` begins a fresh snapshot.
-    fn next_files_entry(&mut self, restart: bool) -> Answer<frankenlibc_core::pwd::Passwd> {
-        self.refresh_cache();
-        if restart || self.entries_generation != self.cache_generation {
-            self.rebuild_entries();
-        }
-        if let Some(entry) = self.entries.get(self.iter_idx).cloned() {
-            self.iter_idx += 1;
-            return Answer::Found(entry);
-        }
-        match self.backend_io_error() {
-            Some(err) => Answer::Unavailable(err),
-            None => Answer::NotFound,
-        }
-    }
-}
-
-// Files buffers already have native ownership. The NSS cursor must belong
-// to the same lifecycle, rather than the creator's inherited compiler TLS.
-static PW_ENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Cell<EntCursor>> =
-    crate::owned_tls_cache::OwnedTlsCache::new(|| Cell::new(EntCursor::default()));
-
-thread_local! {
-    /// Multi-source `getpwent` position, and an entry `getpwent_r` could not
-    /// fit into the caller's buffer (returned again on the next call).
-    #[cfg(not(feature = "owned-tls-cache"))]
-    static PW_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static PW_PENDING: crate::util::TlsHeapCell<RefCell<Option<frankenlibc_core::pwd::Passwd>>> =
-        const { crate::util::TlsHeapCell::new() };
-}
-
-#[inline]
-fn with_pw_cursor<R>(f: impl FnOnce(&Cell<EntCursor>) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        PW_ENT_OWNED_TLS.with(|cursor| f(cursor))
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        if crate::owned_tls_cache::uses_owned_tls() {
-            return PW_ENT_OWNED_TLS.with(|cursor| f(cursor));
-        }
-        PW_ENT.with(f)
-    }
-}
-
-#[inline]
-fn with_pw_pending<R>(f: impl FnOnce(&RefCell<Option<frankenlibc_core::pwd::Passwd>>) -> R) -> R {
-    PW_PENDING.with(|slot| slot.with_init(|| RefCell::new(None), f))
-}
-
-/// Next entry of a multi-source enumeration: `Err(None)` at the end,
-/// `Err(Some(errno))` when a source failed and its action ends the walk.
-fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
-    if let Some(entry) = with_pw_pending(|p| p.borrow_mut().take()) {
-        return Ok(entry);
-    }
-    loop {
-        let mut cursor = with_pw_cursor(Cell::get);
-        let (step, service) =
-            nss_module::ent_step(EntDb::Passwd, &mut cursor, nss_module::getpwent);
-        with_pw_cursor(|c| c.set(cursor));
-        let answer = match step {
-            EntStep::Done => return Err(None),
-            EntStep::Files { restart } => with_pwd_storage(|s| s.next_files_entry(restart)),
-            EntStep::Module(answer) => answer,
-        };
-        let (status, err) = match answer {
-            Answer::Found(entry) => return Ok(entry),
-            Answer::NotFound => (Status::NotFound, None),
-            Answer::TryAgain(err) => (Status::TryAgain, Some(err)),
-            Answer::Unavailable(err) => (Status::Unavailable, Some(err)),
-            Answer::BufferTooSmall => (Status::Unavailable, Some(libc::ERANGE)),
-        };
-        let Some(service) = service else {
-            return Err(None);
-        };
-        let mut cursor = with_pw_cursor(Cell::get);
-        let advanced = nss_module::ent_advance(&mut cursor, &service, status);
-        with_pw_cursor(|c| c.set(cursor));
-        if !advanced {
-            return Err(err);
-        }
-    }
-}
-
-fn reset_passwd_enumeration() {
-    with_pw_cursor(|c| c.set(EntCursor::default()));
-    with_pw_pending(|p| *p.borrow_mut() = None);
-}
-
 fn passwd_backend_io_error() -> Option<c_int> {
     with_pwd_storage(|storage| storage.backend_io_error())
 }
@@ -882,8 +789,7 @@ pub unsafe extern "C" fn getpwuid(uid: libc::uid_t) -> *mut libc::passwd {
 /// POSIX `setpwent` — rewind the passwd iteration cursor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpwent() {
-    reset_passwd_enumeration();
-    let _ = files_setpwent();
+    nss_module::account_setent(EntDb::Passwd);
 }
 
 /// Rewind only the native files source, without invoking NSS modules.
@@ -898,11 +804,7 @@ pub(crate) fn files_setpwent() -> c_int {
 /// POSIX `endpwent` — close the passwd enumeration and free cached data.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endpwent() {
-    reset_passwd_enumeration();
-    if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
-        nss_module::ent_end(EntDb::Passwd);
-    }
-    files_endpwent();
+    nss_module::account_endent(EntDb::Passwd);
 }
 
 /// Release only the files source's snapshot and enumeration state.
@@ -926,38 +828,7 @@ pub(crate) fn files_endpwent() {
 /// POSIX `getpwent` — return the next passwd entry in iteration order.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpwent() -> *mut libc::passwd {
-    if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
-        return match next_passwd_entry() {
-            Ok(entry) => fill_passwd_from_entry(&entry),
-            Err(err) => {
-                if let Some(err) = err {
-                    unsafe { set_abi_errno(err) };
-                }
-                ptr::null_mut()
-            }
-        };
-    }
-    with_pwd_storage(|storage| {
-        storage.refresh_cache();
-
-        // If entries haven't been loaded, call setpwent implicitly.
-        if (storage.entries.is_empty() && storage.iter_idx == 0)
-            || storage.entries_generation != storage.cache_generation
-        {
-            storage.rebuild_entries();
-        }
-
-        if storage.iter_idx >= storage.entries.len() {
-            if let Some(err) = storage.backend_io_error() {
-                unsafe { set_abi_errno(err) };
-            }
-            return ptr::null_mut();
-        }
-
-        let entry = storage.entries[storage.iter_idx].clone();
-        storage.iter_idx += 1;
-        storage.fill_from(&entry)
-    })
+    nss_module::account_getpwent()
 }
 
 /// POSIX `getpwnam_r` — reentrant version of `getpwnam`.
@@ -1247,19 +1118,13 @@ unsafe fn getpwent_r_impl(
         return libc::EINVAL;
     }
 
-    if !files_only && !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
-        return match next_passwd_entry() {
-            Ok(entry) => {
-                let rc = unsafe {
-                    fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result)
-                };
-                if rc == libc::ERANGE {
-                    // Hand the same entry back once the caller grows its buffer.
-                    with_pw_pending(|p| *p.borrow_mut() = Some(entry));
-                }
-                rc
-            }
-            Err(err) => err.unwrap_or(libc::ENOENT),
+    if !files_only {
+        // SAFETY: the complete passwd, result slot and effective buffer have
+        // been validated. Direct files providers take the branch below.
+        return unsafe {
+            nss_module::account_getent_r(
+                EntDb::Passwd, pwd, buf, effective_buffer_len(buf, buflen), result,
+            )
         };
     }
 
@@ -1278,7 +1143,7 @@ unsafe fn getpwent_r_impl(
             if let Some(err) = storage.backend_io_error() {
                 return err;
             }
-            return if files_only { 0 } else { libc::ENOENT };
+            return 0;
         }
 
         let entry = storage.entries[storage.iter_idx].clone();
@@ -1618,17 +1483,13 @@ unsafe fn getspnam_r_impl(
 /// `setspent` — rewind the shadow database iterator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn setspent() {
-    reset_shadow_enumeration();
+    nss_module::account_setent(EntDb::Shadow);
 }
 
 /// `endspent` — close the shadow database.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn endspent() {
-    reset_shadow_enumeration();
-    if !nss_module::is_files_only(&nss_module::services(Database::Shadow)) {
-        nss_module::ent_end(EntDb::Shadow);
-    }
-    files_endspent();
+    nss_module::account_endent(EntDb::Shadow);
 }
 
 /// Rewind only the native files source and report an unreadable backend.
@@ -1690,99 +1551,10 @@ impl ShadowTlsStorage {
     }
 }
 
-static SP_ENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Cell<EntCursor>> =
-    crate::owned_tls_cache::OwnedTlsCache::new(|| Cell::new(EntCursor::default()));
-
-thread_local! {
-    /// `getspent` position across the configured shadow sources, and an entry
-    /// `getspent_r` could not fit into the caller's buffer.
-    #[cfg(not(feature = "owned-tls-cache"))]
-    static SP_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static SP_PENDING: crate::util::TlsHeapCell<
-        RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>,
-    > = const { crate::util::TlsHeapCell::new() };
-}
-
-#[inline]
-fn with_sp_cursor<R>(f: impl FnOnce(&Cell<EntCursor>) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        SP_ENT_OWNED_TLS.with(|cursor| f(cursor))
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        if crate::owned_tls_cache::uses_owned_tls() {
-            return SP_ENT_OWNED_TLS.with(|cursor| f(cursor));
-        }
-        SP_ENT.with(f)
-    }
-}
-
-#[inline]
-fn with_sp_pending<R>(
-    f: impl FnOnce(&RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>) -> R,
-) -> R {
-    SP_PENDING.with(|slot| slot.with_init(|| RefCell::new(None), f))
-}
-
-/// Next shadow entry: `Err(None)` at the end, `Err(Some(errno))` when a
-/// source failed and its action ends the walk. An enumeration starts
-/// implicitly on the first call, as with glibc (no `setspent` required).
-fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Option<c_int>> {
-    if let Some(entry) = with_sp_pending(|p| p.borrow_mut().take()) {
-        return Ok(entry);
-    }
-    loop {
-        let mut cursor = with_sp_cursor(Cell::get);
-        let (step, service) =
-            nss_module::ent_step(EntDb::Shadow, &mut cursor, nss_module::getspent);
-        with_sp_cursor(|c| c.set(cursor));
-        let answer = match step {
-            EntStep::Done => return Err(None),
-            EntStep::Files { restart } => {
-                with_shadow_storage(|s| s.next_files_entry(restart, None))
-            }
-            EntStep::Module(answer) => answer,
-        };
-        let (status, err) = match answer {
-            Answer::Found(entry) => return Ok(entry),
-            Answer::NotFound => (Status::NotFound, None),
-            Answer::TryAgain(err) => (Status::TryAgain, Some(err)),
-            Answer::Unavailable(err) => (Status::Unavailable, Some(err)),
-            Answer::BufferTooSmall => (Status::Unavailable, Some(libc::ERANGE)),
-        };
-        let Some(service) = service else {
-            return Err(None);
-        };
-        let mut cursor = with_sp_cursor(Cell::get);
-        let advanced = nss_module::ent_advance(&mut cursor, &service, status);
-        with_sp_cursor(|c| c.set(cursor));
-        if !advanced {
-            return Err(err);
-        }
-    }
-}
-
-fn reset_shadow_enumeration() {
-    with_sp_cursor(|c| c.set(EntCursor::default()));
-    with_sp_pending(|p| *p.borrow_mut() = None);
-}
-
 /// `getspent` — read the next shadow entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getspent() -> *mut c_void {
-    match next_shadow_entry() {
-        Ok(entry) => with_shadow_storage(|storage| {
-            fill_shadow_parsed(&entry, &mut storage.buf, &mut storage.entry);
-            &mut storage.entry as *mut SpwdEntry as *mut c_void
-        }),
-        Err(err) => {
-            if let Some(err) = err {
-                unsafe { set_abi_errno(err) };
-            }
-            ptr::null_mut()
-        }
-    }
+    nss_module::account_getspent().cast()
 }
 
 /// `getspent_r` — reentrant version of getspent.
@@ -1849,25 +1621,12 @@ unsafe fn getspent_r_impl(
         });
     }
 
-    match next_shadow_entry() {
-        Ok(entry) => {
-            let rc = unsafe {
-                fill_shadow_parsed_caller(
-                    &entry,
-                    spbuf as *mut SpwdEntry,
-                    buf,
-                    effective_buffer_len(buf, buflen),
-                )
-            };
-            if rc == libc::ERANGE {
-                // Hand the same entry back once the caller grows its buffer.
-                with_sp_pending(|p| *p.borrow_mut() = Some(entry));
-            } else if rc == 0 {
-                unsafe { *result = spbuf };
-            }
-            rc
-        }
-        Err(err) => err.unwrap_or(libc::ENOENT),
+    // SAFETY: the shadow C layout, result slot and exact writable capacity
+    // were checked above. Direct files callbacks never acquire this lease.
+    unsafe {
+        nss_module::account_getent_r(
+            EntDb::Shadow, spbuf.cast::<libc::spwd>(), buf, capacity, result.cast(),
+        )
     }
 }
 

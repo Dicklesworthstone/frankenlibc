@@ -22793,7 +22793,7 @@ impl ServiceFilesCursor {
 
 /// Public enumeration follows one immutable source-policy snapshot. Foreign
 /// callbacks run only after this state has been leased out of thread storage.
-struct NetdbIteration {
+pub(crate) struct NetdbIteration {
     database: crate::nss_module::NetdbDatabase,
     sources: Option<std::sync::Arc<Vec<frankenlibc_core::nss::Service>>>,
     source: usize,
@@ -22802,7 +22802,7 @@ struct NetdbIteration {
 }
 
 impl NetdbIteration {
-    const fn new(database: crate::nss_module::NetdbDatabase) -> Self {
+    pub(crate) const fn new(database: crate::nss_module::NetdbDatabase) -> Self {
         Self {
             database,
             sources: None,
@@ -22830,12 +22830,15 @@ impl NetdbIteration {
     }
 
     fn begin(&mut self, source: &frankenlibc_core::nss::Service, stayopen: c_int) -> Option<c_int> {
-        if source.name() == b"files" {
+        if self.database.native_files(source) {
             let error = match self.database {
                 crate::nss_module::NetdbDatabase::Services => files_setservent(),
                 crate::nss_module::NetdbDatabase::Protocols => files_setprotoent(),
                 crate::nss_module::NetdbDatabase::Hosts => files_sethostent(),
                 crate::nss_module::NetdbDatabase::Rpc => files_setrpcent(),
+                crate::nss_module::NetdbDatabase::Passwd => crate::pwd_abi::files_setpwent(),
+                crate::nss_module::NetdbDatabase::Group => crate::grp_abi::files_setgrent(),
+                crate::nss_module::NetdbDatabase::Shadow => crate::pwd_abi::files_setspent(),
             };
             Some(match error {
                 0 => NSS_STATUS_SUCCESS,
@@ -22853,7 +22856,7 @@ impl NetdbIteration {
         }
     }
 
-    fn rewind(&mut self, stayopen: c_int) {
+    pub(crate) fn rewind(&mut self, stayopen: c_int) {
         use frankenlibc_core::nss::Action;
         let sources = self.database.sources();
         self.sources = Some(sources.clone());
@@ -22888,7 +22891,7 @@ impl NetdbIteration {
         }
     }
 
-    fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         use frankenlibc_core::nss::{Action, Status};
         // The public GNU wrapper is a no-op until a public set/get initialized
         // enumeration. Direct files-provider calls do not initialize this state.
@@ -22898,12 +22901,15 @@ impl NetdbIteration {
         let sources = self.database.sources();
         let mut first = None;
         for (index, source) in sources.iter().enumerate() {
-            let found = if source.name() == b"files" {
+            let found = if self.database.native_files(source) {
                 match self.database {
                     crate::nss_module::NetdbDatabase::Services => files_endservent(),
                     crate::nss_module::NetdbDatabase::Protocols => files_endprotoent(),
                     crate::nss_module::NetdbDatabase::Hosts => files_endhostent(),
                     crate::nss_module::NetdbDatabase::Rpc => files_endrpcent(),
+                    crate::nss_module::NetdbDatabase::Passwd => crate::pwd_abi::files_endpwent(),
+                    crate::nss_module::NetdbDatabase::Group => crate::grp_abi::files_endgrent(),
+                    crate::nss_module::NetdbDatabase::Shadow => crate::pwd_abi::files_endspent(),
                 }
                 true
             } else {
@@ -22943,7 +22949,7 @@ impl NetdbIteration {
     ///
     /// # Safety
     /// The caller validated the result object and the exact buffer capacity.
-    unsafe fn next_r(
+    pub(crate) unsafe fn next_r(
         &mut self,
         output: *mut c_void,
         buffer: *mut c_char,
@@ -22954,7 +22960,7 @@ impl NetdbIteration {
         let sources = self.sources();
         let mut status = NSS_STATUS_NOTFOUND;
         while let Some(source) = sources.get(self.source) {
-            let module = if source.name() == b"files" {
+            let module = if self.database.native_files(source) {
                 None
             } else {
                 let Some(module) =
@@ -23014,6 +23020,28 @@ impl NetdbIteration {
                 // SAFETY: this leased state and caller storage survive the
                 // callback; no mutable TLS borrow or policy lock is retained.
                 unsafe { module.next_r(output, buffer, capacity) }
+            } else if matches!(
+                self.database,
+                crate::nss_module::NetdbDatabase::Passwd
+                    | crate::nss_module::NetdbDatabase::Group
+                    | crate::nss_module::NetdbDatabase::Shadow
+            ) {
+                // Direct files callbacks enter files_only helpers, sharing the
+                // native cursor without reacquiring the public account lease.
+                // SAFETY: the account caller supplies the matching checked
+                // output layout, exact writable buffer, and canonical errno.
+                unsafe {
+                    let error = crate::errno_abi::__errno_location();
+                    match self.database {
+                        crate::nss_module::NetdbDatabase::Passwd =>
+                            _nss_files_getpwent_r(output, buffer, capacity, error),
+                        crate::nss_module::NetdbDatabase::Group =>
+                            _nss_files_getgrent_r(output, buffer, capacity, error),
+                        crate::nss_module::NetdbDatabase::Shadow =>
+                            _nss_files_getspent_r(output, buffer, capacity, error),
+                        _ => unreachable!("account databases handled above"),
+                    }
+                }
             } else if matches!(self.database, crate::nss_module::NetdbDatabase::Rpc) {
                 // SAFETY: the caller supplies a checked rpcent and the exact
                 // writable buffer; the files provider retains its retry cursor.
@@ -23055,6 +23083,9 @@ impl NetdbIteration {
                     }),
                     crate::nss_module::NetdbDatabase::Hosts => unreachable!("hosts handled above"),
                     crate::nss_module::NetdbDatabase::Rpc => unreachable!("RPC handled above"),
+                    crate::nss_module::NetdbDatabase::Passwd
+                    | crate::nss_module::NetdbDatabase::Group
+                    | crate::nss_module::NetdbDatabase::Shadow => unreachable!("accounts handled above"),
                 };
                 match outcome {
                     Ok(found) => {

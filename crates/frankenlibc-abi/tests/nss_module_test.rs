@@ -571,6 +571,398 @@ fn accounts_reentrant_module_buffers_match_glibc() {
     eprintln!("account buffers: {compared} GNU/candidate comparisons, all five reentrant lookups");
 }
 
+unsafe fn account_enumeration_value(database: &str, result: *mut c_void) -> Option<String> {
+    if result.is_null() {
+        return None;
+    }
+    Some(unsafe {
+        match database {
+            "passwd" => pw_line(result.cast()),
+            "group" => gr_line(result.cast()),
+            "shadow" => {
+                let (name, password, changed) = spwd_fields(result.cast()).unwrap();
+                format!("{}:{}:{changed}", s(&name), s(&password))
+            }
+            _ => unreachable!(),
+        }
+    })
+}
+
+fn account_enumeration_read(
+    host: bool,
+    database: &str,
+    capacity: Option<usize>,
+    offset: usize,
+) -> (c_int, c_int, Option<String>) {
+    use frankenlibc_abi::{grp_abi as group, pwd_abi as passwd};
+
+    let mut storage = AccountCallerBuffer([0xa5; 4160]);
+    let start = 16 + offset;
+    // Nonreentrant growth may invoke get repeatedly. Suppress only those
+    // private get traces; source-transition set/end callbacks remain visible.
+    if capacity.is_none() {
+        unsafe { std::env::set_var("FLTEST_ACCOUNT_ENUM_PRIVATE", "1") };
+    }
+    let (rc, error, value) = unsafe {
+        let errno = if host {
+            libc::__errno_location()
+        } else {
+            frankenlibc_abi::errno_abi::__errno_location()
+        };
+        let mut pw: libc::passwd = std::mem::zeroed();
+        let mut gr: libc::group = std::mem::zeroed();
+        let mut sp: libc::spwd = std::mem::zeroed();
+        let output: *mut c_void = match database {
+            "passwd" => (&raw mut pw).cast(),
+            "group" => (&raw mut gr).cast(),
+            "shadow" => (&raw mut sp).cast(),
+            _ => unreachable!(),
+        };
+        let mut result = output;
+        *errno = 619;
+        let rc = if let Some(capacity) = capacity {
+            let buffer = storage.0.as_mut_ptr().add(start).cast::<c_char>();
+            match (host, database) {
+                (true, "passwd") => libc::getpwent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
+                (false, "passwd") => passwd::getpwent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
+                (true, "group") => libc::getgrent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
+                (false, "group") => group::getgrent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
+                (true, "shadow") => libc::getspent_r(output.cast(), buffer, capacity, (&raw mut result).cast()),
+                (false, "shadow") => passwd::getspent_r(output, buffer, capacity, &mut result),
+                _ => unreachable!(),
+            }
+        } else {
+            result = match (host, database) {
+                (true, "passwd") => libc::getpwent().cast(),
+                (false, "passwd") => passwd::getpwent().cast(),
+                (true, "group") => libc::getgrent().cast(),
+                (false, "group") => group::getgrent().cast(),
+                (true, "shadow") => libc::getspent().cast(),
+                (false, "shadow") => passwd::getspent(),
+                _ => unreachable!(),
+            };
+            if result.is_null() { -1 } else { 0 }
+        };
+        let error = *errno;
+        if capacity.is_some() {
+            assert!(result.is_null() || (rc == 0 && result == output));
+        }
+        let value = account_enumeration_value(database, result);
+        (rc, error, value)
+    };
+    if let Some(capacity) = capacity {
+        assert!(storage.0[..start].iter().all(|byte| *byte == 0xa5));
+        assert!(storage.0[start + capacity..].iter().all(|byte| *byte == 0xa5));
+    } else {
+        unsafe { std::env::remove_var("FLTEST_ACCOUNT_ENUM_PRIVATE") };
+    }
+    (rc, error, value)
+}
+
+fn account_enumeration_lifecycle(host: bool, database: &str, rewind: bool) -> c_int {
+    use frankenlibc_abi::{grp_abi as group, pwd_abi as passwd};
+    unsafe {
+        let errno = if host { libc::__errno_location() } else {
+            frankenlibc_abi::errno_abi::__errno_location()
+        };
+        *errno = 619;
+        match (host, database, rewind) {
+            (true, "passwd", true) => libc::setpwent(),
+            (false, "passwd", true) => passwd::setpwent(),
+            (true, "passwd", false) => libc::endpwent(),
+            (false, "passwd", false) => passwd::endpwent(),
+            (true, "group", true) => libc::setgrent(),
+            (false, "group", true) => group::setgrent(),
+            (true, "group", false) => libc::endgrent(),
+            (false, "group", false) => group::endgrent(),
+            (true, "shadow", true) => libc::setspent(),
+            (false, "shadow", true) => passwd::setspent(),
+            (true, "shadow", false) => libc::endspent(),
+            (false, "shadow", false) => passwd::endspent(),
+            _ => unreachable!(),
+        }
+        *errno
+    }
+}
+
+fn account_enumeration_transcript(host: bool, database: &str) -> String {
+    let mut output = String::new();
+    writeln!(output, "fresh-end {}", account_enumeration_lifecycle(host, database, false)).unwrap();
+    for capacity in [0, 1, 8] {
+        writeln!(output, "implicit {capacity} {:?}", account_enumeration_read(host, database, Some(capacity), 1)).unwrap();
+    }
+    writeln!(output, "static-after-range {:?}", account_enumeration_read(host, database, None, 0)).unwrap();
+    for (index, capacity) in [64, 4095, 4096].into_iter().enumerate() {
+        writeln!(output, "mixed {capacity} {:?}", account_enumeration_read(host, database, Some(capacity), index % 2)).unwrap();
+    }
+    for index in 0..16 {
+        let value = account_enumeration_read(host, database, Some(4096), index % 2);
+        let done = value.2.is_none();
+        writeln!(output, "drain {index} {value:?}").unwrap();
+        if done { break; }
+    }
+    writeln!(output, "repeat-eof {:?}", account_enumeration_read(host, database, Some(4096), 0)).unwrap();
+    writeln!(output, "set {}", account_enumeration_lifecycle(host, database, true)).unwrap();
+    writeln!(output, "rewind-small {:?}", account_enumeration_read(host, database, Some(1), 0)).unwrap();
+    writeln!(output, "rewind-retry {:?}", account_enumeration_read(host, database, Some(4096), 1)).unwrap();
+    writeln!(output, "static-next {:?}", account_enumeration_read(host, database, None, 0)).unwrap();
+    writeln!(output, "end {}", account_enumeration_lifecycle(host, database, false)).unwrap();
+    writeln!(output, "end-again {}", account_enumeration_lifecycle(host, database, false)).unwrap();
+    writeln!(output, "after-end {:?}", account_enumeration_read(host, database, Some(4096), 1)).unwrap();
+    writeln!(output, "final-end {}", account_enumeration_lifecycle(host, database, false)).unwrap();
+    output
+}
+
+/// Public account enumeration must expose the provider's real ERANGE, retain
+/// its row for retry, and share traversal between _r and nonreentrant callers.
+#[test]
+fn accounts_enumeration_matches_glibc_module_policy() {
+    const TEST: &str = "accounts_enumeration_matches_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_ACCOUNT_PROVIDER").unwrap() == "host";
+        let database = std::env::var("FLTEST_ACCOUNT_DATABASE").unwrap();
+        if host {
+            unsafe extern "C" {
+                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+            }
+            let name = CString::new(database.as_str()).unwrap();
+            let sources = CString::new(std::env::var("FLTEST_ACCOUNT_SOURCES").unwrap()).unwrap();
+            assert_eq!(unsafe { __nss_configure_lookup(name.as_ptr(), sources.as_ptr()) }, 0);
+        }
+        unsafe { libc::alarm(15) };
+        let transcript = account_enumeration_transcript(host, &database);
+        unsafe { libc::alarm(0) };
+        println!("ACCOUNT_ENUM_BEGIN\n{transcript}ACCOUNT_ENUM_END");
+        return;
+    }
+
+    let dir = scratch_dir("account-enumeration");
+    build_modules(&dir);
+    let module = Command::new("cc")
+        .args(["-O2", "-fPIC", "-shared", "-DSERVICE=flaccountgetonly",
+            "-DNO_ACCOUNT_SET", "-DNO_ACCOUNT_END"])
+        .arg(repo_root().join("tests/integration/fixture_nss_module_lib.c"))
+        .arg("-o").arg(dir.join("libnss_flaccountgetonly.so.2"))
+        .output().expect("build get-only account module");
+    assert!(module.status.success(), "account module build failed: {}",
+        String::from_utf8_lossy(&module.stderr));
+    let cases = [
+        ("fltest", "normal", false),
+        ("fltest fltestnoig", "normal", false),
+        ("fltest [SUCCESS=continue] fltestnoig", "normal", false),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "normal", true),
+        ("fltest [TRYAGAIN=return] fltestnoig", "normal", true),
+        ("fltest [UNAVAIL=return] fltestnoig", "get-unavail", false),
+        ("fltest [UNAVAIL=continue] fltestnoig", "get-unavail", false),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-again", false),
+        ("fltest [TRYAGAIN=continue] fltestnoig", "get-again", false),
+        ("fltest [TRYAGAIN=return] fltestnoig", "get-quiet-again", false),
+        ("fltest [NOTFOUND=return] fltestnoig", "get-notfound", false),
+        ("fltest [NOTFOUND=continue] fltestnoig", "get-notfound", false),
+        ("fltest fltestnoig", "get-return", false),
+        ("fltest [!SUCCESS=continue] fltestnoig", "get-return", false),
+        ("fltest fltestnoig", "set-unavail", false),
+        ("fltest [UNAVAIL=return] fltestnoig", "set-unavail", false),
+        ("fltest [TRYAGAIN=return] fltestnoig", "set-again", false),
+        ("fltest [NOTFOUND=return] fltestnoig", "set-notfound", false),
+        ("fltest fltestnoig", "set-return", false),
+        ("flmissing fltest", "normal", false),
+        ("flmissing [UNAVAIL=return] fltestnoig", "normal", false),
+        ("flaccountgetonly", "normal", false),
+        ("flaccountgetonly fltest", "normal", false),
+        ("fltest flaccountgetonly fltestnoig", "normal", false),
+    ];
+    let mut compared = 0;
+    for database in ["passwd", "group", "shadow"] {
+        for (index, (sources, scenario, scratch)) in cases.into_iter().enumerate() {
+            let mut oracle = None;
+            for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+                let label = format!("account-enum-{database}-{index}-{provider}-{mode}");
+                let mut child = host_module_child(TEST, &dir, &format!("{database}: {sources}\n"), &label);
+                child.env("FLTEST_ACCOUNT_PROVIDER", provider)
+                    .env("FLTEST_ACCOUNT_DATABASE", database)
+                    .env("FLTEST_ACCOUNT_SOURCES", sources)
+                    .env("FLTEST_ACCOUNT_ENUM", scenario)
+                    .env("FLTEST_TRACE", "1")
+                    .env("FRANKENLIBC_MODE", mode)
+                    .env_remove("FLTEST_ACCOUNT_ENUM_PRIVATE")
+                    .env_remove("FLTEST_ACCOUNT_SCRATCH")
+                    .env_remove("FLTEST_ACCOUNT_ERRNO");
+                if scratch {
+                    child.env("FLTEST_ACCOUNT_ENUM_SCRATCH", "fltest");
+                } else {
+                    child.env_remove("FLTEST_ACCOUNT_ENUM_SCRATCH");
+                }
+                let result = run_child(child, &label);
+                let stdout = std::str::from_utf8(&result.stdout).unwrap();
+                let transcript = stdout.split_once("ACCOUNT_ENUM_BEGIN\n")
+                    .and_then(|(_, rest)| rest.split_once("ACCOUNT_ENUM_END"))
+                    .map(|(text, _)| text).expect("account enumeration transcript").to_owned();
+                assert!(transcript.lines().count() >= 18);
+                let trace = String::from_utf8_lossy(&result.stderr).lines()
+                    .filter(|line| line.starts_with("fltest:") || line.starts_with("fltestnoig:")
+                        || line.starts_with("flaccountgetonly:"))
+                    .map(str::to_owned).collect::<Vec<_>>();
+                if sources == "fltest" && scenario == "normal" {
+                    assert!(transcript.contains("static-after-range (0,"),
+                        "{label}: the first record must survive short-buffer retries");
+                    assert!(transcript.contains("fltest1") || transcript.contains("fltestgrp"),
+                        "{label}: no provider record was observed");
+                }
+                if let Some(expected) = &oracle {
+                    assert_eq!(&(transcript, trace), expected,
+                        "{label}: database={database}, sources={sources}, scenario={scenario}");
+                    compared += 1;
+                } else {
+                    oracle = Some((transcript, trace));
+                }
+            }
+        }
+    }
+    assert_eq!(compared, 144);
+    eprintln!("account enumeration: {compared} independent GNU/candidate comparisons");
+}
+
+fn account_enumeration_files_read(database: &str, capacity: usize) -> (c_int, Option<String>) {
+    use frankenlibc_abi::unistd_abi as nss;
+
+    let mut storage = AccountCallerBuffer([0xa5; 4160]);
+    let mut passwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut group: libc::group = unsafe { std::mem::zeroed() };
+    let mut shadow: libc::spwd = unsafe { std::mem::zeroed() };
+    let output: *mut c_void = match database {
+        "passwd" => (&raw mut passwd).cast(),
+        "group" => (&raw mut group).cast(),
+        "shadow" => (&raw mut shadow).cast(),
+        _ => unreachable!(),
+    };
+    // SAFETY: the matching C output and the exact writable buffer are live
+    // throughout the direct files callback. Each call has independent storage.
+    let (status, value) = unsafe {
+        let mut error = 781;
+        let errno = frankenlibc_abi::errno_abi::__errno_location();
+        *errno = 619;
+        let buffer = storage.0.as_mut_ptr().add(17).cast();
+        let status = match database {
+            "passwd" => nss::_nss_files_getpwent_r(output, buffer, capacity, &mut error),
+            "group" => nss::_nss_files_getgrent_r(output, buffer, capacity, &mut error),
+            "shadow" => nss::_nss_files_getspent_r(output, buffer, capacity, &mut error),
+            _ => unreachable!(),
+        };
+        let value = if status == 1 {
+            assert_eq!((error, *errno), (781, 619));
+            account_enumeration_value(database, output)
+        } else {
+            None
+        };
+        (status, value)
+    };
+    assert!(storage.0[..17].iter().all(|byte| *byte == 0xa5));
+    assert!(storage.0[17 + capacity..].iter().all(|byte| *byte == 0xa5));
+    (status, value)
+}
+
+fn account_enumeration_files_rewind(database: &str) {
+    use frankenlibc_abi::unistd_abi as nss;
+    // SAFETY: these direct providers take only the stayopen flag.
+    let status = unsafe {
+        match database {
+            "passwd" => nss::_nss_files_setpwent(0),
+            "group" => nss::_nss_files_setgrent(0),
+            "shadow" => nss::_nss_files_setspent(0),
+            _ => unreachable!(),
+        }
+    };
+    assert_eq!(status, 1);
+}
+
+/// The public iterator and direct files provider must use the same real file
+/// cursor. A hidden pending owned record would replay stale data after a direct
+/// provider consumes the row following ERANGE.
+#[test]
+fn accounts_enumeration_shares_files_provider_cursor() {
+    const TEST: &str = "accounts_enumeration_shares_files_provider_cursor";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        unsafe { libc::alarm(15) };
+        for database in ["passwd", "group", "shadow"] {
+            let assert_public = |expected: &str, capacity| {
+                let (rc, _, record) = account_enumeration_read(false, database, capacity, 1);
+                assert_eq!(rc, 0, "{database}: {expected}");
+                let record = record.expect("public enumeration record");
+                assert!(record.starts_with(&format!("{expected}:")), "{database}: {record}");
+            };
+            let assert_direct = |expected: &str| {
+                let (status, record) = account_enumeration_files_read(database, 4096);
+                assert_eq!(status, 1, "{database}: {expected}");
+                let record = record.expect("direct files enumeration record");
+                assert!(record.starts_with(&format!("{expected}:")), "{database}: {record}");
+            };
+            account_enumeration_lifecycle(false, database, true);
+            // The ignored physical line is larger than 128 bytes even though
+            // the first returned account fits. Do not consume it privately.
+            let small = account_enumeration_read(false, database, Some(128), 1);
+            assert_eq!(small, (libc::ERANGE, libc::ERANGE, None), "{database}");
+            assert_direct("local_a");
+            assert_public("local_b", Some(4096));
+            assert_public("local_c", None);
+
+            let (first, second) = if database == "group" {
+                ("fltestgrp", "fltestgrp2")
+            } else {
+                ("fltest1", "fltest2")
+            };
+            assert_public(first, Some(4096));
+            // Rewinding only the files module must not reset public selection
+            // once the iterator has advanced to an installed module.
+            account_enumeration_files_rewind(database);
+            assert_public(second, Some(4096));
+
+            account_enumeration_lifecycle(false, database, false);
+            assert_public("local_a", Some(4096));
+            assert_direct("local_b");
+            account_enumeration_lifecycle(false, database, false);
+        }
+        unsafe { libc::alarm(0) };
+        println!("ACCOUNT_ENUM_FILES_CURSOR_OK");
+        return;
+    }
+
+    let dir = scratch_dir("account-enumeration-files");
+    build_modules(&dir);
+    let ignored = format!("#{}\n", "x".repeat(512));
+    let mut passwd = ignored.clone();
+    let mut group = ignored.clone();
+    let mut shadow = ignored;
+    for (index, name) in ["local_a", "local_b", "local_c"].into_iter().enumerate() {
+        let id = 8100 + index;
+        writeln!(passwd, "{name}:x:{id}:{id}:Local:/home/local:/bin/sh").unwrap();
+        writeln!(group, "{name}:x:{id}:member").unwrap();
+        writeln!(shadow, "{name}:x:20000:0:99999:7:::").unwrap();
+    }
+    std::fs::write(dir.join("passwd"), passwd).unwrap();
+    std::fs::write(dir.join("group"), group).unwrap();
+    std::fs::write(dir.join("shadow"), shadow).unwrap();
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(
+            TEST,
+            &dir,
+            "passwd: files fltest\ngroup: files fltest\nshadow: files fltest\n",
+            mode,
+        );
+        child.env("FRANKENLIBC_MODE", mode)
+            .env("FRANKENLIBC_PASSWD_PATH", dir.join("passwd"))
+            .env("FRANKENLIBC_GROUP_PATH", dir.join("group"))
+            .env("FRANKENLIBC_SHADOW_PATH", dir.join("shadow"))
+            .env_remove("FLTEST_ACCOUNT_ENUM")
+            .env_remove("FLTEST_ACCOUNT_ENUM_PRIVATE")
+            .env_remove("FLTEST_ACCOUNT_ENUM_SCRATCH")
+            .env_remove("FLTEST_ACCOUNT_SCRATCH")
+            .env_remove("FLTEST_ACCOUNT_ERRNO");
+        let output = run_child(child, &format!("account files cursor {mode}"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("ACCOUNT_ENUM_FILES_CURSOR_OK"));
+    }
+}
+
 fn build_modules(dir: &Path) {
     let source = repo_root().join("tests/integration/fixture_nss_module_lib.c");
     let variants: &[(&str, &[&str])] = &[

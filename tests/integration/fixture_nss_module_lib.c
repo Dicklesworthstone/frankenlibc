@@ -13,6 +13,9 @@
  *   FLTEST_TRACE=1                            log each call to fd 2
  *   FLTEST_ACCOUNT_SCRATCH=<service>          require 4096 bytes for account lookups
  *   FLTEST_ACCOUNT_ERRNO=1                    verify errno across account sources
+ *   FLTEST_ACCOUNT_ENUM=<scenario>            force account lifecycle/get status
+ *   FLTEST_ACCOUNT_ENUM_SCRATCH=<service>     require 4096 bytes for enumeration
+ *   FLTEST_ACCOUNT_ENUM_PRIVATE=1             omit private get traces; retain set/end
  */
 #include <errno.h>
 #include <grp.h>
@@ -925,6 +928,10 @@ static const struct grp groups[] = {
 static void trace(const char *what, const char *arg) {
   const char *t = getenv("FLTEST_TRACE");
   if (t == NULL || *t != '1') return;
+  const char *private_account = getenv("FLTEST_ACCOUNT_ENUM_PRIVATE");
+  if (private_account && *private_account == '1' &&
+      (!strcmp(what, "getpwent_r") || !strcmp(what, "getgrent_r") ||
+       !strcmp(what, "getspent_r"))) return;
   char line[256];
   size_t n = 0;
   const char *parts[] = {STR(SERVICE), ":", what, arg ? "(" : "", arg ? arg : "", arg ? ")" : "", "\n"};
@@ -1065,21 +1072,45 @@ enum nss_status FN(getpwuid_r)(uid_t uid, struct passwd *pw, char *buf, size_t l
 
 static size_t pw_cursor, gr_cursor, sp_cursor;
 
-enum nss_status FN(setpwent)(int stayopen) {
-  (void)stayopen;
-  trace("setpwent", NULL);
-  pw_cursor = 0;
-  return NSS_STATUS_SUCCESS;
+/* Enumeration has a separate scratch requirement from keyed lookups. A short
+ * caller buffer must not be hidden by a libc-private retry or consume a row. */
+static int account_enum_scratch_too_small(size_t len, int *errnop) {
+  const char *service = getenv("FLTEST_ACCOUNT_ENUM_SCRATCH");
+  if (service && !strcmp(service, STR(SERVICE)) && len < 4096) {
+    *errnop = ERANGE;
+    return 1;
+  }
+  return 0;
 }
+
+#ifndef NO_ACCOUNT_SET
+static const char *account_enum_set_arg(int stayopen) {
+  if (!getenv("FLTEST_ACCOUNT_ENUM")) return NULL;
+  return stayopen == 0 ? "0" : stayopen == 1 ? "1" : "other";
+}
+#endif
+
+#ifndef NO_ACCOUNT_SET
+enum nss_status FN(setpwent)(int stayopen) {
+  trace("setpwent", account_enum_set_arg(stayopen));
+  pw_cursor = 0;
+  return netdb_enum_status("FLTEST_ACCOUNT_ENUM", "set", &errno);
+}
+#endif
+#ifndef NO_ACCOUNT_END
 enum nss_status FN(endpwent)(void) {
   trace("endpwent", NULL);
   pw_cursor = 0;
   return NSS_STATUS_SUCCESS;
 }
+#endif
 enum nss_status FN(getpwent_r)(struct passwd *pw, char *buf, size_t len, int *errnop) {
   enum nss_status st;
   trace("getpwent_r", NULL);
   if (forced(&st, errnop)) return st;
+  st = netdb_enum_status("FLTEST_ACCOUNT_ENUM", "get", errnop);
+  if (st != NSS_STATUS_SUCCESS) return st;
+  if (account_enum_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
   if (pw_cursor >= COUNT(users)) {
     *errnop = ENOENT;
     return NSS_STATUS_NOTFOUND;
@@ -1114,21 +1145,27 @@ enum nss_status FN(getgrgid_r)(gid_t gid, struct group *gr, char *buf, size_t le
   return NSS_STATUS_NOTFOUND;
 }
 
+#ifndef NO_ACCOUNT_SET
 enum nss_status FN(setgrent)(int stayopen) {
-  (void)stayopen;
-  trace("setgrent", NULL);
+  trace("setgrent", account_enum_set_arg(stayopen));
   gr_cursor = 0;
-  return NSS_STATUS_SUCCESS;
+  return netdb_enum_status("FLTEST_ACCOUNT_ENUM", "set", &errno);
 }
+#endif
+#ifndef NO_ACCOUNT_END
 enum nss_status FN(endgrent)(void) {
   trace("endgrent", NULL);
   gr_cursor = 0;
   return NSS_STATUS_SUCCESS;
 }
+#endif
 enum nss_status FN(getgrent_r)(struct group *gr, char *buf, size_t len, int *errnop) {
   enum nss_status st;
   trace("getgrent_r", NULL);
   if (forced(&st, errnop)) return st;
+  st = netdb_enum_status("FLTEST_ACCOUNT_ENUM", "get", errnop);
+  if (st != NSS_STATUS_SUCCESS) return st;
+  if (account_enum_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
   if (gr_cursor >= COUNT(groups)) {
     *errnop = ENOENT;
     return NSS_STATUS_NOTFOUND;
@@ -1170,21 +1207,27 @@ enum nss_status FN(getspnam_r)(const char *name, struct spwd *sp, char *buf, siz
   *errnop = ENOENT;
   return NSS_STATUS_NOTFOUND;
 }
+#ifndef NO_ACCOUNT_SET
 enum nss_status FN(setspent)(int stayopen) {
-  (void)stayopen;
-  trace("setspent", NULL);
+  trace("setspent", account_enum_set_arg(stayopen));
   sp_cursor = 0;
-  return NSS_STATUS_SUCCESS;
+  return netdb_enum_status("FLTEST_ACCOUNT_ENUM", "set", &errno);
 }
+#endif
+#ifndef NO_ACCOUNT_END
 enum nss_status FN(endspent)(void) {
   trace("endspent", NULL);
   sp_cursor = 0;
   return NSS_STATUS_SUCCESS;
 }
+#endif
 enum nss_status FN(getspent_r)(struct spwd *sp, char *buf, size_t len, int *errnop) {
   enum nss_status st;
   trace("getspent_r", NULL);
   if (forced(&st, errnop)) return st;
+  st = netdb_enum_status("FLTEST_ACCOUNT_ENUM", "get", errnop);
+  if (st != NSS_STATUS_SUCCESS) return st;
+  if (account_enum_scratch_too_small(len, errnop)) return NSS_STATUS_TRYAGAIN;
   while (sp_cursor < COUNT(users) && users[sp_cursor].uid == 0) sp_cursor++;
   if (sp_cursor >= COUNT(users)) {
     *errnop = ENOENT;

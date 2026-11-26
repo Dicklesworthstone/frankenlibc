@@ -1058,14 +1058,17 @@ pub(crate) unsafe fn service_entry_r(
     unsafe { query.answer(out, buf, len) }
 }
 
-/// These netdb databases share GNU's set/get/end source traversal, while
-/// keeping their entry layouts and callback signatures distinct.
+/// These databases share GNU's set/get/end source traversal, while keeping
+/// their entry layouts and callback signatures distinct.
 #[derive(Clone, Copy)]
 pub(crate) enum NetdbDatabase {
     Services,
     Protocols,
     Hosts,
     Rpc,
+    Passwd,
+    Group,
+    Shadow,
 }
 
 impl NetdbDatabase {
@@ -1075,6 +1078,16 @@ impl NetdbDatabase {
             Self::Protocols => services(Database::Protocols),
             Self::Hosts => Arc::new(hosts_policy().enumeration_sources()),
             Self::Rpc => services(Database::Rpc),
+            Self::Passwd => services(Database::Passwd),
+            Self::Group => services(Database::Group),
+            Self::Shadow => services(Database::Shadow),
+        }
+    }
+
+    pub(crate) fn native_files(self, source: &Service) -> bool {
+        match self {
+            Self::Passwd | Self::Group | Self::Shadow => source.kind() == SourceKind::Files,
+            _ => source.name() == b"files",
         }
     }
 
@@ -1084,6 +1097,9 @@ impl NetdbDatabase {
             Self::Protocols => ("setprotoent", "getprotoent_r", "endprotoent"),
             Self::Hosts => ("sethostent", "gethostent_r", "endhostent"),
             Self::Rpc => ("setrpcent", "getrpcent_r", "endrpcent"),
+            Self::Passwd => ("setpwent", "getpwent_r", "endpwent"),
+            Self::Group => ("setgrent", "getgrent_r", "endgrent"),
+            Self::Shadow => ("setspent", "getspent_r", "endspent"),
         }
     }
 }
@@ -1121,6 +1137,18 @@ impl NetdbEnumeration {
                 }
                 NetdbDatabase::Rpc => {
                     let next: GetEntFn<crate::unistd_abi::RpcEnt> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+                NetdbDatabase::Passwd => {
+                    let next: GetEntFn<libc::passwd> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+                NetdbDatabase::Group => {
+                    let next: GetEntFn<libc::group> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+                NetdbDatabase::Shadow => {
+                    let next: GetEntFn<libc::spwd> = core::mem::transmute(self.next);
                     next(output.cast(), buffer, capacity, error)
                 }
                 NetdbDatabase::Hosts => {
@@ -2318,7 +2346,8 @@ pub(crate) fn merge_group(
 // Enumeration across sources
 // ---------------------------------------------------------------------------
 
-/// Which enumeration a cursor walks.
+/// Account databases share one public reentrant/nonreentrant traversal per
+/// owner, while direct files-provider calls retain their native files cursor.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EntDb {
     Passwd,
@@ -2327,112 +2356,277 @@ pub(crate) enum EntDb {
 }
 
 impl EntDb {
-    fn database(self) -> Database {
+    const fn index(self) -> usize {
         match self {
-            Self::Passwd => Database::Passwd,
-            Self::Group => Database::Group,
-            Self::Shadow => Database::Shadow,
+            Self::Passwd => 0,
+            Self::Group => 1,
+            Self::Shadow => 2,
         }
     }
-    fn set_fn(self) -> &'static str {
+
+    const fn enumeration(self) -> NetdbDatabase {
         match self {
-            Self::Passwd => "setpwent",
-            Self::Group => "setgrent",
-            Self::Shadow => "setspent",
-        }
-    }
-    fn end_fn(self) -> &'static str {
-        match self {
-            Self::Passwd => "endpwent",
-            Self::Group => "endgrent",
-            Self::Shadow => "endspent",
+            Self::Passwd => NetdbDatabase::Passwd,
+            Self::Group => NetdbDatabase::Group,
+            Self::Shadow => NetdbDatabase::Shadow,
         }
     }
 }
 
-/// Position of a multi-source enumeration: the source being walked and
-/// whether its `set*ent` has run (or, for files, its snapshot was taken).
-#[derive(Clone, Copy, Default)]
-pub(crate) struct EntCursor {
-    pub(crate) source: usize,
-    pub(crate) started: bool,
+#[repr(C)]
+union AccountEnumerationOutput {
+    passwd: MaybeUninit<libc::passwd>,
+    group: MaybeUninit<libc::group>,
+    shadow: MaybeUninit<libc::spwd>,
 }
 
-/// One step of `get*ent` from the source the cursor points at.
-pub(crate) enum EntStep<T> {
-    /// The cursor's source is the native files backend: the caller produces
-    /// the next files entry (restarting its snapshot when `restart`).
-    Files {
-        restart: bool,
-    },
-    Module(Answer<T>),
-    /// Enumeration is over.
-    Done,
+struct AccountEnumerationState {
+    iteration: crate::unistd_abi::NetdbIteration,
+    buffer: Vec<u8>,
+    output: AccountEnumerationOutput,
+    busy: bool,
 }
 
-/// Decide what the cursor's current source should do next.
-pub(crate) fn ent_step<T>(
-    db: EntDb,
-    cursor: &mut EntCursor,
-    getent: impl FnOnce(&[u8]) -> Answer<T>,
-) -> (EntStep<T>, Option<Service>) {
-    let services = services(db.database());
-    let Some(service) = services.get(cursor.source).cloned() else {
-        return (EntStep::Done, None);
-    };
-    let restart = !cursor.started;
-    cursor.started = true;
-    match service.kind() {
-        SourceKind::Files => (EntStep::Files { restart }, Some(service)),
-        SourceKind::Module => {
-            if restart {
-                let status = call_setent(service.name(), db.set_fn());
-                if status != Status::Success {
-                    return (
-                        EntStep::Module(match status {
-                            Status::TryAgain => Answer::TryAgain(libc::EAGAIN),
-                            _ => Answer::Unavailable(missing_source()),
-                        }),
-                        Some(service),
-                    );
-                }
+// SAFETY: an owned cache slot belongs to one native thread. Output pointers
+// address that owner's leased buffer and never migrate to another slot.
+unsafe impl Send for AccountEnumerationState {}
+
+impl AccountEnumerationState {
+    const fn new(database: EntDb) -> Self {
+        Self {
+            iteration: crate::unistd_abi::NetdbIteration::new(database.enumeration()),
+            buffer: Vec::new(),
+            output: AccountEnumerationOutput { passwd: MaybeUninit::uninit() },
+            busy: false,
+        }
+    }
+
+    unsafe fn output(&mut self, database: EntDb) -> *mut c_void {
+        // SAFETY: these fields provide storage only; the matching complete C
+        // result is written before any caller receives the pointer.
+        unsafe {
+            match database {
+                EntDb::Passwd => self.output.passwd.as_mut_ptr().cast(),
+                EntDb::Group => self.output.group.as_mut_ptr().cast(),
+                EntDb::Shadow => self.output.shadow.as_mut_ptr().cast(),
             }
-            (EntStep::Module(getent(service.name())), Some(service))
         }
     }
-}
 
-/// After the current source answered `status`: move to the next source
-/// (returning true) or stop.
-pub(crate) fn ent_advance(cursor: &mut EntCursor, service: &Service, status: Status) -> bool {
-    if frankenlibc_core::nss::enumeration_advances(service, status) {
-        cursor.source += 1;
-        cursor.started = false;
-        true
-    } else {
-        false
+    fn all() -> [Self; 3] {
+        [
+            Self::new(EntDb::Passwd),
+            Self::new(EntDb::Group),
+            Self::new(EntDb::Shadow),
+        ]
     }
 }
 
-/// `end*ent`: close every module source this process has loaded for `db`.
-pub(crate) fn ent_end(db: EntDb) {
-    for service in services(db.database()).iter() {
-        if service.kind() == SourceKind::Module {
-            call_endent(service.name(), db.end_fn());
+static ACCOUNT_ENUMERATION_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<
+    [AccountEnumerationState; 3],
+> = crate::owned_tls_cache::OwnedTlsCache::new(AccountEnumerationState::all);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static ACCOUNT_ENUMERATION: crate::util::TlsHeapCell<
+        std::cell::UnsafeCell<[AccountEnumerationState; 3]>,
+    > = const { crate::util::TlsHeapCell::new() };
+}
+
+fn with_account_enumeration<R>(
+    database: EntDb,
+    callback: impl FnOnce(&mut AccountEnumerationState) -> R,
+) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        ACCOUNT_ENUMERATION_OWNED_TLS.with(|states| callback(&mut states[database.index()]))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return ACCOUNT_ENUMERATION_OWNED_TLS
+                .with(|states| callback(&mut states[database.index()]));
         }
+        ACCOUNT_ENUMERATION.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(AccountEnumerationState::all()),
+                |cell| {
+                    // SAFETY: this short owner-local access cannot run foreign
+                    // callbacks, and no state reference escapes it.
+                    callback(unsafe { &mut (*cell.get())[database.index()] })
+                },
+            )
+        })
     }
 }
 
-pub(crate) fn getpwent(service: &[u8]) -> Answer<frankenlibc_core::pwd::Passwd> {
-    call_getent::<libc::passwd, _>(service, "getpwent_r", passwd_from_c)
+/// Move traversal and owned scratch out of TLS while a provider is running.
+/// A provider may call direct files APIs or a different account database
+/// without aliasing this lease. Same-database public reentry fails explicitly.
+struct AccountIterationLease {
+    database: EntDb,
+    iteration: crate::unistd_abi::NetdbIteration,
+    buffer: Vec<u8>,
 }
 
+impl AccountIterationLease {
+    fn acquire(database: EntDb) -> Option<Self> {
+        // SAFETY: the canonical errno cell belongs to this caller.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let lease = with_account_enumeration(database, |state| {
+            if state.busy {
+                return None;
+            }
+            state.busy = true;
+            Some(Self {
+                database,
+                iteration: std::mem::replace(
+                    &mut state.iteration,
+                    crate::unistd_abi::NetdbIteration::new(database.enumeration()),
+                ),
+                buffer: std::mem::take(&mut state.buffer),
+            })
+        });
+        // TLS initialization must not replace the errno supplied to a module.
+        unsafe { crate::errno_abi::set_abi_errno(saved_errno) };
+        lease
+    }
+}
+
+impl Drop for AccountIterationLease {
+    fn drop(&mut self) {
+        // SAFETY: preserve the final provider's errno across storage cleanup.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let iteration = std::mem::replace(
+            &mut self.iteration,
+            crate::unistd_abi::NetdbIteration::new(self.database.enumeration()),
+        );
+        let buffer = std::mem::take(&mut self.buffer);
+        with_account_enumeration(self.database, |state| {
+            state.iteration = iteration;
+            state.buffer = buffer;
+            state.busy = false;
+        });
+        unsafe { crate::errno_abi::set_abi_errno(saved_errno) };
+    }
+}
+
+pub(crate) fn account_setent(database: EntDb) {
+    let Some(mut lease) = AccountIterationLease::acquire(database) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.rewind(0);
+}
+
+pub(crate) fn account_endent(database: EntDb) {
+    let Some(mut lease) = AccountIterationLease::acquire(database) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EDEADLK) };
+        return;
+    };
+    lease.iteration.end();
+}
+
+/// # Safety
+/// The database matches the C layout of `T`; `output`, `buffer[..capacity]`,
+/// and `result` are validated writable caller storage. The result slot was
+/// cleared before entering this dispatcher.
+pub(crate) unsafe fn account_getent_r<T>(
+    database: EntDb,
+    output: *mut T,
+    buffer: *mut c_char,
+    capacity: usize,
+    result: *mut *mut T,
+) -> c_int {
+    let Some(mut lease) = AccountIterationLease::acquire(database) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EDEADLK) };
+        return libc::EDEADLK;
+    };
+    // SAFETY: the typed output and exact caller buffer survive each callback.
+    let status = unsafe { lease.iteration.next_r(output.cast(), buffer, capacity) };
+    match Status::from_raw(status) {
+        Status::Success => {
+            unsafe { *result = output };
+            0
+        }
+        Status::TryAgain => unsafe { *crate::errno_abi::__errno_location() },
+        // Unlike keyed lookups, get*ent_r reports ENOENT for EOF while
+        // preserving the provider's separate errno value.
+        _ => libc::ENOENT,
+    }
+}
+
+fn account_getent_static<T: Copy>(database: EntDb) -> *mut T {
+    let Some(mut lease) = AccountIterationLease::acquire(database) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EDEADLK) };
+        return std::ptr::null_mut();
+    };
+    let mut output = MaybeUninit::<T>::uninit();
+    let mut capacity = lease.buffer.len().max(INITIAL_SCRATCH);
+    loop {
+        if capacity > lease.buffer.len() {
+            let additional = capacity - lease.buffer.len();
+            if lease.buffer.try_reserve_exact(additional).is_err() {
+                unsafe { crate::errno_abi::set_abi_errno(libc::ENOMEM) };
+                return std::ptr::null_mut();
+            }
+            lease.buffer.resize(capacity, 0);
+        }
+        // SAFETY: the private wrappers select T's matching database. Neither
+        // the output nor leased scratch moves during a provider callback.
+        let status = unsafe {
+            lease.iteration.next_r(
+                output.as_mut_ptr().cast(),
+                lease.buffer.as_mut_ptr().cast(),
+                capacity,
+            )
+        };
+        if Status::from_raw(status) == Status::Success {
+            let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+            // SAFETY: SUCCESS initialized the complete C result.
+            let output = unsafe { output.assume_init() };
+            drop(lease);
+            let result = with_account_enumeration(database, |state| {
+                // SAFETY: the wrapper fixes T to the database's C layout.
+                // Returning the lease restored the backing allocation; this
+                // owner's output slot stays at a stable address.
+                unsafe {
+                    let result = state.output(database).cast::<T>();
+                    result.write(output);
+                    result
+                }
+            });
+            unsafe { crate::errno_abi::set_abi_errno(saved_errno) };
+            return result;
+        }
+        if Status::from_raw(status) != Status::TryAgain
+            || unsafe { *crate::errno_abi::__errno_location() } != libc::ERANGE
+        {
+            return std::ptr::null_mut();
+        }
+        let Some(next) = capacity.checked_mul(2).filter(|size| *size <= isize::MAX as usize) else {
+            unsafe { crate::errno_abi::set_abi_errno(libc::ENOMEM) };
+            return std::ptr::null_mut();
+        };
+        capacity = next;
+    }
+}
+
+pub(crate) fn account_getpwent() -> *mut libc::passwd {
+    account_getent_static::<libc::passwd>(EntDb::Passwd)
+}
+
+pub(crate) fn account_getgrent() -> *mut libc::group {
+    account_getent_static::<libc::group>(EntDb::Group)
+}
+
+pub(crate) fn account_getspent() -> *mut libc::spwd {
+    account_getent_static::<libc::spwd>(EntDb::Shadow)
+}
+
+/// initgroups' module fallback owns scratch independently of public traversal.
 pub(crate) fn getgrent(service: &[u8]) -> Answer<frankenlibc_core::grp::Group> {
     call_getent::<libc::group, _>(service, "getgrent_r", group_from_c)
-}
-
-pub(crate) fn getspent(service: &[u8]) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
-    call_getent::<libc::spwd, _>(service, "getspent_r", shadow_from_c)
 }
 
 // ---------------------------------------------------------------------------
