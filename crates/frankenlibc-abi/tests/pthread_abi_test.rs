@@ -1931,7 +1931,10 @@ mod barrier_generations {
 
                 // Reinitialize exactly the old storage after destroy returns.
                 unsafe {
-                    assert_eq!(pthread_barrier_init(address as *mut c_void, ptr::null(), 1), 0);
+                    assert_eq!(
+                        pthread_barrier_init(address as *mut c_void, ptr::null(), 1),
+                        0
+                    );
                     assert_eq!(
                         pthread_barrier_wait(address as *mut c_void),
                         libc::PTHREAD_BARRIER_SERIAL_THREAD

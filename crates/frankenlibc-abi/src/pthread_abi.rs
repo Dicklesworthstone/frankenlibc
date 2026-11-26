@@ -9733,7 +9733,9 @@ pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int 
     // released participant to destroy the barrier. Wait for those final
     // accesses before allowing the application to reuse the storage.
     let private = bd.magic.load(Ordering::Relaxed) != BARRIER_PSHARED_MAGIC;
-    let previous = bd.active.fetch_or(BARRIER_DESTROY_WAITING, Ordering::AcqRel);
+    let previous = bd
+        .active
+        .fetch_or(BARRIER_DESTROY_WAITING, Ordering::AcqRel);
     if previous != 0 {
         let mut state = previous | BARRIER_DESTROY_WAITING;
         let wake_timeout = libc::timespec {
@@ -9901,7 +9903,8 @@ fn barrier_depart(bd: &BarrierData, private: bool) {
         // Only clearing this bit hands ownership back to destroy. Using an
         // RMW extends the release sequence of all participants' departures.
         unsafe { futex_wake_u32(bd.active.as_ptr(), 1, private) };
-        bd.active.fetch_and(!BARRIER_DESTROY_WAITING, Ordering::Release);
+        bd.active
+            .fetch_and(!BARRIER_DESTROY_WAITING, Ordering::Release);
     }
 }
 

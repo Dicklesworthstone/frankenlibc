@@ -1527,3 +1527,49 @@ fn character_output_returns_unsigned_bytes_including_eof_input() {
         }
     }
 }
+
+#[test]
+fn rewind_clears_indicators_on_host_owned_streams() {
+    let host = host();
+    // SAFETY: all FILE operations other than the candidate rewind use glibc's
+    // own entrypoints on a live, read-only glibc FILE.
+    unsafe {
+        let host_rewind: unsafe extern "C-unwind" fn(*mut c_void) =
+            dlsym_oracle::host_fn(c"rewind", fl::rewind as *const ());
+        for candidate in [false, true] {
+            for pipe in [false, true] {
+                let stream = if pipe {
+                    let mut fds = [-1; 2];
+                    assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+                    assert_eq!(libc::close(fds[1]), 0);
+                    (host.fdopen)(fds[0], c"r".as_ptr())
+                } else {
+                    (host.fopen)(c"/dev/null".as_ptr(), c"r".as_ptr())
+                };
+                assert!(!stream.is_null());
+                assert_eq!((host.fgetc)(stream), libc::EOF);
+                assert_eq!((host.fputc)(i32::from(b'X'), stream), libc::EOF);
+                assert_ne!((host.feof)(stream), 0);
+                assert_ne!((host.ferror)(stream), 0);
+
+                let error = if candidate {
+                    let slot = frankenlibc_abi::errno_abi::__errno_location();
+                    *slot = 0;
+                    fl::rewind(stream);
+                    *slot
+                } else {
+                    let slot = libc::__errno_location();
+                    *slot = 0;
+                    host_rewind(stream);
+                    *slot
+                };
+                assert_eq!((host.feof)(stream), 0);
+                assert_eq!((host.ferror)(stream), 0);
+                if pipe {
+                    assert_eq!(error, libc::ESPIPE);
+                }
+                assert_eq!((host.fclose)(stream), 0);
+            }
+        }
+    }
+}

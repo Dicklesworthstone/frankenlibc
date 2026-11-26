@@ -8358,18 +8358,14 @@ pub unsafe extern "C-unwind" fn ftello(stream: *mut c_void) -> i64 {
 /// POSIX `rewind`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn rewind(stream: *mut c_void) {
-    let _lock = unsafe { StdioLockGuard::acquire(stream) };
-    // rewind is fseek(stream, 0, SEEK_SET) + clearerr.
+    let lock = unsafe { StdioLockGuard::acquire(stream) };
     unsafe { fseek(stream, 0, libc::SEEK_SET) };
-
-    let id = canonical_stream_id(stream);
-    if let Some(cell) = stream_cell(id) {
-        let mut s = cell.lock();
-        s.clear_err();
-        if let Some(cursor) = fast_fixed_mem_read(id) {
-            cursor.eof.store(false, Ordering::Release);
-        }
-    }
+    // Clear the indicators on the FILE that owns them, even when the seek
+    // failed. Preserve its errno across host symbol lookup and unlocking.
+    let seek_errno = unsafe { *crate::errno_abi::__errno_location() };
+    unsafe { clearerr_without_lock(stream) };
+    drop(lock);
+    unsafe { set_abi_errno(seek_errno) };
 }
 
 // ---------------------------------------------------------------------------
