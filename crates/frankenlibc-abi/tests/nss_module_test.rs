@@ -4160,6 +4160,108 @@ fn service_files_keyed_transcript(host: bool) -> String {
     transcript
 }
 
+/// Exercise public NSS dispatch with the same mounted files used by the
+/// direct-provider oracle. The row before a hit may decide the return code.
+fn public_files_services_transcript(host: bool) -> String {
+    unsafe extern "C" {
+        fn getservbyname_r(
+            name: *const c_char,
+            proto: *const c_char,
+            out: *mut libc::servent,
+            buf: *mut c_char,
+            len: usize,
+            result: *mut *mut libc::servent,
+        ) -> c_int;
+        fn getservbyport_r(
+            port: c_int,
+            proto: *const c_char,
+            out: *mut libc::servent,
+            buf: *mut c_char,
+            len: usize,
+            result: *mut *mut libc::servent,
+        ) -> c_int;
+        fn __nss_configure_lookup(database: *const c_char, sources: *const c_char) -> c_int;
+    }
+    use frankenlibc_abi::{glibc_internal_abi as g, inet_abi};
+    let configure = if host {
+        __nss_configure_lookup
+    } else {
+        g::__nss_configure_lookup
+    };
+    assert_eq!(
+        unsafe { configure(c"services".as_ptr(), c"files".as_ptr()) },
+        0
+    );
+    let mut transcript = String::new();
+    for (name, port, proto) in [
+        (c"http", None, c"tcp"),
+        (c"www", None, c"tcp"),
+        (c"HTTP", None, c"tcp"),
+        (c"http", None, c"TCP"),
+        (c"missing", None, c"tcp"),
+        (c"port80", Some(c_int::from(80u16.to_be())), c"tcp"),
+        (c"wide", Some(c_int::from(80u16.to_be()) + 65536), c"tcp"),
+    ] {
+        for (capacity, offset) in [(1, 0), (32, 0), (48, 1), (64, 0), (4096, 7)] {
+            let mut bytes = vec![0xabu8; capacity + 16];
+            let buf = unsafe { bytes.as_mut_ptr().add(offset).cast::<c_char>() };
+            let mut out: libc::servent = unsafe { std::mem::zeroed() };
+            let mut result: *mut libc::servent = std::ptr::dangling_mut();
+            let rc = unsafe {
+                match (host, port) {
+                    (true, Some(p)) => getservbyport_r(
+                        p,
+                        proto.as_ptr(),
+                        &mut out,
+                        buf,
+                        capacity,
+                        &mut result,
+                    ),
+                    (true, None) => getservbyname_r(
+                        name.as_ptr(),
+                        proto.as_ptr(),
+                        &mut out,
+                        buf,
+                        capacity,
+                        &mut result,
+                    ),
+                    (false, Some(p)) => inet_abi::getservbyport_r(
+                        p,
+                        proto.as_ptr(),
+                        (&raw mut out).cast(),
+                        buf,
+                        capacity,
+                        (&raw mut result).cast(),
+                    ),
+                    (false, None) => inet_abi::getservbyname_r(
+                        name.as_ptr(),
+                        proto.as_ptr(),
+                        (&raw mut out).cast(),
+                        buf,
+                        capacity,
+                        (&raw mut result).cast(),
+                    ),
+                }
+            };
+            let record = if result.is_null() {
+                None
+            } else {
+                assert_eq!(result, &raw mut out);
+                assert_eq!(rc, 0);
+                unsafe {
+                    enumerated_service(result.cast(), Some((buf as usize, buf as usize + capacity)))
+                }
+            };
+            assert!(bytes[..offset]
+                .iter()
+                .chain(&bytes[offset + capacity..])
+                .all(|&b| b == 0xab));
+            writeln!(transcript, "{name:?} {port:?} {proto:?} {capacity}/{offset} {rc} {record:?}").unwrap();
+        }
+    }
+    transcript
+}
+
 #[test]
 fn services_enumeration_files_retry_and_provider_isolation() {
     const TEST: &str = "services_enumeration_files_retry_and_provider_isolation";
@@ -4177,8 +4279,9 @@ fn services_enumeration_files_retry_and_provider_isolation() {
                 );
             }
             println!(
-                "FILES_SERVICES_BEGIN\n{}FILES_SERVICES_END",
-                service_files_keyed_transcript(host)
+                "FILES_SERVICES_BEGIN\n{}{}FILES_SERVICES_END",
+                service_files_keyed_transcript(host),
+                public_files_services_transcript(host)
             );
             unsafe { libc::alarm(0) };
             return;
@@ -4742,7 +4845,6 @@ fn protocols_lookups_match_glibc_module_policy() {
         unsafe { libc::alarm(20) };
         let api = protocol_api(host);
         let mut transcript = String::new();
-        let sources = std::env::var("FLTEST_PROTOCOL_SOURCES").unwrap();
         let queries = [
             ProtocolRequest::Name(c"tcp"),
             ProtocolRequest::Name(c"TCP"),
@@ -4767,33 +4869,15 @@ fn protocols_lookups_match_glibc_module_policy() {
             ProtocolRequest::Number(987654),
         ];
         for query in queries {
-            // Exact small-buffer behavior belongs to the selected module.
-            // Files keyed lookups retain their existing parsed index: GNU's
-            // sequential scan can exhaust a tiny buffer on an unrelated line.
-            let module_answer = match query {
-                ProtocolRequest::Name(name) => [
-                    c"tcp",
-                    c"fltest-protocol",
-                    c"fltest-proto",
-                    c"fltest-large-protocol",
-                    c"fltest-negative",
-                    c"fltest-wide",
-                    c"fltest-errno-success",
-                    c"fltest-errno-written",
-                ]
-                .contains(&name),
-                ProtocolRequest::Number(number) => matches!(number, 6 | 14501 | 14502 | -7 | 70000),
-                ProtocolRequest::Next => false,
-            };
-            let mut budgets = Vec::new();
-            if sources == "fltest" || (sources.starts_with("fltest ") && module_answer) {
-                budgets.extend([(Some(0), 0), (Some(7), 1)]);
-            }
-            if sources == "fltest" {
-                budgets.push((Some(96), 3));
-            }
-            budgets.extend([(Some(8192), 1), (None, 0)]);
-            for (capacity, offset) in budgets {
+            // An earlier files line can exhaust the buffer even on a missing
+            // key or before a later module would have supplied an answer.
+            for (capacity, offset) in [
+                (Some(0), 0),
+                (Some(7), 1),
+                (Some(96), 3),
+                (Some(8192), 1),
+                (None, 0),
+            ] {
                 writeln!(
                     transcript,
                     "{query:?} {capacity:?}/{offset} {:?}",
@@ -4844,7 +4928,7 @@ fn protocols_lookups_match_glibc_module_policy() {
                 .unwrap()
                 .0
                 .to_owned();
-            assert!((42..=105).contains(&transcript.lines().count()));
+            assert_eq!(transcript.lines().count(), 105);
             if sources == "fltest" {
                 assert!(
                     transcript.contains("number: 14501") && transcript.contains("number: 14502")

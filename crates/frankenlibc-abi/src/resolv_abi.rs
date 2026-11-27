@@ -9,6 +9,8 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::int_plus_one)]
 
+mod files_netdb;
+
 // Unconditional: the `getnameinfo` render paths below borrow-or-own their host
 // and service text in both feature configurations.
 use std::borrow::Cow;
@@ -338,6 +340,7 @@ struct ServicePortLookupKey {
 }
 
 struct ServiceLookupCache {
+    reentrant: files_netdb::Index,
     generation: Option<u64>,
     entries: Vec<frankenlibc_core::resolv::ServiceEntry>,
     name_keys: Vec<ServiceNameLookupKey>,
@@ -347,6 +350,7 @@ struct ServiceLookupCache {
 impl ServiceLookupCache {
     fn new() -> Self {
         Self {
+            reentrant: files_netdb::Index::default(),
             generation: None,
             entries: Vec::new(),
             name_keys: Vec::new(),
@@ -520,6 +524,7 @@ struct ProtocolNumberLookupKey {
 }
 
 struct ProtocolLookupCache {
+    reentrant: files_netdb::Index,
     generation: Option<u64>,
     entries: Vec<frankenlibc_core::resolv::ProtocolEntry>,
     name_keys: Vec<ProtocolNameLookupKey>,
@@ -529,6 +534,7 @@ struct ProtocolLookupCache {
 impl ProtocolLookupCache {
     fn new() -> Self {
         Self {
+            reentrant: files_netdb::Index::default(),
             generation: None,
             entries: Vec::new(),
             name_keys: Vec::new(),
@@ -1065,17 +1071,22 @@ pub(crate) unsafe fn service_lookup_r(
     frankenlibc_core::nss::lookup(
         &sources,
         |source| match source.name() {
-            b"files" => {
-                match with_files_service_entry(key, proto_filter, |entry| {
-                    // SAFETY: the ABI caller owns the supplied output region.
-                    unsafe { crate::inet_abi::pack_service_entry(entry, out, buf, len) }
-                }) {
-                    Ok(Some(0)) => Answer::Found(()),
-                    Ok(Some(_)) => Answer::BufferTooSmall,
-                    Ok(None) => Answer::NotFound,
-                    Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
-                }
-            }
+            b"files" => with_services_backend_snapshot(|content, generation| {
+                with_service_lookup_cache(|cache| {
+                    // SAFETY: the caller admitted this complete object and buffer.
+                    unsafe {
+                        cache.reentrant.lookup(
+                            content,
+                            generation,
+                            files_netdb::Key::Service(key, proto_filter),
+                            out.cast(),
+                            buf,
+                            len,
+                        )
+                    }
+                })
+            })
+            .unwrap_or_else(|error| Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO))),
             // SAFETY: as above; no cache borrow or configuration lock survives
             // into user module code, so module callbacks can reenter NSS.
             _ => unsafe {
@@ -1240,27 +1251,22 @@ pub(crate) unsafe fn files_protocol_lookup_r(
     len: usize,
 ) -> frankenlibc_core::nss::Answer<()> {
     use frankenlibc_core::nss::Answer;
-    match with_files_protocol_entry(key, |entry| {
-        let mut resolved = ptr::null_mut();
-        // SAFETY: the ABI validated complete output objects before dispatch.
-        unsafe {
-            crate::unistd_abi::fill_protoent_r(
-                &entry.name,
-                entry.number,
-                &entry.aliases,
-                out.cast(),
-                buf,
-                len,
-                &mut resolved,
-            )
-        }
-    }) {
-        Ok(Some(0)) => Answer::Found(()),
-        Ok(Some(libc::ERANGE)) => Answer::BufferTooSmall,
-        Ok(Some(error)) => Answer::Unavailable(error),
-        Ok(None) => Answer::NotFound,
-        Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
-    }
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            // SAFETY: the caller admitted this complete object and buffer.
+            unsafe {
+                cache.reentrant.lookup(
+                    content,
+                    generation,
+                    files_netdb::Key::Protocol(key),
+                    out.cast(),
+                    buf,
+                    len,
+                )
+            }
+        })
+    })
+    .unwrap_or_else(|error| Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)))
 }
 
 /// Dispatch with the caller's exact buffer, preserving a module's alignment

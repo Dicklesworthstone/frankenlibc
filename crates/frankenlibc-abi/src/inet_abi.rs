@@ -1045,6 +1045,26 @@ pub(crate) unsafe fn pack_service_entry(
     0
 }
 
+/// A caller can reuse a string from the previous result as the next key.
+/// Snapshot that key if a files or foreign provider can overwrite it during
+/// this lookup. Independent query strings keep the borrowed fast path.
+unsafe fn service_query_bytes<'a>(
+    argument: *const c_char,
+    buffer: *mut c_char,
+    capacity: usize,
+    output: *mut c_void,
+) -> Option<std::borrow::Cow<'a, [u8]>> {
+    let bytes = unsafe { read_bounded_cstr_ref(argument) }?;
+    let start = argument as usize;
+    let end = start.saturating_add(bytes.len());
+    let overlaps = |base: usize, len: usize| start < base.saturating_add(len) && base < end;
+    if overlaps(buffer as usize, capacity) || overlaps(output as usize, size_of::<libc::servent>()) {
+        Some(std::borrow::Cow::Owned(bytes.to_vec()))
+    } else {
+        Some(std::borrow::Cow::Borrowed(bytes))
+    }
+}
+
 unsafe fn finish_service_lookup_r(
     answer: frankenlibc_core::nss::Answer<()>,
     result_buf: *mut c_void,
@@ -1095,21 +1115,14 @@ pub unsafe extern "C" fn getservbyname_r(
         return libc::EINVAL;
     }
 
-    // Borrowed, allocation-free argument reads. `read_bounded_cstr` is
-    // `read_bounded_cstr_ref(..).to_vec()`: it malloc'd a `Vec` for the name AND another for
-    // the protocol on every call, which under the interposed allocator costs more than the
-    // indexed lookup itself (bd-qds9jk / bd-xmng5n frame tables: ~91% allocator bookkeeping).
-    // Both slices are only READ inside this call — the lookup compares them and copies bytes
-    // out — so they never outlive `name`/`proto`, exactly as `read_bounded_cstr_ref` requires.
-    // SAFETY: same bounded-read contract as `read_bounded_cstr` (rejects unterminated input).
-    let Some(name_bytes) = (unsafe { read_bounded_cstr_ref(name) }) else {
+    let capacity = effective_c_buffer_len(buf, buflen);
+    let Some(name_bytes) = (unsafe { service_query_bytes(name, buf, capacity, result_buf) }) else {
         return libc::EINVAL;
     };
     let proto_filter = if proto.is_null() {
         None
     } else {
-        // SAFETY: as above.
-        let Some(proto_bytes) = (unsafe { read_bounded_cstr_ref(proto) }) else {
+        let Some(proto_bytes) = (unsafe { service_query_bytes(proto, buf, capacity, result_buf) }) else {
             return libc::EINVAL;
         };
         Some(proto_bytes)
@@ -1119,11 +1132,11 @@ pub unsafe extern "C" fn getservbyname_r(
     // source call. The switch never holds files/cache locks across callbacks.
     unsafe {
         let answer = crate::resolv_abi::service_lookup_r(
-            crate::nss_module::ServiceKey::Name(name_bytes),
-            proto_filter,
+            crate::nss_module::ServiceKey::Name(&name_bytes),
+            proto_filter.as_deref(),
             result_buf.cast(),
             buf,
-            effective_c_buffer_len(buf, buflen),
+            capacity,
         );
         finish_service_lookup_r(answer, result_buf, result)
     }
@@ -1154,13 +1167,11 @@ pub unsafe extern "C" fn getservbyport_r(
         return libc::EINVAL;
     }
 
-    // Borrowed, allocation-free protocol read; see `getservbyname_r` above.
+    let capacity = effective_c_buffer_len(buf, buflen);
     let proto_filter = if proto.is_null() {
         None
     } else {
-        // SAFETY: same bounded-read contract as `read_bounded_cstr`; the slice is only read
-        // inside this call.
-        let Some(proto_bytes) = (unsafe { read_bounded_cstr_ref(proto) }) else {
+        let Some(proto_bytes) = (unsafe { service_query_bytes(proto, buf, capacity, result_buf) }) else {
             return libc::EINVAL;
         };
         Some(proto_bytes)
@@ -1170,10 +1181,10 @@ pub unsafe extern "C" fn getservbyport_r(
     unsafe {
         let answer = crate::resolv_abi::service_lookup_r(
             crate::nss_module::ServiceKey::Port(port),
-            proto_filter,
+            proto_filter.as_deref(),
             result_buf.cast(),
             buf,
-            effective_c_buffer_len(buf, buflen),
+            capacity,
         );
         finish_service_lookup_r(answer, result_buf, result)
     }
