@@ -113,18 +113,20 @@ struct Fingerprint {
     ino: u64,
 }
 
+const DATABASE_COUNT: usize = 11;
+
 struct ConfigCache {
     path: Vec<u8>,
     fingerprint: Option<Fingerprint>,
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 10],
+    parsed: [Option<Arc<Vec<Service>>>; DATABASE_COUNT],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
     /// Process-local overrides are independent of the on-disk image. A
     /// fingerprint or path change must never erase an explicit selection.
-    overrides: [Option<Arc<Vec<Service>>>; 10],
+    overrides: [Option<Arc<Vec<Service>>>; DATABASE_COUNT],
     hosts_override: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     hosts_parsed: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
     /// GNU freezes the whole configuration on the first successful runtime
@@ -137,9 +139,9 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None, None, None, None, None, None, None],
+    parsed: [const { None }; DATABASE_COUNT],
     initgroups_explicit: None,
-    overrides: [None, None, None, None, None, None, None, None, None, None],
+    overrides: [const { None }; DATABASE_COUNT],
     hosts_override: None,
     hosts_parsed: None,
     frozen: false,
@@ -173,6 +175,7 @@ pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), Confi
         b"services" => Database::Services,
         b"protocols" => Database::Protocols,
         b"networks" => Database::Networks,
+        b"ethers" => Database::Ethers,
         b"rpc" => Database::Rpc,
         b"netgroup" => Database::Netgroup,
         _ => return Err(ConfigureError::UnknownDatabase),
@@ -195,7 +198,7 @@ fn freeze_config(cache: &mut ConfigCache, read: fn(&ConfigCache) -> Option<Vec<u
     if !cache.frozen {
         cache.snapshot = read(cache);
         cache.frozen = true;
-        cache.parsed = [None, None, None, None, None, None, None, None, None, None];
+        cache.parsed = [const { None }; DATABASE_COUNT];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -235,6 +238,7 @@ fn database_slot(database: Database) -> usize {
         Database::Protocols => 7,
         Database::Rpc => 8,
         Database::Networks => 9,
+        Database::Ethers => 10,
     }
 }
 
@@ -345,7 +349,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None, None, None, None, None, None, None];
+        cache.parsed = [const { None }; DATABASE_COUNT];
         cache.initgroups_explicit = None;
         cache.hosts_parsed = None;
     }
@@ -1392,6 +1396,23 @@ pub(crate) unsafe fn host_entry_r(
             }
         }
     })
+}
+
+/// Both keyed ethers callbacks receive a key pointer, an etherent header and
+/// caller-owned scratch. The key points to either a C name or six octets.
+pub(crate) type EtherLookupFn = unsafe extern "C" fn(
+    *const c_void,
+    *mut c_void,
+    *mut c_char,
+    usize,
+    *mut c_int,
+) -> c_int;
+
+pub(crate) fn ether_lookup_function(service: &[u8], by_name: bool) -> Option<EtherLookupFn> {
+    let function = if by_name { "gethostton_r" } else { "getntohost_r" };
+    let address = module_function(service, function)?;
+    // SAFETY: these two NSS symbols have the keyed ethers provider ABI.
+    Some(unsafe { core::mem::transmute::<usize, EtherLookupFn>(address) })
 }
 
 /// Invoke a networks provider with the caller's exact buffer and error slots.

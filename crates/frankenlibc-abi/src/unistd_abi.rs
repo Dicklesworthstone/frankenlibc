@@ -26422,27 +26422,74 @@ pub unsafe extern "C" fn ether_line(
     0
 }
 
-/// Resolve a key using the ethers files provider and the public GNU scratch size.
+/// Dispatch an ethers lookup in configured source order with GNU's scratch size.
 unsafe fn lookup_ether(
     key: ethers_files::Key<'_>,
-    mut publish: impl FnMut(&NssParsedEther) -> c_int,
+    publish: impl FnOnce(&NssParsedEther, &[u8]) -> c_int,
 ) -> c_int {
+    use frankenlibc_core::nss::{Action, Database, Status};
+
     let mut result = NssParsedEther {
         name: std::ptr::null_mut(),
         address: EtherAddrBytes { octet: [0; 6] },
     };
-    let mut buffer = [0 as c_char; 1024];
-    let status = unsafe {
-        ethers_files::lookup(
-            key,
-            (&mut result as *mut NssParsedEther).cast(),
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            crate::errno_abi::__errno_location(),
-        )
+    let mut buffer = [0u8; 1024];
+
+    let saved_errno = current_abi_errno();
+    let sources = crate::nss_module::services(Database::Ethers);
+    let result_ptr = (&mut result as *mut NssParsedEther).cast();
+    let errnop = unsafe { crate::errno_abi::__errno_location() };
+    // Foreign name callbacks need an owned NUL-terminated key across calls.
+    let name_storage = match key {
+        ethers_files::Key::Name(name) => {
+            let mut terminated = name.to_vec();
+            terminated.push(0);
+            terminated
+        }
+        ethers_files::Key::Address(_) => Vec::new(),
     };
+    let key_ptr = match &key {
+        ethers_files::Key::Name(_) => name_storage.as_ptr().cast(),
+        ethers_files::Key::Address(address) => address.as_ptr().cast(),
+    };
+    unsafe { set_abi_errno(saved_errno) };
+    let mut status = NSS_STATUS_UNAVAIL;
+    for source in sources.iter() {
+        if source.name() == b"files" {
+            status = unsafe {
+                ethers_files::lookup(key, result_ptr, buffer.as_mut_ptr().cast(), buffer.len(), errnop)
+            };
+        } else {
+            let before_lookup = current_abi_errno();
+            let function = crate::nss_module::ether_lookup_function(
+                source.name(),
+                matches!(key, ethers_files::Key::Name(_)),
+            );
+            unsafe { set_abi_errno(before_lookup) };
+            let Some(call) = function else {
+                // A source without a callback has not supplied an answer.
+                if source.action(Status::Unavailable) == Action::Continue {
+                    continue;
+                }
+                break;
+            };
+            status = unsafe {
+                call(key_ptr, result_ptr, buffer.as_mut_ptr().cast(), buffer.len(), errnop)
+            };
+        }
+        // GNU's ethers wrappers use __nss_next2 directly. Only RETURN stops
+        // an ordinary answer; MERGE advances without combining ether records.
+        let action = if status == 2 {
+            source.return_action()
+        } else {
+            source.action(Status::from_raw(status))
+        };
+        if action == Action::Return {
+            break;
+        }
+    }
     if status == NSS_STATUS_SUCCESS {
-        publish(&result)
+        publish(&result, &buffer)
     } else {
         -1
     }
@@ -26457,8 +26504,16 @@ pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_voi
     }
     let key = ethers_files::Key::Address(unsafe { (*addr).octet });
     unsafe {
-        lookup_ether(key, |entry| {
-            let Some(name) = read_c_string_bytes(entry.name) else {
+        lookup_ether(key, |entry, buffer| {
+            // Modules may return either a scratch string or static storage.
+            // Keep a scratch result within this call's known buffer extent.
+            let name = if buffer.as_ptr_range().contains(&entry.name.cast::<u8>().cast_const()) {
+                packed_entry_cstr_bytes(buffer, entry.name).map(<[u8]>::to_vec)
+            } else {
+                read_c_string_bytes(entry.name)
+            };
+            let Some(name) = name else {
+                set_abi_errno(libc::EINVAL);
                 return -1;
             };
             if !tracked_region_fits(hostname as usize, name.len() + 1) {
@@ -26483,7 +26538,7 @@ pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_voi
         return -1;
     };
     unsafe {
-        lookup_ether(ethers_files::Key::Name(&name), |entry| {
+        lookup_ether(ethers_files::Key::Name(&name), |entry, _| {
             addr.write(entry.address);
             0
         })

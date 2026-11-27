@@ -21,6 +21,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/ethers_files.rs'
       - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
@@ -410,6 +411,15 @@ jobs:
             2>&1 | tee artifacts/network-database/modules.log
           grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' \
             artifacts/network-database/modules.log
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test nss_module_test ethers_lookups_match_glibc_module_policy \
+            -- --exact --nocapture --test-threads=1 2>&1 | tee artifacts/network-database/ethers.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' \
+            artifacts/network-database/ethers.log
+          cargo test -p frankenlibc-abi "${features[@]}" --lib ethers_files::tests \
+            -- --test-threads=1 2>&1 | tee artifacts/network-database/ethers-files.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+            artifacts/network-database/ethers-files.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

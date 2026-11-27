@@ -167,6 +167,7 @@ pub enum Database {
     Services,
     Protocols,
     Networks,
+    Ethers,
     Rpc,
     Netgroup,
 }
@@ -182,6 +183,7 @@ impl Database {
             Self::Services => b"services",
             Self::Protocols => b"protocols",
             Self::Networks => b"networks",
+            Self::Ethers => b"ethers",
             Self::Rpc => b"rpc",
             Self::Netgroup => b"netgroup",
         }
@@ -217,6 +219,7 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
         | Database::Services
         | Database::Protocols
         | Database::Networks
+        | Database::Ethers
         | Database::Rpc
         | Database::Netgroup => None,
     };

@@ -1552,3 +1552,48 @@ enum nss_status FN(getnetgrent_r)(struct __netgrent *out, char *buf, size_t len,
   state->position++;
   return NSS_STATUS_SUCCESS;
 }
+
+/* The ethers provider record contains a hostname followed by six octets.
+ * Each fixture variant returns a different address and name so source order
+ * is observable without access to the runner's /etc/ethers. */
+struct fl_etherent {
+    char *name;
+    unsigned char octets[6];
+};
+
+static enum nss_status
+ether_record(struct fl_etherent *record, char *scratch, size_t size, int *errnop)
+{
+    if (size != 1024) {
+        *errnop = ERANGE;
+        return NSS_STATUS_TRYAGAIN;
+    }
+    strcpy(scratch, STR(SERVICE));
+    record->name = scratch;
+    memcpy(record->octets, "\x02\x09\x08\x07\x06\x05", 6);
+    if (strcmp(STR(SERVICE), "fltest") != 0)
+        record->octets[5] = 4;
+    return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status
+FN(gethostton_r)(const char *name, struct fl_etherent *record,
+                 char *scratch, size_t size, int *errnop)
+{
+    if (strcmp(name, "candidate") != 0)
+        return NSS_STATUS_NOTFOUND;
+    return ether_record(record, scratch, size, errnop);
+}
+
+enum nss_status
+FN(getntohost_r)(const unsigned char *address, struct fl_etherent *record,
+                 char *scratch, size_t size, int *errnop)
+{
+    if (address[0] == 1 && strcmp(STR(SERVICE), "fltest") == 0) {
+        *errnop = EAGAIN;
+        return NSS_STATUS_TRYAGAIN;
+    }
+    if (address[0] > 1)
+        return NSS_STATUS_NOTFOUND;
+    return ether_record(record, scratch, size, errnop);
+}

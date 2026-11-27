@@ -8212,3 +8212,90 @@ fn rpc_native_isolation(path: &Path) {
         unsafe { (api.end)() };
     });
 }
+
+#[test]
+fn ethers_lookups_match_glibc_module_policy() {
+    use frankenlibc_abi::unistd_abi as fl;
+    const TEST: &str = "ethers_lookups_match_glibc_module_policy";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        unsafe extern "C" {
+            fn ether_hostton(name: *const c_char, addr: *mut c_void) -> c_int;
+            fn ether_ntohost(name: *mut c_char, addr: *const c_void) -> c_int;
+            fn __nss_configure_lookup(db: *const c_char, sources: *const c_char) -> c_int;
+        }
+        let host = std::env::var("FLTEST_ETHER_PROVIDER").unwrap() == "host";
+        let policies = [
+            "fltest",
+            "fltestnoig fltest",
+            "fltest [SUCCESS=continue] fltestnoig",
+            "fltest [SUCCESS=merge] fltestnoig",
+            "fltest [SUCCESS=continue] flmissing",
+            "fltest [TRYAGAIN=return] fltestnoig",
+            "fltest [TRYAGAIN=continue] fltestnoig",
+            "flmissing [UNAVAIL=return] fltest",
+            "flmissing fltest",
+        ];
+        let configure = if host {
+            __nss_configure_lookup
+        } else {
+            frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup
+        };
+        let forward = if host { ether_hostton } else { fl::ether_hostton };
+        let reverse = if host { ether_ntohost } else { fl::ether_ntohost };
+        println!("ETHER_BEGIN");
+        for policy in policies {
+            let sources = CString::new(policy).unwrap();
+            assert_eq!(unsafe { configure(c"ethers".as_ptr(), sources.as_ptr()) }, 0);
+            for name in [c"candidate", c"absent"] {
+                let mut address = [99u8; 6];
+                let rc = unsafe { forward(name.as_ptr(), address.as_mut_ptr().cast()) };
+                println!("{policy} forward {name:?} {rc} {address:?}");
+                if policy == "fltest" && name == c"candidate" {
+                    assert_eq!((rc, address), (0, [2, 9, 8, 7, 6, 5]));
+                }
+                if rc != 0 {
+                    assert_eq!(address, [99; 6]);
+                }
+            }
+            for first in [0u8, 1, 2] {
+                let address = [first; 6];
+                let mut name = [0 as c_char; 64];
+                name[0] = b'?' as c_char;
+                let rc = unsafe { reverse(name.as_mut_ptr(), address.as_ptr().cast()) };
+                let name = unsafe { CStr::from_ptr(name.as_ptr()) };
+                println!("{policy} reverse {first} {rc} {name:?}");
+                if policy == "fltest" && first == 0 {
+                    assert_eq!((rc, name), (0, c"fltest"));
+                }
+                if rc != 0 {
+                    assert_eq!(name, c"?");
+                }
+            }
+        }
+        println!("ETHER_END");
+        return;
+    }
+
+    let dir = host_enumeration_scratch("ethers-lookups");
+    build_modules(&dir);
+    let mut oracle = None;
+    for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+        let label = format!("ethers-{provider}-{mode}");
+        let mut child = host_module_child(TEST, &dir, "", &label);
+        child
+            .env("FLTEST_ETHER_PROVIDER", provider)
+            .env("FRANKENLIBC_MODE", mode)
+            .env_remove("LD_PRELOAD")
+            .env_remove("LD_AUDIT");
+        let output = run_child(child, &label);
+        let stdout = std::str::from_utf8(&output.stdout).unwrap();
+        let (_, tail) = stdout.split_once("ETHER_BEGIN\n").expect("ethers child ran");
+        let (observations, _) = tail.split_once("ETHER_END").unwrap();
+        assert_eq!(observations.lines().count(), 45);
+        if let Some(expected) = &oracle {
+            assert_eq!(observations, expected, "{label}");
+        } else {
+            oracle = Some(observations.to_owned());
+        }
+    }
+}
