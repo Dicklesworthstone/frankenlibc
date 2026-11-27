@@ -17397,7 +17397,7 @@ pub unsafe extern "C-unwind" fn vasprintf(
 // ===========================================================================
 
 use frankenlibc_core::stdio::scanf::{
-    ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format, scan_input,
+    ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format_with_dialect, scan_input,
     scan_input_with_radix,
 };
 
@@ -17517,14 +17517,7 @@ macro_rules! scanf_write_one {
     }};
 }
 
-/// The symbol the caller selected determines the scanf dialect, independently
-/// of the compiler used to build this library or the host libc's default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScanfDialect {
-    Legacy,
-    C99,
-    C23,
-}
+pub(crate) use frankenlibc_core::stdio::scanf::ScanfDialect;
 
 /// Scan ordinary buffer formats through the existing collecting engine.
 fn scanf_core(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
@@ -17548,7 +17541,8 @@ unsafe fn scan_narrow_buffer_with_session(
             // Keep format errors ordered with earlier conversions and failures.
             return matches!(directive, ScanDirective::InvalidBitWidth);
         };
-        spec.argument_index.is_some()
+        spec.legacy_alloc
+            || spec.argument_index.is_some()
             || (spec.length == LengthMod::L
                 && (spec.writes_char_buffer() || spec.writes_string_buffer()))
     });
@@ -17597,7 +17591,7 @@ unsafe fn scan_narrow_buffer_with_session(
     let result = if writer.allocation_failure || (summary.input_failure && summary.count == 0) {
         libc::EOF
     } else {
-        summary.count
+        writer.assigned_count(summary.count)
     };
     drop(writer);
     // SAFETY: preserve the scan's errno across partial-field cleanup.
@@ -17630,25 +17624,19 @@ fn scanf_directives(
         return None;
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
-    let wide_input = wide_locale.is_some();
-    let mut directives = if let Some(locale) = wide_locale {
-        frankenlibc_core::stdio::scanf::parse_scanf_format_wide_with_space(fmt_bytes, &|wc| {
-            locale.wide_is_space(wc)
-        })
+    Some(if let Some(locale) = wide_locale {
+        parse_scanf_format_with_dialect::<true, _>(
+            fmt_bytes,
+            &|wc| locale.wide_is_space(wc),
+            dialect,
+        )
     } else {
-        parse_scanf_format(fmt_bytes)
-    };
-    if wide_input || dialect == ScanfDialect::C23 {
-        // Keep the input and dialect flags on this call's directives: a nested
-        // scan must not change the outer call's prefix or whitespace policy.
-        for dir in directives.as_mut_slice() {
-            if let ScanDirective::Spec(spec) = dir {
-                spec.wide_input = wide_input;
-                spec.binary_prefix = dialect == ScanfDialect::C23;
-            }
-        }
-    }
-    Some(directives)
+        parse_scanf_format_with_dialect::<false, _>(
+            fmt_bytes,
+            &frankenlibc_core::string::wchar::iswspace,
+            dialect,
+        )
+    })
 }
 
 /// Read only when the active directive needs input. A short read is not EOF,
@@ -17761,7 +17749,7 @@ unsafe fn scan_narrow_stream(
     let result = if writer.allocation_failure || (input_failure && summary.count == 0) {
         libc::EOF
     } else {
-        summary.count
+        writer.assigned_count(summary.count)
     };
     drop(writer);
     drop(_lock);

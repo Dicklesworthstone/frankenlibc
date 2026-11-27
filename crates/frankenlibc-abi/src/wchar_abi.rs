@@ -6305,6 +6305,7 @@ pub(crate) struct WideScanWriter {
     pending_text: Option<WideScanPendingText>,
     pub(crate) error: Option<c_int>,
     pub(crate) allocation_failure: bool,
+    legacy_prefix_assigned: bool,
     narrow_input: bool,
 }
 
@@ -6319,6 +6320,7 @@ impl WideScanWriter {
             pending_text: None,
             error: None,
             allocation_failure: false,
+            legacy_prefix_assigned: false,
             narrow_input: false,
         }
     }
@@ -6330,6 +6332,11 @@ impl WideScanWriter {
             narrow_input: true,
             ..Self::new(ap)
         }
+    }
+
+    /// GNU assignment allocation can finish a prefix when growth fails.
+    pub(crate) fn assigned_count(&self, count: c_int) -> c_int {
+        count.saturating_add(c_int::from(self.legacy_prefix_assigned))
     }
 
     /// Fetch only the arguments required by reached conversions. Positional
@@ -6398,20 +6405,30 @@ impl WideScanWriter {
             wide,
             terminator_bytes,
         };
-        if spec.alloc && spec.writes_char_buffer() {
+        if spec.legacy_alloc || (spec.alloc && spec.writes_char_buffer()) {
             // Keep initial allocation failure before the first source read,
             // while bounding the reservation independently of a huge width.
             // Later appends grow storage from characters actually supplied.
-            let units = spec
-                .width
-                .unwrap_or(1)
-                .clamp(1, if wide { 1024 } else { 100 });
+            let units = if spec.legacy_alloc {
+                100
+            } else {
+                spec.width
+                    .unwrap_or(1)
+                    .clamp(1, if wide { 1024 } else { 100 })
+            };
             let unit_bytes = if wide { size_of::<libc::wchar_t>() } else { 1 };
             let capacity = units * unit_bytes;
             // SAFETY: at most 1024 wchar_t elements are reserved, and malloc
             // supplies their required alignment. Storage is not yet published.
             text.output = unsafe { crate::malloc_abi::malloc(capacity).cast() };
             if text.output.is_null() {
+                if spec.legacy_alloc {
+                    // GNU leaves earlier assignments in caller ownership.
+                    self.error = Some(libc::ENOMEM);
+                    return Err(WideScanWriteError {
+                        input_failure: false,
+                    });
+                }
                 // SAFETY: this field owns no allocation; its receiving pointer
                 // and all completed earlier allocation arguments remain live.
                 return Err(unsafe { self.stream_allocation_failed(destination) });
@@ -6430,6 +6447,25 @@ impl WideScanWriter {
         unsafe { self.release_failed_allocations(destination) };
         WideScanWriteError {
             input_failure: true,
+        }
+    }
+
+    /// Every previous append reserved space for the terminator. A legacy
+    /// field can therefore transfer its completed prefix without allocating.
+    unsafe fn finish_legacy_prefix(&mut self) -> WideScanWriteError {
+        // SAFETY: a legacy field starts with an owned buffer. Finishing it
+        // writes its reserved terminator and transfers the buffer to the caller.
+        if let Some(mut text) = self.pending_text.take() {
+            unsafe {
+                std::ptr::write_bytes(text.output.add(text.written), 0, text.terminator_bytes);
+                *text.destination.cast::<*mut u8>() =
+                    std::mem::replace(&mut text.output, std::ptr::null_mut());
+            }
+            self.legacy_prefix_assigned = true;
+        }
+        self.error = Some(libc::ENOMEM);
+        WideScanWriteError {
+            input_failure: false,
         }
     }
 
@@ -6463,6 +6499,9 @@ impl WideScanWriter {
             .checked_add(width)
             .and_then(|bytes| bytes.checked_add(text.terminator_bytes));
         let Some(needed) = needed else {
+            if spec.legacy_alloc {
+                return Err(unsafe { self.finish_legacy_prefix() });
+            }
             if text.alloc {
                 let destination = text.destination;
                 // SAFETY: the active field owns its receiving pointer.
@@ -6475,12 +6514,20 @@ impl WideScanWriter {
             });
         };
         if text.alloc && needed > text.capacity {
-            let capacity = needed.max(text.capacity.saturating_mul(2)).max(64);
+            let mut capacity = needed.max(text.capacity.saturating_mul(2)).max(64);
             // SAFETY: output is NULL or an allocation owned by this field.
             // Failed realloc leaves the old allocation available for cleanup.
-            let output =
+            let mut output =
                 unsafe { crate::malloc_abi::realloc(text.output.cast(), capacity).cast::<u8>() };
+            if output.is_null() && spec.legacy_alloc && capacity > needed {
+                // GNU first retries the smallest reservation for the next unit.
+                capacity = needed;
+                output = unsafe { crate::malloc_abi::realloc(text.output.cast(), capacity).cast() };
+            }
             if output.is_null() {
+                if spec.legacy_alloc {
+                    return Err(unsafe { self.finish_legacy_prefix() });
+                }
                 let destination = text.destination;
                 // SAFETY: every allocation still belongs to its tracked owner.
                 return Err(unsafe { self.stream_allocation_failed(destination) });
@@ -8484,7 +8531,7 @@ unsafe fn scan_wide_buffer(
         }
     });
     let outcome = WideScanOutcome {
-        count: summary.count,
+        count: writer.assigned_count(summary.count),
         input_failure: summary.input_failure,
         allocation_failure: writer.allocation_failure,
         // Preserve conversion errno across partial-field and parser cleanup.
@@ -8545,7 +8592,7 @@ unsafe fn scan_wide_stream(
         }
     };
     let mut outcome = WideScanOutcome {
-        count: summary.count,
+        count: writer.assigned_count(summary.count),
         input_failure: summary.input_failure,
         allocation_failure: writer.allocation_failure,
         error: Some(writer.error.unwrap_or(if session.invalid_bit_width() {

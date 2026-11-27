@@ -167,3 +167,93 @@ fn scanf_m_modifier_matches_glibc() {
         );
     }
 }
+
+#[test]
+fn legacy_string_allocation_is_selected_by_the_scanf_symbol() {
+    for (input, format) in [
+        ("token rest", "%as %as"),
+        ("abc123", "%a[a-z]%a[0-9]"),
+        ("abcd", "%2as%as"),
+        ("discard keep", "%*as %as"),
+        ("second first", "%2$as %1$as"),
+        ("", "%as %as"),
+        ("keep !", "%as %a[0-9]"),
+        ("", "literal%as"),
+    ] {
+        assert_eq!(
+            alloc_str(0, input, format),
+            alloc_str(1, input, format),
+            "{input:?} {format:?}"
+        );
+    }
+
+    type Scan = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> i32;
+    for scan in [
+        fl::__isoc99_sscanf as Scan,
+        frankenlibc_abi::isoc_abi::__isoc23_sscanf as Scan,
+    ] {
+        // A modern %a takes a float pointer and 's' is a literal. Provide
+        // aligned storage large enough to detect an accidental pointer store.
+        #[repr(C, align(8))]
+        struct Slot {
+            value: f32,
+            guard: u32,
+        }
+        let mut slot = Slot {
+            value: -1.0,
+            guard: 0x1234_5678,
+        };
+        let mut consumed = -1;
+        let rc = unsafe {
+            scan(
+                c"0x1p+1s".as_ptr(),
+                c"%as%n".as_ptr(),
+                &mut slot.value,
+                &mut consumed,
+            )
+        };
+        assert_eq!(
+            (rc, slot.value, slot.guard, consumed),
+            (1, 2.0, 0x1234_5678, 7)
+        );
+    }
+}
+
+#[test]
+fn legacy_wide_allocations_return_caller_owned_wchar_strings() {
+    let input = [b'a' as libc::wchar_t, b'b' as libc::wchar_t, 0];
+    let format = [
+        b'%' as libc::wchar_t,
+        b'a' as libc::wchar_t,
+        b'S' as libc::wchar_t,
+        0,
+    ];
+    let mut wide: *mut libc::wchar_t = std::ptr::null_mut();
+    let rc =
+        unsafe { frankenlibc_abi::wchar_abi::swscanf(input.as_ptr(), format.as_ptr(), &mut wide) };
+    assert_eq!(rc, 1);
+    assert!(!wide.is_null());
+    // SAFETY: the successful assignment includes both characters and the NUL.
+    assert_eq!(unsafe { std::slice::from_raw_parts(wide, 3) }, &input);
+    unsafe { flm::free(wide.cast()) };
+}
+
+#[test]
+fn legacy_file_scanset_grows_and_preserves_lookahead() {
+    let mut bytes = vec![b'x'; 513];
+    bytes.push(b'!');
+    let stream = unsafe { fl::fmemopen(bytes.as_mut_ptr().cast(), bytes.len(), c"r".as_ptr()) };
+    assert!(!stream.is_null());
+    let mut output: *mut c_char = std::ptr::null_mut();
+    let mut count = -1_i32;
+    let rc = unsafe { fl::fscanf(stream, c"%a[x]%n".as_ptr(), &mut output, &mut count) };
+    let next = unsafe { fl::fgetc(stream) };
+    assert_eq!(unsafe { fl::fclose(stream) }, 0);
+    assert_eq!((rc, count, next), (1, 513, i32::from(b'!')));
+    assert!(!output.is_null());
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(output) }.to_bytes(),
+        &bytes[..513]
+    );
+    unsafe { flm::free(output.cast()) };
+}

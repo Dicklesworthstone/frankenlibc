@@ -395,6 +395,8 @@ pub struct ScanSpec {
     /// text is stored into a freshly allocated buffer. Only meaningful for the
     /// string conversions; the ABI layer performs the allocation.
     pub alloc: bool,
+    /// GNU %as/%aS/%a[ may return a partial allocation on exhaustion.
+    pub legacy_alloc: bool,
     route: ScanfRoute,
 }
 
@@ -601,9 +603,22 @@ impl ScanSet {
 // Format string parser
 // ---------------------------------------------------------------------------
 
+/// The symbol the caller selected determines the scanf dialect, independently
+/// of the compiler used to build this library or the host libc's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanfDialect {
+    Legacy,
+    C99,
+    C23,
+}
+
 /// Parse a scanf format string into a list of directives.
 pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
-    parse_scanf_format_impl::<false, _>(fmt, &crate::string::wchar::iswspace)
+    parse_scanf_format_with_dialect::<false, _>(
+        fmt,
+        &crate::string::wchar::iswspace,
+        ScanfDialect::C99,
+    )
 }
 
 /// Parse the UTF-8 representation of a wide scanf format. Scansets and
@@ -619,10 +634,15 @@ pub fn parse_scanf_format_wide_with_space<S>(fmt: &[u8], is_space: &S) -> ScanDi
 where
     S: Fn(u32) -> bool,
 {
-    parse_scanf_format_impl::<true, S>(fmt, is_space)
+    parse_scanf_format_with_dialect::<true, S>(fmt, is_space, ScanfDialect::C99)
 }
 
-fn parse_scanf_format_impl<const WIDE_INPUT: bool, S>(fmt: &[u8], is_space: &S) -> ScanDirectives
+/// Parse using the dialect of the exported function selected by the caller.
+pub fn parse_scanf_format_with_dialect<const WIDE_INPUT: bool, S>(
+    fmt: &[u8],
+    is_space: &S,
+    dialect: ScanfDialect,
+) -> ScanDirectives
 where
     S: Fn(u32) -> bool,
 {
@@ -666,8 +686,9 @@ where
                 scanset: None,
                 simple_set: SimpleScanSet::None,
                 wide_input,
-                binary_prefix: false,
+                binary_prefix: dialect == ScanfDialect::C23,
                 alloc: false,
+                legacy_alloc: false,
                 route: ScanfRoute::invalid(),
             };
 
@@ -711,10 +732,13 @@ where
                 spec.width = Some(w);
             }
 
-            // GNU `m` assignment-allocation modifier (`%ms`, `%m[`, `%mc`,
-            // optionally combined with `l`). It precedes the length modifier;
-            // the destination is a `char **` filled with a malloc'd buffer.
-            if i < fmt.len() && fmt[i] == b'm' {
+            // POSIX m permits a following l. The older GNU a spelling is an
+            // allocation modifier only immediately before s, S, or a scanset.
+            // Modern entry points always interpret that a as hexadecimal float.
+            spec.legacy_alloc = dialect == ScanfDialect::Legacy
+                && fmt.get(i) == Some(&b'a')
+                && matches!(fmt.get(i + 1), Some(b's' | b'S' | b'['));
+            if spec.legacy_alloc || fmt.get(i) == Some(&b'm') {
                 spec.alloc = true;
                 i += 1;
             }
@@ -1217,6 +1241,7 @@ fn default_float_spec() -> &'static ScanSpec {
             wide_input: false,
             binary_prefix: false,
             alloc: false,
+            legacy_alloc: false,
             route: ScanfRoute::invalid(),
         };
         // A `%lf` route always binds. If it ever stopped, `scan_float` would
@@ -1242,6 +1267,7 @@ fn default_float32_spec() -> &'static ScanSpec {
             wide_input: false,
             binary_prefix: false,
             alloc: false,
+            legacy_alloc: false,
             route: ScanfRoute::invalid(),
         };
         let _ = spec.bind_route();
@@ -1776,6 +1802,7 @@ impl<'a> WideScanSession<'a> {
                                 | ScanOperationKind::String
                                 | ScanOperationKind::Scanset
                         ) && !spec.suppress
+                            && !(spec.legacy_alloc && spec.skips_leading_whitespace())
                             && let Err(error) =
                                 writer(spec, WideScanEvent::BeginText, self.context(0))
                         {
@@ -1801,10 +1828,20 @@ impl<'a> WideScanSession<'a> {
                             self.consume();
                             self.phase = WideScanPhase::Leading(kind);
                         }
-                        Some(WideScanInput::Character(_)) => {
-                            self.phase = Self::start_operation(kind)
-                        }
-                        Some(WideScanInput::Eof | WideScanInput::Error) => {
+                        Some(value) => {
+                            // GNU allocates the initial %as/%aS buffer after
+                            // skipping whitespace, even when it reaches EOF.
+                            if spec.legacy_alloc
+                                && !spec.suppress
+                                && let Err(error) =
+                                    writer(spec, WideScanEvent::BeginText, self.context(0))
+                            {
+                                return self.finish(error.input_failure);
+                            }
+                            if matches!(value, WideScanInput::Character(_)) {
+                                self.phase = Self::start_operation(kind);
+                                continue;
+                            }
                             if matches!(
                                 kind,
                                 ScanOperationKind::Character
