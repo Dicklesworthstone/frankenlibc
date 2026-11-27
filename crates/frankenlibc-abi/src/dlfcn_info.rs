@@ -20,7 +20,9 @@ use frankenlibc_core::dlfcn as core;
 use frankenlibc_core::elf::{LoadedObject, ProgramType};
 
 use super::super as abi;
-use super::{NATIVE_DSOS, NativeDso, OPERATIONS, ifunc, native_dso_id_from_handle, tls};
+use super::{
+    NATIVE_DSOS, NativeDso, OPERATIONS, find_object, ifunc, native_dso_id_from_handle, tls,
+};
 
 const ERR_REQUEST: &[u8] = b"unsupported dlinfo request\0";
 const ERR_OUTPUT: &[u8] = b"invalid dlinfo output buffer\0";
@@ -43,6 +45,8 @@ struct LinkMap {
 
 #[derive(Debug)]
 pub(super) struct Metadata {
+    // Retire the signal-readable record before freeing its public link map.
+    find_object: find_object::Registration,
     // C retains raw aliases while the loader updates the list links.
     map: Box<UnsafeCell<LinkMap>>,
     origin: CString,
@@ -50,7 +54,7 @@ pub(super) struct Metadata {
 }
 
 impl Metadata {
-    pub(super) fn new(object: &LoadedObject, name: &CStr, bytes: &[u8]) -> Option<Self> {
+    pub(super) fn new(id: usize, object: &LoadedObject, name: &CStr, bytes: &[u8]) -> Option<Self> {
         let path = Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()));
         let origin = CString::new(path.parent()?.as_os_str().as_bytes()).ok()?;
         let dynamic = object
@@ -59,16 +63,47 @@ impl Metadata {
             .find(|header| header.p_type == ProgramType::Dynamic)
             .map(|header| object.base.checked_add(header.p_vaddr))
             .unwrap_or(Some(0))?;
+        let map = Box::new(UnsafeCell::new(LinkMap {
+            l_addr: usize::try_from(object.base).ok()?,
+            l_name: name.as_ptr() as usize,
+            l_ld: usize::try_from(dynamic).ok()?,
+            ..LinkMap::default()
+        }));
+        let mut first = u64::MAX;
+        let mut end = 0;
+        for header in object
+            .program_headers
+            .iter()
+            .filter(|header| header.is_load() && header.p_memsz != 0)
+        {
+            first = first.min(header.p_vaddr);
+            end = end.max(header.p_vaddr.checked_add(header.p_memsz)?);
+        }
+        let eh_frame = object
+            .program_headers
+            .iter()
+            .find(|header| header.p_type == ProgramType::GnuEhFrame)
+            .map(|header| object.base.checked_add(header.p_vaddr))
+            .unwrap_or(Some(0))?;
+        let find_object = find_object::Registration::new(
+            id,
+            find_object::Record {
+                start: usize::try_from(object.base.checked_add(first)?).ok()?,
+                end: usize::try_from(object.base.checked_add(end)?).ok()?,
+                link_map: map.get() as usize,
+                eh_frame: usize::try_from(eh_frame).ok()?,
+            },
+        )?;
         Some(Self {
-            map: Box::new(UnsafeCell::new(LinkMap {
-                l_addr: usize::try_from(object.base).ok()?,
-                l_name: name.as_ptr() as usize,
-                l_ld: usize::try_from(dynamic).ok()?,
-                ..LinkMap::default()
-            })),
+            find_object,
+            map,
             origin,
             symbols: SymbolTable::parse(object, bytes)?,
         })
+    }
+
+    pub(super) fn publish_find_object(&self) {
+        self.find_object.publish();
     }
 
     pub(super) fn address(&self) -> *mut c_void {

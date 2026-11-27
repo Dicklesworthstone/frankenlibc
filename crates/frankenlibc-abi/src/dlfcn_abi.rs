@@ -566,7 +566,7 @@ pub(crate) use native::{
     drain_current_thread_tls_destructors, prepare_native_public_tls_destructors,
     register_native_public_tls_destructor,
 };
-pub(crate) use native::{native_address_info_extra, query_object_info};
+pub(crate) use native::{find_native_object, native_address_info_extra, query_object_info};
 
 #[cfg(any(feature = "standalone", feature = "conformance-testing"))]
 pub(crate) fn native_tls_address(module_id: usize, offset: usize) -> *mut c_void {
@@ -1602,7 +1602,8 @@ fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
     // Auxv identifies the executable and vDSO independently of their names
     // and the continued existence of their backing files. Preserve caller errno
     // when an optional auxv entry such as `AT_SYSINFO_EHDR` is absent.
-    let main_phdr = unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHDR) } as usize;
+    let main_phdr =
+        unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHDR) } as usize;
     let main_count =
         unsafe { crate::stdlib_abi::getauxval_preserving_errno(libc::AT_PHNUM) } as usize;
     let vdso =
@@ -1617,7 +1618,11 @@ fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
     for entry in entries
         .iter()
         .filter(|entry| vdso != 0 && entry.start == vdso)
-        .chain(entries.iter().filter(|entry| vdso == 0 || entry.start != vdso))
+        .chain(
+            entries
+                .iter()
+                .filter(|entry| vdso == 0 || entry.start != vdso),
+        )
     {
         if objects.len() == STANDALONE_DL_ITERATE_MAX_OBJECTS {
             break;

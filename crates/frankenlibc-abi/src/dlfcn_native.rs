@@ -92,6 +92,10 @@ mod introspection;
 pub(crate) use introspection::query as query_object_info;
 pub(super) use introspection::resolver_address as info_resolver_address;
 
+#[path = "dlfcn_find_object.rs"]
+mod find_object;
+pub(crate) use find_object::query as find_native_object;
+
 #[path = "dlfcn_inspection.rs"]
 mod inspection;
 pub(super) use inspection::address_info as native_address_info;
@@ -1050,7 +1054,7 @@ fn map_object(
     let tls_relocations = tls::take_relocations(&mut object);
     let phdrs = phdr::Headers::new(&object)?;
     let name = CString::new(prepared.path.as_os_str().as_bytes()).ok()?;
-    let info = introspection::Metadata::new(&object, &name, &prepared.bytes)?;
+    let info = introspection::Metadata::new(id, &object, &name, &prepared.bytes)?;
     Some(NativeDso {
         id,
         device: prepared.device,
@@ -1407,8 +1411,14 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     unique.commit(&mut dsos, &mut pending)?;
     initialization::select(&mut pending);
     phdr::published(pending.len());
+    let published_start = dsos.len();
     dsos.extend(pending);
     introspection::refresh_links(&mut dsos);
+    // Signal readers see only fully bound groups with stable public link maps.
+    // Pending IFUNC execution above remains outside this published namespace.
+    for dso in &dsos[published_start..] {
+        dso.info.publish_find_object();
+    }
     // Publish lookup membership only for a fully bound group. Neither failed
     // staging nor membership itself acquires a provider lifetime dependency.
     lookup::attach_scope(&mut dsos, root, flags & dlfcn_core::RTLD_DEEPBIND != 0);

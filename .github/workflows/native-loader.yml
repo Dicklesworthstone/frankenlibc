@@ -8,6 +8,7 @@ on:
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'tests/integration/fixture_native_find_object.c'
       - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
@@ -22,6 +23,7 @@ on:
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'tests/integration/fixture_native_find_object.c'
       - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
       - 'crates/frankenlibc-abi/src/util.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
@@ -293,6 +295,7 @@ jobs:
           cargo test -p frankenlibc-abi --no-fail-fast \
             --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
             --test dlfcn_native_search_test --test dlfcn_native_lifecycle_test \
+            --test dlfcn_native_find_object_test \
             --test dlfcn_native_tls_test --test dlfcn_native_thread_exit_test \
             --test dlfcn_native_ifunc_test --test dlfcn_native_binding_test \
             --test dlfcn_native_tlsdesc_test --test dlfcn_native_cxa_test \

@@ -128,6 +128,17 @@ pub(super) fn runtime_export(name: &str, version: Option<&str>) -> Option<Option
     // or submit native owners to a foreign destructor queue. Keep recognized
     // but unsupported versions authoritative, just like other owned runtimes.
     match name {
+        "_dl_find_object" => {
+            // Bind the hidden body: an exported function-item address can be
+            // preempted by host libc when this runtime is loaded RTLD_LOCAL.
+            return Some(
+                version
+                    .is_none_or(|version| version == "GLIBC_2.35")
+                    .then_some(
+                        crate::glibc_internal_abi::find_object_impl as *const () as usize as u64,
+                    ),
+            );
+        }
         "__tls_get_addr" => return Some(tls::resolver_address(version)),
         "__cxa_thread_atexit_impl" => {
             return Some(super::thread_exit::resolver_address(version));

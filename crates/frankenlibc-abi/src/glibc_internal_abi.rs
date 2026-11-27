@@ -5155,7 +5155,7 @@ pub static mut mallwatch: *mut c_void = std::ptr::null_mut();
 // ==========================================================================
 // _dl_*, _flushlbf, _libc_intl_domainname, getdate_err, _res (5 symbols)
 // ==========================================================================
-// _dl_find_object: glibc 2.35+ dynamic linker API for unwinding — return -1 (not found)
+// _dl_find_object: glibc 2.35+ dynamic linker API for unwinding.
 // Used by libgcc_s unwinder to find .eh_frame for a given PC address.
 //
 // libgcc (GCC >= 12 on glibc >= 2.35) does NOT fall back to dl_iterate_phdr
@@ -5164,9 +5164,26 @@ pub static mut mallwatch: *mut c_void = std::ptr::null_mut();
 // aborted every C++ exception under preload (bd-rc0923-epic-eeuy4f.2). In
 // interpose builds the host dynamic linker owns the link map of every object
 // it loaded, so delegate to its implementation. Objects mapped by fl's native
-// loader are not in that map; they report not-found (tracked on the bead).
+// loader are not in that map; query their published atomic metadata first.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_void) -> c_int {
+    // SAFETY: this public veneer and native imports share the hidden body.
+    unsafe { find_object_impl(address, result) }
+}
+
+// Keep native bindings independent of ELF preemption of the public veneer.
+pub(crate) unsafe extern "C" fn find_object_impl(
+    address: *mut c_void,
+    result: *mut c_void,
+) -> c_int {
+    if result.is_null() || !(result as usize).is_multiple_of(std::mem::align_of::<usize>()) {
+        return -1;
+    }
+    // SAFETY: the caller supplies aligned, complete GNU struct storage.
+    // Native lookup uses no locks, allocator calls, TLS or PC dereferences.
+    if unsafe { crate::dlfcn_abi::find_native_object(address, result) } {
+        return 0;
+    }
     #[cfg(not(feature = "standalone"))]
     {
         type HostDlFindObject = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
@@ -5182,9 +5199,11 @@ pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_vo
                 addr = resolved;
             }
         }
-        if addr != 0 && addr != _dl_find_object as *const () as usize {
+        if addr != 0 {
             // SAFETY: resolved from the already-loaded host dynamic linker,
             // which exports `_dl_find_object(void *, struct dl_find_object *)`.
+            // Raw ELF resolution bypasses preemption; comparing against the
+            // exported veneer could mistake the host address for our own.
             let host: HostDlFindObject = unsafe { core::mem::transmute(addr) };
             return unsafe { host(address, result) };
         }
