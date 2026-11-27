@@ -12971,6 +12971,18 @@ pub unsafe extern "C" fn fnmatch(
     let pat_bytes = unsafe { core::ffi::CStr::from_ptr(pattern) }.to_bytes();
     let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
     let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
+    if locale_fnmatch(pat_bytes, str_bytes, core_flags) {
+        0
+    } else {
+        FNM_NOMATCH
+    }
+}
+
+fn locale_fnmatch(
+    pat_bytes: &[u8],
+    str_bytes: &[u8],
+    core_flags: frankenlibc_core::string::fnmatch::FnmatchFlags,
+) -> bool {
     // Under collation rules (en_US.UTF-8) equivalence classes and ranges are
     // collation-defined, even in an ASCII pattern: `[[=a=]]` matches "A" and
     // `[B-a]` is empty (B sorts after a). glibc then reads the strings both
@@ -12985,17 +12997,16 @@ pub unsafe extern "C" fn fnmatch(
         && let Some(tables) = crate::locale_abi::named_collate()
     {
         let bytes = |b: &[u8]| b.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
-        let matched = frankenlibc_core::string::fnmatch::fnmatch_wide(
+        return frankenlibc_core::string::fnmatch::fnmatch_wide(
             &bytes(pat_bytes),
             &bytes(str_bytes),
             core_flags,
             &ByteCollation(tables),
         ) || fnmatch_by_characters(pat_bytes, str_bytes, core_flags, Some(tables))
             == Some(true);
-        return if matched { 0 } else { FNM_NOMATCH };
     }
     if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
-        return 0;
+        return true;
     }
     // In a UTF-8 locale glibc 2.43 ALSO matches by characters: `?` and a
     // bracket take one character and classes/case folding cover non-ASCII
@@ -13008,11 +13019,10 @@ pub unsafe extern "C" fn fnmatch(
     if crate::locale_abi::mb_cur_max() > 1
         && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
         && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
-        && let Some(matched) = fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None)
     {
-        return if matched { 0 } else { FNM_NOMATCH };
+        return fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None) == Some(true);
     }
-    FNM_NOMATCH
+    false
 }
 
 /// `fnmatch_wide` over the UTF-8 `pattern` and `string` in the active
@@ -13176,6 +13186,27 @@ struct AltDirGlobFs {
     readdir: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
     closedir: Option<unsafe extern "C" fn(*mut c_void)>,
     stat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+}
+
+struct ActiveGlobLocale;
+
+impl frankenlibc_core::string::glob::GlobLocale for ActiveGlobLocale {
+    fn matches_component(
+        &self,
+        pattern: &[u8],
+        name: &[u8],
+        flags: frankenlibc_core::string::fnmatch::FnmatchFlags,
+    ) -> bool {
+        locale_fnmatch(pattern, name, flags)
+    }
+
+    fn sort_paths(&self, paths: &mut [Vec<u8>]) {
+        if let Some(tables) = crate::locale_abi::named_collate() {
+            paths.sort_by(|a, b| tables.compare(a, b).cmp(&0));
+        } else {
+            paths.sort();
+        }
+    }
 }
 
 /// Supply the passwd database home directory for bare-tilde expansion when the
@@ -13370,17 +13401,25 @@ pub unsafe extern "C" fn glob(
 
     // GLOB_ALTDIRFUNC routes every directory/stat operation through the caller's
     // gl_opendir/gl_readdir/gl_closedir/gl_stat callbacks; otherwise use std::fs.
-    let result = if flags & GLOB_ALTDIRFUNC != 0 {
-        let alt = AltDirGlobFs {
+    let alt;
+    let fs: &dyn glob_core::GlobFs = if flags & GLOB_ALTDIRFUNC != 0 {
+        alt = AltDirGlobFs {
             opendir: unsafe { (*gt).gl_opendir },
             readdir: unsafe { (*gt).gl_readdir },
             closedir: unsafe { (*gt).gl_closedir },
             stat: unsafe { (*gt).gl_stat },
         };
-        glob_core::glob_expand_with_fs(effective_pattern, flags, &mut errfn, &alt)
+        &alt
     } else {
-        glob_core::glob_expand_with_fs(effective_pattern, flags, &mut errfn, &glob_core::StdGlobFs)
+        &glob_core::StdGlobFs
     };
+    let result = glob_core::glob_expand_with_locale(
+        effective_pattern,
+        flags,
+        &mut errfn,
+        fs,
+        &ActiveGlobLocale,
+    );
 
     match result {
         Ok(res) => {

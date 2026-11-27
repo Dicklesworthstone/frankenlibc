@@ -126,21 +126,19 @@ fn split_pattern(pat: &[u8], noescape: bool) -> (&[u8], &[u8]) {
 // fnmatch (single path component)
 // ---------------------------------------------------------------------------
 
-/// Match a single path component against `pat`.
-///
-/// Delegates to the shared POSIX fnmatch engine so bracket expressions —
-/// ranges, `!`/`^` negation, `[[:alpha:]]` character classes, `[.x.]`
-/// collating elements, and `\` escapes — all behave per POSIX. Path
-/// components never contain `/`, and leading-`.` handling is performed by
-/// the directory walk, so no `FNM_PATHNAME` / `FNM_PERIOD` flags are needed.
-fn fnmatch_component(pat: &[u8], name: &[u8], noescape: bool) -> bool {
-    let flags = if noescape {
-        fnmatch::FnmatchFlags::NOESCAPE
-    } else {
-        fnmatch::FnmatchFlags::NONE
-    };
-    fnmatch::fnmatch_match(pat, name, flags)
+/// Matching and collation used for each expansion, including brace alternatives.
+pub trait GlobLocale {
+    fn matches_component(&self, pattern: &[u8], name: &[u8], flags: fnmatch::FnmatchFlags) -> bool {
+        fnmatch::fnmatch_match(pattern, name, flags)
+    }
+
+    fn sort_paths(&self, paths: &mut [Vec<u8>]) {
+        paths.sort();
+    }
 }
+
+struct PosixLocale;
+impl GlobLocale for PosixLocale {}
 
 // ---------------------------------------------------------------------------
 // Directory reading and expansion
@@ -326,7 +324,7 @@ pub fn glob_expand_with_error_handler<F>(
 where
     F: FnMut(&[u8], i32) -> bool,
 {
-    glob_expand_dyn(pattern, flags, &mut errfunc, &StdGlobFs)
+    glob_expand_with_fs(pattern, flags, &mut errfunc, &StdGlobFs)
 }
 
 /// Like [`glob_expand_with_error_handler`] but routes every directory/stat
@@ -337,17 +335,19 @@ pub fn glob_expand_with_fs(
     errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
     fs: &dyn GlobFs,
 ) -> Result<GlobResult, i32> {
-    glob_expand_dyn(pattern, flags, errfunc, fs)
+    glob_expand_with_locale(pattern, flags, errfunc, fs, &PosixLocale)
 }
 
 // Non-generic core taking the error handler via dynamic dispatch so the
 // GLOB_BRACE recursion (and glob_recursive) do not blow the monomorphization
 // recursion limit by nesting `&mut F` ever deeper.
-fn glob_expand_dyn(
+/// Expand with the caller's filesystem and locale, sorting each brace alternative separately.
+pub fn glob_expand_with_locale(
     pattern: &[u8],
     flags: i32,
     errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
     fs: &dyn GlobFs,
+    locale: &dyn GlobLocale,
 ) -> Result<GlobResult, i32> {
     // Find the pattern up to first null byte.
     let pat_len = pattern
@@ -382,7 +382,7 @@ fn glob_expand_dyn(
             let inner_flags = flags & !(GLOB_BRACE | GLOB_NOCHECK | GLOB_NOMAGIC | GLOB_APPEND);
             let mut combined: Vec<Vec<u8>> = Vec::new();
             for sub in &expansions {
-                match glob_expand_dyn(sub, inner_flags, errfunc, fs) {
+                match glob_expand_with_locale(sub, inner_flags, errfunc, fs, locale) {
                     Ok(res) => combined.extend(res.paths),
                     Err(GLOB_NOMATCH) => {}
                     Err(e) => return Err(e),
@@ -476,7 +476,7 @@ fn glob_expand_dyn(
     if trailing_slash {
         walk_pat.push(b'/');
     }
-    glob_recursive(b"", &walk_pat, flags, &mut results, errfunc, fs)?;
+    glob_recursive(b"", &walk_pat, flags, &mut results, errfunc, fs, locale)?;
 
     if results.is_empty() {
         if flags & GLOB_NOCHECK != 0 {
@@ -487,14 +487,8 @@ fn glob_expand_dyn(
         return Err(GLOB_NOMATCH);
     }
 
-    // Sort unless GLOB_NOSORT. glibc's glob() collates via strcoll() rather
-    // than raw byte order so non-C locales sort by the user's collation rules.
-    // Our strcoll currently degrades to strcmp under the C/POSIX locale (the
-    // default), so behavior matches the previous byte-order sort there; this
-    // routing means glob picks up real locale-aware collation automatically
-    // when strcoll grows it.
     if flags & GLOB_NOSORT == 0 {
-        results.sort_by(|a, b| super::str::strcoll(a, b).cmp(&0));
+        locale.sort_paths(&mut results);
     }
 
     Ok(GlobResult { paths: results })
@@ -531,6 +525,7 @@ fn glob_recursive(
     results: &mut Vec<Vec<u8>>,
     errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
     fs: &dyn GlobFs,
+    locale: &dyn GlobLocale,
 ) -> Result<(), i32> {
     let noescape = flags & GLOB_NOESCAPE != 0;
     if !resolved_prefix.is_empty() && !has_magic(pattern, noescape) {
@@ -603,13 +598,18 @@ fn glob_recursive(
 
     // The backend yields entries WITHOUT "." / "..", but glibc's `readdir`
     // always includes them, so re-introduce them unconditionally. The
-    // hidden-file skip and `fnmatch_component` below decide whether they
+    // hidden-file skip and the component matcher below decide whether they
     // actually match — only when the component begins with '.' or GLOB_PERIOD
     // is set — so a pattern like `*` / `?` / `[!a-c]` matches them under
     // GLOB_PERIOD, exactly like glibc.
     let mut names: Vec<Vec<u8>> = vec![b".".to_vec(), b"..".to_vec()];
     names.extend(dir_entries);
 
+    let match_flags = if noescape {
+        fnmatch::FnmatchFlags::NOESCAPE
+    } else {
+        fnmatch::FnmatchFlags::NONE
+    };
     for name_bytes in &names {
         let name_bytes = name_bytes.as_slice();
 
@@ -621,7 +621,7 @@ fn glob_recursive(
             continue;
         }
 
-        if !fnmatch_component(component_pat, name_bytes, noescape) {
+        if !locale.matches_component(component_pat, name_bytes, match_flags) {
             continue;
         }
 
@@ -677,7 +677,9 @@ fn glob_recursive(
             if extra > 0 {
                 full_path.push(b'/');
             }
-            glob_recursive(&full_path, &rest[extra..], flags, results, errfunc, fs)?;
+            glob_recursive(
+                &full_path, &rest[extra..], flags, results, errfunc, fs, locale,
+            )?;
         }
     }
 
@@ -825,6 +827,15 @@ mod tests {
 
         // Agreement with has_magic, which is the contract this split assumes.
         assert!(has_magic(b"foo\\*bar/baz", true));
+    }
+
+    fn fnmatch_component(pattern: &[u8], name: &[u8], noescape: bool) -> bool {
+        let flags = if noescape {
+            fnmatch::FnmatchFlags::NOESCAPE
+        } else {
+            fnmatch::FnmatchFlags::NONE
+        };
+        PosixLocale.matches_component(pattern, name, flags)
     }
 
     #[test]
