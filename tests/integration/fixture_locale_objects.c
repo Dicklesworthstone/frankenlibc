@@ -640,8 +640,11 @@ static void codec_scalars(const struct codec_case *test) {
         unsigned char byte = (unsigned char)v->bytes[0];
         /* The GNU btowc ABI preserves ASCII identity even for SHIFT_JIS's
          * yen/overline bytes; mbrtowc above uses their codeset mappings. */
-        CHECK(codec_btowc(byte) ==
-              (byte < 0x80 ? (wint_t)byte : v->length == 1 ? (wint_t)v->value : WEOF));
+        wint_t expected_byte = byte < 0x80 ? (wint_t)byte :
+            v->length == 1 ? (wint_t)v->value : WEOF;
+        if (!strcmp(test->codeset, "GBK") && byte >= 0x80)
+            expected_byte = WEOF;
+        CHECK(codec_btowc(byte) == expected_byte);
         for (size_t split = 1; split < v->length; ++split) {
             memset(&state, 0, sizeof state);
             value = 0xdddd;
@@ -890,6 +893,17 @@ static void multibyte(unsigned index, const char *provider) {
     CHECK(uselocale(selected) == LC_GLOBAL_LOCALE);
     CHECK(MB_CUR_MAX == test->width && !strcmp(setlocale(LC_CTYPE, NULL), "C"));
     codec_scalars(test);
+    if (!strcmp(test->codeset, "GBK")) {
+        /* GNU's GBK btowc accepts only ASCII. The ordinary decoder and
+         * reverse encoder both handle the Euro extension at byte 0x80. */
+        for (int byte = 0; byte <= 0xff; ++byte)
+            CHECK(codec_btowc(byte) == (byte < 0x80 ? (wint_t)byte : WEOF));
+        mbstate_t state = {0};
+        wchar_t euro = 0;
+        CHECK(mbrtowc(&euro, "\x80", 1, &state) == 1);
+        CHECK(euro == 0x20ac && mbsinit(&state));
+        CHECK(codec_wctob(euro) == 0x80);
+    }
     codec_guard_pages(test);
     codec_bulk(test);
     codec_streams(test, selected);

@@ -2996,6 +2996,27 @@ impl MultibyteCodec {
         Some(Self::SingleByte(codec))
     }
 
+    /// GNU single-byte conversion for the active character locale.
+    #[inline]
+    #[must_use]
+    pub fn btowc(self, byte: u8) -> Option<u32> {
+        if let Self::Stateless(codec) = self {
+            // The CJK single-byte interface preserves ASCII, including the
+            // JIS yen and overline bytes. GBK accepts only this ASCII subset
+            // here, though its restartable decoder maps 0x80 to U+20AC.
+            if byte.is_ascii() {
+                return Some(u32::from(byte));
+            }
+            if codec.encoding == Encoding::Gbk {
+                return None;
+            }
+        }
+        match self.decode(&[byte]) {
+            crate::string::wchar::Utf8Step::Char { wc, len: 1 } => Some(wc),
+            _ => None,
+        }
+    }
+
     /// Decode one external character, distinguishing an incomplete prefix
     /// from invalid input. NUL consumes its encoding's external width.
     #[inline]

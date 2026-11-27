@@ -4745,17 +4745,9 @@ pub unsafe extern "C" fn btowc(c: c_int) -> u32 {
     if !(c_int::from(i8::MIN)..=c_int::from(u8::MAX)).contains(&c) || c == libc::EOF {
         return u32::MAX;
     }
-    let codec = crate::locale_abi::active_multibyte_codec();
-    // GNU's btowc symbol preserves ASCII for these CJK locale families even
-    // in SHIFT_JIS, where mbrtowc maps 0x5c/0x7e to yen/overline. Keep that
-    // single-byte API behavior separate from the actual external decoder.
-    if (0..0x80).contains(&c) && matches!(codec, crate::locale_abi::MultibyteCodec::Stateless(_)) {
-        return c as u32;
-    }
-    match codec.decode(&[c as u8]) {
-        wchar_core::Utf8Step::Char { wc, len: 1 } => wc,
-        _ => u32::MAX,
-    }
+    crate::locale_abi::active_multibyte_codec()
+        .btowc(c as u8)
+        .unwrap_or(u32::MAX)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
