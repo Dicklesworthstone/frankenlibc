@@ -16742,122 +16742,228 @@ fn time_converters_are_identity_on_lp64() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn nss_compat_end_stubs_return_success() {
+fn nss_compat_lifecycle_matches_installed_provider() {
     use frankenlibc_abi::unistd_abi::{
-        _nss_compat_endgrent, _nss_compat_endpwent, _nss_compat_endspent,
+        _nss_compat_endgrent, _nss_compat_endpwent, _nss_compat_endspent, _nss_compat_setgrent,
+        _nss_compat_setpwent, _nss_compat_setspent,
     };
-    assert_eq!(unsafe { _nss_compat_endgrent() }, 1);
-    assert_eq!(unsafe { _nss_compat_endpwent() }, 1);
-    assert_eq!(unsafe { _nss_compat_endspent() }, 1);
-}
-
-#[test]
-fn nss_compat_set_stubs_accept_stayopen_and_return_success() {
-    use frankenlibc_abi::unistd_abi::{
-        _nss_compat_setgrent, _nss_compat_setpwent, _nss_compat_setspent,
-    };
+    // The provider may be absent or unable to open a database (notably shadow).
+    // Compare its actual status instead of asserting unconditional success.
+    let provider = unsafe { libc::dlopen(c"libnss_compat.so.2".as_ptr(), libc::RTLD_NOW) };
     macro_rules! check {
-        ($f:ident) => {{
-            assert_eq!(unsafe { $f(0) }, 1);
-            assert_eq!(unsafe { $f(1) }, 1);
+        ($set:ident, $end:ident) => {{
+            let set_name = CString::new(stringify!($set)).unwrap();
+            let end_name = CString::new(stringify!($end)).unwrap();
+            let set_address = if provider.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { libc::dlsym(provider, set_name.as_ptr()) }
+            };
+            let end_address = if provider.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { libc::dlsym(provider, end_name.as_ptr()) }
+            };
+            for stayopen in [0, 1] {
+                let expected = if set_address.is_null() {
+                    -1 // NSS_STATUS_UNAVAIL
+                } else {
+                    let callback: unsafe extern "C" fn(c_int) -> c_int =
+                        unsafe { std::mem::transmute(set_address) };
+                    unsafe { callback(stayopen) }
+                };
+                assert_eq!(unsafe { $set(stayopen) }, expected, stringify!($set));
+            }
+            let expected = if end_address.is_null() {
+                -1
+            } else {
+                let callback: unsafe extern "C" fn() -> c_int =
+                    unsafe { std::mem::transmute(end_address) };
+                unsafe { callback() }
+            };
+            assert_eq!(unsafe { $end() }, expected, stringify!($end));
         }};
     }
-    check!(_nss_compat_setgrent);
-    check!(_nss_compat_setpwent);
-    check!(_nss_compat_setspent);
+    check!(_nss_compat_setgrent, _nss_compat_endgrent);
+    check!(_nss_compat_setpwent, _nss_compat_endpwent);
+    check!(_nss_compat_setspent, _nss_compat_endspent);
+    if !provider.is_null() {
+        unsafe { libc::dlclose(provider) };
+    }
 }
 
 #[test]
-fn nss_compat_get_ent_stubs_return_notfound_and_set_errno() {
+fn nss_compat_get_ent_rejects_null_arguments() {
     use frankenlibc_abi::unistd_abi::{
         _nss_compat_getgrent_r, _nss_compat_getpwent_r, _nss_compat_getspent_r,
     };
     macro_rules! check {
-        ($f:ident) => {{
-            let mut err = 0;
-            assert_eq!(
-                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err) },
-                0
-            );
-            assert_eq!(err, libc::ENOENT);
+        ($f:ident, $entry:ty) => {{
+            let mut entry = std::mem::MaybeUninit::<$entry>::uninit();
+            let mut buffer = [0 as c_char; 64];
+            for missing in 0..3 {
+                let mut err = 731;
+                let rc = unsafe {
+                    $f(
+                        if missing == 0 {
+                            std::ptr::null_mut()
+                        } else {
+                            entry.as_mut_ptr()
+                        },
+                        if missing == 1 {
+                            std::ptr::null_mut()
+                        } else {
+                            buffer.as_mut_ptr()
+                        },
+                        buffer.len(),
+                        if missing == 2 {
+                            std::ptr::null_mut()
+                        } else {
+                            &mut err
+                        },
+                    )
+                };
+                assert_eq!(rc, -1, "{} null argument {missing}", stringify!($f));
+                assert_eq!(err, if missing == 2 { 731 } else { libc::EINVAL });
+            }
         }};
     }
-    check!(_nss_compat_getgrent_r);
-    check!(_nss_compat_getpwent_r);
-    check!(_nss_compat_getspent_r);
+    check!(_nss_compat_getgrent_r, libc::group);
+    check!(_nss_compat_getpwent_r, libc::passwd);
+    check!(_nss_compat_getspent_r, libc::spwd);
 }
 
 #[test]
-fn nss_compat_get_by_str_stubs_return_notfound_and_set_errno() {
+fn nss_compat_get_by_str_rejects_null_arguments() {
     use frankenlibc_abi::unistd_abi::{
         _nss_compat_getgrnam_r, _nss_compat_getpwnam_r, _nss_compat_getspnam_r,
     };
     let key = CString::new("nobody").unwrap();
     macro_rules! check {
-        ($f:ident) => {{
-            let mut err = 0;
-            assert_eq!(
-                unsafe {
+        ($f:ident, $entry:ty) => {{
+            let mut entry = std::mem::MaybeUninit::<$entry>::uninit();
+            let mut buffer = [0 as c_char; 64];
+            for missing in 0..4 {
+                let mut err = 731;
+                let rc = unsafe {
                     $f(
-                        key.as_ptr(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        0,
-                        &mut err,
+                        if missing == 0 {
+                            std::ptr::null()
+                        } else {
+                            key.as_ptr()
+                        },
+                        if missing == 1 {
+                            std::ptr::null_mut()
+                        } else {
+                            entry.as_mut_ptr()
+                        },
+                        if missing == 2 {
+                            std::ptr::null_mut()
+                        } else {
+                            buffer.as_mut_ptr()
+                        },
+                        buffer.len(),
+                        if missing == 3 {
+                            std::ptr::null_mut()
+                        } else {
+                            &mut err
+                        },
                     )
-                },
-                0
-            );
-            assert_eq!(err, libc::ENOENT);
+                };
+                assert_eq!(rc, -1, "{} null argument {missing}", stringify!($f));
+                assert_eq!(err, if missing == 3 { 731 } else { libc::EINVAL });
+            }
         }};
     }
-    check!(_nss_compat_getgrnam_r);
-    check!(_nss_compat_getpwnam_r);
-    check!(_nss_compat_getspnam_r);
+    check!(_nss_compat_getgrnam_r, libc::group);
+    check!(_nss_compat_getpwnam_r, libc::passwd);
+    check!(_nss_compat_getspnam_r, libc::spwd);
 }
 
 #[test]
-fn nss_compat_get_by_int_stubs_return_notfound_and_set_errno() {
+fn nss_compat_get_by_int_rejects_null_arguments() {
     use frankenlibc_abi::unistd_abi::{_nss_compat_getgrgid_r, _nss_compat_getpwuid_r};
-    let mut err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_compat_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_compat_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
+    macro_rules! check {
+        ($f:ident, $entry:ty) => {{
+            let mut entry = std::mem::MaybeUninit::<$entry>::uninit();
+            let mut buffer = [0 as c_char; 64];
+            for missing in 0..3 {
+                let mut err = 731;
+                let rc = unsafe {
+                    $f(
+                        0,
+                        if missing == 0 {
+                            std::ptr::null_mut()
+                        } else {
+                            entry.as_mut_ptr()
+                        },
+                        if missing == 1 {
+                            std::ptr::null_mut()
+                        } else {
+                            buffer.as_mut_ptr()
+                        },
+                        buffer.len(),
+                        if missing == 2 {
+                            std::ptr::null_mut()
+                        } else {
+                            &mut err
+                        },
+                    )
+                };
+                assert_eq!(rc, -1, "{} null argument {missing}", stringify!($f));
+                assert_eq!(err, if missing == 2 { 731 } else { libc::EINVAL });
+            }
+        }};
+    }
+    check!(_nss_compat_getgrgid_r, libc::group);
+    check!(_nss_compat_getpwuid_r, libc::passwd);
 }
 
 #[test]
-fn nss_compat_initgroups_dyn_returns_notfound_and_sets_errno() {
+fn nss_compat_initgroups_dyn_rejects_null_arguments_without_mutating_storage() {
     use frankenlibc_abi::unistd_abi::_nss_compat_initgroups_dyn;
     let user = CString::new("alice").unwrap();
-    let mut err: c_int = 0;
-    let mut start: std::ffi::c_long = 0;
-    let mut size: std::ffi::c_long = 0;
-    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
-    let rc = unsafe {
-        _nss_compat_initgroups_dyn(
-            user.as_ptr(),
-            0,
-            &mut start,
-            &mut size,
-            &mut groups,
-            8,
-            &mut err,
-        )
-    };
-    assert_eq!(rc, 0);
-    assert_eq!(err, libc::ENOENT);
+    for missing in 0..5 {
+        let mut err: c_int = 731;
+        let mut start: std::ffi::c_long = 0;
+        let mut size: std::ffi::c_long = 0;
+        let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+        let rc = unsafe {
+            _nss_compat_initgroups_dyn(
+                if missing == 0 {
+                    std::ptr::null()
+                } else {
+                    user.as_ptr()
+                },
+                0,
+                if missing == 1 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut start
+                },
+                if missing == 2 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut size
+                },
+                if missing == 3 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut groups
+                },
+                8,
+                if missing == 4 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut err
+                },
+            )
+        };
+        assert_eq!(rc, -1, "null argument {missing}");
+        assert_eq!(err, if missing == 4 { 731 } else { libc::EINVAL });
+        assert_eq!((start, size), (0, 0));
+        assert!(groups.is_null());
+    }
 }
 
 // ---------------------------------------------------------------------------

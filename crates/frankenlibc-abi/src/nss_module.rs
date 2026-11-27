@@ -489,6 +489,13 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     (addr != 0).then_some(addr)
 }
 
+/// Resolve a compatibility-provider entry point in its own module scope.
+/// Interpose uses the installed GNU provider; standalone uses only the owned
+/// loader and reports unavailable when it cannot load that provider.
+pub(crate) fn compat_function(function: &'static str) -> Option<usize> {
+    module_function(b"compat", function)
+}
+
 /// Whether the module for `service` has already been loaded (successfully).
 /// Used by `end*ent`, which must not load a module just to close it.
 fn module_loaded(service: &[u8]) -> bool {

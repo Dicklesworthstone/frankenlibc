@@ -36474,48 +36474,122 @@ pub extern "C" fn _time_to_time64(t: libc::time_t) -> i64 {
 // ---------------------------------------------------------------------------
 //
 // libnss_compat.so.2 layers `+`/`-`/`+@netgroup` extensions on top of the
-// files-plugin's passwd/group/shadow lookups. When no compat directives are
-// present the plugin behaves identically to _nss_files_*. We mirror the
-// _nss_files_* stub conventions: NSS_STATUS_NOTFOUND + errnop=ENOENT for
-// every getXXent_r / getXXbynam_r / getXXbyid_r and NSS_STATUS_SUCCESS for
-// setXXent / endXXent and a 0-result initgroups_dyn.
+// local account files. Its passwd_compat/group_compat/shadow_compat backend
+// policy and cursor state belong to the selected provider. In L1 this is the
+// installed GNU module, not a native implementation. Returning empty success
+// here used to silently hide real local and remote identities.
 
-nss_files_end_stub!(_nss_compat_endgrent);
-nss_files_end_stub!(_nss_compat_endpwent);
-nss_files_end_stub!(_nss_compat_endspent);
-
-nss_files_set_stayopen_stub!(_nss_compat_setgrent);
-nss_files_set_stayopen_stub!(_nss_compat_setpwent);
-nss_files_set_stayopen_stub!(_nss_compat_setspent);
-
-nss_files_get_ent_stub!(_nss_compat_getgrent_r);
-nss_files_get_ent_stub!(_nss_compat_getpwent_r);
-nss_files_get_ent_stub!(_nss_compat_getspent_r);
-
-nss_files_get_by_str_stub!(_nss_compat_getgrnam_r);
-nss_files_get_by_str_stub!(_nss_compat_getpwnam_r);
-nss_files_get_by_str_stub!(_nss_compat_getspnam_r);
-
-nss_files_get_by_int_stub!(_nss_compat_getgrgid_r, libc::gid_t);
-nss_files_get_by_int_stub!(_nss_compat_getpwuid_r, libc::uid_t);
-
-/// `_nss_compat_initgroups_dyn(user, gid, *start, *size, **groupsp,
-/// limit, *errnop) -> nss_status` — supplementary group lookup.
-/// Stub returns NSS_STATUS_NOTFOUND with errnop=ENOENT.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn _nss_compat_initgroups_dyn(
-    _user: *const c_char,
-    _gid: libc::gid_t,
-    _start: *mut c_long,
-    _size: *mut c_long,
-    _groupsp: *mut *mut libc::gid_t,
-    _limit: c_long,
-    errnop: *mut c_int,
-) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    NSS_STATUS_NOTFOUND
+fn nss_compat_provider(function: &'static str, veneer: usize) -> Option<usize> {
+    let saved_errno = current_abi_errno();
+    let address = crate::nss_module::compat_function(function).filter(|&address| address != veneer);
+    // Provider discovery is internal bookkeeping. Preserve the incoming
+    // error state before the callback runs, as the public NSS dispatcher does.
+    // SAFETY: the current thread owns its errno storage.
+    unsafe { set_abi_errno(saved_errno) };
+    address
 }
+
+macro_rules! nss_compat_forward {
+    ($name:ident, $operation:literal, ($($arg:ident: $ty:ty),*), $errnop:expr, $valid:expr) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        #[allow(clippy::too_many_arguments)]
+        pub unsafe extern "C" fn $name($($arg: $ty),*) -> c_int {
+            if !$valid {
+                // Do not turn the former stubs' null-input tolerance into a
+                // null dereference inside a newly live foreign callback.
+                // SAFETY: a nonnull errnop is writable under the NSS ABI.
+                unsafe { nss_set_errnop($errnop, libc::EINVAL) };
+                return NSS_STATUS_UNAVAIL;
+            }
+            let Some(address) = nss_compat_provider($operation, $name as *const () as usize) else {
+                // An absent provider is UNAVAIL, not a searched-but-missing
+                // account. The caller's nsswitch status action must decide.
+                // SAFETY: the NSS ABI supplies a writable errnop when nonnull.
+                unsafe { nss_set_errnop($errnop, libc::ENOSYS) };
+                return NSS_STATUS_UNAVAIL;
+            };
+            type Callback = unsafe extern "C" fn($($ty),*) -> c_int;
+            // SAFETY: this operation name has the GNU NSS callback signature
+            // written in this invocation. Lookup is scoped to libnss_compat,
+            // and the equality guard rejects a dependency resolving to us.
+            let callback: Callback = unsafe { core::mem::transmute(address) };
+            // SAFETY: caller-owned buffers and cursor arguments retain their
+            // documented NSS lifetime for the entire delegated operation.
+            unsafe { callback($($arg),*) }
+        }
+    };
+}
+
+nss_compat_forward!(
+    _nss_compat_endgrent,
+    "endgrent",
+    (),
+    std::ptr::null_mut(),
+    true
+);
+nss_compat_forward!(
+    _nss_compat_endpwent,
+    "endpwent",
+    (),
+    std::ptr::null_mut(),
+    true
+);
+nss_compat_forward!(
+    _nss_compat_endspent,
+    "endspent",
+    (),
+    std::ptr::null_mut(),
+    true
+);
+nss_compat_forward!(_nss_compat_setgrent, "setgrent", (stayopen: c_int), std::ptr::null_mut(), true);
+nss_compat_forward!(_nss_compat_setpwent, "setpwent", (stayopen: c_int), std::ptr::null_mut(), true);
+nss_compat_forward!(_nss_compat_setspent, "setspent", (stayopen: c_int), std::ptr::null_mut(), true);
+nss_compat_forward!(
+    _nss_compat_getgrent_r, "getgrent_r",
+    (entry: *mut libc::group, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getpwent_r, "getpwent_r",
+    (entry: *mut libc::passwd, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getspent_r, "getspent_r",
+    (entry: *mut libc::spwd, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getgrnam_r, "getgrnam_r",
+    (name: *const c_char, entry: *mut libc::group, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !name.is_null() && !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getpwnam_r, "getpwnam_r",
+    (name: *const c_char, entry: *mut libc::passwd, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !name.is_null() && !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getspnam_r, "getspnam_r",
+    (name: *const c_char, entry: *mut libc::spwd, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !name.is_null() && !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getgrgid_r, "getgrgid_r",
+    (gid: libc::gid_t, entry: *mut libc::group, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_getpwuid_r, "getpwuid_r",
+    (uid: libc::uid_t, entry: *mut libc::passwd, buffer: *mut c_char, length: usize, errnop: *mut c_int), errnop,
+    !entry.is_null() && !buffer.is_null() && !errnop.is_null()
+);
+nss_compat_forward!(
+    _nss_compat_initgroups_dyn, "initgroups_dyn",
+    (user: *const c_char, gid: libc::gid_t, start: *mut c_long, size: *mut c_long,
+     groupsp: *mut *mut libc::gid_t, limit: c_long, errnop: *mut c_int), errnop,
+    !user.is_null() && !start.is_null() && !size.is_null() && !groupsp.is_null() && !errnop.is_null()
+);
 
 // ---------------------------------------------------------------------------
 // 17 _nss_hesiod_* NSS plugin entrypoints (bd-yz9cj)

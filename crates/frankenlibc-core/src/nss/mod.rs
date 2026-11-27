@@ -90,8 +90,9 @@ pub enum Action {
 /// How a configured source is executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
-    /// The native files backend (`files`, and `compat`, whose NIS `+`/`-`
-    /// records the files parser already reports verbatim).
+    /// The native files backend. `compat` has different semantics: its
+    /// `+`/`-` directives select and exclude remote accounts, rather than
+    /// representing accounts with those literal names.
     Files,
     /// A `libnss_<name>.so.2` service module.
     Module,
@@ -136,7 +137,7 @@ impl Service {
 
     pub fn kind(&self) -> SourceKind {
         match self.name.as_slice() {
-            b"files" | b"compat" => SourceKind::Files,
+            b"files" => SourceKind::Files,
             _ => SourceKind::Module,
         }
     }
@@ -789,7 +790,7 @@ mod tests {
             kinds,
             [
                 SourceKind::Files,
-                SourceKind::Files,
+                SourceKind::Module,
                 SourceKind::Module,
                 SourceKind::Module
             ]
