@@ -8,12 +8,23 @@ use super::{
 };
 use frankenlibc_core::resolv::{NssNetdbKind, NssNetdbValue, parse_nss_netdb_line};
 use std::ffi::{c_char, c_int, c_void};
-use std::io::{BufRead, BufReader, Read};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Read, Seek};
+use std::path::Path;
 
 #[derive(Clone, Copy)]
 pub(super) enum Key<'a> {
     Name(&'a [u8]),
     Address([u8; 6]),
+}
+
+fn open_source(path: &Path) -> io::Result<File> {
+    let mut file = File::open(path)?;
+    // A GNU files provider must be able to reread a record on ERANGE.
+    // Reject nonseekable sources before the first read or buffer preflight.
+    file.rewind()
+        .map_err(|_| io::Error::from_raw_os_error(libc::ESPIPE))?;
+    Ok(file)
 }
 
 fn scan(
@@ -73,7 +84,7 @@ pub(super) unsafe fn lookup(
         unsafe { nss_set_errnop(errnop, libc::EINVAL) };
         return NSS_STATUS_UNAVAIL;
     }
-    let file = match std::fs::File::open("/etc/ethers") {
+    let file = match open_source(Path::new("/etc/ethers")) {
         Ok(file) => file,
         Err(error) => {
             let code = error.raw_os_error().unwrap_or(libc::EIO);
@@ -122,6 +133,21 @@ pub(super) unsafe fn lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn source_open_requires_a_seekable_descriptor() {
+        use std::os::fd::AsRawFd;
+
+        let (reader, _writer) = io::pipe().unwrap();
+        let source = format!("/proc/self/fd/{}", reader.as_raw_fd());
+        let error = open_source(Path::new(&source)).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::ESPIPE));
+
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let mut file = open_source(&manifest).unwrap();
+        assert_eq!(file.stream_position().unwrap(), 0);
+    }
 
     #[test]
     fn lookup_uses_files_grammar_case_folding_and_first_match() {

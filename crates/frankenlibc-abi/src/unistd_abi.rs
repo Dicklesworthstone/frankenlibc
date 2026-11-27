@@ -26507,7 +26507,11 @@ pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_voi
         lookup_ether(key, |entry, buffer| {
             // Modules may return either a scratch string or static storage.
             // Keep a scratch result within this call's known buffer extent.
-            let name = if buffer.as_ptr_range().contains(&entry.name.cast::<u8>().cast_const()) {
+            let scratch = buffer.as_ptr_range();
+            // A one-past pointer has no bytes available for a terminator.
+            // Keep it on the bounded path instead of probing beyond scratch.
+            let address = entry.name.cast::<u8>().cast_const();
+            let name = if (scratch.start..=scratch.end).contains(&address) {
                 packed_entry_cstr_bytes(buffer, entry.name).map(<[u8]>::to_vec)
             } else {
                 read_c_string_bytes(entry.name)

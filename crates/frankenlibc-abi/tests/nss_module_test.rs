@@ -8357,6 +8357,21 @@ fn ethers_lookups_match_glibc_module_policy() {
             }
         }
         println!("ETHER_END");
+        if !host {
+            // Only the candidate receives the malformed module result.
+            assert_eq!(unsafe { configure(c"ethers".as_ptr(), c"fltest".as_ptr()) }, 0);
+            let address = [3u8; 6];
+            let mut name = [b'?' as c_char; 64];
+            let rc = unsafe { reverse(name.as_mut_ptr(), address.as_ptr().cast()) };
+            let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+            assert_eq!((rc, error), (-1, libc::EINVAL));
+            assert_eq!(name, [b'?' as c_char; 64]);
+
+            let address = [4u8; 6];
+            let rc = unsafe { reverse(name.as_mut_ptr(), address.as_ptr().cast()) };
+            assert_eq!(rc, 0);
+            assert_eq!(unsafe { CStr::from_ptr(name.as_ptr()) }, c"static-ether");
+        }
         return;
     }
 

@@ -418,7 +418,7 @@ jobs:
             artifacts/network-database/ethers.log
           cargo test -p frankenlibc-abi "${features[@]}" --lib ethers_files::tests \
             -- --test-threads=1 2>&1 | tee artifacts/network-database/ethers-files.log
-          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+          grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
             artifacts/network-database/ethers-files.log
       - uses: actions/upload-artifact@v4
         if: always()

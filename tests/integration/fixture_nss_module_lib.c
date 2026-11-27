@@ -1593,6 +1593,16 @@ FN(getntohost_r)(const unsigned char *address, struct fl_etherent *record,
         *errnop = EAGAIN;
         return NSS_STATUS_TRYAGAIN;
     }
+    if (address[0] == 3) {
+        /* Valid pointer arithmetic, but no room for a hostname. */
+        record->name = scratch + size;
+        return NSS_STATUS_SUCCESS;
+    }
+    if (address[0] == 4) {
+        static char name[] = "static-ether";
+        record->name = name;
+        return NSS_STATUS_SUCCESS;
+    }
     if (address[0] > 1)
         return NSS_STATUS_NOTFOUND;
     return ether_record(record, scratch, size, errnop);
