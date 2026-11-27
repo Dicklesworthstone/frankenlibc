@@ -73,6 +73,15 @@ jobs:
           status=$?
           set -e
           test "$status" -eq 91
+      - name: Check floating-point exceptions in both modes
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+          CARGO_PROFILE_TEST_DEBUG: 0
+        run: |
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -j2 -p frankenlibc-abi \
+              --test conformance_fenv_traps -- --test-threads=1
+          done
       - name: Run log-gamma Rust regressions in both modes
         env:
           CARGO_PROFILE_DEV_DEBUG: 0

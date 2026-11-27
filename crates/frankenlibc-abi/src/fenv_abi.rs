@@ -382,13 +382,14 @@ pub unsafe extern "C" fn fesetexceptflag(flagp: *const u16, excepts: c_int) -> c
     let mask = (excepts as u32) & HW_ALL_EXCEPT;
     let flags = unsafe { *flagp } as u32 & mask;
     unsafe {
-        // Update x87 status via fnstenv/modify/fldenv
+        // Reported status is the union of x87 and MXCSR. Clear selected x87
+        // bits and install their requested values in MXCSR only. Setting an
+        // unmasked x87 bit with FLDENV would arm a trap on the next FWAIT.
         let mut env = zeroed_fenv();
         store_x87_env(&mut env);
-        env.sw = (env.sw & !(mask as u16)) | (flags as u16);
+        env.sw &= !(mask as u16);
         load_x87_env(&env);
 
-        // Update MXCSR exception flags
         let mut mxcsr = read_mxcsr();
         mxcsr = (mxcsr & !mask) | flags;
         write_mxcsr(mxcsr);

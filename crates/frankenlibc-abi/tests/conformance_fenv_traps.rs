@@ -204,8 +204,12 @@ fn synchronous_exception_delivery() {
                     fe::feraiseexcept(bit);
                     fe::feupdateenv(saved.as_ptr().cast());
                 }
-                "set" => {
-                    fe::fesetexcept(bit);
+                "set" | "copy" => {
+                    if op == "set" {
+                        assert_eq!(fe::fesetexcept(bit), 0);
+                    } else {
+                        assert_eq!(fe::fesetexceptflag(&(bit as u16), bit), 0);
+                    }
                     core::arch::asm!("fwait", options(nostack, preserves_flags));
                     assert_eq!(fe::fetestexcept(bit), bit);
                 }
@@ -239,6 +243,7 @@ fn synchronous_exception_delivery() {
         ("convert", &[FE_OVERFLOW, FE_UNDERFLOW, FE_INEXACT][..], true),
         ("exact", &[FE_INEXACT][..], false),
         ("set", &[FE_OVERFLOW][..], false),
+        ("copy", &[FE_INEXACT][..], false),
     ] {
         for bit in bits {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -256,5 +261,33 @@ fn synchronous_exception_delivery() {
                 assert!(output.status.success(), "{op}/{bit}: {output:?}");
             }
         }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn range_exceptions_preserve_only_requested_flags() {
+    unsafe {
+        let mut original = [0u32; 8];
+        assert_eq!(fe::feholdexcept(original.as_mut_ptr().cast()), 0);
+        for range in [FE_OVERFLOW, FE_UNDERFLOW] {
+            fe::feclearexcept(FE_ALL);
+            fe::fesetexcept(FE_DIVBYZERO);
+            fe::feraiseexcept(range);
+            // Explicitly raising a range exception does not request INEXACT.
+            assert_eq!(fe::fetestexcept(FE_ALL), FE_DIVBYZERO | range);
+
+            let mut saved = [0u32; 8];
+            assert_eq!(fe::feholdexcept(saved.as_mut_ptr().cast()), 0);
+            fe::feraiseexcept(FE_INEXACT);
+            assert_eq!(fe::feupdateenv(saved.as_ptr().cast()), 0);
+            assert_eq!(fe::fetestexcept(FE_ALL), FE_DIVBYZERO | range | FE_INEXACT);
+
+            // Clear a flag set through x87 and one set through MXCSR, keeping
+            // the unselected x87 inexact flag raised by the update.
+            assert_eq!(fe::fesetexceptflag(&0, FE_DIVBYZERO | range), 0);
+            assert_eq!(fe::fetestexcept(FE_ALL), FE_INEXACT);
+        }
+        assert_eq!(fe::fesetenv(original.as_ptr().cast()), 0);
     }
 }
