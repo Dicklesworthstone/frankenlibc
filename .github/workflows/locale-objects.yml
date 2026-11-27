@@ -82,6 +82,13 @@ jobs:
           mkdir -p artifacts/locale-results
           cargo build -p frankenlibc-abi --release
           cc -O2 -fno-builtin -Wall -Wextra -Werror -pthread tests/integration/fixture_locale_objects.c -o artifacts/locale-results/probe -ldl
+      - name: Compare pathname matching, collation, and calendar normalization with glibc
+        run: |
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test conformance_diff_glob_locale --test conformance_diff_fnmatch_collation \
+              --test conformance_diff_timegm_normalize
+          done
       - name: Compare explicit wide locales, case folding, and thread isolation
         run: |
           probe="$PWD/artifacts/locale-results/probe"
@@ -148,13 +155,6 @@ jobs:
           env -u LD_PRELOAD -u LD_AUDIT "$probe" multibyte-sjis "$candidate" > artifacts/locale-results/multibyte-provider-negative.log 2>&1 || status=$?
           if [[ "$status" -ne 86 ]] || ! grep -Fxq 'locale-codec:provider-mismatch:newlocale' artifacts/locale-results/multibyte-provider-negative.log; then failed=1; fi
           exit "$failed"
-      - name: Compare pathname matching, collation, and calendar normalization with glibc
-        run: |
-          for mode in strict hardened; do
-            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
-              --test conformance_diff_glob_locale --test conformance_diff_fnmatch_collation \
-              --test conformance_diff_timegm_normalize
-          done
       - name: Check named single-byte conversion and locale selection
         run: |
           cargo test --release -p frankenlibc-abi --test conformance_diff_c_locale_codec --test conformance_diff_strfmon_l -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/codec.log

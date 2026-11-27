@@ -1,9 +1,9 @@
-#![cfg(all(target_os = "linux", target_env = "gnu"))]
+#![cfg(all(target_os = "linux", target_env = "gnu", target_pointer_width = "64"))]
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 
-use frankenlibc_abi::{locale_abi, string_abi};
+use frankenlibc_abi::{locale_abi, string_abi, unistd_abi};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 
@@ -30,9 +30,25 @@ fn expand(glob: Glob, free: GlobFree, pattern: &CStr, flags: i32) -> (i32, Vec<V
 fn glob_matches_and_orders_paths_in_the_selected_locale() {
     // This integration binary owns its process locale. Neither provider's
     // result may be re-sorted before comparison.
-    let host_glob: Glob = unsafe { dlsym_oracle::host_fn(c"glob", string_abi::glob as *const ()) };
-    let host_free: GlobFree =
-        unsafe { dlsym_oracle::host_fn(c"globfree", string_abi::globfree as *const ()) };
+    let providers = [
+        (
+            c"glob",
+            c"globfree",
+            string_abi::glob as Glob,
+            string_abi::globfree as GlobFree,
+        ),
+        (
+            c"glob64",
+            c"globfree64",
+            unistd_abi::glob64 as Glob,
+            unistd_abi::globfree64 as GlobFree,
+        ),
+    ]
+    .map(|(name, free_name, candidate, free)| {
+        let host: Glob = unsafe { dlsym_oracle::host_fn(name, candidate as *const ()) };
+        let host_free: GlobFree = unsafe { dlsym_oracle::host_fn(free_name, free as *const ()) };
+        (name, candidate, free, host, host_free)
+    });
     let host_setlocale: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char =
         unsafe { dlsym_oracle::host_fn(c"setlocale", locale_abi::setlocale as *const ()) };
     let dir = std::env::temp_dir().join(format!("fl-glob-locale-{}", std::process::id()));
@@ -55,12 +71,15 @@ fn glob_matches_and_orders_paths_in_the_selected_locale() {
             ("[a-z]", 0),
             ("?/?", 0),
             ("*", 0),
+            ("?", libc::GLOB_NOSORT),
             ("{z*,*}", libc::GLOB_BRACE),
         ] {
             let pattern = CString::new(dir.join(pattern).as_os_str().as_bytes()).unwrap();
-            let expected = expand(host_glob, host_free, &pattern, flags);
-            let actual = expand(string_abi::glob, string_abi::globfree, &pattern, flags);
-            assert_eq!(actual, expected, "{locale:?} {pattern:?} {flags:#x}");
+            for (name, candidate, free, host, host_free) in providers {
+                let expected = expand(host, host_free, &pattern, flags);
+                let actual = expand(candidate, free, &pattern, flags);
+                assert_eq!(actual, expected, "{name:?} {locale:?} {pattern:?} {flags:#x}");
+            }
         }
     }
     std::fs::remove_dir_all(dir).unwrap();
