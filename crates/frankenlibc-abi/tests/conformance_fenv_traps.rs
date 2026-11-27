@@ -177,3 +177,84 @@ fn fenv_trap_extensions_match_glibc() {
         d.join("\n  ")
     );
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn synchronous_exception_delivery() {
+    use frankenlibc_abi::stdlib_abi;
+    use std::os::unix::process::ExitStatusExt;
+
+    const CHILD: &str = "FRANKENLIBC_TEST_FENV_TRAP";
+    if let Ok(case) = std::env::var(CHILD) {
+        let (op, bit) = case.split_once('/').unwrap();
+        let bit = bit.parse::<c_int>().unwrap();
+        unsafe {
+            fe::fedisableexcept(FE_ALL);
+            // Initialize the same conversion path before enabling traps.
+            std::hint::black_box(stdlib_abi::strtod(c"1".as_ptr(), std::ptr::null_mut()));
+            fe::feclearexcept(FE_ALL);
+            assert_eq!(fe::feenableexcept(bit), 0);
+            match op {
+                "raise" => {
+                    fe::feraiseexcept(bit);
+                }
+                "restore" => {
+                    let mut saved = [0u32; 8];
+                    assert_eq!(fe::feholdexcept(saved.as_mut_ptr().cast()), 0);
+                    fe::feraiseexcept(bit);
+                    fe::feupdateenv(saved.as_ptr().cast());
+                }
+                "set" => {
+                    fe::fesetexcept(bit);
+                    core::arch::asm!("fwait", options(nostack, preserves_flags));
+                    assert_eq!(fe::fetestexcept(bit), bit);
+                }
+                "exact" | "convert" => {
+                    let input = match (op, bit) {
+                        ("exact", _) => c"0x1p0",
+                        (_, FE_OVERFLOW) => c"1e9999",
+                        (_, FE_UNDERFLOW) => c"1e-9999",
+                        (_, FE_INEXACT) => c"0x1.00000000000008p0",
+                        _ => unreachable!(),
+                    };
+                    std::hint::black_box(stdlib_abi::strtod(input.as_ptr(), std::ptr::null_mut()));
+                }
+                _ => unreachable!(),
+            }
+            fe::fedisableexcept(FE_ALL);
+            fe::feclearexcept(FE_ALL);
+        }
+        return;
+    }
+
+    // Each enabled exception runs in a fresh process with the default SIGFPE
+    // disposition. A normal return from raise, restore or convert is a failure.
+    for (op, bits, traps) in [
+        (
+            "raise",
+            &[FE_INVALID, FE_DIVBYZERO, FE_OVERFLOW, FE_UNDERFLOW, FE_INEXACT][..],
+            true,
+        ),
+        ("restore", &[FE_DIVBYZERO][..], true),
+        ("convert", &[FE_OVERFLOW, FE_UNDERFLOW, FE_INEXACT][..], true),
+        ("exact", &[FE_INEXACT][..], false),
+        ("set", &[FE_OVERFLOW][..], false),
+    ] {
+        for bit in bits {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "synchronous_exception_delivery", "--nocapture"])
+                .env(CHILD, format!("{op}/{bit}"))
+                .output()
+                .unwrap();
+            if traps {
+                assert_eq!(
+                    output.status.signal(),
+                    Some(libc::SIGFPE),
+                    "{op}/{bit}: {output:?}"
+                );
+            } else {
+                assert!(output.status.success(), "{op}/{bit}: {output:?}");
+            }
+        }
+    }
+}

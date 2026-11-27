@@ -281,18 +281,73 @@ pub unsafe extern "C" fn fetestexcept(excepts: c_int) -> c_int {
     }
 }
 
+/// Perform the exception-generating operation even when its value is unused.
+/// The hardware consults the thread's active masks and supplies the SIGFPE code.
+#[inline]
+#[cfg(target_arch = "x86_64")]
+unsafe fn sse_divide(numerator: f32, denominator: f32) {
+    unsafe {
+        core::arch::asm!(
+            "divss {value}, {divisor}",
+            value = inout(xmm_reg) numerator => _,
+            divisor = in(xmm_reg) denominator,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+}
+
+/// Publish the result of an integer-based floating-point conversion. Range
+/// overflow and inexact underflow each carry FE_INEXACT as well.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn raise_conversion_flags(flags: u32) {
+    unsafe {
+        let mxcsr = read_mxcsr();
+        if flags & !(mxcsr >> 7) == 0 {
+            write_mxcsr(mxcsr | flags);
+        } else if flags & 0x08 != 0 {
+            sse_divide(f32::MAX, f32::MIN_POSITIVE);
+        } else if flags & 0x10 != 0 {
+            sse_divide(f32::MIN_POSITIVE, f32::MAX);
+        } else {
+            sse_divide(2.0, 3.0);
+        }
+    }
+}
+
 /// Raise the specified floating-point exceptions.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn feraiseexcept(excepts: c_int) -> c_int {
     let mask = (excepts as u32) & HW_ALL_EXCEPT;
-    if mask == 0 {
-        return 0;
-    }
+    #[cfg(target_arch = "x86_64")]
     unsafe {
-        // Set exception flags in MXCSR (SSE exceptions are non-trapping by default)
-        let mut mxcsr = read_mxcsr();
-        mxcsr |= mask;
-        write_mxcsr(mxcsr);
+        if mask & 0x01 != 0 {
+            sse_divide(0.0, 0.0);
+        }
+        if mask & 0x04 != 0 {
+            sse_divide(1.0, 0.0);
+        }
+        if mask & 0x02 != 0 {
+            // Preserve the existing extension for the raw denormal status bit.
+            write_mxcsr(read_mxcsr() | 0x02);
+        }
+
+        // Raise overflow and underflow before inexact. Injecting one x87
+        // status bit at a time avoids manufacturing an extra inexact flag
+        // for a caller that requested only a range exception. FWAIT delivers
+        // an enabled exception before returning to the caller.
+        for bit in [0x08, 0x10, 0x20] {
+            if mask & bit != 0 {
+                let mut env = zeroed_fenv();
+                store_x87_env(&mut env);
+                env.sw |= bit as u16;
+                load_x87_env(&env);
+                core::arch::asm!("fwait", options(nostack, preserves_flags));
+            }
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe {
+        write_mxcsr(read_mxcsr() | mask);
     }
     0
 }

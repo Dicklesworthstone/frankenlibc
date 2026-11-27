@@ -964,9 +964,8 @@ pub(crate) fn parse_float_c(
     (parsed, parsed.consumed, parsed.status.range_error())
 }
 
-/// Publish the selected conversion's range error and masked sticky exception
-/// flags without clearing existing flags or changing rounding/mask controls.
-/// Delivery of unmasked floating-point traps is a separate ABI obligation.
+/// Publish the selected conversion's range error and floating-point exceptions.
+/// On x86-64, an exception enabled in MXCSR traps synchronously.
 pub(crate) fn apply_float_status(status: FloatStatus) {
     if status.range_error() {
         // SAFETY: updates only the calling thread's ABI errno slot.
@@ -978,11 +977,8 @@ pub(crate) fn apply_float_status(status: FloatStatus) {
             | (u32::from(status.underflow) << 4)
             | (u32::from(status.overflow) << 3);
         if flags != 0 {
-            // SAFETY: MXCSR status bits are ORed into its existing value;
-            // rounding, denormal controls and exception masks are preserved.
-            unsafe {
-                crate::fenv_abi::write_mxcsr(crate::fenv_abi::read_mxcsr() | flags);
-            }
+            // SAFETY: only the calling thread's floating-point state is used.
+            unsafe { crate::fenv_abi::raise_conversion_flags(flags) };
         }
     }
     #[cfg(target_arch = "aarch64")]
