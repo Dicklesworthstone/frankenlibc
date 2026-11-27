@@ -3587,3 +3587,34 @@ mod locale_scanning {
         }
     }
 }
+
+#[test]
+fn swscanf_bit_widths_follow_wide_input_and_numbered_destinations() {
+    let input = w("甲123 4567890123");
+    // Use numbered destinations to exercise lazy lookup, a suppressed wide
+    // character, field width, zero-padded bit width, and a wide-character count.
+    let run = |scan: SwscanfFn, format: &str| {
+        let format = w(format);
+        let mut wide = [77_u64; 2];
+        let mut short = [77_i16; 4];
+        let mut count = [77_i8; 8];
+        let rc = unsafe {
+            scan(
+                input.as_ptr(),
+                format.as_ptr(),
+                wide.as_mut_ptr(),
+                short.as_mut_ptr(),
+                count.as_mut_ptr(),
+            )
+        };
+        (rc, wide, short, count)
+    };
+    let expected = run(host_swscanf(), "%*lc%2$3hd %1$lu%3$hhn");
+    assert_eq!(expected.0, 2);
+    assert_eq!(expected.1[0], 4567890123);
+    assert_eq!(expected.3[0], 15);
+    assert_eq!(
+        run(fl::swscanf, "%*lc%2$3w016d %1$wf32u%3$w8n"),
+        expected
+    );
+}

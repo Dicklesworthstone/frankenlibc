@@ -347,6 +347,8 @@ pub enum ScanDirective {
     /// `input_failure` set and reports EOF, whereas glibc reports a MATCHING
     /// failure (return 0) because the fault is in the format, not the input.
     Malformed,
+    /// Unsupported C23 bit width. GNU scanf sets EINVAL when it reaches it.
+    InvalidBitWidth,
 }
 
 /// A parsed scanf conversion specifier.
@@ -749,6 +751,24 @@ where
                     b't' => {
                         spec.length = LengthMod::T;
                         i += 1;
+                    }
+                    b'w' => {
+                        i += 1;
+                        let fast = fmt.get(i) == Some(&b'f');
+                        i += usize::from(fast);
+                        // GNU reads N as a decimal number, including leading zeros.
+                        while fmt.get(i) == Some(&b'0') {
+                            i += 1;
+                        }
+                        let start = i;
+                        while fmt.get(i).is_some_and(u8::is_ascii_digit) {
+                            i += 1;
+                        }
+                        let Some(length) = LengthMod::from_bit_width(fast, &fmt[start..i]) else {
+                            directives.push(ScanDirective::InvalidBitWidth);
+                            break;
+                        };
+                        spec.length = length;
                     }
                     b'L' => {
                         spec.length = LengthMod::BigL;
@@ -1471,6 +1491,17 @@ impl<'a> WideScanSession<'a> {
         self.encoding_error
     }
 
+    /// Report EINVAL only if execution reached the invalid modifier. An earlier
+    /// matching failure leaves errno and all later directives alone.
+    #[must_use]
+    pub fn invalid_bit_width(&self) -> bool {
+        self.complete.is_some()
+            && matches!(
+                self.directives.get(self.directive_index),
+                Some(ScanDirective::InvalidBitWidth)
+            )
+    }
+
     /// Characters fetched but not consumed, in original input order. After
     /// Complete, the ABI restores these in reverse order through wide pushback.
     pub fn unread(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
@@ -1694,7 +1725,9 @@ impl<'a> WideScanSession<'a> {
             let phase = core::mem::replace(&mut self.phase, WideScanPhase::Directive);
             match phase {
                 WideScanPhase::Directive => match directive {
-                    ScanDirective::Malformed => return self.finish(false),
+                    ScanDirective::Malformed | ScanDirective::InvalidBitWidth => {
+                        return self.finish(false);
+                    }
                     ScanDirective::Whitespace => match self.available() {
                         None => return self.need_input(WideScanReadPurpose::FormatWhitespace),
                         Some(WideScanInput::Character(character)) if is_space(character) => {
@@ -2251,7 +2284,7 @@ where
             // sscanf("^abc", "%[^]") — input was available, the format was
             // broken — so input_failure must be cleared here even though no
             // conversion succeeded.
-            ScanDirective::Malformed => {
+            ScanDirective::Malformed | ScanDirective::InvalidBitWidth => {
                 return ScanResult {
                     values,
                     count,

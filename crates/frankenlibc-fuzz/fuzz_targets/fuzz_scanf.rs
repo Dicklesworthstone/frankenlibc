@@ -142,7 +142,7 @@ fn fuzz_parse_format(input: &ScanfFuzzInput) {
             ScanDirective::WideLiteral(_) => {
                 panic!("narrow format parser produced a wide literal");
             }
-            ScanDirective::Whitespace | ScanDirective::Malformed => {}
+            ScanDirective::Whitespace | ScanDirective::Malformed | ScanDirective::InvalidBitWidth => {}
             ScanDirective::Spec(spec) => {
                 let _ = spec.suppress;
                 let _ = spec.width;

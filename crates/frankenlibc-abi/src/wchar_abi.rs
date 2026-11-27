@@ -8476,9 +8476,13 @@ unsafe fn scan_wide_buffer(
         }
     };
     // SAFETY: the current thread owns its errno slot.
-    let error = writer
-        .error
-        .unwrap_or_else(|| unsafe { *crate::errno_abi::__errno_location() });
+    let error = writer.error.unwrap_or_else(|| {
+        if session.invalid_bit_width() {
+            libc::EINVAL
+        } else {
+            unsafe { *crate::errno_abi::__errno_location() }
+        }
+    });
     let outcome = WideScanOutcome {
         count: summary.count,
         input_failure: summary.input_failure,
@@ -8544,7 +8548,11 @@ unsafe fn scan_wide_stream(
         count: summary.count,
         input_failure: summary.input_failure,
         allocation_failure: writer.allocation_failure,
-        error: Some(writer.error.unwrap_or(scan_errno)),
+        error: Some(writer.error.unwrap_or(if session.invalid_bit_width() {
+            libc::EINVAL
+        } else {
+            scan_errno
+        })),
     };
     for wc in session.unread().rev() {
         // SAFETY: these complete characters were read from this same stream.

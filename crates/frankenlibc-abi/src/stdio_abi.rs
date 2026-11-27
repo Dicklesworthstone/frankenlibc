@@ -17566,7 +17566,8 @@ unsafe fn scan_narrow_buffer_with_session(
 ) -> Option<c_int> {
     let needs_session = directives.iter().any(|directive| {
         let ScanDirective::Spec(spec) = directive else {
-            return false;
+            // Keep format errors ordered with earlier conversions and failures.
+            return matches!(directive, ScanDirective::InvalidBitWidth);
         };
         spec.argument_index.is_some()
             || (spec.length == LengthMod::L
@@ -17605,7 +17606,9 @@ unsafe fn scan_narrow_buffer_with_session(
         }
     };
     let error = writer.error.unwrap_or_else(|| {
-        if session.encoding_error() {
+        if session.invalid_bit_width() {
+            errno::EINVAL
+        } else if session.encoding_error() {
             errno::EILSEQ
         } else {
             // SAFETY: the current thread owns its errno slot.
@@ -17752,7 +17755,9 @@ unsafe fn scan_narrow_stream(
         }
     };
     let mut input_failure = summary.input_failure;
-    let mut error = writer.error.unwrap_or(if session.encoding_error() {
+    let mut error = writer.error.unwrap_or(if session.invalid_bit_width() {
+        errno::EINVAL
+    } else if session.encoding_error() {
         errno::EILSEQ
     } else {
         scan_errno

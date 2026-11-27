@@ -997,3 +997,83 @@ fn strict_fast_path_float_nan_payload_and_whitespace_separators_match_glibc() {
         }
     }
 }
+
+#[test]
+fn c23_bit_widths_select_exact_destination_types() {
+    // GNU LP64 int_fast8_t is signed char; int_fast16/32/64_t are long.
+    // Spare typed elements detect oversized writes, including through %n.
+    let input = c"-91 60001 -7654321 9876543210 0xab -4567890123 7654321000";
+    let fixed = c"%w8d%w16u%w32d%w64u%wf8x%wf16d%wf32u%wf64n";
+    let equivalent = c"%hhd%hu%d%lu%hhx%ld%lu%ln";
+    let run = |f: SscanfFn, fmt: &std::ffi::CStr| {
+        let mut a = [42_i8; 8];
+        let mut b = [42_u16; 4];
+        let mut c = [42_i32; 2];
+        let mut d = [42_u64; 2];
+        let mut e = [42_u8; 8];
+        let mut g = [42_i64; 2];
+        let mut h = [42_u64; 2];
+        let mut n = [42_i64; 2];
+        // SAFETY: all eight slots have the specified LP64 pointee types.
+        let rc = unsafe {
+            f(
+                input.as_ptr(),
+                fmt.as_ptr(),
+                a.as_mut_ptr(),
+                b.as_mut_ptr(),
+                c.as_mut_ptr(),
+                d.as_mut_ptr(),
+                e.as_mut_ptr(),
+                g.as_mut_ptr(),
+                h.as_mut_ptr(),
+                n.as_mut_ptr(),
+            )
+        };
+        (rc, a, b, c, d, e, g, h, n)
+    };
+    for (name, candidate) in fl_arms() {
+        let symbol = CString::new(name).unwrap();
+        let host: SscanfFn = unsafe { host_fn(&symbol, candidate as *const ()) };
+        // The equivalent standard modifiers also work on older GNU hosts.
+        let expected = run(host, equivalent);
+        assert_eq!(expected.0, 7);
+        assert_eq!(expected.8, [input.to_bytes().len() as i64, 42]);
+        assert_eq!(run(candidate, fixed), expected, "{name}");
+    }
+}
+
+#[test]
+fn invalid_scan_bit_width_reports_errno_only_when_reached() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+
+    for (name, candidate) in fl_arms() {
+        for fmt in [c"%w7d", c"%w0d", c"%w128d", c"%wfd", c"%wd"] {
+            let mut value = 42_i64;
+            unsafe { *__errno_location() = 0 };
+            let rc = unsafe { candidate(c"1".as_ptr(), fmt.as_ptr(), &mut value) };
+            assert_eq!(
+                (rc, value, unsafe { *__errno_location() }),
+                (0, 42, libc::EINVAL),
+                "{name} {fmt:?}"
+            );
+        }
+        for (input, rc, value, error) in [(c"12", 1, 12, libc::EINVAL), (c"x", 0, 42, 0)] {
+            let mut out = 42_i32;
+            let mut untouched = 37_i64;
+            unsafe { *__errno_location() = 0 };
+            let got = unsafe {
+                candidate(
+                    input.as_ptr(),
+                    c"%w32d%wf7u".as_ptr(),
+                    &mut out,
+                    &mut untouched,
+                )
+            };
+            assert_eq!(
+                (got, out, untouched, unsafe { *__errno_location() }),
+                (rc, value, 37, error),
+                "{name} {input:?}"
+            );
+        }
+    }
+}

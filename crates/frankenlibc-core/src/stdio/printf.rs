@@ -141,6 +141,19 @@ pub enum LengthMod {
     BigL, // 'L'
 }
 
+impl LengthMod {
+    /// Map C23 exact/fast integer widths to the equivalent GNU LP64 type.
+    pub(super) fn from_bit_width(fast: bool, digits: &[u8]) -> Option<Self> {
+        match (fast, digits) {
+            (_, b"8") => Some(Self::Hh),
+            (false, b"16") => Some(Self::H),
+            (false, b"32") => Some(Self::None),
+            (false, b"64") | (true, b"16" | b"32" | b"64") => Some(Self::L),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum PrintfHandler {
@@ -1403,16 +1416,11 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
                 while pos < len && fmt[pos].is_ascii_digit() {
                     pos += 1;
                 }
-                match (fast, &fmt[digits_start..pos]) {
-                    (_, b"8") => LengthMod::Hh,
-                    (false, b"16") => LengthMod::H,
-                    (false, b"32") => LengthMod::None,
-                    (false, b"64") | (true, b"16" | b"32" | b"64") => LengthMod::L,
-                    _ => {
-                        *invalid = true;
-                        return None;
-                    }
-                }
+                let Some(length) = LengthMod::from_bit_width(fast, &fmt[digits_start..pos]) else {
+                    *invalid = true;
+                    return None;
+                };
+                length
             }
             _ => LengthMod::None,
         }
