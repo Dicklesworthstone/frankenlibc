@@ -12993,7 +12993,6 @@ fn locale_fnmatch(
     if pat_bytes.contains(&b'[')
         && (pat_bytes.windows(2).any(|w| w == b"[=") || pat_bytes.contains(&b'-'))
         && crate::locale_abi::mb_cur_max() > 1
-        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
         && let Some(tables) = crate::locale_abi::named_collate()
     {
         let bytes = |b: &[u8]| b.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
@@ -13014,10 +13013,9 @@ fn locale_fnmatch(
     // when either reading matches -- measured: "?" and "??" both match "Ü",
     // "???" does not; "[Ü][Ü]" matches "Ü" -- hence byte matching first and
     // this only on a byte mismatch. Only relevant when a non-ASCII byte is
-    // present; invalid UTF-8 stays byte-only, as in glibc. Extended
-    // (FNM_EXTMATCH) patterns stay on the byte matcher.
+    // present; invalid UTF-8 stays byte-only. Extended patterns use the
+    // same locale units for each alternative and its continuation.
     if crate::locale_abi::mb_cur_max() > 1
-        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
         && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
     {
         return fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None) == Some(true);

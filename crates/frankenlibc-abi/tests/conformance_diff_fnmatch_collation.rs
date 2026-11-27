@@ -23,6 +23,7 @@ unsafe extern "C" {
 const FNM_PATHNAME: i32 = 1;
 const FNM_PERIOD: i32 = 4;
 const FNM_CASEFOLD: i32 = 16;
+const FNM_EXTMATCH: i32 = 32;
 
 fn both(pat: &str, s: &str, flags: i32) -> (i32, i32) {
     let p = CString::new(pat).unwrap();
@@ -123,6 +124,24 @@ fn fnmatch_collation_brackets_match_glibc() {
             "fl setlocale({locale:?}) failed where glibc's succeeded"
         );
         compare(patterns, corpus, &flags);
+        compare(
+            &[
+                "?",
+                "@(?)",
+                "+([[:alpha:]])",
+                "@(Ä|中)",
+                "@(\\é|[ü])",
+                "?(@(é|中))",
+                "*(@([[:upper:]]|?))",
+                "@([[=a=]]|[b-é])",
+            ],
+            corpus,
+            &[
+                FNM_EXTMATCH,
+                FNM_EXTMATCH | FNM_CASEFOLD,
+                FNM_EXTMATCH | FNM_PATHNAME | FNM_PERIOD,
+            ],
+        );
         compare(
             &["[[=a=]]", "[[=o=]]", "[a-z]", "[A-Z]", "[!a-z]"],
             &all,

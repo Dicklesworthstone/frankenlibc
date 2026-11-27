@@ -17,6 +17,8 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_strfmon_l.rs'
       - 'crates/frankenlibc-core/src/iconv/**'
       - 'crates/frankenlibc-core/src/locale/**'
+      - 'crates/frankenlibc-core/src/string/fnmatch*.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_fnmatch_collation.rs'
       - 'crates/frankenlibc-core/src/string/glob.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_glob_locale.rs'
       - 'crates/frankenlibc-core/src/stdio/scanf.rs'
@@ -148,7 +150,7 @@ jobs:
       - name: Compare pathname matching and collation with glibc
         run: |
           for mode in strict hardened; do
-            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test conformance_diff_glob_locale
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test conformance_diff_glob_locale --test conformance_diff_fnmatch_collation
           done
       - name: Check named single-byte conversion and locale selection
         run: |

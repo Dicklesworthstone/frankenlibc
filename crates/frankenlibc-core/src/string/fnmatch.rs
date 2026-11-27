@@ -9,7 +9,7 @@
 #[path = "fnmatch_legacy.rs"]
 mod legacy;
 
-pub use legacy::{FnmatchFlags, WideCtype, fnmatch_wide};
+pub use legacy::{FnmatchFlags, WideCtype};
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -22,6 +22,38 @@ pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
         return legacy::fnmatch_match(pattern, text, flags);
     }
     evaluate(pattern, text, flags).0
+}
+
+/// Match decoded characters using the active locale's class, case and collation tables.
+pub fn fnmatch_wide(
+    pattern: &[u32],
+    text: &[u32],
+    flags: FnmatchFlags,
+    ctype: &dyn WideCtype,
+) -> bool {
+    if !flags.contains(FnmatchFlags::EXTMATCH) {
+        return legacy::fnmatch_wide(pattern, text, flags, ctype);
+    }
+    // Only ASCII can introduce shell syntax. Keep one slot per character so
+    // every group boundary is also an index into the original locale units.
+    let syntax = |units: &[u32]| {
+        units
+            .iter()
+            .map(|&c| u8::try_from(c).unwrap_or(0xff))
+            .collect::<Vec<_>>()
+    };
+    let pattern_syntax = syntax(pattern);
+    if !has_extglob(&pattern_syntax, flags.contains(FnmatchFlags::NOESCAPE)) {
+        return legacy::fnmatch_wide(pattern, text, flags, ctype);
+    }
+    let units = WideUnits { pattern, text, ctype };
+    evaluate_units(&pattern_syntax, &syntax(text), flags, Some(&units)).0
+}
+
+struct WideUnits<'a> {
+    pattern: &'a [u32],
+    text: &'a [u32],
+    ctype: &'a dyn WideCtype,
 }
 
 fn has_extglob(pattern: &[u8], noescape: bool) -> bool {
@@ -160,6 +192,40 @@ fn parse_groups(pattern: &[u8], noescape: bool) -> Groups {
     groups
 }
 
+/// Return the index after the bracket and whether it matched. An absent
+/// closing delimiter leaves the opening bracket to match literally.
+fn match_bracket(
+    state: State,
+    pattern: &[u8],
+    text: &[u8],
+    wide: Option<&WideUnits<'_>>,
+) -> Option<(usize, bool)> {
+    let noescape = state.flag(FnmatchFlags::NOESCAPE);
+    if let Some(units) = wide {
+        return legacy::wide_bracket(
+            &units.pattern[..state.pend],
+            state.p,
+            &units.text[..state.end],
+            state.s,
+            noescape,
+            state.flag(FnmatchFlags::CASEFOLD),
+            units.ctype,
+        );
+    }
+    match bracket(&pattern[..state.pend], state.p, noescape) {
+        Bracket::Closed(end) => {
+            let flags = FnmatchFlags::from_bits(
+                state.bits & (FnmatchFlags::NOESCAPE.bits() | FnmatchFlags::CASEFOLD.bits()),
+            );
+            let matched =
+                legacy::fnmatch_match(&pattern[state.p..end], &text[state.s..=state.s], flags);
+            Some((end, matched))
+        }
+        Bracket::Literal => None,
+        Bracket::Invalid => Some((state.p + 1, false)),
+    }
+}
+
 fn group_at(state: State, groups: &Groups) -> Option<Rc<Group>> {
     groups
         .get(&state.p)
@@ -271,6 +337,7 @@ impl Frame {
         text: &[u8],
         groups: &Groups,
         completed: &BTreeMap<State, bool>,
+        wide: Option<&WideUnits<'_>>,
     ) -> Step {
         loop {
             let state = self.state;
@@ -324,11 +391,15 @@ impl Frame {
                         return Step::Done(false);
                     }
                     let c = text[state.s];
-                    let eq = |a: u8, b: u8| {
-                        if state.flag(FnmatchFlags::CASEFOLD) {
-                            a.eq_ignore_ascii_case(&b)
+                    let literal_matches = |p: usize| {
+                        let fold = state.flag(FnmatchFlags::CASEFOLD);
+                        if let Some(units) = wide {
+                            let a = units.pattern[p];
+                            let b = units.text[state.s];
+                            a == b || (fold && units.ctype.fold(a) == units.ctype.fold(b))
                         } else {
-                            a == b
+                            let a = pattern[p];
+                            a == c || (fold && a.eq_ignore_ascii_case(&c))
                         }
                     };
                     let mut next = state.p + 1;
@@ -343,24 +414,11 @@ impl Frame {
                             {
                                 return Step::Done(false);
                             }
-                            match bracket(
-                                &pattern[..state.pend],
-                                state.p,
-                                state.flag(FnmatchFlags::NOESCAPE),
-                            ) {
-                                Bracket::Closed(end) => {
-                                    next = end;
-                                    // Only single-byte atom semantics are delegated; this
-                                    // can never enter the recursive extglob implementation.
-                                    let flags = FnmatchFlags::from_bits(
-                                        state.bits
-                                            & (FnmatchFlags::NOESCAPE.bits()
-                                                | FnmatchFlags::CASEFOLD.bits()),
-                                    );
-                                    legacy::fnmatch_match(&pattern[state.p..end], &[c], flags)
-                                }
-                                Bracket::Literal => eq(c, b'['),
-                                Bracket::Invalid => false,
+                            if let Some((end, matched)) = match_bracket(state, pattern, text, wide) {
+                                next = end;
+                                matched
+                            } else {
+                                literal_matches(state.p)
                             }
                         }
                         b'\\' if !state.flag(FnmatchFlags::NOESCAPE) => {
@@ -368,9 +426,9 @@ impl Frame {
                                 return Step::Done(false);
                             }
                             next += 1;
-                            eq(c, pattern[state.p + 1])
+                            literal_matches(state.p + 1)
                         }
-                        _ => eq(c, pc),
+                        _ => literal_matches(state.p),
                     };
                     if !hit {
                         return Step::Done(false);
@@ -475,6 +533,15 @@ impl Frame {
 /// The second result is a deterministic work counter for regression tests.
 /// No arbitrary recursion/work cutoff turns a valid match into a false miss.
 fn evaluate(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> (bool, usize) {
+    evaluate_units(pattern, text, flags, None)
+}
+
+fn evaluate_units(
+    pattern: &[u8],
+    text: &[u8],
+    flags: FnmatchFlags,
+    wide: Option<&WideUnits<'_>>,
+) -> (bool, usize) {
     let root = State {
         p: 0,
         pend: pattern.len(),
@@ -490,7 +557,7 @@ fn evaluate(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> (bool, usize) {
     let mut stack = vec![Frame::new(root)];
     loop {
         let frame = stack.last_mut().expect("root frame remains until return");
-        match frame.advance(pattern, text, &groups, &completed) {
+        match frame.advance(pattern, text, &groups, &completed, wide) {
             Step::Need(state) => stack.push(Frame::new(state)),
             Step::Done(value) => {
                 let frame = stack.pop().expect("completed frame exists");

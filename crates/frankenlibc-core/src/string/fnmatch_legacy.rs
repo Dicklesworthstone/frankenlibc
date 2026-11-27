@@ -907,7 +907,7 @@ pub fn fnmatch_wide(
 /// expression (no closing `]`), in which case the `[` is a literal. Literals
 /// and ranges fold under `FNM_CASEFOLD`; `[:class:]`, `[=x=]` and `[.x.]` do
 /// not, as in the byte matcher.
-fn wide_bracket(
+pub(super) fn wide_bracket(
     pattern: &[u32],
     open: usize,
     text: &[u32],
