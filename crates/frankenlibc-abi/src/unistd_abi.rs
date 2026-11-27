@@ -13220,9 +13220,39 @@ pub unsafe extern "C" fn _nss_files_getspnam_r(
         })
     }
 }
-// gethostton/getntohost have the *_by_str shape under the hood.
-nss_files_get_by_str_stub!(_nss_files_gethostton_r);
-nss_files_get_by_str_stub!(_nss_files_getntohost_r);
+/// Look up a hostname in the native ethers source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_gethostton_r(
+    key: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    let Some(name) = (unsafe { read_c_string_bytes(key) }) else {
+        unsafe { nss_set_errnop(errnop, libc::EINVAL) };
+        return NSS_STATUS_UNAVAIL;
+    };
+    unsafe { ethers_files::lookup(ethers_files::Key::Name(&name), result, buffer, buflen, errnop) }
+}
+
+/// Look up a six-octet address in the native ethers source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getntohost_r(
+    key: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    let address = key.cast::<EtherAddrBytes>();
+    if !tracked_object_fits(address) {
+        unsafe { nss_set_errnop(errnop, libc::EINVAL) };
+        return NSS_STATUS_UNAVAIL;
+    }
+    let key = ethers_files::Key::Address(unsafe { (*address).octet });
+    unsafe { ethers_files::lookup(key, result, buffer, buflen, errnop) }
+}
 
 /// Resolve an RPC program number from the native files source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -26362,7 +26392,8 @@ pub unsafe extern "C-unwind" fn versionsort64(
 // ether_ntohost / ether_hostton / ether_line — native /etc/ethers parser
 // ===========================================================================
 
-const ETHERS_PATH: &str = "/etc/ethers";
+#[path = "ethers_files.rs"]
+mod ethers_files;
 
 /// `ether_line` — parse an /etc/ethers format line into addr + hostname.
 ///
@@ -26391,121 +26422,71 @@ pub unsafe extern "C" fn ether_line(
     0
 }
 
-/// `ether_ntohost` — look up hostname by Ethernet address in /etc/ethers.
-///
-/// Native implementation: scans /etc/ethers line by line.
-/// Returns 0 on success, -1 if not found or file unavailable.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_void) -> c_int {
-    use std::io::BufRead;
-
-    if hostname.is_null() || addr.is_null() {
-        return -1;
-    }
-    let file = match std::fs::File::open(ETHERS_PATH) {
-        Ok(f) => f,
-        Err(_) => return -1,
+/// Resolve a key using the ethers files provider and the public GNU scratch size.
+unsafe fn lookup_ether(
+    key: ethers_files::Key<'_>,
+    mut publish: impl FnMut(&NssParsedEther) -> c_int,
+) -> c_int {
+    let mut result = NssParsedEther {
+        name: std::ptr::null_mut(),
+        address: EtherAddrBytes { octet: [0; 6] },
     };
-    let needle = unsafe { *(addr as *const EtherAddrBytes) };
-    let mut reader = std::io::BufReader::new(file);
-    let mut line_buf = Vec::with_capacity(256);
-
-    loop {
-        line_buf.clear();
-        match reader.read_until(b'\n', &mut line_buf) {
-            Ok(0) => return -1, // EOF
-            Err(_) => return -1,
-            Ok(_) => {}
-        }
-        // NUL-terminate for ether_line
-        if line_buf.last() == Some(&b'\n') {
-            if let Some(last) = line_buf.last_mut() {
-                *last = 0;
-            } else {
-                line_buf.push(0);
-            }
-        } else {
-            line_buf.push(0);
-        }
-
-        let mut parsed_addr = EtherAddrBytes { octet: [0; 6] };
-        let mut host_buf = [0u8; 256];
-
-        let rc = unsafe {
-            ether_line(
-                line_buf.as_ptr() as *const c_char,
-                (&mut parsed_addr as *mut EtherAddrBytes).cast(),
-                host_buf.as_mut_ptr() as *mut c_char,
-            )
-        };
-        if rc == 0 && parsed_addr.octet == needle.octet {
-            // Found it — copy hostname to caller
-            let hlen = host_buf.iter().position(|&b| b == 0).unwrap_or(0);
-            unsafe {
-                std::ptr::copy_nonoverlapping(host_buf.as_ptr(), hostname as *mut u8, hlen);
-                *(hostname as *mut u8).add(hlen) = 0;
-            }
-            return 0;
-        }
+    let mut buffer = [0 as c_char; 1024];
+    let status = unsafe {
+        ethers_files::lookup(
+            key,
+            (&mut result as *mut NssParsedEther).cast(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            crate::errno_abi::__errno_location(),
+        )
+    };
+    if status == NSS_STATUS_SUCCESS {
+        publish(&result)
+    } else {
+        -1
     }
 }
 
-/// `ether_hostton` — look up Ethernet address by hostname in /etc/ethers.
-///
-/// Native implementation: scans /etc/ethers line by line.
-/// Returns 0 on success, -1 if not found or file unavailable.
+/// Resolve an Ethernet address to its hostname.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_void) -> c_int {
-    use std::io::BufRead;
-
-    if hostname.is_null() || addr.is_null() {
+pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_void) -> c_int {
+    let addr = addr.cast::<EtherAddrBytes>();
+    if hostname.is_null() || !tracked_object_fits(addr) {
         return -1;
     }
-    let Some(needle) = (unsafe { read_c_string_bytes(hostname) }) else {
+    let key = ethers_files::Key::Address(unsafe { (*addr).octet });
+    unsafe {
+        lookup_ether(key, |entry| {
+            let Some(name) = read_c_string_bytes(entry.name) else {
+                return -1;
+            };
+            if !tracked_region_fits(hostname as usize, name.len() + 1) {
+                set_abi_errno(libc::ERANGE);
+                return -1;
+            }
+            std::ptr::copy_nonoverlapping(name.as_ptr(), hostname.cast::<u8>(), name.len());
+            hostname.add(name.len()).write(0);
+            0
+        })
+    }
+}
+
+/// Resolve a hostname to its six-octet Ethernet address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_void) -> c_int {
+    let addr = addr.cast::<EtherAddrBytes>();
+    if !tracked_object_fits(addr) {
+        return -1;
+    }
+    let Some(name) = (unsafe { read_c_string_bytes(hostname) }) else {
         return -1;
     };
-    let mut reader = std::io::BufReader::new(match std::fs::File::open(ETHERS_PATH) {
-        Ok(f) => f,
-        Err(_) => return -1,
-    });
-    let mut line_buf = Vec::with_capacity(256);
-
-    loop {
-        line_buf.clear();
-        match reader.read_until(b'\n', &mut line_buf) {
-            Ok(0) => return -1,
-            Err(_) => return -1,
-            Ok(_) => {}
-        }
-        if line_buf.last() == Some(&b'\n') {
-            if let Some(last) = line_buf.last_mut() {
-                *last = 0;
-            } else {
-                line_buf.push(0);
-            }
-        } else {
-            line_buf.push(0);
-        }
-
-        let mut parsed_addr = EtherAddrBytes { octet: [0; 6] };
-        let mut host_buf = [0u8; 256];
-
-        let rc = unsafe {
-            ether_line(
-                line_buf.as_ptr() as *const c_char,
-                (&mut parsed_addr as *mut EtherAddrBytes).cast(),
-                host_buf.as_mut_ptr() as *mut c_char,
-            )
-        };
-        if rc == 0 {
-            let hlen = host_buf.iter().position(|&b| b == 0).unwrap_or(0);
-            if &host_buf[..hlen] == needle.as_slice() {
-                unsafe {
-                    *(addr as *mut EtherAddrBytes) = parsed_addr;
-                }
-                return 0;
-            }
-        }
+    unsafe {
+        lookup_ether(ethers_files::Key::Name(&name), |entry| {
+            addr.write(entry.address);
+            0
+        })
     }
 }
 
