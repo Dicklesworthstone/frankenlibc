@@ -56,6 +56,58 @@ int memcmp(const void *left, const void *right, size_t n) {
     (void)left; (void)right; (void)n; return -23;
 }
 #endif
+#ifdef PATTERN_CLIENT
+#include <fnmatch.h>
+#include <regex.h>
+
+void *pattern_import(unsigned index) {
+    switch (index) {
+        case 0: return (void *)fnmatch;
+        case 1: return (void *)regcomp;
+        case 2: return (void *)regexec;
+        case 3: return (void *)regerror;
+        case 4: return (void *)regfree;
+        default: return NULL;
+    }
+}
+
+regex_t *pattern_compile(void) {
+    regex_t *compiled = malloc(sizeof(*compiled));
+    if (compiled && regcomp(compiled, "(ab)c", REG_EXTENDED) != 0) {
+        free(compiled);
+        return NULL;
+    }
+    return compiled;
+}
+
+int pattern_finish(regex_t *compiled) {
+    regmatch_t groups[2];
+    int status = regexec(compiled, "xxabc!", 2, groups, 0);
+    if (status || groups[0].rm_so != 2 || groups[0].rm_eo != 5 ||
+        groups[1].rm_so != 2 || groups[1].rm_eo != 4) return __LINE__;
+    if (regexec(compiled, "ab", 0, NULL, 0) != REG_NOMATCH) return __LINE__;
+
+    /* Exercise the modern version's byte range across an embedded NUL. */
+    typedef int (*execute_fn)(const regex_t *, const char *, size_t, regmatch_t *, int);
+    execute_fn execute = (execute_fn)dlvsym(RTLD_DEFAULT, "regexec", "GLIBC_2.3.4");
+    const char bytes[] = {'x', 0, 'a', 'b', 'c', '!'};
+    groups[0] = (regmatch_t){2, 6};
+    if (!execute || execute(compiled, bytes, 2, groups, REG_STARTEND) ||
+        groups[0].rm_so != 2 || groups[0].rm_eo != 5) return __LINE__;
+
+    char message[4] = {'?', '?', '?', '!'};
+    size_t needed = regerror(REG_NOMATCH, compiled, NULL, 0);
+    if (needed <= 3 || regerror(REG_NOMATCH, compiled, message, 3) != needed ||
+        message[0] == 0 || message[2] != 0 || message[3] != '!') return __LINE__;
+    regfree(compiled);
+    free(compiled);
+    if (fnmatch("src/*.c", "src/main.c", FNM_PATHNAME) ||
+        fnmatch("src/*.c", "src/sub/main.c", FNM_PATHNAME) != FNM_NOMATCH ||
+        fnmatch("*", ".config", FNM_PERIOD) != FNM_NOMATCH) return __LINE__;
+    return 0;
+}
+#endif
+
 int memory_compare(void) { return memcmp("a", "b", 1); }
 extern int memory_unknown_weak(void) __attribute__((weak));
 int memory_weak_missing(void) { return memory_unknown_weak == 0; }
@@ -1004,6 +1056,70 @@ fn memory_runtime_clearenv_clears_and_rebuilds_the_process_environment() {
             assert_eq!(api.run(handle, c"memory_environment_clear"), 0);
             assert_eq!(std::env::vars_os().count(), 0);
             api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_patterns_survive_the_compiling_dso() {
+    isolated(
+        "memory_runtime_patterns_survive_the_compiling_dso",
+        false,
+        |api| {
+            let producer = Fixture::new(&["-DPATTERN_CLIENT"]);
+            let consumer = Fixture::new(&["-DPATTERN_CLIENT", "-fno-plt"]);
+            let first = api.open(&producer.path, 0);
+            let second = api.open(&consumer.path, 0);
+            for handle in [first, second] {
+                let imported: Function =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"pattern_import")) };
+                let dynamic: Dynamic =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_dynamic")) };
+                for (index, (name, expected)) in [
+                    (c"fnmatch", strings::fnmatch as *const ()),
+                    (c"regcomp", strings::regcomp as *const ()),
+                    (c"regexec", strings::regexec as *const ()),
+                    (c"regerror", strings::regerror as *const ()),
+                    (c"regfree", strings::regfree as *const ()),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let version = if name == c"regexec" {
+                        c"GLIBC_2.3.4"
+                    } else {
+                        c"GLIBC_2.2.5"
+                    };
+                    let default = unsafe { dynamic(name.as_ptr(), std::ptr::null()) };
+                    assert!(!default.is_null());
+                    assert_eq!(unsafe { dynamic(name.as_ptr(), version.as_ptr()) }, default);
+                    assert!(unsafe { dynamic(name.as_ptr(), c"GLIBC_PRIVATE".as_ptr()) }.is_null());
+                    if api.native {
+                        assert_eq!(
+                            unsafe { imported(index as u32) },
+                            expected.cast_mut().cast()
+                        );
+                        assert_eq!(default, expected.cast_mut().cast());
+                        if name == c"regexec" {
+                            assert!(
+                                unsafe { dynamic(name.as_ptr(), c"GLIBC_2.2.5".as_ptr()) }.is_null()
+                            );
+                        }
+                    } else {
+                        assert_eq!(default, unsafe { dlsym_oracle::host_addr(name, expected) });
+                    }
+                }
+            }
+
+            let compile: unsafe extern "C" fn() -> *mut c_void =
+                unsafe { std::mem::transmute(api.symbol(first, c"pattern_compile")) };
+            let finish: unsafe extern "C" fn(*mut c_void) -> c_int =
+                unsafe { std::mem::transmute(api.symbol(second, c"pattern_finish")) };
+            let compiled = unsafe { compile() };
+            assert!(!compiled.is_null());
+            api.close(first);
+            assert_eq!(unsafe { finish(compiled) }, 0);
+            api.close(second);
         },
     );
 }

@@ -82,6 +82,16 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     // version must stay rejected by runtime_export, rather than escaping into
     // host lookup and a different errno, environment or callback domain.
     let versioned = match name {
+        // The older x86-64 regexec ABI masks REG_STARTEND. Only bind the
+        // modern contract implemented by string_abi::regexec.
+        "regexec" => Some((
+            strings::regexec as *const (),
+            if cfg!(target_arch = "aarch64") {
+                baseline
+            } else {
+                "GLIBC_2.3.4"
+            },
+        )),
         "mlock2" => Some((mapping::mlock2 as *const (), "GLIBC_2.27")),
         "secure_getenv" => Some((stdlib::secure_getenv as *const (), "GLIBC_2.17")),
         "qsort_r" => Some((
@@ -302,6 +312,12 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "strncat" => strings::strncat as *const (),
         "strspn" => strings::strspn as *const (),
         "strcspn" => strings::strcspn as *const (),
+        // regex_t owns a compiled engine handle. Its lifecycle must stay
+        // within the same runtime across relocation and dynamic lookup.
+        "regcomp" => strings::regcomp as *const (),
+        "regfree" => strings::regfree as *const (),
+        "regerror" => strings::regerror as *const (),
+        "fnmatch" => strings::fnmatch as *const (),
         "strpbrk" => strings::strpbrk as *const (),
         _ => return None,
     };
