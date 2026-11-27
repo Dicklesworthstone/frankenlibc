@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fnmatch.h>
 #include <langinfo.h>
 #include <locale.h>
 #include <pthread.h>
@@ -264,7 +265,8 @@ static wint_t (*wide_internal_tolower)(wint_t, locale_t);
 static int (*wide_internal_compare)(const wchar_t *, const wchar_t *, locale_t);
 static int (*wide_internal_ncompare)(const wchar_t *, const wchar_t *, size_t, locale_t);
 
-static void *wide_symbol(const char *expected, const char *name, const void *address) {
+static void *locale_symbol(const char *family, const char *expected,
+                           const char *name, const void *address) {
     struct stat wanted, actual;
     Dl_info info = {0};
     CHECK(stat(expected, &wanted) == 0);
@@ -272,10 +274,14 @@ static void *wide_symbol(const char *expected, const char *name, const void *add
     if (!symbol || !dladdr(symbol, &info) || !info.dli_fname ||
         stat(info.dli_fname, &actual) != 0 || wanted.st_dev != actual.st_dev ||
         wanted.st_ino != actual.st_ino) {
-        fprintf(stderr, "locale-wide:provider-mismatch:%s\n", name);
+        fprintf(stderr, "%s:provider-mismatch:%s\n", family, name);
         exit(86);
     }
     return symbol;
+}
+
+static void *wide_symbol(const char *expected, const char *name, const void *address) {
+    return locale_symbol("locale-wide", expected, name, address);
 }
 
 static void wide_provider(const char *expected) {
@@ -913,6 +919,64 @@ static void multibyte(unsigned index, const char *provider) {
     printf("multibyte-%s: ok\n", test->codeset);
 }
 
+/* The global locale stays C while the thread selects each named decoder.
+ * Let GNU supply the return codes for malformed input and extended groups. */
+static void named_fnmatch(const char *provider) {
+    static const struct { const char *name; const void *address; } functions[] = {
+        {"fnmatch", (const void *)fnmatch}, {"newlocale", (const void *)newlocale},
+        {"setlocale", (const void *)setlocale}, {"uselocale", (const void *)uselocale},
+        {"freelocale", (const void *)freelocale}, {"nl_langinfo_l", (const void *)nl_langinfo_l},
+    };
+    for (size_t i = 0; i < sizeof functions / sizeof *functions; ++i)
+        locale_symbol("locale-fnmatch", provider, functions[i].name, functions[i].address);
+    CHECK(setlocale(LC_ALL, "C"));
+    for (size_t i = 0; i < 2; ++i) {
+        const struct codec_case *test = &codec_cases[i];
+        /* The final scalar in the fixed fixture is 2 bytes in SHIFT_JIS and
+         * 3 bytes in EUC-JP. No host conversion builds either operand. */
+        const char *unit = test->text + 3;
+        size_t width = strlen(unit);
+        CHECK(width >= 2 && width <= 3);
+        CHECK(fnmatch("?", unit, 0) == FNM_NOMATCH);
+        locale_t selected = newlocale(LC_CTYPE_MASK, test->name, (locale_t)0);
+        CHECK(selected);
+        codeset(selected, test->codeset);
+        CHECK(uselocale(selected) == LC_GLOBAL_LOCALE);
+        CHECK(fnmatch("?", unit, 0) == 0);
+        CHECK(fnmatch("????", unit, 0) == FNM_NOMATCH);
+        char bracket[16], nested[32], suffix[16], malformed[16], partial[4];
+        CHECK((size_t)snprintf(bracket, sizeof bracket, "[%s]", unit) < sizeof bracket);
+        CHECK((size_t)snprintf(nested, sizeof nested, "@(@(%s|x)|z)?", unit) < sizeof nested);
+        CHECK((size_t)snprintf(suffix, sizeof suffix, "%s!", unit) < sizeof suffix);
+        memcpy(malformed, unit, width);
+        malformed[width] = (char)test->invalid_byte;
+        malformed[width + 1] = '\0';
+        memcpy(partial, unit, width - 1);
+        partial[width - 1] = '\0';
+        const struct { const char *tag, *pattern, *text; int flags; } cases[] = {
+            {"two-wildcards", "??", unit, 0},
+            {"three-wildcards", "???", unit, 0},
+            {"literal", unit, unit, 0},
+            {"bracket", bracket, unit, 0},
+            {"nested", nested, suffix, FNM_EXTMATCH},
+            {"nested-miss", nested, unit, FNM_EXTMATCH},
+            {"partial-name", "?", partial, 0},
+            {"partial-pattern", partial, partial, 0},
+            {"invalid-name", "??", malformed, 0},
+            {"invalid-pattern", malformed, unit, 0},
+            {"invalid-both", malformed, malformed, 0},
+        };
+        for (size_t j = 0; j < sizeof cases / sizeof *cases; ++j) {
+            printf("fnmatch-%s:%s:%d\n", test->codeset, cases[j].tag,
+                   fnmatch(cases[j].pattern, cases[j].text, cases[j].flags));
+        }
+        CHECK(uselocale(LC_GLOBAL_LOCALE) == selected);
+        freelocale(selected);
+        CHECK(fnmatch("?", unit, 0) == FNM_NOMATCH);
+        printf("fnmatch-%s: ok\n", test->codeset);
+    }
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2 || argc == 3);
     if (!strcmp(argv[1], "lifecycle")) lifecycle();
@@ -921,6 +985,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "named")) named();
     else if (!strcmp(argv[1], "wide")) { CHECK(argc == 3); wide(argv[2]); }
     else if (!strcmp(argv[1], "wide-threads")) { CHECK(argc == 3); wide_threads(argv[2]); }
+    else if (!strcmp(argv[1], "named-fnmatch")) { CHECK(argc == 3); named_fnmatch(argv[2]); }
     else if (!strcmp(argv[1], "multibyte-sjis")) { CHECK(argc == 3); multibyte(0, argv[2]); }
     else if (!strcmp(argv[1], "multibyte-eucjp")) { CHECK(argc == 3); multibyte(1, argv[2]); }
     else if (!strcmp(argv[1], "multibyte-gb18030")) { CHECK(argc == 3); multibyte(2, argv[2]); }

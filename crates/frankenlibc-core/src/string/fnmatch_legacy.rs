@@ -847,6 +847,11 @@ pub fn fnmatch_wide(
         if pi < pattern.len() {
             let pc = pattern[pi];
             if pc == b'*' as u32 {
+                // A leading period must be matched by the first pattern atom,
+                // even if this star could otherwise consume zero characters.
+                if ti < text.len() && leading_period(ti) {
+                    return false;
+                }
                 while pi < pattern.len() && pattern[pi] == b'*' as u32 {
                     pi += 1;
                 }
@@ -870,10 +875,11 @@ pub fn fnmatch_wide(
                         advanced = true;
                     }
                 } else {
-                    // Literal, possibly escaped (a trailing `\` is literal).
-                    let (lit, width) = if pc == b'\\' as u32 && !noescape && pi + 1 < pattern.len()
-                    {
-                        (pattern[pi + 1], 2)
+                    let (lit, width) = if pc == b'\\' as u32 && !noescape {
+                        let Some(&escaped) = pattern.get(pi + 1) else {
+                            return false;
+                        };
+                        (escaped, 2)
                     } else {
                         (pc, 1)
                     };
@@ -1819,6 +1825,11 @@ mod tests {
         ));
         assert!(!w("*ü", ".ü", FnmatchFlags::PERIOD));
         assert!(w(".ü", ".ü", FnmatchFlags::PERIOD));
+        assert!(!w("*.ü", ".ü", FnmatchFlags::PERIOD));
+        assert!(!w("ü/*.é", "ü/.é", FnmatchFlags::PATHNAME | FnmatchFlags::PERIOD));
+        assert!(w("ü/*.é", "ü/x.é", FnmatchFlags::PATHNAME | FnmatchFlags::PERIOD));
+        assert!(!w("ü\\", "ü\\", none));
+        assert!(w("ü\\", "ü\\", FnmatchFlags::NOESCAPE));
         assert!(!w(
             "ü/?b",
             "ü/.b",

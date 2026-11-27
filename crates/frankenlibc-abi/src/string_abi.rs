@@ -13007,41 +13007,53 @@ fn locale_fnmatch(
     if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
         return true;
     }
-    // In a UTF-8 locale glibc 2.43 ALSO matches by characters: `?` and a
-    // bracket take one character and classes/case folding cover non-ASCII
-    // (gnulib test-fnmatch-3: fnmatch("x?y", "xüy") == 0). It reports a match
-    // when either reading matches -- measured: "?" and "??" both match "Ü",
-    // "???" does not; "[Ü][Ü]" matches "Ü" -- hence byte matching first and
-    // this only on a byte mismatch. Only relevant when a non-ASCII byte is
-    // present; invalid UTF-8 stays byte-only. Extended patterns use the
-    // same locale units for each alternative and its continuation.
-    if crate::locale_abi::mb_cur_max() > 1
-        && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
-    {
-        return fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None) == Some(true);
-    }
-    false
+    // A byte mismatch can still match when each wildcard consumes a whole
+    // locale character. An invalid or incomplete encoding keeps the byte result.
+    fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None) == Some(true)
 }
 
-/// `fnmatch_wide` over the UTF-8 `pattern` and `string` in the active
-/// locale, with its collation rules `collate`; `None` when either is not
-/// valid UTF-8.
+/// Decode pattern and filename using LC_CTYPE. A named multibyte encoding
+/// may assign a different character to an ASCII byte (e.g. Shift_JIS 0x5c).
 fn fnmatch_by_characters(
     pattern: &[u8],
     string: &[u8],
     flags: frankenlibc_core::string::fnmatch::FnmatchFlags,
     collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
 ) -> Option<bool> {
-    let p: Vec<u32> = core::str::from_utf8(pattern)
-        .ok()?
-        .chars()
-        .map(u32::from)
-        .collect();
-    let s: Vec<u32> = core::str::from_utf8(string)
-        .ok()?
-        .chars()
-        .map(u32::from)
-        .collect();
+    use crate::locale_abi::MultibyteCodec;
+    use frankenlibc_core::string::wchar::Utf8Step;
+
+    let codec = crate::locale_abi::active_multibyte_codec();
+    if matches!(codec, MultibyteCodec::Ascii | MultibyteCodec::SingleByte(_))
+        || (collate.is_none()
+            && codec.is_ascii_compatible()
+            && pattern.is_ascii()
+            && string.is_ascii())
+    {
+        return None;
+    }
+    let decode = |mut bytes: &[u8]| -> Option<Vec<u32>> {
+        if matches!(codec, MultibyteCodec::Utf8) {
+            return Some(
+                core::str::from_utf8(bytes)
+                    .ok()?
+                    .chars()
+                    .map(u32::from)
+                    .collect(),
+            );
+        }
+        let mut units = Vec::with_capacity(bytes.len());
+        while !bytes.is_empty() {
+            let Utf8Step::Char { wc, len } = codec.decode(bytes) else {
+                return None;
+            };
+            units.push(wc);
+            bytes = &bytes[len..];
+        }
+        Some(units)
+    };
+    let p = decode(pattern)?;
+    let s = decode(string)?;
     let ctype = LocaleWideCtype { collate };
     Some(frankenlibc_core::string::fnmatch::fnmatch_wide(
         &p, &s, flags, &ctype,

@@ -82,6 +82,22 @@ jobs:
           mkdir -p artifacts/locale-results
           cargo build -p frankenlibc-abi --release
           cc -O2 -fno-builtin -Wall -Wextra -Werror -pthread tests/integration/fixture_locale_objects.c -o artifacts/locale-results/probe -ldl
+      - name: Compare named multibyte fnmatch with GNU
+        run: |
+          export LOCPATH="$PWD/artifacts/locale-results/locales"
+          out="$PWD/artifacts/locale-results"
+          probe="$out/probe"
+          candidate="$(realpath target/release/libfrankenlibc_abi.so)"
+          host="$(env -u LD_PRELOAD -u LD_AUDIT "$probe" provider)"
+          timeout 30 env -u LD_PRELOAD -u LD_AUDIT "$probe" named-fnmatch "$host" | tee "$out/fnmatch.host"
+          for codeset in SHIFT_JIS EUC-JP; do
+            grep -Fxq "fnmatch-$codeset: ok" "$out/fnmatch.host"
+          done
+          for mode in strict hardened; do
+            timeout 30 env -u LD_AUDIT FRANKENLIBC_MODE="$mode" LD_PRELOAD="$candidate" \
+              "$probe" named-fnmatch "$candidate" | tee "$out/fnmatch.$mode"
+            diff -u "$out/fnmatch.host" "$out/fnmatch.$mode"
+          done
       - name: Compare pathname matching, collation, and calendar normalization with glibc
         run: |
           for mode in strict hardened; do
