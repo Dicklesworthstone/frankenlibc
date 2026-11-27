@@ -42,6 +42,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/io_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/pthread_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_host_thread_handoff_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_cancel_wait_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs'
@@ -368,7 +369,7 @@ jobs:
             done
           done
           exit "$failed"
-      - name: Preserve creator pthread state across native admission
+      - name: Preserve native creation state and nonblocking joins
         if: always()
         env:
           FEATURE: ${{ matrix.feature }}
@@ -383,6 +384,15 @@ jobs:
             log="artifacts/signal-waits/admission/$mode.log"
             if ! FRANKENLIBC_MODE="$mode" cargo test --release -p frankenlibc-abi "${args[@]}" \
                 --test pthread_thread_lifecycle_test native_thread_admission_preserves_creator_pthread_state \
+                -- --exact --nocapture --test-threads=1 2>&1 | tee "$log"; then
+              failed=1
+            fi
+            if ! grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"; then
+              failed=1
+            fi
+            log="artifacts/signal-waits/admission/tryjoin-$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test --release -p frankenlibc-abi "${args[@]}" \
+                --test pthread_abi_test tryjoin_np_finished_before_kernel_exit_is_busy \
                 -- --exact --nocapture --test-threads=1 2>&1 | tee "$log"; then
               failed=1
             fi

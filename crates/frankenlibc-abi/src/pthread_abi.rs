@@ -11776,7 +11776,12 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
                 let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
                 match state {
                     s if s == THREAD_FINISHED => {
-                        // Thread is done; proceed to join below.
+                        // FINISHED precedes the kernel's clear-TID store. A
+                        // try-join must not park while that final exit is still
+                        // pending, even though application cleanup has ended.
+                        if unsafe { (*handle_ptr).tid.load(Ordering::Acquire) } != 0 {
+                            return libc::EBUSY;
+                        }
                     }
                     s if s == THREAD_DETACHED || s == THREAD_JOINED => {
                         return libc::EINVAL;
@@ -11796,7 +11801,7 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
         }
     }
 
-    // Thread is FINISHED. Perform a full join.
+    // FINISHED and kernel clear-TID are both observed; reaping cannot wait.
     unsafe { native_pthread_join(thread, retval, 0) }
 }
 

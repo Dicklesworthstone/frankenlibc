@@ -4743,6 +4743,134 @@ fn tryjoin_np_on_finished_thread() {
 }
 
 #[test]
+fn tryjoin_np_finished_before_kernel_exit_is_busy() {
+    use std::time::{Duration, Instant};
+
+    const CHILD: &str = "FRANKENLIBC_TRYJOIN_EXIT_CHILD";
+    const NAME: &str = "tryjoin_np_finished_before_kernel_exit_is_busy";
+    if std::env::var(CHILD).as_deref() != Ok(NAME) {
+        for mode in ["strict", "hardened"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+                .env(CHILD, NAME)
+                .env("FRANKENLIBC_MODE", mode)
+                .env_remove("LD_PRELOAD")
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success(), "{NAME}/{mode}: {status}");
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("{NAME}/{mode}: tryjoin blocked before kernel exit");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        return;
+    }
+
+    struct Probe {
+        tid: AtomicI32,
+        release: AtomicI32,
+    }
+    unsafe extern "C" fn finish_after_identity_check(raw: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator retains this context until successful reaping.
+        let probe = unsafe { &*raw.cast::<Probe>() };
+        probe
+            .tid
+            .store(frankenlibc_core::syscall::sys_gettid(), Ordering::Release);
+        while probe.release.load(Ordering::Acquire) == 0 {
+            std::hint::spin_loop();
+        }
+        0x57usize as *mut c_void
+    }
+
+    let _guard = ThreadingForceNativeGuard {
+        previous: pthread_threading_swap_force_native_for_tests(),
+    };
+    // A failed assertion may leave the worker running until this isolated
+    // child exits. Retain its heap context on every failure path; reclaim it
+    // only after the successful join proves the worker has stopped using it.
+    let probe = Box::into_raw(Box::new(Probe {
+        tid: AtomicI32::new(0),
+        release: AtomicI32::new(0),
+    }));
+    let mut thread = 0;
+    assert_eq!(
+        unsafe {
+            pthread_create(
+                &mut thread,
+                ptr::null(),
+                Some(finish_after_identity_check),
+                probe.cast(),
+            )
+        },
+        0,
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let tid = loop {
+        let tid = unsafe { (*probe).tid.load(Ordering::Acquire) };
+        if tid > 0 {
+            break tid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native worker did not publish its TID"
+        );
+        std::thread::yield_now();
+    };
+    // The live worker cannot exit yet. The core identity lookup checks native
+    // registration and handle magic before admitting any raw field access.
+    let handle = frankenlibc_core::pthread::handle_for_tid(tid)
+        .expect("forced-native worker must own a registered ThreadHandle");
+    assert_eq!(handle as usize, thread as usize);
+    unsafe { (*probe).release.store(1, Ordering::Release) };
+    while unsafe { (*handle).tid.load(Ordering::Acquire) } != 0 {
+        assert!(Instant::now() < deadline, "native worker did not exit");
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        unsafe { (*handle).state.load(Ordering::Acquire) },
+        frankenlibc_core::pthread::THREAD_FINISHED,
+    );
+
+    // Replay FINISHED-before-clear-TID in the real unjoined control block.
+    // The kernel has released the word; only this test owns the joinable
+    // handle, so these stores cannot race an owner, joiner, or detach call.
+    unsafe { (*handle).tid.store(tid, Ordering::Release) };
+    let sentinel = 0xabcdusize as *mut c_void;
+    let mut result = sentinel;
+    let status = unsafe { pthread_tryjoin_np(thread, &mut result) };
+    if status == 0 {
+        // A successful join consumes the mapping. Never dereference it even
+        // if an incorrect implementation unexpectedly reaped it here.
+        panic!("tryjoin reaped a target before kernel clear-TID");
+    }
+    // Restore the real terminal state before assertions or final reaping.
+    let pending_tid = unsafe { (*handle).tid.swap(0, Ordering::AcqRel) };
+    let state = unsafe { (*handle).state.load(Ordering::Acquire) };
+    assert_eq!(status, libc::EBUSY);
+    assert_eq!(pending_tid, tid);
+    assert_eq!(state, frankenlibc_core::pthread::THREAD_FINISHED);
+    assert_eq!(result, sentinel, "busy tryjoin must not publish a result");
+    assert_eq!(unsafe { pthread_tryjoin_np(thread, &mut result) }, 0);
+    // SAFETY: successful reaping ended the worker's context borrow, and this
+    // raw pointer uniquely retains the allocation created above.
+    unsafe { drop(Box::from_raw(probe)) };
+    // The successful call freed the handle; only the opaque name remains.
+    assert_eq!(result, 0x57usize as *mut c_void);
+    assert_eq!(
+        unsafe { pthread_tryjoin_np(thread, ptr::null_mut()) },
+        libc::ESRCH
+    );
+}
+
+#[test]
 fn tryjoin_np_rejects_self_join_for_managed_thread() {
     unsafe {
         let _guard = ThreadingForceNativeGuard {
