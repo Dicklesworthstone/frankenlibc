@@ -719,6 +719,12 @@ static SIGNAL_DEFERRED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 static SIGNAL_FLUSHED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 static SIGNAL_IMMEDIATE_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 
+// `siginterrupt` also selects the restart policy for subsequent `signal`
+// installations. Keep that process-wide preference separate from the current
+// sigaction flags: callers can replace an action without changing this choice.
+// A clear bit gives the default BSD behavior of restarting interrupted I/O.
+static SIGNAL_INTERRUPT_PREFERENCES: AtomicU64 = AtomicU64::new(0);
+
 fn signal_slot(signum: c_int) -> Option<&'static SignalHandlerSlot> {
     if (1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
         Some(&SIGNAL_HANDLER_SLOTS[signum as usize])
@@ -1442,7 +1448,7 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: libc::sighandler_t) -> l
         return sig_err;
     }
 
-    if !signal_core::catchable_signal(signum) {
+    if !signal_core::catchable_signal(signum) || signal_core::glibc_reserved_signal(signum) {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return sig_err;
@@ -1450,6 +1456,13 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: libc::sighandler_t) -> l
 
     let mut act = unsafe { std::mem::zeroed::<libc::sigaction>() };
     act.sa_sigaction = handler as libc::sighandler_t;
+    // SAFETY: act owns an initialized mask; the checks above establish a
+    // catchable signal in 1..=64 and exclude glibc's reserved signals.
+    unsafe { sigaddset_valid(&mut act.sa_mask, signum) };
+    let signal_bit = 1u64 << (signum - 1);
+    if SIGNAL_INTERRUPT_PREFERENCES.load(Ordering::Relaxed) & signal_bit == 0 {
+        act.sa_flags = libc::SA_RESTART;
+    }
     let mut oldact = unsafe { std::mem::zeroed::<libc::sigaction>() };
     let rc = unsafe { sigaction(signum, &act as *const libc::sigaction, &mut oldact) };
     let adverse = rc != 0;
@@ -2248,16 +2261,10 @@ pub(crate) unsafe fn sigwait_cp(set: *const libc::sigset_t, sig: *mut c_int) -> 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
-    // SAFETY: get current action for the signal.
-    if let Err(e) = unsafe {
-        raw_syscall::sys_rt_sigaction(
-            sig,
-            std::ptr::null(),
-            &mut sa as *mut libc::sigaction as *mut u8,
-            std::mem::size_of::<libc::c_ulong>(),
-        )
-    } {
-        unsafe { set_abi_errno(e) };
+    // SAFETY: sa is writable. Use the shared frontend to validate the signal,
+    // translate the kernel's different sigaction layout and recover any user
+    // handler behind our delivery trampoline.
+    if unsafe { sigaction(sig, std::ptr::null(), &mut sa) } != 0 {
         return -1;
     }
     if flag != 0 {
@@ -2265,21 +2272,21 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
     } else {
         sa.sa_flags |= libc::SA_RESTART;
     }
-    // SAFETY: set the modified action.
-    match unsafe {
-        raw_syscall::sys_rt_sigaction(
-            sig,
-            &sa as *const libc::sigaction as *const u8,
-            std::ptr::null_mut(),
-            std::mem::size_of::<libc::c_ulong>(),
-        )
-    } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
+    // SAFETY: sa came from sigaction and only its SA_RESTART bit changed. The
+    // frontend preserves the handler, mask and restorer while updating its
+    // trampoline metadata together with the kernel action.
+    if unsafe { sigaction(sig, &sa, std::ptr::null_mut()) } != 0 {
+        return -1;
     }
+    // Successful installation established a valid catchable signal. Publish
+    // the persistent choice only after the kernel accepted the changed action.
+    let signal_bit = 1u64 << (sig - 1);
+    if flag != 0 {
+        SIGNAL_INTERRUPT_PREFERENCES.fetch_or(signal_bit, Ordering::Relaxed);
+    } else {
+        SIGNAL_INTERRUPT_PREFERENCES.fetch_and(!signal_bit, Ordering::Relaxed);
+    }
+    0
 }
 
 /// `sighold` — add signal to process signal mask (XSI obsolete).

@@ -1386,6 +1386,234 @@ fn siginterrupt_sigusr1() {
 }
 
 #[test]
+fn signal_restart_policy_matches_live_glibc() {
+    const CHILD: &str = "FRANKENLIBC_SIGNAL_RESTART_CHILD";
+    const CASE: &str = "FRANKENLIBC_SIGNAL_RESTART_CASE";
+    if let Ok(provider) = std::env::var(CHILD) {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        use std::time::Instant;
+
+        type Signal = unsafe extern "C" fn(c_int, libc::sighandler_t) -> libc::sighandler_t;
+        type Interrupt = unsafe extern "C" fn(c_int, c_int) -> c_int;
+        type Action =
+            unsafe extern "C" fn(c_int, *const libc::sigaction, *mut libc::sigaction) -> c_int;
+        let case = std::env::var(CASE).unwrap();
+        let candidate_signal: Signal = if case == "bsd-default" {
+            frankenlibc_abi::unistd_abi::bsd_signal
+        } else {
+            signal
+        };
+        let (install, interrupt, action): (Signal, Interrupt, Action) = match provider.as_str() {
+            "candidate" => (candidate_signal, siginterrupt, sigaction),
+            "host" => unsafe {
+                (
+                    dlsym_oracle::host_fn(
+                        if case == "bsd-default" {
+                            c"bsd_signal"
+                        } else {
+                            c"signal"
+                        },
+                        candidate_signal as *const (),
+                    ),
+                    dlsym_oracle::host_fn(c"siginterrupt", siginterrupt as *const ()),
+                    dlsym_oracle::host_fn(c"sigaction", sigaction as *const ()),
+                )
+            },
+            _ => panic!("unknown signal provider"),
+        };
+
+        struct RestoreAction(Action, libc::sigaction);
+        impl Drop for RestoreAction {
+            fn drop(&mut self) {
+                // SAFETY: the action was read before this child changed it.
+                let _ = unsafe { (self.0)(libc::SIGUSR1, &self.1, std::ptr::null_mut()) };
+            }
+        }
+        let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { action(libc::SIGUSR1, std::ptr::null(), &mut previous) },
+            0
+        );
+        let _restore = RestoreAction(action, previous);
+        let handler = live_counting_handler as *const () as libc::sighandler_t;
+        let disabling = matches!(case.as_str(), "disable" | "reinstall-disabled");
+        let mut initial: libc::sigaction = unsafe { std::mem::zeroed() };
+        initial.sa_sigaction = handler;
+        initial.sa_flags = libc::SA_NODEFER | if disabling { libc::SA_RESTART } else { 0 };
+        assert_eq!(unsafe { sigaddset(&mut initial.sa_mask, libc::SIGUSR2) }, 0);
+        assert_eq!(
+            unsafe { action(libc::SIGUSR1, &initial, std::ptr::null_mut()) },
+            0
+        );
+        let reinstall = matches!(
+            case.as_str(),
+            "default" | "bsd-default" | "reinstall-disabled" | "reinstall-enabled"
+        );
+        if !matches!(case.as_str(), "default" | "bsd-default") {
+            assert_eq!(
+                unsafe { interrupt(libc::SIGUSR1, c_int::from(disabling)) },
+                0
+            );
+        }
+        if reinstall {
+            assert_eq!(unsafe { install(libc::SIGUSR1, handler) }, handler);
+        }
+
+        // Observe the public action, not the wrapper's return code alone.
+        // siginterrupt must preserve the handler and unrelated flags/mask;
+        // signal must remember the interruption choice across reinstalls.
+        let mut observed: libc::sigaction = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { action(libc::SIGUSR1, std::ptr::null(), &mut observed) },
+            0
+        );
+        assert_eq!(observed.sa_sigaction, handler);
+        assert_eq!(
+            observed.sa_flags & libc::SA_RESTART != 0,
+            !disabling,
+            "{case}"
+        );
+        assert_eq!(observed.sa_flags & libc::SA_NODEFER != 0, !reinstall);
+        assert_eq!(
+            unsafe { sigismember(&observed.sa_mask, libc::SIGUSR2) },
+            c_int::from(!reinstall)
+        );
+        assert_eq!(
+            unsafe { sigismember(&observed.sa_mask, libc::SIGUSR1) },
+            c_int::from(reinstall)
+        );
+
+        // Blocked-read behavior is an independent kernel observation of the
+        // installed flags. A helper first observes this exact read in /proc,
+        // then targets this kernel TID, and writes only after handler delivery.
+        // No scheduler-sensitive sleep decides whether read was interrupted.
+        let mut unblocked: libc::sigset_t = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { sigaddset(&mut unblocked, libc::SIGUSR1) }, 0);
+        let mut old_mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { sigprocmask(libc::SIG_UNBLOCK, &unblocked, &mut old_mask) },
+            0
+        );
+        struct RestoreMask(libc::sigset_t);
+        impl Drop for RestoreMask {
+            fn drop(&mut self) {
+                // SAFETY: this child owns the current thread's saved mask.
+                let _ = unsafe { sigprocmask(libc::SIG_SETMASK, &self.0, std::ptr::null_mut()) };
+            }
+        }
+        let _restore_mask = RestoreMask(old_mask);
+        let mut pipe = [-1; 2];
+        assert_eq!(
+            unsafe { frankenlibc_core::syscall::sys_pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) },
+            Ok(())
+        );
+        // SAFETY: the successful pipe2 returned two uniquely owned descriptors.
+        let input = unsafe { OwnedFd::from_raw_fd(pipe[0]) };
+        let output = unsafe { OwnedFd::from_raw_fd(pipe[1]) };
+        let reader_fd = input.as_raw_fd();
+        let pid = frankenlibc_core::syscall::sys_getpid();
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        LIVE_HANDLER_COUNT.store(0, Ordering::Release);
+        let sender = thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let path = format!("/proc/self/task/{tid}/syscall");
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let snapshot = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                    let mut fields = snapshot.split_whitespace();
+                    let number = fields.next().and_then(|field| field.parse::<i64>().ok());
+                    let descriptor = fields.next().and_then(|field| {
+                        usize::from_str_radix(field.strip_prefix("0x").unwrap_or(field), 16).ok()
+                    });
+                    if number == Some(libc::SYS_read) && descriptor == Some(reader_fd as usize) {
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(format!("never observed target read: {snapshot}"));
+                    }
+                    thread::yield_now();
+                }
+                frankenlibc_core::syscall::sys_tgkill(pid, tid, libc::SIGUSR1)
+                    .map_err(|e| format!("tgkill: {e}"))?;
+                while LIVE_HANDLER_COUNT.load(Ordering::Acquire) == 0 {
+                    if Instant::now() >= deadline {
+                        return Err("signal handler did not execute".into());
+                    }
+                    thread::yield_now();
+                }
+                Ok(())
+            })();
+            // Always release the reader, even if observation or delivery failed.
+            let written = unsafe {
+                frankenlibc_core::syscall::sys_write(output.as_raw_fd(), b"R".as_ptr(), 1)
+            };
+            result.and_then(|()| {
+                if written == Ok(1) {
+                    Ok(())
+                } else {
+                    Err(format!("pipe write: {written:?}"))
+                }
+            })
+        });
+        let mut byte = 0xa5;
+        let received = unsafe { frankenlibc_core::syscall::sys_read(reader_fd, &mut byte, 1) };
+        sender.join().unwrap().unwrap();
+        assert_eq!(LIVE_HANDLER_COUNT.load(Ordering::Acquire), 1);
+        if disabling {
+            assert_eq!(received, Err(libc::EINTR));
+            assert_eq!(byte, 0xa5, "interrupted read must not publish a byte");
+        } else {
+            assert_eq!(received, Ok(1));
+            assert_eq!(byte, b'R');
+        }
+        return;
+    }
+
+    // Fresh processes isolate process-global dispositions, siginterrupt state
+    // and strict/hardened policy. Every case executes against a pinned GNU
+    // oracle as well as the candidate; a timeout is a failure, never a skip.
+    for case in [
+        "default",
+        "bsd-default",
+        "disable",
+        "enable",
+        "reinstall-disabled",
+        "reinstall-enabled",
+    ] {
+        for (provider, mode) in [
+            ("host", "strict"),
+            ("candidate", "strict"),
+            ("candidate", "hardened"),
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "signal_restart_policy_matches_live_glibc",
+                    "--nocapture",
+                ])
+                .env(CHILD, provider)
+                .env(CASE, case)
+                .env("FRANKENLIBC_MODE", mode)
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success(), "{provider}/{mode}/{case}: {status}");
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("{provider}/{mode}/{case}: timeout");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
+
+#[test]
 fn siginterrupt_invalid_signal_sets_errno() {
     let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
@@ -1411,17 +1639,19 @@ fn siginterrupt_invalid_signal_matches_live_glibc_errno() {
     let host_errno_location: ErrnoLocation =
         unsafe { dlsym_oracle::host_fn(c"__errno_location", __errno_location as *const ()) };
 
-    for &(signal, flag) in &[(0, 0), (0, 1), (-1, 0), (-1, 1)] {
-        unsafe { *host_errno_location() = errno::E2BIG };
-        let expected = unsafe { (host_siginterrupt(signal, flag), *host_errno_location()) };
+    for signal in [0, -1, 32, 33, libc::SIGKILL, libc::SIGSTOP, 65, c_int::MAX] {
+        for flag in [0, 1, -5] {
+            unsafe { *host_errno_location() = errno::E2BIG };
+            let expected = unsafe { (host_siginterrupt(signal, flag), *host_errno_location()) };
 
-        unsafe { *__errno_location() = errno::E2BIG };
-        let actual = unsafe { (siginterrupt(signal, flag), *__errno_location()) };
+            unsafe { *__errno_location() = errno::E2BIG };
+            let actual = unsafe { (siginterrupt(signal, flag), *__errno_location()) };
 
-        assert_eq!(
-            actual, expected,
-            "siginterrupt({signal}, {flag}) must match live glibc's return/errno pair"
-        );
+            assert_eq!(
+                actual, expected,
+                "siginterrupt({signal}, {flag}) must match live glibc's return/errno pair"
+            );
+        }
     }
 }
 

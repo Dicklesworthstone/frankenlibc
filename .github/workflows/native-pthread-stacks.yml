@@ -346,6 +346,8 @@ jobs:
           args=()
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cases=(
+            signal_restart_policy_matches_live_glibc
+            siginterrupt_invalid_signal_matches_live_glibc_errno
             nested_signal_sections_preserve_the_outer_classification
             signal_sections_restore_live_guards_after_non_lifo_drops
             signal_native_tls_keeps_kernel_delivery_and_pending_siginfo_with_the_owner
