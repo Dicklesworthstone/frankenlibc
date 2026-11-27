@@ -171,6 +171,7 @@ pub enum Database {
     Ethers,
     Rpc,
     Netgroup,
+    Aliases,
 }
 
 impl Database {
@@ -187,6 +188,7 @@ impl Database {
             Self::Ethers => b"ethers",
             Self::Rpc => b"rpc",
             Self::Netgroup => b"netgroup",
+            Self::Aliases => b"aliases",
         }
     }
 
@@ -222,7 +224,8 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
         | Database::Networks
         | Database::Ethers
         | Database::Rpc
-        | Database::Netgroup => None,
+        | Database::Netgroup
+        | Database::Aliases => None,
     };
     if let Some(fallback) = fallback
         && let Some(services) = parse_database(config, fallback.key())
@@ -513,6 +516,7 @@ mod tests {
                 "networks" => Database::Networks,
                 "rpc" => Database::Rpc,
                 "netgroup" => Database::Netgroup,
+                "aliases" => Database::Aliases,
                 _ => Database::Initgroups,
             },
         )
@@ -560,6 +564,24 @@ mod tests {
         let sources = services_for(
             Some(b"rpc: stale\nprotocols: other\nrpc: remote [NOTFOUND=return TRYAGAIN=continue] files\n"),
             Database::Rpc,
+        );
+        assert_eq!(names(&sources), [b"remote".as_slice(), b"files"]);
+        assert_eq!(sources[0].action(Status::NotFound), Action::Return);
+        assert_eq!(sources[0].action(Status::TryAgain), Action::Continue);
+        assert_eq!(sources[0].action(Status::Success), Action::Return);
+    }
+
+    #[test]
+    fn aliases_uses_its_own_policy_and_files_default() {
+        assert_eq!(names(&services_for(None, Database::Aliases)), [b"files"]);
+        assert_eq!(
+            names(&services_for(Some(b"passwd: compat\n"), Database::Aliases)),
+            [b"files"]
+        );
+        assert!(line("aliases", "").is_empty());
+        let sources = services_for(
+            Some(b"aliases: remote [NOTFOUND=return TRYAGAIN=continue] files\n"),
+            Database::Aliases,
         );
         assert_eq!(names(&sources), [b"remote".as_slice(), b"files"]);
         assert_eq!(sources[0].action(Status::NotFound), Action::Return);

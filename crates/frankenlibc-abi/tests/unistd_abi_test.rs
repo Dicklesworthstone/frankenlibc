@@ -1290,6 +1290,7 @@ unsafe extern "C" {
 #[repr(C)]
 struct AliasEnt {
     alias_name: *mut c_char,
+    alias_members_len: usize,
     alias_members: *mut *mut c_char,
     alias_local: c_int,
 }
@@ -2202,6 +2203,7 @@ fn alias_iterators_match_host_shape() {
 
     let mut host_entry = AliasEnt {
         alias_name: std::ptr::null_mut(),
+        alias_members_len: 0,
         alias_members: std::ptr::null_mut(),
         alias_local: 0,
     };
@@ -2221,6 +2223,7 @@ fn alias_iterators_match_host_shape() {
 
     let mut our_entry = AliasEnt {
         alias_name: std::ptr::null_mut(),
+        alias_members_len: 0,
         alias_members: std::ptr::null_mut(),
         alias_local: 0,
     };
@@ -8040,25 +8043,56 @@ fn setnetgrent_rejects_tracked_unterminated_group() {
 }
 
 #[test]
-fn alias_lookup_missing_entry_sets_errno() {
+fn alias_lookup_missing_entry_matches_host() {
+    type HostLookup = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+    type HostLookupR = unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+    ) -> c_int;
+    let Some(host_lookup) = (unsafe { load_host_symbol("getaliasbyname") })
+        .map(|pointer| unsafe { std::mem::transmute::<*mut c_void, HostLookup>(pointer) })
+    else {
+        return;
+    };
+    let Some(host_lookup_r) = (unsafe { load_host_symbol("getaliasbyname_r") })
+        .map(|pointer| unsafe { std::mem::transmute::<*mut c_void, HostLookupR>(pointer) })
+    else {
+        return;
+    };
     let missing = CString::new("frankenlibc-no-such-alias").unwrap();
-    unsafe { *__errno_location() = 0 };
+    unsafe { *libc::__errno_location() = 77 };
+    let host_plain = unsafe { host_lookup(missing.as_ptr()) };
+    let host_plain_errno = unsafe { *libc::__errno_location() };
+    unsafe { *__errno_location() = 77 };
     let plain = unsafe { getaliasbyname(missing.as_ptr()) };
     assert!(plain.is_null(), "missing alias should return NULL");
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+    assert_eq!(plain.is_null(), host_plain.is_null());
+    assert_eq!(unsafe { *__errno_location() }, host_plain_errno);
 
-    #[repr(C)]
-    struct AliasEnt {
-        alias_name: *mut c_char,
-        alias_members_len: usize,
-        alias_members: *mut *mut c_char,
-        alias_local: c_int,
-    }
-
+    // A missing key in a readable database clears errno and returns zero;
+    // an inaccessible database instead reports its I/O error. Use the host
+    // oracle so the assertion is valid whether /etc/aliases exists or not.
+    let mut host_ent: AliasEnt = unsafe { std::mem::zeroed() };
+    let mut host_buf = [0i8; 512];
+    let mut host_result = std::ptr::dangling_mut::<c_void>();
+    unsafe { *libc::__errno_location() = 77 };
+    let host_rc = unsafe {
+        host_lookup_r(
+            missing.as_ptr(),
+            (&mut host_ent as *mut AliasEnt).cast(),
+            host_buf.as_mut_ptr(),
+            host_buf.len(),
+            &mut host_result,
+        )
+    };
+    let host_errno = unsafe { *libc::__errno_location() };
     let mut ent: AliasEnt = unsafe { std::mem::zeroed() };
     let mut buf = [0i8; 512];
     let mut result = std::ptr::dangling_mut::<c_void>();
-    unsafe { *__errno_location() = 0 };
+    unsafe { *__errno_location() = 77 };
     let rc = unsafe {
         getaliasbyname_r(
             missing.as_ptr(),
@@ -8068,12 +8102,13 @@ fn alias_lookup_missing_entry_sets_errno() {
             &mut result,
         )
     };
-    assert_eq!(rc, libc::ENOENT);
+    assert_eq!(rc, host_rc);
     assert!(
         result.is_null(),
         "missing alias should null the result pointer"
     );
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+    assert_eq!(result.is_null(), host_result.is_null());
+    assert_eq!(unsafe { *__errno_location() }, host_errno);
 }
 
 #[test]
@@ -14699,9 +14734,20 @@ fn nss_files_endnetgrent_returns_success_with_state_arg() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn nss_files_set_void_stubs_return_success() {
+fn nss_files_setaliasent_matches_host_open_status() {
     use frankenlibc_abi::unistd_abi::_nss_files_setaliasent;
-    assert_eq!(unsafe { _nss_files_setaliasent() }, 1);
+    type HostSet = unsafe extern "C" fn() -> c_int;
+    let Some(host_set) = (unsafe { load_host_symbol("_nss_files_setaliasent") })
+        .map(|pointer| unsafe { std::mem::transmute::<*mut c_void, HostSet>(pointer) })
+    else {
+        return;
+    };
+    unsafe { *libc::__errno_location() = 77 };
+    let expected = unsafe { host_set() };
+    let expected_errno = unsafe { *libc::__errno_location() };
+    unsafe { *__errno_location() = 77 };
+    assert_eq!(unsafe { _nss_files_setaliasent() }, expected);
+    assert_eq!(unsafe { *__errno_location() }, expected_errno);
 }
 
 #[test]
@@ -16406,13 +16452,13 @@ fn res_context_mkquery_accepts_allocated_resolv_context_and_nss_alias_erange() {
             &mut errnop,
         )
     };
-    assert_eq!(status, -2); // NSS_STATUS_TRYAGAIN
-    assert_eq!(errnop, libc::ERANGE);
+    assert_eq!(status, -1); // NSS_STATUS_UNAVAIL: NULL output buffer.
+    assert_eq!(errnop, libc::EINVAL);
 
     // Also drive `files_getaliasbyname_r` with a non-null 1-byte scratch buffer
     // (must cleanly report ERANGE/NOTFOUND/UNAVAIL without UB).
     let mut tiny_buf = [0 as c_char; 1];
-    let mut tiny_errnop: c_int = 0;
+    let mut tiny_errnop: c_int = 91;
     let tiny_status = unsafe {
         _nss_files_getaliasbyname_r(
             alias_name.as_ptr(),
@@ -16426,10 +16472,12 @@ fn res_context_mkquery_accepts_allocated_resolv_context_and_nss_alias_erange() {
         matches!(tiny_status, -2 | -1 | 0),
         "unexpected NSS status {tiny_status} (errnop={tiny_errnop})"
     );
-    if tiny_status != 0 {
-        assert_ne!(
-            tiny_errnop, 0,
-            "TRYAGAIN/UNAVAIL NSS lookup must populate *errnop"
+    if tiny_status == -2 {
+        assert_eq!(tiny_errnop, libc::ERANGE);
+    } else {
+        assert_eq!(
+            tiny_errnop, 91,
+            "open failures preserve the separate error cell"
         );
     }
 }

@@ -38,13 +38,13 @@ pub(crate) struct NetEnt {
 unsafe extern "C" {}
 
 #[inline]
-fn current_abi_errno() -> c_int {
+pub(crate) fn current_abi_errno() -> c_int {
     // SAFETY: __errno_location returns valid thread-local errno storage.
     unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) }
 }
 
 #[inline]
-unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+pub(crate) unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     if ptr.is_null() {
         return None;
     }
@@ -93,14 +93,14 @@ fn tracked_region_fits(addr: usize, len: usize) -> bool {
 }
 
 #[inline]
-fn tracked_object_fits<T>(ptr: *const T) -> bool {
+pub(crate) fn tracked_object_fits<T>(ptr: *const T) -> bool {
     !ptr.is_null()
         && (ptr as usize).is_multiple_of(core::mem::align_of::<T>())
         && tracked_region_fits(ptr as usize, core::mem::size_of::<T>())
 }
 
 #[inline]
-fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
+pub(crate) fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 
@@ -12167,7 +12167,12 @@ macro_rules! nss_files_end_stub {
     };
 }
 
-nss_files_end_stub!(_nss_files_endaliasent);
+/// Close the shared native aliases cursor and its pending short-buffer entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endaliasent() -> c_int {
+    crate::aliases_abi::files_endent();
+    NSS_STATUS_SUCCESS
+}
 nss_files_end_stub!(_nss_files_endetherent);
 /// Close the native networks cursor, including any short-buffer retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -12245,16 +12250,6 @@ pub unsafe extern "C" fn _nss_files_endnetgrent(_result: *mut c_void) -> c_int {
 // NSS_STATUS_SUCCESS (= 1) is the safe stub. Signatures vary per
 // family per the NSS files-module convention.
 
-/// No-arg `set*ent` family: `enum nss_status fn(void)`.
-macro_rules! nss_files_set_void_stub {
-    ($name:ident) => {
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name() -> c_int {
-            NSS_STATUS_SUCCESS
-        }
-    };
-}
-
 /// `int stayopen` family: `enum nss_status fn(int stayopen)`.
 macro_rules! nss_files_set_stayopen_stub {
     ($name:ident) => {
@@ -12265,7 +12260,11 @@ macro_rules! nss_files_set_stayopen_stub {
     };
 }
 
-nss_files_set_void_stub!(_nss_files_setaliasent);
+/// Open or rewind aliases without reentering the public NSS dispatcher.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setaliasent() -> c_int {
+    nss_identity_setent(crate::aliases_abi::files_setent)
+}
 nss_files_set_stayopen_stub!(_nss_files_setetherent);
 /// Open or rewind the native networks source and report unavailable files.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -12772,7 +12771,17 @@ macro_rules! nss_files_get_by_int_stub {
 }
 
 // Remaining unsupported plain getent_r providers.
-nss_files_get_ent_stub!(_nss_files_getaliasent_r);
+/// Enumerate complete native aliases, retaining the entry for ERANGE retries.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getaliasent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: the provider validates the complete output objects and capacity.
+    unsafe { crate::aliases_abi::files_next_r(result, buffer, buflen, errnop) }
+}
 nss_files_get_ent_stub!(_nss_files_getetherent_r);
 /// Enumerate complete RPC records from the files provider.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -13085,69 +13094,8 @@ pub unsafe extern "C" fn _nss_files_getaliasbyname_r(
     buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    if name.is_null() || result.is_null() {
-        if !errnop.is_null() {
-            unsafe { *errnop = libc::EINVAL };
-        }
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return NSS_STATUS_UNAVAIL;
-    }
-    if buffer.is_null() || buflen == 0 {
-        if !errnop.is_null() {
-            unsafe { *errnop = libc::ERANGE };
-        }
-        unsafe { set_abi_errno(libc::ERANGE) };
-        return NSS_STATUS_TRYAGAIN;
-    }
-    let effective_buflen = if runtime_policy::mode().heals_enabled() {
-        crate::malloc_abi::known_remaining(buffer as usize)
-            .map_or(buflen, |remaining| buflen.min(remaining))
-    } else {
-        buflen
-    };
-    let saved_errno = current_abi_errno();
-    let mut resolved: *mut c_void = std::ptr::null_mut();
-    let mut open_errno: c_int = 0;
-    let rc = unsafe {
-        files_getaliasbyname_r(
-            name,
-            result,
-            buffer,
-            effective_buflen,
-            &mut resolved,
-            &mut open_errno,
-        )
-    };
-    if open_errno != 0 {
-        if !errnop.is_null() {
-            unsafe { *errnop = open_errno };
-        }
-        unsafe { set_abi_errno(open_errno) };
-        return if open_errno == libc::EAGAIN {
-            NSS_STATUS_TRYAGAIN
-        } else {
-            NSS_STATUS_UNAVAIL
-        };
-    }
-    if rc == 0 && !resolved.is_null() {
-        unsafe { set_abi_errno(saved_errno) };
-        NSS_STATUS_SUCCESS
-    } else if rc == libc::ERANGE {
-        if !errnop.is_null() {
-            unsafe { *errnop = libc::ERANGE };
-        }
-        unsafe { set_abi_errno(libc::ERANGE) };
-        NSS_STATUS_TRYAGAIN
-    } else if rc == libc::EINVAL {
-        if !errnop.is_null() {
-            unsafe { *errnop = libc::EINVAL };
-        }
-        unsafe { set_abi_errno(libc::EINVAL) };
-        NSS_STATUS_UNAVAIL
-    } else {
-        unsafe { set_abi_errno(saved_errno) };
-        NSS_STATUS_NOTFOUND
-    }
+    // SAFETY: the shared provider validates key, output objects and capacity.
+    unsafe { crate::aliases_abi::files_by_name_r(name, result, buffer, buflen, errnop) }
 }
 /// Resolve an exact RPC name or alias from the native files source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -23138,6 +23086,7 @@ impl NetdbIteration {
                 crate::nss_module::NetdbDatabase::Group => crate::grp_abi::files_setgrent(),
                 crate::nss_module::NetdbDatabase::Shadow => crate::pwd_abi::files_setspent(),
                 crate::nss_module::NetdbDatabase::Networks => files_setnetent(),
+                crate::nss_module::NetdbDatabase::Aliases => crate::aliases_abi::files_setent(),
             };
             Some(match error {
                 0 => NSS_STATUS_SUCCESS,
@@ -23210,6 +23159,7 @@ impl NetdbIteration {
                     crate::nss_module::NetdbDatabase::Group => crate::grp_abi::files_endgrent(),
                     crate::nss_module::NetdbDatabase::Shadow => crate::pwd_abi::files_endspent(),
                     crate::nss_module::NetdbDatabase::Networks => files_endnetent(),
+                    crate::nss_module::NetdbDatabase::Aliases => crate::aliases_abi::files_endent(),
                 }
                 true
             } else {
@@ -23342,6 +23292,17 @@ impl NetdbIteration {
                         _ => unreachable!("account databases handled above"),
                     }
                 }
+            } else if matches!(self.database, crate::nss_module::NetdbDatabase::Aliases) {
+                // SAFETY: aliases callers supply a checked aliasent and exact
+                // writable buffer. Public and direct calls share the cursor.
+                unsafe {
+                    _nss_files_getaliasent_r(
+                        output,
+                        buffer,
+                        capacity,
+                        crate::errno_abi::__errno_location(),
+                    )
+                }
             } else if matches!(self.database, crate::nss_module::NetdbDatabase::Rpc) {
                 // SAFETY: the caller supplies a checked rpcent and the exact
                 // writable buffer; the files provider retains its retry cursor.
@@ -23395,6 +23356,7 @@ impl NetdbIteration {
                     }),
                     crate::nss_module::NetdbDatabase::Hosts => unreachable!("hosts handled above"),
                     crate::nss_module::NetdbDatabase::Rpc => unreachable!("RPC handled above"),
+                    crate::nss_module::NetdbDatabase::Aliases => unreachable!("aliases handled above"),
                     crate::nss_module::NetdbDatabase::Passwd
                     | crate::nss_module::NetdbDatabase::Group
                     | crate::nss_module::NetdbDatabase::Shadow => unreachable!("accounts handled above"),
@@ -28164,298 +28126,20 @@ pub unsafe extern "C" fn dn_comp(
 }
 
 // ===========================================================================
-// /etc/aliases database — native parser
+// Aliases database — native files and configured NSS providers
 // ===========================================================================
-//
-// Format: "name: member1, member2, ..."
-//
-// struct aliasent (x86_64, 32 bytes):
-//   alias_name:        *mut c_char    (offset 0)
-//   alias_members_len: size_t         (offset 8)
-//   alias_members:     *mut *mut c_char (offset 16)
-//   alias_local:       c_int          (offset 24)
-
-const ALIASES_PATH: &str = "/etc/aliases";
-
-struct AliasIterState {
-    reader: Option<std::io::BufReader<std::fs::File>>,
-    line_buf: Vec<u8>,
-    entry_buf: [u8; 4096],
-    member_ptrs: [*mut c_char; 64],
-}
-
-impl AliasIterState {
-    const fn new() -> Self {
-        Self {
-            reader: None,
-            line_buf: Vec::new(),
-            entry_buf: [0u8; 4096],
-            member_ptrs: [std::ptr::null_mut(); 64],
-        }
-    }
-}
-
-// SAFETY: `AliasIterState` is process-owned scratch state keyed by kernel
-// thread id under the owned-TLS experiment. The raw member pointer array is
-// rebuilt from `entry_buf` before each returned alias entry and never crosses
-// slots.
-#[cfg(feature = "owned-tls-cache")]
-unsafe impl Send for AliasIterState {}
-
-#[cfg(feature = "owned-tls-cache")]
-static ALIAS_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<AliasIterState> =
-    crate::owned_tls_cache::OwnedTlsCache::new(AliasIterState::new);
-
-#[cfg(not(feature = "owned-tls-cache"))]
-std::thread_local! {
-    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
-    static ALIAS_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<AliasIterState>> =
-        const { crate::util::TlsHeapCell::new() };
-}
-
-#[inline]
-fn with_alias_iter_state<R>(callback: impl FnOnce(&mut AliasIterState) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        ALIAS_ITER_OWNED_TLS.with(callback)
-    }
-
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        ALIAS_ITER.with(|slot| {
-            slot.with_init(
-                || std::cell::UnsafeCell::new(AliasIterState::new()),
-                |cell| {
-                    // SAFETY: ALIAS_ITER is per-thread storage and this callback keeps
-                    // the mutable reference scoped to the thread-local access.
-                    callback(unsafe { &mut *cell.get() })
-                },
-            )
-        })
-    }
-}
-
-// Parse an /etc/aliases line into name + member list.
-// parse_aliases_line moved to frankenlibc_core::aliases. Callers below
-// use frankenlibc_core::aliases::parse_aliases_line directly and access
-// the owned name / members fields of the returned AliasEntry.
-
-/// Fill an aliasent in the entry_buf from parsed data.
-unsafe fn fill_aliasent_buf(
-    state: &mut AliasIterState,
-    name: &[u8],
-    members: &[&[u8]],
-) -> *mut c_void {
-    let str_offset = 32usize; // sizeof(struct aliasent)
-    let mut needed = str_offset + name.len() + 1;
-    for m in members {
-        needed += m.len() + 1;
-    }
-    if needed > state.entry_buf.len() || members.len() + 1 > state.member_ptrs.len() {
-        return std::ptr::null_mut();
-    }
-
-    let buf = state.entry_buf.as_mut_ptr();
-    let mut off = str_offset;
-
-    // Pack name
-    let name_ptr = unsafe { buf.add(off) } as *mut c_char;
-    unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(off), name.len());
-        *buf.add(off + name.len()) = 0;
-    }
-    off += name.len() + 1;
-
-    // Pack members and build pointer array
-    for (i, m) in members.iter().enumerate() {
-        state.member_ptrs[i] = unsafe { buf.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(m.as_ptr(), buf.add(off), m.len());
-            *buf.add(off + m.len()) = 0;
-        }
-        off += m.len() + 1;
-    }
-    state.member_ptrs[members.len()] = std::ptr::null_mut();
-
-    // Fill struct aliasent (glibc sets alias_local = 1 for local /etc/aliases entries).
-    unsafe {
-        *(buf as *mut *mut c_char) = name_ptr; // alias_name
-        *(buf.add(8) as *mut usize) = members.len(); // alias_members_len
-        *(buf.add(16) as *mut *mut *mut c_char) = state.member_ptrs.as_mut_ptr(); // alias_members
-        *(buf.add(24) as *mut c_int) = 1; // alias_local
-    }
-    buf as *mut c_void
-}
-
-/// Parse next alias entry from iterator.
-unsafe fn alias_iter_next(state: &mut AliasIterState) -> *mut c_void {
-    use std::io::BufRead;
-    loop {
-        let reader = match state.reader.as_mut() {
-            Some(r) => r,
-            None => return std::ptr::null_mut(),
-        };
-        state.line_buf.clear();
-        match reader.read_until(b'\n', &mut state.line_buf) {
-            Ok(0) => return std::ptr::null_mut(),
-            Err(_) => return std::ptr::null_mut(),
-            Ok(_) => {}
-        }
-        if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(&state.line_buf) {
-            let mut name_copy = [0u8; 256];
-            let nlen = entry.name.len().min(255);
-            name_copy[..nlen].copy_from_slice(&entry.name[..nlen]);
-            let member_refs: Vec<&[u8]> = entry.members.iter().map(|v| v.as_slice()).collect();
-            let result = unsafe { fill_aliasent_buf(state, &name_copy[..nlen], &member_refs) };
-            if !result.is_null() {
-                return result;
-            }
-        }
-    }
-}
 
 /// `endaliasent` — close alias database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endaliasent() {
-    with_alias_iter_state(|state| {
-        state.reader = None;
-    });
+    crate::aliases_abi::endent();
 }
 
-/// `getaliasbyname` — look up alias by name in /etc/aliases.
+/// `getaliasbyname` — look up an alias through configured NSS providers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
-    if name.is_null() {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        return std::ptr::null_mut();
-    }
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return std::ptr::null_mut();
-    };
-    let content = match std::fs::read(ALIASES_PATH) {
-        Ok(c) => c,
-        Err(_) => {
-            unsafe { set_abi_errno(libc::ENOENT) };
-            return std::ptr::null_mut();
-        }
-    };
-    for line in content.split(|&b| b == b'\n') {
-        if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
-            && entry.name.eq_ignore_ascii_case(&needle)
-        {
-            return with_alias_iter_state(|state| {
-                let member_refs: Vec<&[u8]> = entry.members.iter().map(|v| v.as_slice()).collect();
-                unsafe { fill_aliasent_buf(state, &entry.name, &member_refs) }
-            });
-        }
-    }
-    unsafe { set_abi_errno(libc::ENOENT) };
-    std::ptr::null_mut()
-}
-
-unsafe fn files_getaliasbyname_r(
-    name: *const c_char,
-    result_buf: *mut c_void,
-    buffer: *mut c_char,
-    buflen: usize,
-    result: *mut *mut c_void,
-    open_errno: &mut c_int,
-) -> c_int {
-    *open_errno = 0;
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
-    }
-    if name.is_null() || result_buf.is_null() || buffer.is_null() {
-        return libc::EINVAL;
-    }
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
-        return libc::EINVAL;
-    };
-    let content = match std::fs::read(ALIASES_PATH) {
-        Ok(c) => c,
-        Err(err) => {
-            let code = err.raw_os_error().unwrap_or(libc::ENOENT);
-            *open_errno = code;
-            return code;
-        }
-    };
-    for line in content.split(|&b| b == b'\n') {
-        if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
-            && entry.name.eq_ignore_ascii_case(&needle)
-        {
-            let pname = &entry.name;
-            let members = &entry.members;
-
-            // Pack into caller buffer: name + NUL + members + NULs + aligned ptr array.
-            // Align the ABSOLUTE address `(buffer as usize) + needed` so `char **` is
-            // pointer-aligned even when `buffer` starts at an odd stack address.
-            let ptr_size = core::mem::size_of::<*mut c_char>();
-            let Some(mut needed) = pname.len().checked_add(1) else {
-                return libc::ERANGE;
-            };
-            for m in members {
-                let Some(next) = m.len().checked_add(1).and_then(|n| needed.checked_add(n)) else {
-                    return libc::ERANGE;
-                };
-                needed = next;
-            }
-            let Some(raw_end) = (buffer as usize).checked_add(needed) else {
-                return libc::ERANGE;
-            };
-            let pad = raw_end.wrapping_neg() & (ptr_size - 1);
-            let Some(ptrs_offset) = needed.checked_add(pad) else {
-                return libc::ERANGE;
-            };
-            let Some(ptrs_bytes) = members
-                .len()
-                .checked_add(1)
-                .and_then(|n| n.checked_mul(ptr_size))
-            else {
-                return libc::ERANGE;
-            };
-            let Some(total) = ptrs_offset.checked_add(ptrs_bytes) else {
-                return libc::ERANGE;
-            };
-            if total > buflen {
-                return libc::ERANGE;
-            }
-
-            let buf_u8 = buffer as *mut u8;
-
-            let name_ptr = buffer;
-            unsafe {
-                std::ptr::copy_nonoverlapping(pname.as_ptr(), buf_u8, pname.len());
-                *buf_u8.add(pname.len()) = 0;
-            }
-            let mut off = pname.len() + 1;
-
-            let member_ptrs_base = unsafe { buf_u8.add(ptrs_offset) } as *mut *mut c_char;
-            for (i, m) in members.iter().enumerate() {
-                unsafe {
-                    *(member_ptrs_base.add(i)) = buf_u8.add(off) as *mut c_char;
-                    std::ptr::copy_nonoverlapping(m.as_ptr(), buf_u8.add(off), m.len());
-                    *buf_u8.add(off + m.len()) = 0;
-                }
-                off += m.len() + 1;
-            }
-            unsafe { *(member_ptrs_base.add(members.len())) = std::ptr::null_mut() };
-
-            let ent = result_buf as *mut u8;
-            unsafe {
-                std::ptr::write_unaligned(ent as *mut *mut c_char, name_ptr);
-                std::ptr::write_unaligned(ent.add(8) as *mut usize, members.len());
-                std::ptr::write_unaligned(ent.add(16) as *mut *mut *mut c_char, member_ptrs_base);
-                std::ptr::write_unaligned(ent.add(24) as *mut c_int, 1);
-            }
-            if !result.is_null() {
-                unsafe { *result = result_buf };
-            }
-            return 0;
-        }
-    }
-    libc::ENOENT
+    // SAFETY: the helper bounds the key and owns all returned storage.
+    unsafe { crate::aliases_abi::by_name(name) }
 }
 
 /// `getaliasbyname_r` — reentrant alias lookup by name.
@@ -28467,34 +28151,15 @@ pub unsafe extern "C" fn getaliasbyname_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    let mut open_errno = 0;
-    let rc = unsafe {
-        files_getaliasbyname_r(name, result_buf, buffer, buflen, result, &mut open_errno)
-    };
-    if rc == libc::ENOENT {
-        unsafe { set_abi_errno(libc::ENOENT) };
-    } else if open_errno != 0 {
-        unsafe { set_abi_errno(open_errno) };
-    }
-    rc
+    // SAFETY: the shared helper validates the key and complete output objects.
+    unsafe { crate::aliases_abi::by_name_r(name, result_buf, buffer, buflen, result) }
 }
 
-/// `getaliasent` — get next alias entry from /etc/aliases.
+/// `getaliasent` — enumerate configured aliases using growable output storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasent() -> *mut c_void {
-    let result = with_alias_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(ALIASES_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return std::ptr::null_mut(),
-            }
-        }
-        unsafe { alias_iter_next(state) }
-    });
-    if result.is_null() {
-        unsafe { set_abi_errno(libc::ENOENT) };
-    }
-    result
+    // SAFETY: the helper leases the cursor and owns the complete result buffer.
+    unsafe { crate::aliases_abi::next() }
 }
 
 /// `getaliasent_r` — reentrant get next alias entry.
@@ -28505,76 +28170,8 @@ pub unsafe extern "C" fn getaliasent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    use std::io::BufRead;
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
-    }
-    if result_buf.is_null() || buffer.is_null() {
-        return libc::EINVAL;
-    }
-
-    with_alias_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(ALIASES_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return libc::ENOENT,
-            }
-        }
-        let reader = match state.reader.as_mut() {
-            Some(reader) => reader,
-            None => return libc::ENOENT,
-        };
-        loop {
-            state.line_buf.clear();
-            match reader.read_until(b'\n', &mut state.line_buf) {
-                Ok(0) => return libc::ENOENT,
-                Err(_) => return libc::ENOENT,
-                Ok(_) => {}
-            }
-            if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(&state.line_buf) {
-                let pname = &entry.name;
-                let members = &entry.members;
-                let ptr_size = core::mem::size_of::<*mut c_char>();
-                let mut needed = pname.len() + 1;
-                for m in members {
-                    needed += m.len() + 1;
-                }
-                let ptrs_offset = (needed + (ptr_size - 1)) & !(ptr_size - 1);
-                let total = ptrs_offset + (members.len() + 1) * ptr_size;
-                if total > buflen {
-                    return libc::ERANGE;
-                }
-                let buf_u8 = buffer as *mut u8;
-                let name_ptr = buffer;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(pname.as_ptr(), buf_u8, pname.len());
-                    *buf_u8.add(pname.len()) = 0;
-                }
-                let mut off = pname.len() + 1;
-                let member_ptrs_base = unsafe { buf_u8.add(ptrs_offset) } as *mut *mut c_char;
-                for (i, m) in members.iter().enumerate() {
-                    unsafe {
-                        *(member_ptrs_base.add(i)) = buf_u8.add(off) as *mut c_char;
-                        std::ptr::copy_nonoverlapping(m.as_ptr(), buf_u8.add(off), m.len());
-                        *buf_u8.add(off + m.len()) = 0;
-                    }
-                    off += m.len() + 1;
-                }
-                unsafe { *(member_ptrs_base.add(members.len())) = std::ptr::null_mut() };
-                let ent = result_buf as *mut u8;
-                unsafe {
-                    *(ent as *mut *mut c_char) = name_ptr;
-                    *(ent.add(8) as *mut usize) = members.len();
-                    *(ent.add(16) as *mut *mut *mut c_char) = member_ptrs_base;
-                    *(ent.add(24) as *mut c_int) = 0;
-                }
-                if !result.is_null() {
-                    unsafe { *result = result_buf };
-                }
-                return 0;
-            }
-        }
-    })
+    // SAFETY: the helper validates outputs and retains a short-buffer record.
+    unsafe { crate::aliases_abi::next_r(result_buf, buffer, buflen, result) }
 }
 
 /// `endfsent` — close filesystem table iteration.

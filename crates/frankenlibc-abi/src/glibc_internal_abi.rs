@@ -7740,11 +7740,10 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
 ) -> c_int {
     unsafe { crate::semaphore_wait::timed_cp(sem, clockid, abstime.cast(), false) }
 }
-// setaliasent: mail alias iterator reset — native via endaliasent
-// (resets the thread-local alias iterator so getaliasent starts from the top)
+/// Select and rewind the configured aliases enumeration providers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setaliasent() {
-    unsafe { super::unistd_abi::endaliasent() };
+    crate::aliases_abi::setent();
 }
 /// setfsgid/setfsuid: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

@@ -113,7 +113,7 @@ struct Fingerprint {
     ino: u64,
 }
 
-const DATABASE_COUNT: usize = 11;
+const DATABASE_COUNT: usize = 12;
 
 struct ConfigCache {
     path: Vec<u8>,
@@ -178,6 +178,7 @@ pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), Confi
         b"ethers" => Database::Ethers,
         b"rpc" => Database::Rpc,
         b"netgroup" => Database::Netgroup,
+        b"aliases" => Database::Aliases,
         _ => return Err(ConfigureError::UnknownDatabase),
     };
     let services = frankenlibc_core::nss::parse_sources(line)
@@ -239,6 +240,7 @@ fn database_slot(database: Database) -> usize {
         Database::Rpc => 8,
         Database::Networks => 9,
         Database::Ethers => 10,
+        Database::Aliases => 11,
     }
 }
 
@@ -1145,6 +1147,7 @@ pub(crate) enum NetdbDatabase {
     Group,
     Shadow,
     Networks,
+    Aliases,
 }
 
 impl NetdbDatabase {
@@ -1158,6 +1161,7 @@ impl NetdbDatabase {
             Self::Group => services(Database::Group),
             Self::Shadow => services(Database::Shadow),
             Self::Networks => services(Database::Networks),
+            Self::Aliases => services(Database::Aliases),
         }
     }
 
@@ -1178,6 +1182,7 @@ impl NetdbDatabase {
             Self::Group => ("setgrent", "getgrent_r", "endgrent"),
             Self::Shadow => ("setspent", "getspent_r", "endspent"),
             Self::Networks => ("setnetent", "getnetent_r", "endnetent"),
+            Self::Aliases => ("setaliasent", "getaliasent_r", "endaliasent"),
         }
     }
 }
@@ -1227,6 +1232,11 @@ impl NetdbEnumeration {
                 }
                 NetdbDatabase::Shadow => {
                     let next: GetEntFn<libc::spwd> = core::mem::transmute(self.next);
+                    next(output.cast(), buffer, capacity, error)
+                }
+                NetdbDatabase::Aliases => {
+                    let next: GetEntFn<crate::aliases_abi::AliasEnt> =
+                        core::mem::transmute(self.next);
                     next(output.cast(), buffer, capacity, error)
                 }
                 NetdbDatabase::Hosts => {
@@ -1286,9 +1296,16 @@ pub(crate) fn netdb_setent(
     stayopen: c_int,
 ) -> Option<c_int> {
     let address = module_function(service, database.functions().0)?;
-    // SAFETY: these NSS set callbacks accept one int and return an nss_status.
-    let function: SetEntFn = unsafe { core::mem::transmute(address) };
-    Some(unsafe { function(stayopen) })
+    if matches!(database, NetdbDatabase::Aliases) {
+        // SAFETY: aliases is the NSS database whose set callback takes no
+        // stay-open argument. Do not call it through a mismatched Rust type.
+        let function: EndEntFn = unsafe { core::mem::transmute(address) };
+        Some(unsafe { function() })
+    } else {
+        // SAFETY: the remaining NSS set callbacks take one int.
+        let function: SetEntFn = unsafe { core::mem::transmute(address) };
+        Some(unsafe { function(stayopen) })
+    }
 }
 
 pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_int> {
@@ -1298,6 +1315,35 @@ pub(crate) fn netdb_endent(database: NetdbDatabase, service: &[u8]) -> Option<c_
     // SAFETY: these NSS end callbacks take no arguments and return nss_status.
     let function: EndEntFn = unsafe { core::mem::transmute(address) };
     Some(unsafe { function() })
+}
+
+/// Invoke the configured aliases provider using the caller's exact buffer.
+/// Missing entry points remain distinct from a provider returning UNAVAIL.
+///
+/// # Safety
+/// The name is terminated and the complete output and buffer are writable.
+pub(crate) unsafe fn alias_by_name_r(
+    service: &[u8],
+    name: *const c_char,
+    output: *mut crate::aliases_abi::AliasEnt,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> Option<c_int> {
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    let saved_errno = unsafe { *error };
+    let address = module_function(service, "getaliasbyname_r");
+    // SAFETY: loader bookkeeping must not replace the caller's error value.
+    unsafe { crate::errno_abi::set_abi_errno(saved_errno) };
+    type ByName = unsafe extern "C" fn(
+        *const c_char,
+        *mut crate::aliases_abi::AliasEnt,
+        *mut c_char,
+        usize,
+        *mut c_int,
+    ) -> c_int;
+    // SAFETY: this symbol has the documented NSS aliases callback signature.
+    let function: ByName = unsafe { core::mem::transmute(address?) };
+    Some(unsafe { function(name, output, buffer, capacity, error) })
 }
 
 /// Public legacy hosts operations select their own NSS entry point. These

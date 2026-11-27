@@ -11,6 +11,7 @@ on:
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/socket/**'
       - 'crates/frankenlibc-core/src/nss/**'
+      - 'crates/frankenlibc-core/src/aliases/**'
       - 'crates/frankenlibc-core/src/crypt/**'
       - 'Cargo.toml'
       - 'crates/frankenlibc-core/Cargo.toml'
@@ -21,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/aliases_abi.rs'
       - 'crates/frankenlibc-abi/src/ethers_files.rs'
       - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
@@ -49,9 +51,14 @@ on:
       - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
       - 'tests/integration/fixture_nss.c'
       - 'tests/integration/fixture_nss_module_lib.c'
+      - 'tests/integration/fixture_nss_aliases.c'
+      - 'tests/integration/fixture_nss_aliases_module.c'
+      - 'tests/integration/fixture_nss_compat.c'
       - 'tests/integration/fixture_addrconfig.c'
       - 'tests/integration/fixture_native_dns_transport.c'
       - 'tests/integration/native_dns_fixture.py'
+      - 'scripts/check_nss_aliases.py'
+      - 'scripts/check_nss_compat.py'
       - '.github/workflows/native-resolver.yml'
   workflow_dispatch:
 
@@ -63,6 +70,73 @@ defaults:
     shell: bash
 
 jobs:
+  aliases-and-compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+      RUSTFLAGS: '-Zthreads=1 -Zunstable-options --jobs-backend=1 -Cllvm-args=-enable-tlsdesc'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Retain the dependency snapshot used for all NSS checks
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nss-aliases-compat
+          if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
+          cp Cargo.lock artifacts/nss-aliases-compat/Cargo.lock
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute aliases parser and NSS policy regressions
+        run: |
+          set -euo pipefail
+          for family in aliases nss; do
+            log="artifacts/nss-aliases-compat/core-$family.log"
+            cargo test --locked -p frankenlibc-core --lib "$family::" \
+              -- --test-threads=1 --nocapture 2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
+          done
+      - name: Build the deployed NSS providers
+        run: |
+          set -euo pipefail
+          # Keep the ABI crate's single codegen unit for its versioned exports.
+          # Split only membrane codegen, with one LLVM worker to bound memory.
+          cargo build --locked -p frankenlibc-abi --release --lib \
+            --config 'profile.release.package.frankenlibc-membrane.codegen-units=256' \
+            2>&1 | tee artifacts/nss-aliases-compat/release-build.log
+          test -s target/release/libfrankenlibc_abi.so
+      - name: Install isolated filesystem fixture support
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+      - name: Compare exported aliases with GNU in both runtime modes
+        run: |
+          set -euo pipefail
+          # Only the finished fixture needs mount-namespace privileges.
+          sudo -n python3 scripts/check_nss_aliases.py \
+            --candidate "$PWD/target/release/libfrankenlibc_abi.so" \
+            --output "$PWD/artifacts/nss-aliases-compat/aliases" \
+            2>&1 | tee artifacts/nss-aliases-compat/aliases.log
+      - name: Compare compat directives with GNU in both runtime modes
+        run: |
+          set -euo pipefail
+          sudo -n python3 scripts/check_nss_compat.py \
+            --candidate "$PWD/target/release/libfrankenlibc_abi.so" \
+            --output "$PWD/artifacts/nss-aliases-compat/compat" \
+            2>&1 | tee artifacts/nss-aliases-compat/compat.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nss-aliases-compat-results
+          path: artifacts/nss-aliases-compat/**
+          if-no-files-found: error
+
   native-files-parsers:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
