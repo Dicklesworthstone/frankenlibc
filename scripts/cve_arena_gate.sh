@@ -68,37 +68,32 @@ fi
 # Step 1: Run the CVE Arena test suite (unless skipped)
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_RUN}" != "1" ]]; then
+    # Never substitute an unrelated cargo test run for the CVE result runner.
+    # A prior summary must not be allowed to make a failed run look successful.
     if [[ ! -x "${RUNNER}" ]]; then
-        echo "${YELLOW}cve_arena_gate: runner not found at ${RUNNER}; looking for cargo test fallback${RESET}" >&2
-        # Fallback: attempt to run CVE arena tests via cargo
-        echo "cve_arena_gate: running CVE arena tests via cargo..."
-        mkdir -p "${RESULTS_DIR}"
-        set +e
-        cargo test -p frankenlibc-membrane --test 'cve_arena*' -- --test-threads=1 2>&1 | \
-            tee "${RESULTS_DIR}/cargo_test_output.log"
-        CARGO_RC=${PIPESTATUS[0]}
-        set -e
-        if [[ "${CARGO_RC}" -ne 0 ]]; then
-            echo "${YELLOW}cve_arena_gate: cargo test exited ${CARGO_RC} (some CVE tests may intentionally fail on stock)${RESET}"
-        fi
+        echo "${RED}cve_arena_gate: CVE runner not executable: ${RUNNER}${RESET}" >&2
+        exit 2
+    fi
+    mkdir -p "${RESULTS_DIR}"
+    rm -f -- "${SUMMARY_JSON}"
+    echo "cve_arena_gate: running CVE Arena suite in isolated mode..."
+    if [[ -n "${CATEGORY}" && "${CATEGORY}" != "all" ]]; then
+        "${RUNNER}" --category="${CATEGORY}" --results-dir="${RESULTS_DIR}"
     else
-        echo "cve_arena_gate: running CVE Arena suite in isolated mode..."
-        if [[ -n "${CATEGORY}" && "${CATEGORY}" != "all" ]]; then
-            "${RUNNER}" --category="${CATEGORY}" --results-dir="${RESULTS_DIR}"
-        else
-            "${RUNNER}" --all --results-dir="${RESULTS_DIR}"
-        fi
+        "${RUNNER}" --all --results-dir="${RESULTS_DIR}"
     fi
 fi
 
 # ---------------------------------------------------------------------------
 # Step 2: Generate the report (produces summary.json)
 # ---------------------------------------------------------------------------
-if [[ -x "${REPORTER}" ]]; then
-    echo ""
-    echo "cve_arena_gate: generating report..."
-    "${REPORTER}" "${RESULTS_DIR}"
+if [[ ! -x "${REPORTER}" ]]; then
+    echo "${RED}cve_arena_gate: CVE reporter not executable: ${REPORTER}${RESET}" >&2
+    exit 2
 fi
+echo ""
+echo "cve_arena_gate: generating report..."
+"${REPORTER}" "${RESULTS_DIR}"
 
 # ---------------------------------------------------------------------------
 # Step 3: Parse summary JSON
@@ -109,6 +104,19 @@ if [[ ! -f "${SUMMARY_JSON}" ]]; then
     exit 2
 fi
 
+# Reject missing or malformed counters instead of defaulting to zero.
+if ! jq -e '
+  . as $s |
+  ($s | type) == "object" and
+  ([$s.total_cves, $s.prevented, $s.detected, $s.regressions, $s.baseline]
+    | all(. != null and (type == "number") and (. >= 0) and (floor == .))) and
+  ($s.prevention_rate | type) == "number" and
+  ($s.prevention_rate >= 0 and $s.prevention_rate <= 1) and
+  ($s.total_cves >= ($s.prevented + $s.detected + $s.regressions + $s.baseline))
+' "${SUMMARY_JSON}" >/dev/null; then
+    echo "${RED}cve_arena_gate: summary has invalid or inconsistent counters${RESET}" >&2
+    exit 2
+fi
 TOTAL="$(jq -r '.total_cves // 0' "${SUMMARY_JSON}")"
 PREVENTED="$(jq -r '.prevented // 0' "${SUMMARY_JSON}")"
 DETECTED="$(jq -r '.detected // 0' "${SUMMARY_JSON}")"
