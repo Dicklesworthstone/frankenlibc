@@ -15493,6 +15493,21 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
     // Route through the stdout stream to maintain buffer coherence.
     let stdout_ptr = active_stdout_stream();
     let id = canonical_stream_id(stdout_ptr);
+    if is_cookie_stream(id) {
+        // Cookie streams (including fixed fmemopen buffers) have no writable
+        // descriptor. Share vfprintf's callback, buffering, and error path
+        // before consuming arguments or populating the descriptor write cache.
+        // SAFETY: args is live, the FILE lock is recursive, and no private
+        // stream borrow is held while vfprintf acquires the stream.
+        return unsafe {
+            vfprintf_for_caller(
+                stdout_ptr,
+                format,
+                core::ptr::from_mut(&mut args).cast(),
+                caller,
+            )
+        };
+    }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -17060,6 +17075,12 @@ pub(crate) unsafe fn vprintf_for_caller(
 
     let stdout_ptr = active_stdout_stream();
     let id = canonical_stream_id(stdout_ptr);
+    if is_cookie_stream(id) {
+        // As in printf, preserve the original caller and consume this va_list
+        // exactly once through the shared callback-aware stream formatter.
+        // SAFETY: the public FILE lock is recursive; no stream borrow is held.
+        return unsafe { vfprintf_for_caller(stdout_ptr, format, ap, caller) };
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);

@@ -251,6 +251,24 @@ jobs:
               2>&1 | tee "$log"
             grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "$log"
           done
+      - name: Route redirected stdout formatting through cookie callbacks
+        if: always()
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/cookie-callbacks
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          log=artifacts/cookie-callbacks/redirected-stdout.log
+          # The regression starts independent strict and hardened children.
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test conformance_diff_stdio_printf \
+            redirected_stdout::printf_and_vprintf_use_cookie_stdout \
+            -- --exact --test-threads=1 --nocapture 2>&1 | tee "$log"
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log"
       - name: Preserve byte conversion across native FILE backends
         if: always()
         env:

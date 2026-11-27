@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![feature(c_variadic)]
 
 //! Differential conformance harness for `<stdio.h>` snprintf / sscanf.
 //!
@@ -1177,4 +1178,395 @@ fn diff_sscanf_scanset() {
         "sscanf scanset divergences:\n{}",
         render_divs(&divs)
     );
+}
+
+// stdout is process-global, so this differential matrix runs in exact-filtered
+// children. Each provider uses its own FILE, callbacks and stdout cell, with
+// errno read and written through that provider's accessor.
+mod redirected_stdout {
+    use super::{c_char, c_int, fl};
+    use std::ffi::c_void;
+
+    const CHILD: &str = "FRANKENLIBC_PRINTF_COOKIE_STDOUT_CHILD";
+    const TEST: &str = "redirected_stdout::printf_and_vprintf_use_cookie_stdout";
+    const SENTINEL: c_int = 0x5eed;
+    const OUTPUT: &[u8] = b"stdout|0042|3.25|\0|\n";
+
+    mod host {
+        use super::{c_char, c_int, c_void, fl};
+
+        unsafe extern "C" {
+            pub static mut stdout: *mut c_void;
+            pub fn __errno_location() -> *mut c_int;
+            pub fn fmemopen(buffer: *mut c_void, size: usize, mode: *const c_char) -> *mut c_void;
+            pub fn fopencookie(
+                cookie: *mut c_void,
+                mode: *const c_char,
+                funcs: fl::CookieIoFuncs,
+            ) -> *mut c_void;
+        }
+
+        unsafe extern "C-unwind" {
+            pub fn printf(format: *const c_char, ...) -> c_int;
+            pub fn vprintf(format: *const c_char, args: *mut c_void) -> c_int;
+            pub fn __printf_chk(flag: c_int, format: *const c_char, ...) -> c_int;
+            pub fn __vprintf_chk(flag: c_int, format: *const c_char, args: *mut c_void) -> c_int;
+            pub fn setvbuf(
+                stream: *mut c_void,
+                buffer: *mut c_char,
+                mode: c_int,
+                size: usize,
+            ) -> c_int;
+            pub fn fflush(stream: *mut c_void) -> c_int;
+            pub fn ferror(stream: *mut c_void) -> c_int;
+            pub fn fclose(stream: *mut c_void) -> c_int;
+        }
+    }
+
+    fn errno_slot(native: bool) -> *mut c_int {
+        // SAFETY: each provider exposes its calling thread's writable errno.
+        unsafe {
+            if native {
+                frankenlibc_abi::errno_abi::__errno_location()
+            } else {
+                host::__errno_location()
+            }
+        }
+    }
+
+    // Construct a real va_list from promoted arguments, including an FP
+    // register argument. Do not fabricate architecture-specific va_list bytes.
+    unsafe extern "C-unwind" fn call_vprintf(
+        native: c_int,
+        fortified: c_int,
+        format: *const c_char,
+        mut args: ...
+    ) -> c_int {
+        let args = std::ptr::addr_of_mut!(args).cast::<c_void>();
+        // SAFETY: this wrapper owns the live va_list and the caller supplies
+        // arguments matching format; each arm consumes it exactly once.
+        unsafe {
+            match (native != 0, fortified != 0) {
+                (true, false) => fl::vprintf(format, args),
+                (false, false) => host::vprintf(format, args),
+                (true, true) => frankenlibc_abi::fortify_abi::__vprintf_chk(1, format, args),
+                (false, true) => host::__vprintf_chk(1, format, args),
+            }
+        }
+    }
+
+    fn render(native: bool, variant: usize) -> c_int {
+        // Width, mixed GP/FP arguments and the counted NUL keep this on the
+        // generic formatter, away from literal/exact-integer fast paths.
+        let format = c"%s|%04d|%.2f|%c|\n";
+        // SAFETY: all four entry points receive the same promoted C arguments.
+        unsafe {
+            match variant {
+                0 if native => fl::printf(format.as_ptr(), c"stdout".as_ptr(), 42, 3.25f64, 0),
+                0 => host::printf(format.as_ptr(), c"stdout".as_ptr(), 42, 3.25f64, 0),
+                1 | 3 => call_vprintf(
+                    native as c_int,
+                    (variant == 3) as c_int,
+                    format.as_ptr(),
+                    c"stdout".as_ptr(),
+                    42,
+                    3.25f64,
+                    0,
+                ),
+                2 if native => frankenlibc_abi::fortify_abi::__printf_chk(
+                    1,
+                    format.as_ptr(),
+                    c"stdout".as_ptr(),
+                    42,
+                    3.25f64,
+                    0,
+                ),
+                2 => host::__printf_chk(1, format.as_ptr(), c"stdout".as_ptr(), 42, 3.25f64, 0),
+                _ => unreachable!("bounded printf variant"),
+            }
+        }
+    }
+
+    struct Redirect {
+        slot: *mut *mut c_void,
+        saved: *mut c_void,
+        stream: *mut c_void,
+        close: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    }
+
+    impl Redirect {
+        unsafe fn install(native: bool, stream: *mut c_void) -> Self {
+            let slot = if native {
+                &raw mut fl::stdout
+            } else {
+                // SAFETY: take the address of the linked GNU stdout cell.
+                unsafe { &raw mut host::stdout }
+            };
+            // SAFETY: the isolated child owns this provider's stdout cell.
+            let saved = unsafe { slot.replace(stream) };
+            Self {
+                slot,
+                saved,
+                stream,
+                close: if native { fl::fclose } else { host::fclose },
+            }
+        }
+
+        fn finish(mut self) -> c_int {
+            // Restore before fclose, which could invoke a user callback.
+            // Clearing ownership first prevents a second close during unwind.
+            unsafe { self.slot.write(self.saved) };
+            let stream = std::mem::replace(&mut self.stream, std::ptr::null_mut());
+            // SAFETY: this guard owns the live stream and matching provider.
+            unsafe { (self.close)(stream) }
+        }
+    }
+
+    impl Drop for Redirect {
+        fn drop(&mut self) {
+            // SAFETY: the process-global cell remains live. On panic, close
+            // while the caller's cookie and setvbuf storage are still alive.
+            unsafe {
+                self.slot.write(self.saved);
+                if !self.stream.is_null() {
+                    (self.close)(self.stream);
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct Observation {
+        configured: c_int,
+        printed: (c_int, c_int, bool),
+        before_flush: Vec<u8>,
+        flushed: (c_int, c_int, bool),
+        closed: c_int,
+        after_close: Vec<u8>,
+    }
+
+    fn observe(
+        native: bool,
+        variant: usize,
+        stream: *mut c_void,
+        mode: c_int,
+        buffer: *mut c_char,
+        capacity: usize,
+        snapshot: impl Fn() -> Vec<u8>,
+    ) -> Observation {
+        let configure = if native { fl::setvbuf } else { host::setvbuf };
+        let flush = if native { fl::fflush } else { host::fflush };
+        let error = if native { fl::ferror } else { host::ferror };
+        // SAFETY: callers retain stream backing and buffer through finish.
+        // No assertion runs while the selected stdout cell is redirected.
+        unsafe {
+            let redirect = Redirect::install(native, stream);
+            let configured = configure(stream, buffer, mode, capacity);
+            *errno_slot(native) = SENTINEL;
+            let count = render(native, variant);
+            let number = *errno_slot(native);
+            let printed = (count, number, error(stream) != 0);
+            let before_flush = snapshot();
+            *errno_slot(native) = SENTINEL;
+            let result = flush(stream);
+            let number = *errno_slot(native);
+            let flushed = (result, number, error(stream) != 0);
+            let closed = redirect.finish();
+            Observation {
+                configured,
+                printed,
+                before_flush,
+                flushed,
+                closed,
+                after_close: snapshot(),
+            }
+        }
+    }
+
+    struct Cookie {
+        native: bool,
+        fail: bool,
+        bytes: Vec<u8>,
+    }
+
+    unsafe extern "C-unwind" fn write_cookie(
+        opaque: *mut c_void,
+        input: *const c_char,
+        length: usize,
+    ) -> isize {
+        // SAFETY: cookie() retains this state through the matching fclose.
+        let cookie = unsafe { &mut *opaque.cast::<Cookie>() };
+        if cookie.fail {
+            // A zero-length write signals failure under the GNU cookie ABI.
+            // Set this provider's errno rather than an unrelated host cell.
+            unsafe { *errno_slot(cookie.native) = libc::ENOSPC };
+            return 0;
+        }
+        // SAFETY: the writer supplies length readable bytes, including NUL.
+        let bytes = unsafe { std::slice::from_raw_parts(input.cast(), length) };
+        cookie.bytes.extend_from_slice(bytes);
+        length as isize
+    }
+
+    fn cookie(native: bool, variant: usize, mode: c_int, fail: bool) -> Observation {
+        let mut state = Cookie {
+            native,
+            fail,
+            bytes: Vec::new(),
+        };
+        let state_pointer = &raw mut state;
+        let mut buffer = [0u8; 512];
+        let open = if native {
+            fl::fopencookie
+        } else {
+            host::fopencookie
+        };
+        let funcs = fl::CookieIoFuncs {
+            write: Some(write_cookie),
+            ..fl::CookieIoFuncs::default()
+        };
+        // SAFETY: state and buffering stay live until observe closes stream.
+        let stream = unsafe { open(state_pointer.cast(), c"w".as_ptr(), funcs) };
+        assert!(!stream.is_null());
+        observe(
+            native,
+            variant,
+            stream,
+            mode,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            // Capture a raw pointer, not a shared reference held across a
+            // callback's mutable borrow. Snapshot only between operations.
+            || unsafe { (*state_pointer).bytes.clone() },
+        )
+    }
+
+    fn fixed_memory(native: bool, variant: usize) -> Observation {
+        let mut buffer = [0xa5u8; 256];
+        let pointer = buffer.as_mut_ptr();
+        let open = if native { fl::fmemopen } else { host::fmemopen };
+        // SAFETY: the complete caller buffer outlives the selected stream.
+        let stream = unsafe { open(pointer.cast(), buffer.len(), c"w".as_ptr()) };
+        assert!(!stream.is_null());
+        observe(
+            native,
+            variant,
+            stream,
+            libc::_IONBF,
+            std::ptr::null_mut(),
+            0,
+            // Preserve bytes beyond the counted NUL and the output boundary.
+            || unsafe { std::slice::from_raw_parts(pointer, 256).to_vec() },
+        )
+    }
+
+    #[test]
+    fn printf_and_vprintf_use_cookie_stdout() {
+        if std::env::var_os(CHILD).is_none() {
+            for mode in ["strict", "hardened"] {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+                    .env(CHILD, "1")
+                    .env("FRANKENLIBC_MODE", mode)
+                    .env_remove("LD_PRELOAD")
+                    .env_remove("LD_AUDIT")
+                    .output()
+                    .expect("run isolated stdout differential test");
+                let report = String::from_utf8_lossy(&output.stdout);
+                assert!(
+                    output.status.success() && report.contains("1 passed"),
+                    "{mode}: child must execute and pass the regression\n{report}\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            return;
+        }
+
+        // Bound a lock or callback regression instead of hanging the parent.
+        // SAFETY: this exact-filtered child owns its process-wide alarm.
+        unsafe { libc::alarm(30) };
+
+        // These must be independent implementations and independent public
+        // data cells; comparing a provider to itself cannot establish parity.
+        assert_ne!(fl::printf as *const (), host::printf as *const ());
+        assert_ne!(fl::vprintf as *const (), host::vprintf as *const ());
+        assert_ne!(
+            frankenlibc_abi::fortify_abi::__printf_chk as *const (),
+            host::__printf_chk as *const ()
+        );
+        assert_ne!(
+            frankenlibc_abi::fortify_abi::__vprintf_chk as *const (),
+            host::__vprintf_chk as *const ()
+        );
+        assert_ne!(fl::fopencookie as *const (), host::fopencookie as *const ());
+        assert_ne!(fl::fmemopen as *const (), host::fmemopen as *const ());
+        // SAFETY: compare the addresses without reading either FILE cell.
+        assert_ne!(&raw mut fl::stdout, unsafe { &raw mut host::stdout });
+
+        let mut compared = 0;
+        for (variant, name) in ["printf", "vprintf", "__printf_chk", "__vprintf_chk"]
+            .into_iter()
+            .enumerate()
+        {
+            for mode in [libc::_IOFBF, libc::_IOLBF, libc::_IONBF] {
+                let reference = cookie(false, variant, mode, false);
+                assert_eq!(reference.configured, 0);
+                assert_eq!(reference.printed.0, OUTPUT.len() as c_int);
+                assert!(!reference.printed.2);
+                assert_eq!(reference.flushed.0, 0);
+                assert!(!reference.flushed.2);
+                assert_eq!(reference.closed, 0);
+                assert_eq!(reference.after_close, OUTPUT);
+                assert_eq!(
+                    reference.before_flush.as_slice(),
+                    if mode == libc::_IOFBF {
+                        b"".as_slice()
+                    } else {
+                        OUTPUT
+                    }
+                );
+                assert_eq!(
+                    cookie(true, variant, mode, false),
+                    reference,
+                    "{name}/{mode}"
+                );
+                compared += 1;
+            }
+
+            let reference = cookie(false, variant, libc::_IONBF, true);
+            assert!(reference.printed.0 < 0);
+            assert_eq!(
+                (reference.printed.1, reference.printed.2),
+                (libc::ENOSPC, true)
+            );
+            assert!(reference.before_flush.is_empty());
+            assert!(reference.after_close.is_empty());
+            assert_eq!(
+                cookie(true, variant, libc::_IONBF, true),
+                reference,
+                "{name}: immediate callback failure"
+            );
+            compared += 1;
+
+            let reference = fixed_memory(false, variant);
+            let mut expected = vec![0xa5; 256];
+            expected[..OUTPUT.len()].copy_from_slice(OUTPUT);
+            expected[OUTPUT.len()] = 0;
+            assert_eq!(reference.configured, 0);
+            assert_eq!(reference.printed.0, OUTPUT.len() as c_int);
+            assert!(!reference.printed.2);
+            assert_eq!(reference.flushed.0, 0);
+            assert_eq!(reference.closed, 0);
+            assert_eq!(reference.after_close, expected);
+            assert_eq!(
+                fixed_memory(true, variant),
+                reference,
+                "{name}: fixed memory"
+            );
+            compared += 1;
+        }
+        assert_eq!(compared, 20, "all stream/caller combinations must execute");
+        // SAFETY: all redirected streams have closed and this child is done.
+        unsafe { libc::alarm(0) };
+    }
 }
