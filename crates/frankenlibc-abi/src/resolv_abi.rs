@@ -372,16 +372,16 @@ impl ServiceLookupCache {
             .filter_map(frankenlibc_core::resolv::parse_services_line)
         {
             let entry_index = self.entries.len();
-            let protocol_hash = ascii_casefold_hash(&entry.protocol);
+            let protocol_hash = netdb_key_hash(&entry.protocol);
             self.name_keys.push(ServiceNameLookupKey {
-                name_hash: ascii_casefold_hash(&entry.name),
+                name_hash: netdb_key_hash(&entry.name),
                 protocol_hash,
                 entry_index,
                 name: entry.name.clone(),
             });
             self.name_keys
                 .extend(entry.aliases.iter().map(|alias| ServiceNameLookupKey {
-                    name_hash: ascii_casefold_hash(alias),
+                    name_hash: netdb_key_hash(alias),
                     protocol_hash,
                     entry_index,
                     name: alias.clone(),
@@ -412,26 +412,24 @@ impl ServiceLookupCache {
     ) -> Option<&frankenlibc_core::resolv::ServiceEntry> {
         self.rebuild_if_needed(generation, content);
 
-        let name_hash = ascii_casefold_hash(name);
+        let name_hash = netdb_key_hash(name);
         let start = self
             .name_keys
             .partition_point(|key| key.name_hash < name_hash);
         let end = self
             .name_keys
             .partition_point(|key| key.name_hash <= name_hash);
-        let proto_hash = proto_filter.map(ascii_casefold_hash);
+        let proto_hash = proto_filter.map(netdb_key_hash);
         let mut best_entry_index = None;
 
         for key in &self.name_keys[start..end] {
-            if proto_hash.is_some_and(|hash| key.protocol_hash != hash)
-                || !key.name.eq_ignore_ascii_case(name)
-            {
+            if proto_hash.is_some_and(|hash| key.protocol_hash != hash) || key.name != name {
                 continue;
             }
 
             let entry = &self.entries[key.entry_index];
             if let Some(filter) = proto_filter
-                && !entry.protocol.eq_ignore_ascii_case(filter)
+                && entry.protocol != filter
             {
                 continue;
             }
@@ -444,48 +442,9 @@ impl ServiceLookupCache {
         best_entry_index.map(|index| &self.entries[index])
     }
 
-    /// Visit every record whose canonical name or alias equals `name`, in the
-    /// original backend order. A record is visited once even if both its
-    /// canonical name and one of its aliases match.
-    fn visit_by_name<E>(
-        &mut self,
-        generation: u64,
-        content: &[u8],
-        name: &[u8],
-        mut visit: impl FnMut(&frankenlibc_core::resolv::ServiceEntry) -> Result<(), E>,
-    ) -> Result<(), E> {
-        self.rebuild_if_needed(generation, content);
-
-        let name_hash = ascii_casefold_hash(name);
-        let start = self
-            .name_keys
-            .partition_point(|key| key.name_hash < name_hash);
-        let end = self
-            .name_keys
-            .partition_point(|key| key.name_hash <= name_hash);
-        let mut last_entry_index = None;
-
-        // `sort_by_key` is stable, and keys are appended in record order, so
-        // this hash bucket retains the backend's first-to-last ordering.
-        for key in &self.name_keys[start..end] {
-            // Hash equality only narrows the search; exact comparison is the
-            // collision guard and remains ASCII case-insensitive.
-            if !key.name.eq_ignore_ascii_case(name) || last_entry_index == Some(key.entry_index) {
-                continue;
-            }
-
-            debug_assert!(last_entry_index.is_none_or(|last| last < key.entry_index));
-            last_entry_index = Some(key.entry_index);
-            visit(&self.entries[key.entry_index])?;
-        }
-
-        Ok(())
-    }
-
     /// Port lookup for `getservbyport`. `port` is in HOST order. Returns the
     /// lowest-`entry_index` record whose port matches and whose protocol satisfies
-    /// `proto_filter` (ASCII case-insensitive) — i.e. the first matching line in file
-    /// order, exactly what the replaced `split('\n').find_map(..)` scan returned.
+    /// `proto_filter` byte-for-byte, preserving GNU's first matching file record.
     fn lookup_by_port(
         &mut self,
         generation: u64,
@@ -501,9 +460,7 @@ impl ServiceLookupCache {
         self.port_keys[start..end]
             .iter()
             .filter(|key| match proto_filter {
-                Some(filter) => self.entries[key.entry_index]
-                    .protocol
-                    .eq_ignore_ascii_case(filter),
+                Some(filter) => self.entries[key.entry_index].protocol == filter,
                 None => true,
             })
             .map(|key| key.entry_index)
@@ -557,13 +514,13 @@ impl ProtocolLookupCache {
         {
             let entry_index = self.entries.len();
             self.name_keys.push(ProtocolNameLookupKey {
-                name_hash: ascii_casefold_hash(&entry.name),
+                name_hash: netdb_key_hash(&entry.name),
                 entry_index,
                 name: entry.name.clone(),
             });
             self.name_keys
                 .extend(entry.aliases.iter().map(|alias| ProtocolNameLookupKey {
-                    name_hash: ascii_casefold_hash(alias),
+                    name_hash: netdb_key_hash(alias),
                     entry_index,
                     name: alias.clone(),
                 }));
@@ -589,7 +546,7 @@ impl ProtocolLookupCache {
     ) -> Option<&frankenlibc_core::resolv::ProtocolEntry> {
         self.rebuild_if_needed(generation, content);
 
-        let name_hash = ascii_casefold_hash(name);
+        let name_hash = netdb_key_hash(name);
         let start = self
             .name_keys
             .partition_point(|key| key.name_hash < name_hash);
@@ -599,7 +556,7 @@ impl ProtocolLookupCache {
         let mut best_entry_index = None;
 
         for key in &self.name_keys[start..end] {
-            if !key.name.eq_ignore_ascii_case(name) {
+            if key.name != name {
                 continue;
             }
             if best_entry_index.is_none_or(|current| key.entry_index < current) {
@@ -630,18 +587,13 @@ impl ProtocolLookupCache {
 }
 
 #[inline]
-fn ascii_casefold_hash(bytes: &[u8]) -> u64 {
+fn netdb_key_hash(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
     let mut hash = FNV_OFFSET;
     for &byte in bytes {
-        let folded = if byte.is_ascii_uppercase() {
-            byte + 32
-        } else {
-            byte
-        };
-        hash ^= u64::from(folded);
+        hash ^= u64::from(byte);
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash ^ (bytes.len() as u64)
@@ -1095,17 +1047,6 @@ pub(crate) unsafe fn service_lookup_r(
         },
         None,
     )
-}
-
-/// Visit every parsed `/etc/services` record matching `name`, borrowed from the
-/// generation-stamped name index and in original backend order.
-fn with_service_entries_by_name<E>(
-    name: &[u8],
-    f: impl FnMut(&frankenlibc_core::resolv::ServiceEntry) -> Result<(), E>,
-) -> std::io::Result<Result<(), E>> {
-    with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| cache.visit_by_name(generation, content, name, f))
-    })
 }
 
 /// Bench-only: reconstruct the pre-lever per-call work that `lookup_service_profiles` used to
@@ -1769,87 +1710,8 @@ fn profiles_for_port(
     Ok(profiles)
 }
 
-fn service_entry_profile(
-    entry: &frankenlibc_core::resolv::ServiceEntry,
-    hints: Option<&libc::addrinfo>,
-) -> Result<Option<AddrinfoProfile>, c_int> {
-    let (socktype, protocol) = hints
-        .map(|h| (h.ai_socktype, h.ai_protocol))
-        .unwrap_or((0, 0));
-    let is_tcp = entry.protocol.eq_ignore_ascii_case(b"tcp");
-    let is_udp = entry.protocol.eq_ignore_ascii_case(b"udp");
-
-    match socktype {
-        0 => match protocol {
-            0 => {
-                if is_tcp {
-                    Ok(Some(AddrinfoProfile {
-                        port: entry.port,
-                        socktype: libc::SOCK_STREAM,
-                        protocol: libc::IPPROTO_TCP,
-                    }))
-                } else if is_udp {
-                    Ok(Some(AddrinfoProfile {
-                        port: entry.port,
-                        socktype: libc::SOCK_DGRAM,
-                        protocol: libc::IPPROTO_UDP,
-                    }))
-                } else {
-                    Ok(None)
-                }
-            }
-            libc::IPPROTO_TCP if is_tcp => Ok(Some(AddrinfoProfile {
-                port: entry.port,
-                socktype: libc::SOCK_STREAM,
-                protocol,
-            })),
-            libc::IPPROTO_UDP if is_udp => Ok(Some(AddrinfoProfile {
-                port: entry.port,
-                socktype: libc::SOCK_DGRAM,
-                protocol,
-            })),
-            libc::IPPROTO_TCP | libc::IPPROTO_UDP => Ok(None),
-            _ => Err(libc::EAI_SERVICE),
-        },
-        libc::SOCK_STREAM => match protocol {
-            0 | libc::IPPROTO_TCP => {
-                if is_tcp {
-                    Ok(Some(AddrinfoProfile {
-                        port: entry.port,
-                        socktype,
-                        protocol: libc::IPPROTO_TCP,
-                    }))
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Err(libc::EAI_SOCKTYPE),
-        },
-        libc::SOCK_DGRAM => match protocol {
-            0 | libc::IPPROTO_UDP => {
-                if is_udp {
-                    Ok(Some(AddrinfoProfile {
-                        port: entry.port,
-                        socktype,
-                        protocol: libc::IPPROTO_UDP,
-                    }))
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Err(libc::EAI_SOCKTYPE),
-        },
-        libc::SOCK_RAW => Err(libc::EAI_SERVICE),
-        _ => Err(libc::EAI_SOCKTYPE),
-    }
-}
-
 fn service_entry_matches(entry: &frankenlibc_core::resolv::ServiceEntry, service: &[u8]) -> bool {
-    entry.name.eq_ignore_ascii_case(service)
-        || entry
-            .aliases
-            .iter()
-            .any(|alias| alias.eq_ignore_ascii_case(service))
+    entry.name == service || entry.aliases.iter().any(|alias| alias == service)
 }
 
 fn lookup_service_entry_in_content(
@@ -1863,7 +1725,7 @@ fn lookup_service_entry_in_content(
             return None;
         }
         if let Some(pf) = proto_filter
-            && !entry.protocol.eq_ignore_ascii_case(pf)
+            && entry.protocol != pf
         {
             return None;
         }
@@ -1879,11 +1741,37 @@ fn lookup_service_profiles(
     // Invalid transport combinations fail even when no service record exists.
     let candidates = profiles_for_port(0, hints, true)?;
     let sources = crate::nss_module::services(Database::Services);
-    if !service_sources_are_files(&sources) {
+    let mut profiles = Profiles::new();
+    if service_sources_are_files(&sources) {
+        // Resolve the first matching record independently for each requested
+        // transport, in GNU's TCP-before-UDP order. Scanning every matching
+        // record yielded duplicate ports and could overflow Profiles when a
+        // name appeared more than three times. Both lookups borrow one cached
+        // snapshot and retain the indexed, allocation-free steady-state path.
+        let _ = with_services_backend_snapshot(|content, generation| {
+            with_service_lookup_cache(|cache| {
+                for candidate in &*candidates {
+                    let protocol: &[u8] = match candidate.protocol {
+                        libc::IPPROTO_TCP => b"tcp",
+                        libc::IPPROTO_UDP => b"udp",
+                        _ => continue,
+                    };
+                    if let Some(entry) =
+                        cache.lookup_by_name(generation, content, service, Some(protocol))
+                    {
+                        profiles.push(AddrinfoProfile {
+                            port: entry.port,
+                            ..*candidate
+                        });
+                    }
+                }
+            })
+        });
+        // As before, a failed files read yields "no such service".
+    } else {
         // GNU resolves each transport separately: TCP can come from an early
         // source while UDP falls through to a later one. Numeric services and
         // AI_NUMERICSERV have already returned before entering this function.
-        let mut profiles = Profiles::new();
         for candidate in &*candidates {
             let protocol: &[u8] = match candidate.protocol {
                 libc::IPPROTO_TCP => b"tcp",
@@ -1901,34 +1789,8 @@ fn lookup_service_profiles(
                 });
             }
         }
-        return Ok((!profiles.is_empty()).then_some(profiles));
     }
-    // Narrow the generation-stamped name index before visiting records. This preserves the
-    // old file-order profile collection while reducing the hot per-call walk from O(records)
-    // to O(log indexed names + matching records).
-    let mut profiles = Profiles::new();
-    let scanned = with_service_entries_by_name(service, |entry| {
-        if let Some(profile) = service_entry_profile(entry, hints)?
-            && !profiles.contains(&profile)
-        {
-            profiles.push(profile);
-        }
-        Ok::<(), c_int>(())
-    });
-
-    // A backend read error still reports "no such service" rather than an error, exactly as
-    // the previous `read_services_backend()` / `Err(_) => return Ok(None)` did.
-    match scanned {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(err),
-        Err(_) => return Ok(None),
-    }
-
-    if profiles.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(profiles))
-    }
+    Ok((!profiles.is_empty()).then_some(profiles))
 }
 
 fn resolve_addrinfo_profiles(

@@ -32,6 +32,7 @@ on:
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_netdb_r_aliases.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_netdb_aliases.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_nss_files_parsers.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_crypt_schemes.rs'
       - 'crates/frankenlibc-abi/Cargo.toml'
@@ -229,6 +230,11 @@ jobs:
             -- --nocapture --test-threads=1 2>&1 | tee artifacts/services-enumeration/tests.log
           grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
             artifacts/services-enumeration/tests.log
+          cargo test -p frankenlibc-abi "${features[@]}" \
+            --test conformance_diff_netdb_aliases \
+            -- --nocapture --test-threads=1 2>&1 | tee artifacts/services-enumeration/files-keys.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' \
+            artifacts/services-enumeration/files-keys.log
       - name: Verify account cache refresh across file replacement and concurrent writes
         if: always()
         env:

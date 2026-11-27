@@ -408,60 +408,28 @@ pub fn reverse_lookup_hosts(content: &[u8], addr: &[u8]) -> Vec<Vec<u8>> {
 ///
 /// Format: `<service-name> <port>/<protocol> [<alias>...]`
 pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
-    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-        &line[..pos]
-    } else {
-        line
+    let (line, record) = parse_netdb_database_line(NssNetdbKind::Service, line)?;
+    let NssNetdbValue::Service { port, protocol } = record.value else {
+        return None;
     };
-
-    let mut fields = line
-        .split(|&b| is_resolver_field_separator(b))
-        .filter(|f| !f.is_empty());
-
-    let name = fields.next()?;
-    let port_proto = fields.next()?;
-    let aliases: Vec<Vec<u8>> = fields.map(|field| field.to_vec()).collect();
-
-    // MEASURED against live glibc by bind-mounting a synthetic /etc/services
-    // over the real one (bwrap --bind), then walking getservent. Four rules fl
-    // had stricter than the incumbent, each of which dropped an entry glibc
-    // yields:
-    //
-    //   "noproto 84"        -> accepted, protocol "" (a missing '/' is fine)
-    //   "emptyproto 85/"    -> accepted, protocol ""
-    //   "extraslash 87/tcp/x" -> accepted, protocol "tcp/x" (only the FIRST
-    //                          '/' separates; the rest belongs to the protocol)
-    //   "overflow 99999/tcp"-> accepted as port 34463, i.e. the low 16 bits
-    //
-    // and glibc still REJECTS "abc/tcp" (no digits) and "-1/tcp" (a minus
-    // sign), while accepting "+86/tcp" as 86.
-    let (port_field, proto) = match port_proto.iter().position(|&b| b == b'/') {
-        Some(slash) => (&port_proto[..slash], &port_proto[slash + 1..]),
-        None => (port_proto, &b""[..]),
-    };
-    let port = parse_service_port(port_field)?;
-
     Some(ServiceEntry {
-        name: name.to_vec(),
+        name: line[record.name].to_vec(),
         port,
-        protocol: proto.to_vec(),
-        aliases,
+        protocol: line[protocol].to_vec(),
+        aliases: line[record.aliases]
+            .split(|&byte| nss_netdb_space(byte))
+            .filter(|alias| !alias.is_empty())
+            .map(<[u8]>::to_vec)
+            .collect(),
     })
 }
 
-/// Parse an `/etc/protocols` or `/etc/rpc` number field the way glibc does.
+/// Parse the bounded unsigned-decimal field used by the public RPC reader.
 ///
-/// SHARED ON PURPOSE. `/etc/protocols` and `/etc/rpc` use the identical rule and
-/// previously had two independent implementations that disagreed with the
-/// incumbent in DIFFERENT ways -- protocols rejected `+7`, rpc accepted `-1`.
-/// The /etc/passwd and /etc/group copies of a uid parser drifted apart exactly
-/// like that (ea6beb9a5), so this one lives in a single place.
+/// Whole services and protocols records use [`parse_nss_netdb_line`] instead,
+/// including its unsigned-long sign and line-termination rules.
 ///
-/// glibc's rule, measured by bind-mounting synthetic files over /etc/protocols
-/// and /etc/rpc and walking getprotoent/getrpcent:
-///   * an optional `+` is accepted, a `-` is NOT -- "-1" is refused by both
-///     files, so a negative number is not spellable even though the field is
-///     stored in a signed `int`;
+///   * an optional `+` is accepted; negative fields are rejected;
 ///   * the digits are read as UNSIGNED and must fit 32 bits: "2147483648" is
 ///     accepted and comes back as -2147483648, while "4294967296" and
 ///     "99999999999" are refused;
@@ -489,44 +457,14 @@ pub fn parse_nss_int32_field(field: &[u8]) -> Option<i32> {
     Some(value as u32 as i32)
 }
 
-/// Parse the port half of a `port/proto` field the way glibc does.
-///
-/// An optional `+` is accepted and a `-` is not; at least one digit is
-/// required; and the value is reduced to its low 16 bits rather than rejected,
-/// because glibc stores it through a `uint16_t`. Measured: `99999/tcp` is port
-/// 34463 (99999 - 65536), `+86/tcp` is 86, `-1/tcp` and `abc/tcp` are refused.
-fn parse_service_port(field: &[u8]) -> Option<u16> {
-    let digits = match field {
-        [b'+', rest @ ..] => rest,
-        other => other,
-    };
-    if digits.is_empty() {
-        return None;
-    }
-    let mut value: u32 = 0;
-    for &b in digits {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        // Wrap rather than overflow: only the low 16 bits reach the caller, so
-        // a value beyond u32 must not turn an accepted line into a rejected one.
-        value = value.wrapping_mul(10).wrapping_add(u32::from(b - b'0'));
-    }
-    Some(value as u16)
-}
-
 fn service_name_matches(entry: &ServiceEntry, name: &[u8]) -> bool {
-    eq_ignore_ascii_case(&entry.name, name)
-        || entry
-            .aliases
-            .iter()
-            .any(|alias| eq_ignore_ascii_case(alias, name))
+    entry.name == name || entry.aliases.iter().any(|alias| alias == name)
 }
 
 /// The GNU files-module parsers consume a writable line and return pointers
-/// into that line. Keep their grammar separate from the public database
-/// readers: the module caller has already removed leading whitespace, and
-/// services accept C-style integer bases while protocols and RPC use decimal.
+/// into that line. Public database readers share this grammar after removing
+/// leading whitespace, which module callers have already removed. Services
+/// accept C-style integer bases while protocols and RPC use decimal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NssNetdbKind {
     Ether,
@@ -582,6 +520,17 @@ fn nss_netdb_skip_space(line: &[u8], cursor: &mut usize) {
     while *cursor < line.len() && nss_netdb_space(line[*cursor]) {
         *cursor += 1;
     }
+}
+
+/// Apply the files reader's leading-whitespace preparation before using the
+/// same parser as reentrant lookups and enumeration. Owned caches must not
+/// reinterpret numeric fields, NUL termination, or alias boundaries.
+fn parse_netdb_database_line(kind: NssNetdbKind, input: &[u8]) -> Option<(&[u8], NssNetdbRecord)> {
+    let mut leading = 0;
+    nss_netdb_skip_space(input, &mut leading);
+    let line = &input[leading..];
+    let record = parse_nss_netdb_line(kind, line).record?;
+    Some((line, record))
 }
 
 fn nss_netdb_unsigned(field: &[u8], base: u64) -> (Option<u64>, bool) {
@@ -928,33 +877,23 @@ pub struct ProtocolEntry {
 /// Comments (`#`) and blank lines yield `None`. The number is parsed from
 /// ASCII decimal digits and stored as `int p_proto`.
 pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
-    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-        &line[..pos]
-    } else {
-        line
+    let (line, record) = parse_netdb_database_line(NssNetdbKind::Protocol, line)?;
+    let NssNetdbValue::Protocol(number) = record.value else {
+        return None;
     };
-    let mut fields = line
-        .split(|&b| is_resolver_field_separator(b))
-        .filter(|f| !f.is_empty());
-    let name = fields.next()?;
-    // glibc casts rather than range-checks, and accepts a leading '+'; see
-    // parse_nss_int32_field. `i32::try_from` refused "2147483648", which glibc
-    // yields as -2147483648, and the all-digits rule refused "+7".
-    let number = parse_nss_int32_field(fields.next()?)?;
-    let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(ProtocolEntry {
-        name: name.to_vec(),
+        name: line[record.name].to_vec(),
         number,
-        aliases,
+        aliases: line[record.aliases]
+            .split(|&byte| nss_netdb_space(byte))
+            .filter(|alias| !alias.is_empty())
+            .map(<[u8]>::to_vec)
+            .collect(),
     })
 }
 
 fn protocol_name_matches(entry: &ProtocolEntry, name: &[u8]) -> bool {
-    eq_ignore_ascii_case(&entry.name, name)
-        || entry
-            .aliases
-            .iter()
-            .any(|alias| eq_ignore_ascii_case(alias, name))
+    entry.name == name || entry.aliases.iter().any(|alias| alias == name)
 }
 
 /// Look up a protocol entry by name in /etc/protocols content.
@@ -1230,7 +1169,7 @@ pub fn lookup_service(content: &[u8], name: &[u8], protocol: Option<&[u8]>) -> O
             && service_name_matches(&entry, name)
         {
             if let Some(filter) = protocol {
-                if eq_ignore_ascii_case(&entry.protocol, filter) {
+                if entry.protocol == filter {
                     return Some(entry.port);
                 }
             } else {
@@ -2045,9 +1984,13 @@ mod tests {
     }
 
     #[test]
-    fn lookup_service_case_insensitive() {
-        let content = b"HTTP\t80/tcp";
-        assert_eq!(lookup_service(content, b"http", None), Some(80));
+    fn lookup_service_requires_exact_name_alias_and_protocol() {
+        let content = b"HTTP\t80/tcp www";
+        assert_eq!(lookup_service(content, b"HTTP", Some(b"tcp")), Some(80));
+        assert_eq!(lookup_service(content, b"www", Some(b"tcp")), Some(80));
+        assert_eq!(lookup_service(content, b"http", None), None);
+        assert_eq!(lookup_service(content, b"WWW", None), None);
+        assert_eq!(lookup_service(content, b"HTTP", Some(b"TCP")), None);
     }
 
     #[test]
@@ -3210,11 +3153,13 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
     }
 
     #[test]
-    fn protocol_lookup_by_name_case_insensitive() {
+    fn protocol_lookup_by_exact_name_and_explicit_alias() {
         let content = b"tcp 6 TCP\nudp 17 UDP\n";
         assert_eq!(lookup_protocol_by_name(content, b"TCP").unwrap().number, 6);
         assert_eq!(lookup_protocol_by_name(content, b"udp").unwrap().number, 17);
         assert_eq!(lookup_protocol_by_name(content, b"UDP").unwrap().number, 17);
+        assert!(lookup_protocol_by_name(content, b"TcP").is_none());
+        assert!(lookup_protocol_by_name(content, b"Udp").is_none());
     }
 
     #[test]

@@ -2107,7 +2107,7 @@ fn getaddrinfo_service_name_bucket_preserves_profiles_and_refreshes() {
         Some(b"first 4242/tcp dual\nDUAL 4242/udp dual\nother 9090/tcp\n"),
         |paths| {
             let node = CString::new("127.0.0.1").unwrap();
-            let service = CString::new("dUaL").unwrap();
+            let service = CString::new("dual").unwrap();
             let mut res: *mut libc::addrinfo = ptr::null_mut();
 
             let rc = unsafe {
@@ -2123,6 +2123,18 @@ fn getaddrinfo_service_name_bucket_preserves_profiles_and_refreshes() {
                 ]
             );
             unsafe { resolv_abi::freeaddrinfo(res) };
+
+            let mut wrong_case = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    node.as_ptr(),
+                    c"dUaL".as_ptr(),
+                    ptr::null(),
+                    &mut wrong_case,
+                )
+            };
+            assert_eq!(rc, libc::EAI_SERVICE);
+            assert!(wrong_case.is_null());
 
             std::fs::write(&paths.services, b"dual 5252/udp\n")
                 .expect("rewrite temp services fixture");
@@ -3448,15 +3460,19 @@ fn getservbyname_uses_overridden_services_backend_and_ignores_malformed_lines() 
         None,
         Some(b"broken-service notaport/tcp alias\nfixture-svc 12345/tcp fixturealias\n"),
         |_| {
-            let name = CString::new("FIXTUREALIAS").unwrap();
-            let proto = CString::new("TCP").unwrap();
+            let name = CString::new("fixturealias").unwrap();
+            let proto = CString::new("tcp").unwrap();
             let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
             assert!(!ptr.is_null());
 
             let servent = unsafe { &*(ptr as *const libc::servent) };
             assert_eq!(u16::from_be(servent.s_port as u16), 12345);
             let proto_name = unsafe { CStr::from_ptr(servent.s_proto) };
-            assert!(proto_name.to_bytes().eq_ignore_ascii_case(b"tcp"));
+            assert_eq!(proto_name.to_bytes(), b"tcp");
+            assert!(unsafe {
+                resolv_abi::getservbyname(c"FIXTUREALIAS".as_ptr(), proto.as_ptr()).is_null()
+            });
+            assert!(unsafe { resolv_abi::getservbyname(name.as_ptr(), c"TCP".as_ptr()).is_null() });
         },
     );
 }
