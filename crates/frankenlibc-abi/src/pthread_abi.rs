@@ -10621,19 +10621,34 @@ pub unsafe extern "C" fn pthread_attr_setaffinity_np(
     cpusetsize: usize,
     cpuset: *const libc::cpu_set_t,
 ) -> c_int {
-    if attr.is_null() || cpuset.is_null() || cpusetsize == 0 {
-        return libc::EINVAL;
-    }
     let Some(data) = managed_attr_data_ptr(attr) else {
         return libc::EINVAL;
     };
+    let key = attr as usize;
+    // GNU accepts either a null mask or zero extent to restore inherited
+    // affinity. Only this attribute is cleared; a creation signal mask and
+    // the remaining fields must survive the reset.
+    if cpuset.is_null() || cpusetsize == 0 {
+        let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+            Ok(r) => r,
+            Err(_) => return libc::EINVAL,
+        };
+        if let Some(ext) = reg.get_mut(&key) {
+            ext.affinity = None;
+            if ext.sigmask.is_none() {
+                reg.remove(&key);
+            }
+        }
+        // SAFETY: the managed-attribute lookup validated this live overlay.
+        unsafe { (*data).flags &= !1 };
+        return 0;
+    }
     // Copy the raw bytes of the cpu_set_t.
     let mut mask_bytes = vec![0u8; cpusetsize];
     // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
     unsafe {
         std::ptr::copy_nonoverlapping(cpuset.cast::<u8>(), mask_bytes.as_mut_ptr(), cpusetsize);
     }
-    let key = attr as usize;
     let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
         Ok(r) => r,
         Err(_) => return libc::EINVAL,
@@ -11855,7 +11870,7 @@ extern "C" fn pthread_kill_invalid_log_deny() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
     // Validate signal number (0 is allowed for existence check).
-    if !(0..=64).contains(&sig) {
+    if !(0..=64).contains(&sig) || frankenlibc_core::signal::glibc_reserved_signal(sig) {
         if !frankenlibc_membrane::heal::runtime_log_is_configured() {
             runtime_policy::record_semantic_deny_counter_only();
             return libc::EINVAL;
@@ -12168,6 +12183,14 @@ pub unsafe extern "C" fn pthread_attr_setsigmask_np(
     unsafe {
         std::ptr::copy_nonoverlapping(sigmask.cast::<u8>(), mask_bytes.as_mut_ptr(), 128);
     }
+    // GNU strips its cancellation/setxid signals when storing the attribute,
+    // so getters and copied defaults describe the mask creation will apply.
+    // Preserve the caller's set and every other bit of its stored copy.
+    let mut kernel_mask = [0u8; 8];
+    kernel_mask.copy_from_slice(&mask_bytes[..8]);
+    let kernel_mask =
+        u64::from_ne_bytes(kernel_mask) & !frankenlibc_core::signal::GLIBC_RESERVED_SIGNAL_MASK;
+    mask_bytes[..8].copy_from_slice(&kernel_mask.to_ne_bytes());
     let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
         Ok(r) => r,
         Err(_) => return libc::EINVAL,

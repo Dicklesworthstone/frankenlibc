@@ -1,4 +1,4 @@
-//! Native-plugin thread attributes, recovery, deadlines and cancellation.
+//! Native-plugin thread attributes, names, affinity, scheduling and lifecycle.
 //!
 //! Use the same ABI backend as the basic pthread bindings, not a second set
 //! of host synchronization objects. Native clone-backend limitations remain
@@ -11,15 +11,15 @@ use crate::setjmp_abi;
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     macro_rules! entry {
         ($function:ident, $first:literal, $merged:literal) => {
-            (pthread::$function as *const (), $first, $merged)
+            (
+                pthread::$function as *const (),
+                $first,
+                if $merged { Some("GLIBC_2.34") } else { None },
+            )
         };
     }
-    let (function, first, merged) = match name {
-        "nanosleep" => (
-            crate::time_abi::nanosleep as *const (),
-            "GLIBC_2.2.5",
-            false,
-        ),
+    let (function, first, additional) = match name {
+        "nanosleep" => (crate::time_abi::nanosleep as *const (), "GLIBC_2.2.5", None),
         "pthread_attr_init" => entry!(pthread_attr_init, "GLIBC_2.2.5", false),
         "pthread_attr_destroy" => entry!(pthread_attr_destroy, "GLIBC_2.2.5", false),
         "pthread_attr_getdetachstate" => entry!(pthread_attr_getdetachstate, "GLIBC_2.2.5", false),
@@ -42,6 +42,51 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pthread_attr_setschedparam" => entry!(pthread_attr_setschedparam, "GLIBC_2.2.5", false),
         "pthread_attr_getscope" => entry!(pthread_attr_getscope, "GLIBC_2.2.5", false),
         "pthread_attr_setscope" => entry!(pthread_attr_setscope, "GLIBC_2.2.5", false),
+        // The GLIBC_2.3.3 affinity entries omit cpusetsize. They require
+        // separate adapters and must not resolve to these current frontends.
+        "pthread_attr_getaffinity_np" => entry!(pthread_attr_getaffinity_np, "GLIBC_2.3.4", true),
+        "pthread_attr_setaffinity_np" => (
+            pthread::pthread_attr_setaffinity_np as *const (),
+            "GLIBC_2.3.4",
+            Some("GLIBC_2.32"),
+        ),
+        "pthread_attr_getsigmask_np" => entry!(pthread_attr_getsigmask_np, "GLIBC_2.32", false),
+        "pthread_attr_setsigmask_np" => entry!(pthread_attr_setsigmask_np, "GLIBC_2.32", false),
+        "pthread_getattr_np" => (
+            pthread::pthread_getattr_np as *const (),
+            "GLIBC_2.2.5",
+            Some("GLIBC_2.32"),
+        ),
+        "pthread_getattr_default_np" => entry!(pthread_getattr_default_np, "GLIBC_2.18", true),
+        "pthread_setattr_default_np" => entry!(pthread_setattr_default_np, "GLIBC_2.18", true),
+        "pthread_getaffinity_np" => (
+            pthread::pthread_getaffinity_np as *const (),
+            "GLIBC_2.3.4",
+            Some("GLIBC_2.32"),
+        ),
+        "pthread_setaffinity_np" => entry!(pthread_setaffinity_np, "GLIBC_2.3.4", true),
+        "pthread_getname_np" => entry!(pthread_getname_np, "GLIBC_2.12", true),
+        "pthread_setname_np" => entry!(pthread_setname_np, "GLIBC_2.12", true),
+        "pthread_getschedparam" => (
+            crate::unistd_abi::pthread_getschedparam as *const (),
+            "GLIBC_2.2.5",
+            None,
+        ),
+        "pthread_setschedparam" => (
+            crate::unistd_abi::pthread_setschedparam as *const (),
+            "GLIBC_2.2.5",
+            None,
+        ),
+        "pthread_setschedprio" => (
+            crate::glibc_internal_abi::pthread_setschedprio as *const (),
+            "GLIBC_2.3.4",
+            Some("GLIBC_2.34"),
+        ),
+        "pthread_getcpuclockid" => entry!(pthread_getcpuclockid, "GLIBC_2.2.5", true),
+        "pthread_sigqueue" => entry!(pthread_sigqueue, "GLIBC_2.11", true),
+        "pthread_tryjoin_np" => entry!(pthread_tryjoin_np, "GLIBC_2.3.3", true),
+        "pthread_timedjoin_np" => entry!(pthread_timedjoin_np, "GLIBC_2.3.3", true),
+        "pthread_clockjoin_np" => entry!(pthread_clockjoin_np, "GLIBC_2.31", true),
         "pthread_barrier_init" => entry!(pthread_barrier_init, "GLIBC_2.2.5", true),
         "pthread_barrier_destroy" => entry!(pthread_barrier_destroy, "GLIBC_2.2.5", true),
         "pthread_barrier_wait" => entry!(pthread_barrier_wait, "GLIBC_2.2.5", true),
@@ -105,17 +150,26 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         // C pthread_cleanup_push saves this exact ABI buffer before linking it
         // into the thread cleanup chain. Never replace a returns-twice entry
         // with an ordinary wrapper frame.
-        "__sigsetjmp" => (cleanup_setjmp_address(), "GLIBC_2.2.5", false),
+        "__sigsetjmp" => (cleanup_setjmp_address(), "GLIBC_2.2.5", None),
         _ => return None,
     };
-    // Explicit-clock waits postdate AArch64's baseline as well.
-    let first = if cfg!(target_arch = "aarch64") && first != "GLIBC_2.30" {
+    // Only older entries move to AArch64's baseline. Default attributes,
+    // explicit-clock waits, and attribute signal masks were added later.
+    let first = if cfg!(target_arch = "aarch64")
+        && matches!(
+            first,
+            "GLIBC_2.2.5"
+                | "GLIBC_2.3.3"
+                | "GLIBC_2.3.4"
+                | "GLIBC_2.4"
+                | "GLIBC_2.11"
+                | "GLIBC_2.12"
+        ) {
         "GLIBC_2.17"
     } else {
         first
     };
-    if version.is_some_and(|requested| requested != first && !(merged && requested == "GLIBC_2.34"))
-    {
+    if version.is_some_and(|requested| requested != first && Some(requested) != additional) {
         return None;
     }
     Some(function as usize as u64)

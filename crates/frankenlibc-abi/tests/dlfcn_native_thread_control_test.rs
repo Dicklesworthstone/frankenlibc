@@ -1,6 +1,9 @@
 //! Real native-plugin thread control with a separate live-host oracle.
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use frankenlibc_abi::{c11threads_abi as c11, dlfcn_abi as dl, pthread_abi as pthread};
+use frankenlibc_abi::{
+    c11threads_abi as c11, dlfcn_abi as dl, glibc_internal_abi as internal, pthread_abi as pthread,
+    unistd_abi as unistd,
+};
 use frankenlibc_core::elf::ElfLoader;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::process::Command;
@@ -8,15 +11,25 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 
-fn bindings() -> Vec<(&'static str, &'static str, bool, *const ())> {
+fn bindings() -> Vec<(&'static str, &'static str, Option<&'static str>, *const ())> {
     macro_rules! row {
         ($f:ident, $v:literal, $m:literal) => {
-            (stringify!($f), $v, $m, pthread::$f as *const ())
+            (
+                stringify!($f),
+                $v,
+                if $m { Some("GLIBC_2.34") } else { None },
+                pthread::$f as *const (),
+            )
         };
     }
     macro_rules! c11_row {
         ($f:ident, $merged:literal) => {
-            (stringify!($f), "GLIBC_2.28", $merged, c11::$f as *const ())
+            (
+                stringify!($f),
+                "GLIBC_2.28",
+                if $merged { Some("GLIBC_2.34") } else { None },
+                c11::$f as *const (),
+            )
         };
     }
     vec![
@@ -63,6 +76,55 @@ fn bindings() -> Vec<(&'static str, &'static str, bool, *const ())> {
         row!(pthread_attr_setschedparam, "GLIBC_2.2.5", false),
         row!(pthread_attr_getscope, "GLIBC_2.2.5", false),
         row!(pthread_attr_setscope, "GLIBC_2.2.5", false),
+        row!(pthread_attr_getaffinity_np, "GLIBC_2.3.4", true),
+        (
+            "pthread_attr_setaffinity_np",
+            "GLIBC_2.3.4",
+            Some("GLIBC_2.32"),
+            pthread::pthread_attr_setaffinity_np as *const (),
+        ),
+        row!(pthread_attr_getsigmask_np, "GLIBC_2.32", false),
+        row!(pthread_attr_setsigmask_np, "GLIBC_2.32", false),
+        (
+            "pthread_getattr_np",
+            "GLIBC_2.2.5",
+            Some("GLIBC_2.32"),
+            pthread::pthread_getattr_np as *const (),
+        ),
+        row!(pthread_getattr_default_np, "GLIBC_2.18", true),
+        row!(pthread_setattr_default_np, "GLIBC_2.18", true),
+        (
+            "pthread_getaffinity_np",
+            "GLIBC_2.3.4",
+            Some("GLIBC_2.32"),
+            pthread::pthread_getaffinity_np as *const (),
+        ),
+        row!(pthread_setaffinity_np, "GLIBC_2.3.4", true),
+        row!(pthread_getname_np, "GLIBC_2.12", true),
+        row!(pthread_setname_np, "GLIBC_2.12", true),
+        (
+            "pthread_getschedparam",
+            "GLIBC_2.2.5",
+            None,
+            unistd::pthread_getschedparam as *const (),
+        ),
+        (
+            "pthread_setschedparam",
+            "GLIBC_2.2.5",
+            None,
+            unistd::pthread_setschedparam as *const (),
+        ),
+        (
+            "pthread_setschedprio",
+            "GLIBC_2.3.4",
+            Some("GLIBC_2.34"),
+            internal::pthread_setschedprio as *const (),
+        ),
+        row!(pthread_getcpuclockid, "GLIBC_2.2.5", true),
+        row!(pthread_sigqueue, "GLIBC_2.11", true),
+        row!(pthread_tryjoin_np, "GLIBC_2.3.3", true),
+        row!(pthread_timedjoin_np, "GLIBC_2.3.3", true),
+        row!(pthread_clockjoin_np, "GLIBC_2.31", true),
         row!(pthread_mutexattr_init, "GLIBC_2.2.5", true),
         row!(pthread_mutexattr_destroy, "GLIBC_2.2.5", true),
         row!(pthread_mutexattr_gettype, "GLIBC_2.2.5", true),
@@ -96,12 +158,7 @@ fn bindings() -> Vec<(&'static str, &'static str, bool, *const ())> {
         row!(__pthread_unregister_cancel_restore, "GLIBC_2.3.3", true),
         row!(__pthread_cleanup_routine, "GLIBC_2.3.3", true),
         row!(__pthread_unwind_next, "GLIBC_2.3.3", true),
-        (
-            "__sigsetjmp",
-            "GLIBC_2.2.5",
-            false,
-            cleanup_setjmp_address(),
-        ),
+        ("__sigsetjmp", "GLIBC_2.2.5", None, cleanup_setjmp_address()),
     ]
 }
 
@@ -114,6 +171,9 @@ const SOURCE: &str = r#"
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <sched.h>
+#include <time.h>
 #include <unistd.h>
 #include <dlfcn.h>
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
@@ -180,6 +240,199 @@ int attributes(void) {
     CHECK(pthread_attr_setstack(&a,stack,262144)==0);
     CHECK(pthread_attr_getstack(&a,&result,&z)==0 && result==stack && z==262144);
     CHECK(pthread_attr_destroy(&a)==0); free(stack);
+    return 0;
+}
+
+int running_thread_configuration(void) {
+    pthread_t self=pthread_self();
+    char before[16], changed[16];
+    CHECK(pthread_getname_np(self,before,sizeof(before))==0);
+    CHECK(pthread_setname_np(self,"fl-thread-ctrl")==0);
+    int got=pthread_getname_np(self,changed,sizeof(changed));
+    CHECK(pthread_setname_np(self,before)==0);
+    CHECK(got==0 && strcmp(changed,"fl-thread-ctrl")==0);
+    CHECK(pthread_setname_np(self,"this-name-is-too-long")==ERANGE);
+    CHECK(pthread_getname_np(self,changed,sizeof(changed)-1)==ERANGE);
+
+    int policy, observed_policy;
+    struct sched_param priority, observed_priority;
+    CHECK(pthread_getschedparam(self,&policy,&priority)==0);
+    CHECK(pthread_setschedparam(self,policy,&priority)==0);
+    CHECK(pthread_setschedprio(self,priority.sched_priority)==0);
+    CHECK(pthread_getschedparam(self,&observed_policy,&observed_priority)==0);
+    CHECK(observed_policy==policy && observed_priority.sched_priority==priority.sched_priority);
+
+    cpu_set_t original, selected, observed;
+    CHECK(pthread_getaffinity_np(self,sizeof(original),&original)==0);
+    CPU_ZERO(&selected);
+    int chosen=-1;
+    for(int cpu=0;cpu<CPU_SETSIZE;++cpu) if(CPU_ISSET(cpu,&original)) { chosen=cpu; break; }
+    CHECK(chosen>=0);
+    CPU_SET(chosen,&selected);
+    CHECK(pthread_setaffinity_np(self,sizeof(selected),&selected)==0);
+    got=pthread_getaffinity_np(self,sizeof(observed),&observed);
+    CHECK(pthread_setaffinity_np(self,sizeof(original),&original)==0);
+    CHECK(got==0 && memcmp(&selected,&observed,sizeof(selected))==0);
+
+    clockid_t clock;
+    struct timespec elapsed;
+    CHECK(pthread_getcpuclockid(self,&clock)==0);
+    CHECK(clock_gettime(clock,&elapsed)==0 && elapsed.tv_sec>=0 && elapsed.tv_nsec>=0);
+    union sigval value={.sival_int=57};
+    CHECK(pthread_sigqueue(self,0,value)==0);
+    CHECK(pthread_sigqueue(self,32,value)==EINVAL && pthread_sigqueue(self,33,value)==EINVAL);
+    return 0;
+}
+
+struct configured_worker {
+    _Atomic int phase;
+    int cpu;
+    uint64_t mask;
+    size_t stack_size;
+};
+static void *check_worker_configuration(void *raw) {
+    struct configured_worker *expected=raw;
+    pthread_t self=pthread_self();
+    cpu_set_t affinity={0};
+    sigset_t mask={0};
+    int error=0;
+    if(pthread_getaffinity_np(self,sizeof(affinity),&affinity)!=0 ||
+       !CPU_ISSET(expected->cpu,&affinity)) error=__LINE__;
+    for(int cpu=0;cpu<CPU_SETSIZE;++cpu)
+        if(cpu!=expected->cpu && CPU_ISSET(cpu,&affinity)) error=__LINE__;
+    if(pthread_sigmask(SIG_SETMASK,0,&mask)!=0) error=__LINE__;
+    uint64_t observed_mask;
+    memcpy(&observed_mask,&mask,sizeof(observed_mask));
+    if(observed_mask!=expected->mask) error=__LINE__;
+    pthread_attr_t snapshot;
+    if(pthread_getattr_np(self,&snapshot)!=0) error=__LINE__;
+    else {
+        void *stack; size_t size;
+        if(pthread_attr_getstack(&snapshot,&stack,&size)!=0 || !stack ||
+           size<expected->stack_size) error=__LINE__;
+        if(pthread_attr_getaffinity_np(&snapshot,sizeof(affinity),&affinity)!=0 ||
+           !CPU_ISSET(expected->cpu,&affinity)) error=__LINE__;
+        if(pthread_attr_destroy(&snapshot)!=0) error=__LINE__;
+    }
+    if(pthread_setname_np(self,"fl-worker")==0) atomic_store(&expected->phase,1);
+    else atomic_store(&expected->phase,-1);
+    while(atomic_load(&expected->phase)==1) { }
+    return (void *)(intptr_t)error;
+}
+static void *check_inherited_affinity(void *raw) {
+    const cpu_set_t *expected=raw;
+    cpu_set_t observed={0};
+    if(pthread_getaffinity_np(pthread_self(),sizeof(observed),&observed)!=0 ||
+       memcmp(&observed,expected,sizeof(observed))!=0) return (void *)(intptr_t)__LINE__;
+    return 0;
+}
+int creation_attributes_and_defaults(void) {
+    pthread_attr_t attr, saved, snapshot;
+    CHECK(pthread_attr_init(&attr)==0);
+    CHECK(pthread_getattr_default_np(&saved)==0);
+    sigset_t mask={0}, roundtrip;
+    CHECK(pthread_attr_getsigmask_np(&attr,&roundtrip)==PTHREAD_ATTR_NO_SIGMASK_NP);
+    uint64_t mask_word=UINT64_C(1)<<(SIGUSR1-1);
+    uint64_t requested_mask=mask_word | (UINT64_C(1)<<31) | (UINT64_C(1)<<32);
+    memcpy(&mask,&requested_mask,sizeof(requested_mask));
+    CHECK(pthread_attr_setsigmask_np(&attr,&mask)==0);
+    CHECK(pthread_attr_getsigmask_np(&attr,&roundtrip)==0);
+    uint64_t roundtrip_word;
+    memcpy(&roundtrip_word,&roundtrip,sizeof(roundtrip_word));
+    CHECK(roundtrip_word==mask_word);
+    memcpy(&roundtrip_word,&mask,sizeof(roundtrip_word));
+    CHECK(roundtrip_word==requested_mask);
+
+    cpu_set_t original, selected, got;
+    CHECK(pthread_getaffinity_np(pthread_self(),sizeof(original),&original)==0);
+    CPU_ZERO(&selected);
+    int chosen=-1;
+    for(int cpu=0;cpu<CPU_SETSIZE;++cpu) if(CPU_ISSET(cpu,&original)) { chosen=cpu; break; }
+    CHECK(chosen>=0); CPU_SET(chosen,&selected);
+    CHECK(pthread_attr_setaffinity_np(&attr,sizeof(selected),&selected)==0);
+    CHECK(pthread_attr_getaffinity_np(&attr,sizeof(got),&got)==0);
+    CHECK(memcmp(&selected,&got,sizeof(got))==0);
+    CHECK(pthread_attr_setstacksize(&attr,262144)==0);
+    for(int clear_kind=0;clear_kind<3;++clear_kind) {
+        CHECK(pthread_attr_setaffinity_np(&attr,sizeof(selected),&selected)==0);
+        /* GNU accepts null/zero, null/nonzero and nonnull/zero resets. */
+        CHECK(pthread_attr_setaffinity_np(&attr,clear_kind==1 ? sizeof(selected) : 0,
+                                        clear_kind==2 ? &selected : 0)==0);
+        CHECK(pthread_attr_getaffinity_np(&attr,sizeof(got),&got)==0);
+        for(size_t byte=0;byte<sizeof(got);++byte)
+            CHECK(((unsigned char *)&got)[byte]==255);
+        CHECK(pthread_attr_getsigmask_np(&attr,&roundtrip)==0);
+        memcpy(&roundtrip_word,&roundtrip,sizeof(roundtrip_word));
+        CHECK(roundtrip_word==mask_word);
+        size_t stack_size;
+        CHECK(pthread_attr_getstacksize(&attr,&stack_size)==0 && stack_size==262144);
+        pthread_t thread;
+        CHECK(pthread_create(&thread,&attr,check_inherited_affinity,&original)==0);
+        void *result;
+        CHECK(pthread_join(thread,&result)==0 && result==0);
+    }
+    CHECK(pthread_attr_setaffinity_np(&attr,sizeof(selected),&selected)==0);
+    CHECK(pthread_setattr_default_np(&attr)==0);
+    CHECK(pthread_getattr_default_np(&snapshot)==0);
+    CHECK(pthread_attr_getaffinity_np(&snapshot,sizeof(got),&got)==0);
+    CHECK(memcmp(&selected,&got,sizeof(got))==0);
+    CHECK(pthread_attr_getsigmask_np(&snapshot,&roundtrip)==0);
+    memcpy(&roundtrip_word,&roundtrip,sizeof(roundtrip_word));
+    CHECK(roundtrip_word==mask_word);
+    CHECK(pthread_attr_destroy(&snapshot)==0);
+
+    for(int use_default=0;use_default<2;++use_default) {
+        struct configured_worker expected={.phase=0,.cpu=chosen,.mask=mask_word,.stack_size=262144};
+        pthread_t thread;
+        CHECK(pthread_create(&thread,use_default ? 0 : &attr,check_worker_configuration,&expected)==0);
+        while(atomic_load(&expected.phase)==0) { }
+        char name[16];
+        int name_rc=pthread_getname_np(thread,name,sizeof(name));
+        atomic_store(&expected.phase,2);
+        void *result;
+        CHECK(pthread_join(thread,&result)==0 && result==0);
+        CHECK(name_rc==0 && strcmp(name,"fl-worker")==0);
+    }
+    CHECK(pthread_setattr_default_np(&saved)==0);
+    CHECK(pthread_attr_setsigmask_np(&attr,0)==0);
+    CHECK(pthread_attr_getsigmask_np(&attr,&roundtrip)==PTHREAD_ATTR_NO_SIGMASK_NP);
+    CHECK(pthread_attr_destroy(&attr)==0 && pthread_attr_destroy(&saved)==0);
+    return 0;
+}
+
+static void *wait_for_join_release(void *raw) {
+    _Atomic int *phase=raw;
+    atomic_store(phase,1);
+    while(atomic_load(phase)==1) { }
+    return (void *)73;
+}
+int join_variants(void) {
+    const struct timespec expired={0,0};
+    _Atomic int phase=0;
+    pthread_t thread;
+    CHECK(pthread_create(&thread,0,wait_for_join_release,&phase)==0);
+    while(atomic_load(&phase)==0) { }
+    void *result=(void *)91;
+    int tries=pthread_tryjoin_np(thread,&result);
+    int timed=pthread_timedjoin_np(thread,&result,&expired);
+    int clocked=pthread_clockjoin_np(thread,&result,CLOCK_MONOTONIC,&expired);
+    int invalid=pthread_clockjoin_np(thread,&result,CLOCK_THREAD_CPUTIME_ID,&expired);
+    int unchanged=result==(void *)91;
+    atomic_store(&phase,2);
+    struct timespec deadline;
+    CHECK(clock_gettime(CLOCK_MONOTONIC,&deadline)==0);
+    deadline.tv_sec+=10;
+    CHECK(pthread_clockjoin_np(thread,&result,CLOCK_MONOTONIC,&deadline)==0 && result==(void *)73);
+    CHECK(tries==EBUSY && timed==ETIMEDOUT && clocked==ETIMEDOUT && invalid==EINVAL && unchanged);
+
+    CHECK(pthread_create(&thread,0,identity,(void *)74)==0);
+    CHECK(clock_gettime(CLOCK_REALTIME,&deadline)==0);
+    deadline.tv_sec+=10;
+    CHECK(pthread_timedjoin_np(thread,&result,&deadline)==0 && result==(void *)74);
+    CHECK(pthread_create(&thread,0,identity,(void *)75)==0);
+    int rc;
+    while((rc=pthread_tryjoin_np(thread,&result))==EBUSY) { }
+    CHECK(rc==0 && result==(void *)75);
     return 0;
 }
 
@@ -449,13 +702,18 @@ impl Library {
 }
 fn scenario(name: &str, body: fn(bool)) {
     if let Ok(backend) = std::env::var("FL_THREAD_CONTROL_CHILD") {
-        body(backend == "native");
+        if backend == "native-clone" {
+            pthread::pthread_threading_force_native_for_tests();
+        }
+        body(backend != "host");
         return;
     }
     for (backend, mode) in [
         ("host", "strict"),
         ("native", "strict"),
         ("native", "hardened"),
+        ("native-clone", "strict"),
+        ("native-clone", "hardened"),
     ] {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
@@ -478,6 +736,68 @@ fn scenario(name: &str, body: fn(bool)) {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+#[test]
+fn native_thread_control_running_configuration_and_creation_attributes() {
+    scenario(
+        "native_thread_control_running_configuration_and_creation_attributes",
+        |native| {
+            for got in [false, true] {
+                let lib = Library::new(native, got);
+                for name in [
+                    c"running_thread_configuration",
+                    c"creation_attributes_and_defaults",
+                ] {
+                    // SAFETY: the compiled protocol entries take no arguments
+                    // and restore names, affinity and default attributes.
+                    let run: unsafe extern "C" fn() -> c_int =
+                        unsafe { std::mem::transmute(lib.symbol(name)) };
+                    assert_eq!(unsafe { run() }, 0, "C protocol assertion in {name:?}");
+                }
+                lib.close();
+            }
+        },
+    );
+}
+#[test]
+fn native_thread_control_join_extensions_preserve_target_after_timeout() {
+    scenario(
+        "native_thread_control_join_extensions_preserve_target_after_timeout",
+        |native| {
+            for got in [false, true] {
+                let lib = Library::new(native, got);
+                // SAFETY: exact signature of the compiled bounded join protocol.
+                let run: unsafe extern "C" fn() -> c_int =
+                    unsafe { std::mem::transmute(lib.symbol(c"join_variants")) };
+                assert_eq!(unsafe { run() }, 0, "C join protocol assertion");
+                lib.close();
+            }
+        },
+    );
+}
+#[test]
+fn native_thread_control_rejects_reserved_thread_signals() {
+    scenario(
+        "native_thread_control_rejects_reserved_thread_signals",
+        |native| {
+            // Validation must reject the reserved signal before resolving even an
+            // invalid target. This proves the regression without delivering an
+            // internal cancellation/setxid signal to the test process.
+            let kill: unsafe extern "C" fn(libc::pthread_t, c_int) -> c_int = if native {
+                pthread::pthread_kill
+            } else {
+                unsafe {
+                    dlsym_oracle::host_fn(c"pthread_kill", pthread::pthread_kill as *const ())
+                }
+            };
+            for signal in [32, 33] {
+                assert_eq!(unsafe { kill(0, signal) }, libc::EINVAL, "signal {signal}");
+                if native {
+                    assert_eq!(unsafe { pthread::__pthread_kill(0, signal) }, libc::EINVAL);
+                }
+            }
+        },
+    );
 }
 #[test]
 fn native_thread_control_attributes_recovery_and_deadlines() {
@@ -536,7 +856,7 @@ fn native_thread_control_exact_versions_and_provider_identity() {
                     *const c_char,
                     *mut c_int,
                 ) -> *mut c_void = std::mem::transmute(lib.symbol(c"control_dynamic"));
-                for (i, (name, first, merged, expected)) in bindings().into_iter().enumerate() {
+                for (i, (name, first, additional, expected)) in bindings().into_iter().enumerate() {
                     let name = CString::new(name).unwrap();
                     let first = CString::new(first).unwrap();
                     let provider = direct(i as u32);
@@ -559,7 +879,11 @@ fn native_thread_control_exact_versions_and_provider_identity() {
                     for (version, permitted) in [
                         (std::ptr::null(), true),
                         (first.as_ptr(), true),
-                        (c"GLIBC_2.34".as_ptr(), merged),
+                        (c"GLIBC_2.34".as_ptr(), additional == Some("GLIBC_2.34")),
+                        (
+                            c"GLIBC_2.32".as_ptr(),
+                            additional == Some("GLIBC_2.32") || first.as_bytes() == b"GLIBC_2.32",
+                        ),
                         (c"GLIBC_PRIVATE".as_ptr(), false),
                         (c"MISSING_VERSION".as_ptr(), false),
                     ] {
@@ -572,6 +896,20 @@ fn native_thread_control_exact_versions_and_provider_identity() {
                             assert!(result.is_null(), "unsupported {name:?}");
                             assert_eq!(failed, 1);
                         }
+                    }
+                    if native
+                        && name
+                            .as_bytes()
+                            .windows(b"affinity".len())
+                            .any(|s| s == b"affinity")
+                    {
+                        let mut failed = -1;
+                        // The historical GLIBC_2.3.3 ABI has no cpusetsize
+                        // argument and must never alias these three-argument
+                        // frontends merely because the base name matches.
+                        let result = dynamic(name.as_ptr(), c"GLIBC_2.3.3".as_ptr(), &mut failed);
+                        assert!(result.is_null(), "obsolete affinity ABI {name:?}");
+                        assert_eq!(failed, 1);
                     }
                 }
             }
