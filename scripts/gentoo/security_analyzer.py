@@ -194,8 +194,9 @@ class SecurityAnalyzer:
             healing_count = healing_by_class.get(cve_class, 0)
             class_telemetry_observed = bool(cve.expected_prevention and healing_count > 0)
 
-            if oracle_verdicts is not None and cve.id in oracle_verdicts:
-                verified_by_oracle = bool(oracle_verdicts[cve.id])
+            if (oracle_verdicts is not None and cve.id in oracle_verdicts
+                    and type(oracle_verdicts[cve.id]) is bool):
+                verified_by_oracle = oracle_verdicts[cve.id]
                 would_prevent = verified_by_oracle
                 if cve.expected_prevention:
                     oracle_evaluated_preventable += 1

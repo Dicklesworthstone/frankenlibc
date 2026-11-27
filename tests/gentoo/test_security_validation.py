@@ -260,6 +260,23 @@ class TestSecurityAnalyzer(unittest.TestCase):
         )
         self.assertEqual(analysis.security_score, 0.5)
 
+    def test_malformed_oracle_verdicts_cannot_claim_prevention(self) -> None:
+        # JSON inputs and external adapters can supply strings or integers.
+        # Only literal booleans count as independent oracle observations.
+        for invalid in ("false", "true", 1, 0, None, [], {}):
+            with self.subTest(invalid=invalid):
+                analysis = self.analyzer.analyze_package(
+                    "dev-libs/openssl",
+                    [HealingAction(timestamp="", action="ClampSize", call="memcpy")],
+                    oracle_verdicts={"CVE-2014-0160": invalid},
+                )
+                evidence = analysis.prevention_evidence["CVE-2014-0160"]
+                self.assertFalse(evidence["would_prevent"])
+                self.assertFalse(evidence["verified_by_oracle"])
+                self.assertEqual(evidence["evidence_status"], "telemetry_correlation_only")
+                self.assertEqual(analysis.qualification_status, "unqualified")
+                self.assertEqual(analysis.security_score, 0.0)
+
     def test_analyze_without_healing_actions(self) -> None:
         analysis = self.analyzer.analyze_package("dev-libs/openssl", [])
 
