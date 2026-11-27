@@ -39,6 +39,22 @@ mod semaphore;
 #[path = "dlfcn_thread_control.rs"]
 mod thread_control;
 
+// x86-64's original regex ABI predates length-bounded matching. Match the
+// whole NUL-terminated string and retain the two historical anchor controls.
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" fn regexec_compat(
+    compiled: *const core::ffi::c_void,
+    text: *const core::ffi::c_char,
+    nmatch: usize,
+    matches: *mut core::ffi::c_void,
+    flags: core::ffi::c_int,
+) -> core::ffi::c_int {
+    use frankenlibc_core::string::regex::{REG_NOTBOL, REG_NOTEOL};
+
+    // SAFETY: the caller supplies the ordinary regexec objects and a terminated string.
+    unsafe { strings::regexec(compiled, text, nmatch, matches, flags & (REG_NOTBOL | REG_NOTEOL)) }
+}
+
 /// Only the real baseline symbol version for this target is advertised. A
 /// private/future version is not interchangeable with an unversioned lookup.
 /// Callers perform native DSO scope/preemption checks before this fallback.
@@ -82,8 +98,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     // version must stay rejected by runtime_export, rather than escaping into
     // host lookup and a different errno, environment or callback domain.
     let versioned = match name {
-        // The older x86-64 regexec ABI masks REG_STARTEND. Only bind the
-        // modern contract implemented by string_abi::regexec.
+        #[cfg(target_arch = "x86_64")]
+        "regexec" if version == Some(baseline) => Some((regexec_compat as *const (), baseline)),
         "regexec" => Some((
             strings::regexec as *const (),
             if cfg!(target_arch = "aarch64") {

@@ -95,6 +95,24 @@ int pattern_finish(regex_t *compiled) {
     if (!execute || execute(compiled, bytes, 2, groups, REG_STARTEND) ||
         groups[0].rm_so != 2 || groups[0].rm_eo != 5) return __LINE__;
 
+    /* Old callers search the terminated string regardless of range fields.
+       Use a terminated input for both versions, including the anchor checks. */
+    execute_fn legacy = (execute_fn)dlvsym(RTLD_DEFAULT, "regexec", "GLIBC_2.2.5");
+    if (!legacy || legacy == execute) return __LINE__;
+    groups[0] = (regmatch_t){0, 1};
+    if (execute(compiled, "xxabc", 2, groups, REG_STARTEND) != REG_NOMATCH) return __LINE__;
+    groups[0] = (regmatch_t){0, 1};
+    if (legacy(compiled, "xxabc", 2, groups, REG_STARTEND | 0x1000) ||
+        groups[0].rm_so != 2 || groups[0].rm_eo != 5) return __LINE__;
+    regex_t anchored;
+    if (regcomp(&anchored, "^abc$", REG_EXTENDED)) return __LINE__;
+    groups[0] = (regmatch_t){0, 0};
+    if (legacy(&anchored, "abc", 1, groups, REG_STARTEND | 0x1000) ||
+        legacy(&anchored, "abc", 0, NULL, REG_NOTBOL | 0x1000) != REG_NOMATCH ||
+        legacy(&anchored, "abc", 0, NULL, REG_NOTEOL | 0x1000) != REG_NOMATCH)
+        return __LINE__;
+    regfree(&anchored);
+
     char message[4] = {'?', '?', '?', '!'};
     size_t needed = regerror(REG_NOMATCH, compiled, NULL, 0);
     if (needed <= 3 || regerror(REG_NOMATCH, compiled, message, 3) != needed ||
@@ -1068,6 +1086,30 @@ fn memory_runtime_patterns_survive_the_compiling_dso() {
         |api| {
             let producer = Fixture::new(&["-DPATTERN_CLIENT"]);
             let consumer = Fixture::new(&["-DPATTERN_CLIENT", "-fno-plt"]);
+            // Install a host-only nondefault version. It supplies a positive
+            // control for a version miss that the host could actually satisfy.
+            let source = producer.dir.join("foreign.c");
+            let map = producer.dir.join("foreign.map");
+            let object = producer.dir.join("foreign.so");
+            std::fs::write(
+                &source,
+                r#"int foreign_marker(void) { return 1; }
+__asm__(".symver foreign_marker,regexec@FRANKEN_REGEX_TEST_1");
+"#,
+            )
+            .unwrap();
+            std::fs::write(
+                &map,
+                "FRANKEN_REGEX_TEST_1 { global: regexec; local: *; };",
+            )
+            .unwrap();
+            compile(
+                &source,
+                &object,
+                &[&format!("-Wl,--version-script={}", map.display())],
+            );
+            let host = Api::new(false);
+            let foreign = host.open(&object, libc::RTLD_GLOBAL);
             let first = api.open(&producer.path, 0);
             let second = api.open(&consumer.path, 0);
             for handle in [first, second] {
@@ -1094,17 +1136,18 @@ fn memory_runtime_patterns_survive_the_compiling_dso() {
                     assert!(!default.is_null());
                     assert_eq!(unsafe { dynamic(name.as_ptr(), version.as_ptr()) }, default);
                     assert!(unsafe { dynamic(name.as_ptr(), c"GLIBC_PRIVATE".as_ptr()) }.is_null());
+                    if name == c"regexec" {
+                        let foreign_version =
+                            unsafe { dynamic(name.as_ptr(), c"FRANKEN_REGEX_TEST_1".as_ptr()) };
+                        assert_eq!(foreign_version.is_null(), api.native);
+                        assert!(unsafe { dynamic(name.as_ptr(), c"GLIBC_2.3".as_ptr()) }.is_null());
+                    }
                     if api.native {
                         assert_eq!(
                             unsafe { imported(index as u32) },
                             expected.cast_mut().cast()
                         );
                         assert_eq!(default, expected.cast_mut().cast());
-                        if name == c"regexec" {
-                            assert!(
-                                unsafe { dynamic(name.as_ptr(), c"GLIBC_2.2.5".as_ptr()) }.is_null()
-                            );
-                        }
                     } else {
                         assert_eq!(default, unsafe { dlsym_oracle::host_addr(name, expected) });
                     }
@@ -1120,6 +1163,7 @@ fn memory_runtime_patterns_survive_the_compiling_dso() {
             api.close(first);
             assert_eq!(unsafe { finish(compiled) }, 0);
             api.close(second);
+            host.close(foreign);
         },
     );
 }
