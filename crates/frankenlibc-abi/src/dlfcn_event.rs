@@ -1,13 +1,17 @@
 //! Event-loop runtime bindings for native plugins.
 //!
-//! Keep readiness waits, event counters, timers and deadline clocks in the same
-//! errno and cancellation domain as the socket and descriptor frontends. Both
-//! native relocation binding and caller-relative lookup consume this table.
+//! Keep readiness waits, signals, event counters, timers and deadline clocks in
+//! the same errno and cancellation domain as the socket and descriptor
+//! frontends. Both native relocation binding and caller-relative lookup consume
+//! this table.
 
-use crate::{poll_abi as poll, time_abi as time};
+use crate::{poll_abi as poll, signal_abi as signal, time_abi as time, unistd_abi as unistd};
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     if let Some(address) = clock_address(name, version) {
+        return Some(address);
+    }
+    if let Some(address) = signal_address(name, version) {
         return Some(address);
     }
     let introduced = match name {
@@ -46,6 +50,56 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "timerfd_gettime" => poll::timerfd_gettime as *const (),
         _ => return None,
     };
+    Some(function as usize as u64)
+}
+
+fn signal_address(name: &str, version: Option<&str>) -> Option<u64> {
+    let (function, introduced) = match name {
+        "signal" => (signal::signal as *const (), "GLIBC_2.2.5"),
+        "bsd_signal" => (unistd::bsd_signal as *const (), "GLIBC_2.2.5"),
+        "raise" => (signal::raise as *const (), "GLIBC_2.2.5"),
+        "kill" => (signal::kill as *const (), "GLIBC_2.2.5"),
+        "killpg" => (signal::killpg as *const (), "GLIBC_2.2.5"),
+        "sigemptyset" => (signal::sigemptyset as *const (), "GLIBC_2.2.5"),
+        "sigfillset" => (signal::sigfillset as *const (), "GLIBC_2.2.5"),
+        "sigaddset" => (signal::sigaddset as *const (), "GLIBC_2.2.5"),
+        "sigdelset" => (signal::sigdelset as *const (), "GLIBC_2.2.5"),
+        "sigismember" => (signal::sigismember as *const (), "GLIBC_2.2.5"),
+        "sigandset" => (signal::sigandset as *const (), "GLIBC_2.2.5"),
+        "sigorset" => (signal::sigorset as *const (), "GLIBC_2.2.5"),
+        "sigisemptyset" => (signal::sigisemptyset as *const (), "GLIBC_2.2.5"),
+        "sigprocmask" => (signal::sigprocmask as *const (), "GLIBC_2.2.5"),
+        "sigpending" => (signal::sigpending as *const (), "GLIBC_2.2.5"),
+        "sigsuspend" => (signal::sigsuspend as *const (), "GLIBC_2.2.5"),
+        "sigaction" => (signal::sigaction as *const (), "GLIBC_2.2.5"),
+        "sigaltstack" => (signal::sigaltstack as *const (), "GLIBC_2.2.5"),
+        "siginterrupt" => (signal::siginterrupt as *const (), "GLIBC_2.2.5"),
+        "sigwait" => (signal::sigwait as *const (), "GLIBC_2.2.5"),
+        "sigqueue" => (unistd::sigqueue as *const (), "GLIBC_2.2.5"),
+        "sigwaitinfo" => (unistd::sigwaitinfo as *const (), "GLIBC_2.2.5"),
+        "sigtimedwait" => (unistd::sigtimedwait as *const (), "GLIBC_2.2.5"),
+        "pause" => (signal::pause as *const (), "GLIBC_2.2.5"),
+        "__libc_current_sigrtmin" => (signal::__libc_current_sigrtmin as *const (), "GLIBC_2.2.5"),
+        "__libc_current_sigrtmax" => (signal::__libc_current_sigrtmax as *const (), "GLIBC_2.2.5"),
+        "signalfd" => (unistd::signalfd as *const (), "GLIBC_2.7"),
+        "tgkill" => (unistd::tgkill as *const (), "GLIBC_2.30"),
+        "sigabbrev_np" => (signal::sigabbrev_np as *const (), "GLIBC_2.32"),
+        "sigdescr_np" => (signal::sigdescr_np as *const (), "GLIBC_2.32"),
+        _ => return None,
+    };
+    // AArch64 starts at GLIBC_2.17. Later additions retain their introduction
+    // version on both architectures; these APIs did not gain GLIBC_2.34 aliases.
+    let supported =
+        if cfg!(target_arch = "aarch64") && matches!(introduced, "GLIBC_2.2.5" | "GLIBC_2.7") {
+            "GLIBC_2.17"
+        } else {
+            introduced
+        };
+    if version.is_some_and(|requested| requested != supported) {
+        return None;
+    }
+    // Bind the actual frontends, including C-unwind signal waits, so imported
+    // calls and dlsym/dlvsym use the same handler, mask and cancellation state.
     Some(function as usize as u64)
 }
 

@@ -10,6 +10,7 @@ on:
       - 'crates/frankenlibc-abi/src/io_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/errno_abi.rs'
+      - 'crates/frankenlibc-abi/src/signal_abi.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
@@ -28,6 +29,8 @@ on:
       - 'crates/frankenlibc-abi/tests/dlfcn_native_identity_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_netdb_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_calendar_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_event_test.rs'
+      - 'crates/frankenlibc-abi/tests/fixtures/native_event_runtime.c'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
@@ -42,6 +45,7 @@ on:
       - 'crates/frankenlibc-abi/src/io_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/errno_abi.rs'
+      - 'crates/frankenlibc-abi/src/signal_abi.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/process_abi.rs'
@@ -60,6 +64,8 @@ on:
       - 'crates/frankenlibc-abi/tests/dlfcn_native_identity_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_netdb_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_calendar_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_event_test.rs'
+      - 'crates/frankenlibc-abi/tests/fixtures/native_event_runtime.c'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
@@ -97,7 +103,7 @@ jobs:
         run: |
           mkdir -p artifacts/native-caller
           status=0
-          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_encoding_test dlfcn_native_identity_test dlfcn_native_netdb_test dlfcn_native_calendar_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test dlfcn_native_barrier_test; do
+          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_encoding_test dlfcn_native_identity_test dlfcn_native_netdb_test dlfcn_native_calendar_test dlfcn_native_event_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test dlfcn_native_barrier_test; do
             log="artifacts/native-caller/${target}-${FRANKENLIBC_MODE}.log"
             # Preserve every failure, but execute later targets as well: a
             # memory-admission failure must not hide stream test outcomes.

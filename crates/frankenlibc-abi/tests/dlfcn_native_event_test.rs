@@ -3,11 +3,14 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use frankenlibc_abi::{dlfcn_abi as dl, poll_abi as poll};
+use frankenlibc_abi::{
+    dlfcn_abi as dl, poll_abi as poll, signal_abi as signal, unistd_abi as unistd,
+};
 use frankenlibc_core::elf::ElfLoader;
 
 #[path = "common/dlsym_oracle.rs"]
@@ -21,7 +24,7 @@ type Sym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
 type Function = unsafe extern "C" fn(u32) -> *mut c_void;
 type Dynamic = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_int) -> *mut c_void;
 
-fn symbols() -> [(&'static str, &'static str, *const ()); 13] {
+fn symbols() -> [(&'static str, &'static str, *const ()); 43] {
     [
         ("poll", "GLIBC_2.2.5", poll::poll as *const ()),
         ("ppoll", "GLIBC_2.4", poll::ppoll as *const ()),
@@ -56,6 +59,84 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 13] {
             "GLIBC_2.8",
             poll::timerfd_gettime as *const (),
         ),
+        ("signal", "GLIBC_2.2.5", signal::signal as *const ()),
+        ("raise", "GLIBC_2.2.5", signal::raise as *const ()),
+        ("kill", "GLIBC_2.2.5", signal::kill as *const ()),
+        ("killpg", "GLIBC_2.2.5", signal::killpg as *const ()),
+        (
+            "sigemptyset",
+            "GLIBC_2.2.5",
+            signal::sigemptyset as *const (),
+        ),
+        ("sigfillset", "GLIBC_2.2.5", signal::sigfillset as *const ()),
+        ("sigaddset", "GLIBC_2.2.5", signal::sigaddset as *const ()),
+        ("sigdelset", "GLIBC_2.2.5", signal::sigdelset as *const ()),
+        (
+            "sigismember",
+            "GLIBC_2.2.5",
+            signal::sigismember as *const (),
+        ),
+        ("sigandset", "GLIBC_2.2.5", signal::sigandset as *const ()),
+        ("sigorset", "GLIBC_2.2.5", signal::sigorset as *const ()),
+        (
+            "sigisemptyset",
+            "GLIBC_2.2.5",
+            signal::sigisemptyset as *const (),
+        ),
+        (
+            "sigprocmask",
+            "GLIBC_2.2.5",
+            signal::sigprocmask as *const (),
+        ),
+        ("sigpending", "GLIBC_2.2.5", signal::sigpending as *const ()),
+        ("sigsuspend", "GLIBC_2.2.5", signal::sigsuspend as *const ()),
+        ("sigaction", "GLIBC_2.2.5", signal::sigaction as *const ()),
+        (
+            "sigaltstack",
+            "GLIBC_2.2.5",
+            signal::sigaltstack as *const (),
+        ),
+        (
+            "siginterrupt",
+            "GLIBC_2.2.5",
+            signal::siginterrupt as *const (),
+        ),
+        ("sigwait", "GLIBC_2.2.5", signal::sigwait as *const ()),
+        ("sigqueue", "GLIBC_2.2.5", unistd::sigqueue as *const ()),
+        (
+            "sigwaitinfo",
+            "GLIBC_2.2.5",
+            unistd::sigwaitinfo as *const (),
+        ),
+        (
+            "sigtimedwait",
+            "GLIBC_2.2.5",
+            unistd::sigtimedwait as *const (),
+        ),
+        ("pause", "GLIBC_2.2.5", signal::pause as *const ()),
+        (
+            "sigabbrev_np",
+            "GLIBC_2.32",
+            signal::sigabbrev_np as *const (),
+        ),
+        (
+            "sigdescr_np",
+            "GLIBC_2.32",
+            signal::sigdescr_np as *const (),
+        ),
+        ("signalfd", "GLIBC_2.7", unistd::signalfd as *const ()),
+        ("tgkill", "GLIBC_2.30", unistd::tgkill as *const ()),
+        (
+            "__libc_current_sigrtmin",
+            "GLIBC_2.2.5",
+            signal::__libc_current_sigrtmin as *const (),
+        ),
+        (
+            "__libc_current_sigrtmax",
+            "GLIBC_2.2.5",
+            signal::__libc_current_sigrtmax as *const (),
+        ),
+        ("bsd_signal", "GLIBC_2.2.5", unistd::bsd_signal as *const ()),
     ]
 }
 
@@ -208,6 +289,9 @@ fn exercise(native: bool) {
             c"event_readiness_protocol",
             c"event_epoll_socket_protocol",
             c"event_timer_protocol",
+            c"event_signal_sets_protocol",
+            c"event_signal_wait_protocol",
+            c"event_signal_handler_protocol",
         ] {
             let run: Run = unsafe { std::mem::transmute(api.symbol(handle, name)) };
             assert_eq!(unsafe { run() }, 0, "{name:?}: failing C protocol line");
@@ -230,16 +314,33 @@ fn native_event_runtime_protocols_and_versions() {
         ("native", "strict"),
         ("native", "hardened"),
     ] {
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "native_event_runtime_protocols_and_versions",
                 "--nocapture",
             ])
             .env(CHILD, provider)
-            .env("FRANKENLIBC_MODE", mode)
-            .spawn()
-            .unwrap();
+            .env("FRANKENLIBC_MODE", mode);
+        // SAFETY: this child-side hook makes only an async-signal-safe raw
+        // syscall before exec. Every harness thread inherits SIGUSR1 blocked;
+        // the fixture unblocks only its current thread. Process-directed queue
+        // delivery therefore returns from the callback on that thread before
+        // dlclose can unmap its code, rather than racing another harness thread.
+        unsafe {
+            command.pre_exec(|| {
+                let mask = 1u64 << (libc::SIGUSR1 - 1);
+                frankenlibc_core::syscall::sys_rt_sigprocmask(
+                    libc::SIG_BLOCK,
+                    (&raw const mask).cast(),
+                    std::ptr::null_mut(),
+                    std::mem::size_of::<u64>(),
+                )
+                .map_err(std::io::Error::from_raw_os_error)
+            });
+        }
+        let mut child = command.spawn().unwrap();
         let start = Instant::now();
         loop {
             if let Some(status) = child.try_wait().unwrap() {
