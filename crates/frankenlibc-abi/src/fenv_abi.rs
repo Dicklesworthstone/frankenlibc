@@ -546,17 +546,37 @@ pub unsafe extern "C" fn fegetenv(envp: *mut c_void) -> c_int {
     0
 }
 
-/// Set the floating-point environment from `*envp`.
-/// Pass `FE_DFL_ENV` (pointer value -1) to reset to default environment.
+/// Set the floating-point environment from a saved object or a GNU preset.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fesetenv(envp: *const c_void) -> c_int {
-    if envp as usize == FE_DFL_ENV_SENTINEL {
-        // Reset to default: fninit resets x87, then set default MXCSR
+    const FE_NOMASK_ENV: usize = usize::MAX - 1;
+    let preset = envp as usize;
+    if preset == FE_DFL_ENV_SENTINEL || preset == FE_NOMASK_ENV {
+        #[cfg(target_arch = "x86_64")]
         unsafe {
-            #[cfg(target_arch = "x86_64")]
-            core::arch::asm!("fninit", options(nostack));
-            write_x87_cw(X87_DEFAULT_CW);
-            write_mxcsr(MXCSR_DEFAULT);
+            // The GNU trapping preset enables the five standard exceptions.
+            // The x86 denormal-operand extension stays masked in both units.
+            let masks = if preset == FE_NOMASK_ENV {
+                0x02
+            } else {
+                HW_ALL_EXCEPT
+            };
+            let mut env = zeroed_fenv();
+            store_x87_env(&mut env);
+            // Preserve the live x87 stack (TOP and tag word). Both presets
+            // select extended precision and rounding to nearest.
+            env.cw = (env.cw & !(X87_ROUND_MASK | HW_ALL_EXCEPT as u16)) | 0x0300 | masks as u16;
+            env.sw &= !(HW_ALL_EXCEPT as u16);
+            env.eip = 0;
+            env.cs_opcode = 0;
+            env.data_off = 0;
+            env.ds_pad = 0;
+            load_x87_env(&env);
+            write_mxcsr(masks << 7);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        if preset == FE_NOMASK_ENV {
+            return -1;
         }
         return 0;
     }

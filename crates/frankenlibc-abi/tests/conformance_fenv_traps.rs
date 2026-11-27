@@ -8,6 +8,10 @@
 use frankenlibc_abi::fenv_abi as fe;
 use std::ffi::c_int;
 
+#[cfg(target_arch = "x86_64")]
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 const FE_INVALID: c_int = 0x01;
 const FE_DIVBYZERO: c_int = 0x04;
 const FE_OVERFLOW: c_int = 0x08;
@@ -198,6 +202,15 @@ fn synchronous_exception_delivery() {
                 "raise" => {
                     fe::feraiseexcept(bit);
                 }
+                "preset-raise" => {
+                    assert_eq!(fe::fesetenv((usize::MAX - 1) as *const _), 0);
+                    fe::feraiseexcept(bit);
+                }
+                "preset-update" => {
+                    fe::fedisableexcept(FE_ALL);
+                    fe::fesetexcept(bit);
+                    fe::feupdateenv((usize::MAX - 1) as *const _);
+                }
                 "restore" => {
                     let mut saved = [0u32; 8];
                     assert_eq!(fe::feholdexcept(saved.as_mut_ptr().cast()), 0);
@@ -240,6 +253,8 @@ fn synchronous_exception_delivery() {
             true,
         ),
         ("restore", &[FE_DIVBYZERO][..], true),
+        ("preset-raise", &[FE_OVERFLOW][..], true),
+        ("preset-update", &[FE_INVALID][..], true),
         ("convert", &[FE_OVERFLOW, FE_UNDERFLOW, FE_INEXACT][..], true),
         ("exact", &[FE_INEXACT][..], false),
         ("set", &[FE_OVERFLOW][..], false),
@@ -289,5 +304,45 @@ fn range_exceptions_preserve_only_requested_flags() {
             assert_eq!(fe::fetestexcept(FE_ALL), FE_INEXACT);
         }
         assert_eq!(fe::fesetenv(original.as_ptr().cast()), 0);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn predefined_environments_match_gnu_hardware_controls() {
+    use std::ffi::c_void;
+    type Set = unsafe extern "C" fn(*const c_void) -> c_int;
+    type Get = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+    unsafe {
+        let set: Set = dlsym_oracle::host_fn(c"fesetenv", fe::fesetenv as *const ());
+        let get: Get = dlsym_oracle::host_fn(c"fegetenv", fe::fegetenv as *const ());
+        let mut original = [0u32; 8];
+        assert_eq!(get(original.as_mut_ptr().cast()), 0);
+        let mut initial = original;
+        // Mask all traps. Select single precision and upward rounding, enable
+        // flush-to-zero in SSE, and seed exception status in both units.
+        initial[0] = (initial[0] & !0x0f3f) | 0x083f;
+        initial[1] |= FE_INEXACT as u32;
+        initial[7] = 0xdf80 | FE_DIVBYZERO as u32;
+
+        let capture = |provider: Set, preset: usize| {
+            let mut observed = [0u32; 8];
+            assert_eq!(set(initial.as_ptr().cast()), 0);
+            let rc = provider(preset as *const c_void);
+            let saved = get(observed.as_mut_ptr().cast());
+            assert_eq!(set(original.as_ptr().cast()), 0);
+            assert_eq!((rc, saved), (0, 0));
+            (observed[0] as u16, observed[1] & 0x3f, observed[7])
+        };
+
+        for (preset, controls) in [
+            (usize::MAX, (0x037f, 0, 0x1f80)),
+            (usize::MAX - 1, (0x0342, 0, 0x0100)),
+        ] {
+            let host = capture(set, preset);
+            assert_eq!(host, controls, "GNU preset {preset:#x}");
+            assert_eq!(capture(fe::fesetenv, preset), host);
+        }
     }
 }
