@@ -1573,3 +1573,74 @@ fn rewind_clears_indicators_on_host_owned_streams() {
         }
     }
 }
+
+#[test]
+fn input_descriptor_readahead_matches_glibc() {
+    let gnu = host();
+    let fl = candidate();
+    // Include both sides of GNU's small-buffer threshold, a non-power-of-two
+    // buffer, exact multiples, and caller buffers larger than BUFSIZ.
+    for (capacity, request) in [
+        (127, 263),
+        (128, 263),
+        (257, 521),
+        (4096, 8192),
+        (16384, 1),
+        (16384, 16384),
+        (16384, 32775),
+    ] {
+        let observe = |arm: &StdioArm| {
+            let path = std::env::temp_dir().join(format!(
+                "fl-stdio-readahead-{}-{capacity}-{request}-{}",
+                std::process::id(),
+                arm.name
+            ));
+            let data: Vec<u8> = (0..request + capacity + 1)
+                .map(|index| (index % 251) as u8)
+                .collect();
+            std::fs::write(&path, &data).unwrap();
+            let cpath = CString::new(path.to_str().unwrap()).unwrap();
+            let writer = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            let mut storage = vec![0u8; capacity];
+            let mut destination = vec![0u8; request];
+            // SAFETY: each FILE and its backing buffer remain live through
+            // fclose. The positional write does not change the descriptor offset.
+            unsafe {
+                let stream = (arm.fopen)(cpath.as_ptr(), c"r".as_ptr());
+                assert!(!stream.is_null());
+                std::fs::remove_file(&path).unwrap();
+                if arm.name == "fl" {
+                    assert!(!fl::stdio_may_delegate_to_host_for_tests(stream));
+                }
+                assert_eq!(
+                    (arm.setvbuf)(stream, storage.as_mut_ptr().cast(), libc::_IOFBF, capacity),
+                    0
+                );
+                assert_eq!(
+                    (arm.fread)(destination.as_mut_ptr().cast(), 1, request, stream),
+                    request
+                );
+                assert_eq!(destination, &data[..request]);
+                let fd = (arm.fileno)(stream);
+                let physical = libc::lseek(fd, 0, libc::SEEK_CUR);
+                let logical = (arm.ftell)(stream);
+                // Make it observable whether the unread suffix was prefetched.
+                use std::os::unix::fs::FileExt;
+                assert_eq!(writer.write_at(&[255], request as u64).unwrap(), 1);
+                let next = (arm.fgetc)(stream);
+                assert_eq!((arm.fflush)(stream), 0);
+                let synchronized = libc::lseek(fd, 0, libc::SEEK_CUR);
+                assert_eq!((arm.fclose)(stream), 0);
+                (physical, logical, next, synchronized)
+            }
+        };
+        let oracle = observe(&gnu);
+        assert_eq!(oracle.1, request as c_long);
+        assert_eq!(oracle.3, request as libc::off_t + 1);
+        assert_eq!(
+            observe(&fl),
+            oracle,
+            "capacity={capacity}, request={request}"
+        );
+    }
+}

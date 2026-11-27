@@ -2134,6 +2134,12 @@ impl StdioStream {
         self.buffer.try_reserve_storage()
     }
 
+    /// Refill an exhausted read window in place. Descriptor callers reserve
+    /// storage first so allocation failure can be reported before any I/O.
+    pub fn refill_read_buffer_with(&mut self, read: impl FnOnce(&mut [u8]) -> isize) -> isize {
+        self.buffer.refill_with(read)
+    }
+
     /// Fill the read buffer with externally-fetched data.
     /// Returns the number of bytes actually buffered.
     pub fn fill_read_buffer(&mut self, data: &[u8]) -> usize {

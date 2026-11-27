@@ -5193,10 +5193,8 @@ unsafe fn flush_native_stdout_before_input(stream: &StdioStream, caller: usize) 
 }
 
 thread_local! {
-    /// Reusable refill bounce buffer — refill_stream fires on EVERY buffered read refill
-    /// (fgetc/fread/fgets/getline), and a fresh `vec![0u8; <=8192]` per refill is a per-refill
-    /// fl-malloc on the read hot path. A thread-local Vec retains capacity across refills;
-    /// a drop guard restores it on every return path.
+    /// Detached storage keeps cookie callback input valid across reentrant
+    /// buffer replacement. Descriptor refills use the FILE's own storage.
     static REFILL_TMP: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
 }
 
@@ -5230,35 +5228,15 @@ unsafe fn refill_stream(
     caller: usize,
 ) -> Result<isize, std::collections::TryReserveError> {
     let io_caller = stream_io_caller(stream, caller);
-    let capacity = stream.buffer_capacity();
-    if capacity == 0 {
-        return Ok(0); // Cannot buffer anything.
+    if stream.buffer_capacity() == 0 {
+        return Ok(0);
     }
-    let want = capacity.min(8192);
-    // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
-    // Vec. `sys_read_fd` overwrites the first `want` bytes, so no pre-zeroing is required for
-    // correctness; `resize(want, 0)` only grows (a no-op once warmed to the common size).
-    let mut guard = if crate::malloc_abi::native_thread_backend_active() {
-        RefillTmpGuard(Vec::new())
-    } else {
-        RefillTmpGuard::take()
-    };
-    let tmp = &mut guard.0;
-    // Reserve both the bounce buffer and the destination before consuming
-    // descriptor bytes. fill_read_buffer lazily materializes its storage;
-    // reserving it here prevents an allocation failure after a successful read.
-    let additional = want.saturating_sub(tmp.len());
-    if let Err(error) = tmp
-        .try_reserve(additional)
-        .and_then(|()| stream.try_reserve_read_buffer())
-    {
+    // Reserve the full setvbuf window before consuming input. Even a
+    // one-byte FILE read exposes the extent of read-ahead through dup'd fds.
+    if let Err(error) = stream.try_reserve_read_buffer() {
         stream.set_error();
-        // SAFETY: only the calling thread's errno slot is modified.
         unsafe { set_abi_errno(errno::ENOMEM) };
         return Err(error);
-    }
-    if tmp.len() < want {
-        tmp.resize(want, 0);
     }
     if stream.effective_orientation() > 0 {
         stream.mark_wide_buffer_initialized();
@@ -5266,9 +5244,11 @@ unsafe fn refill_stream(
     unsafe { flush_native_stdout_before_input(stream, caller) };
     let fd = stream.fd();
     loop {
-        // The owned bounce buffer and the caller's StreamGuard remain outside
-        // the raw-syscall cancellation window and unwind normally on a cancel.
-        let rc = unsafe { stream_read_fd(io_caller, fd, tmp.as_mut_ptr().cast(), want) };
+        // The caller already owns this stream across the descriptor read.
+        // Publish the filled prefix only after the cancellation point returns.
+        let rc = stream.refill_read_buffer_with(|window| unsafe {
+            stream_read_fd(io_caller, fd, window.as_mut_ptr().cast(), window.len())
+        });
         let errno_val = if rc < 0 {
             std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {
@@ -5276,10 +5256,7 @@ unsafe fn refill_stream(
         };
         match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
             StreamPolicyAction::Retry => continue,
-            StreamPolicyAction::Buffer => {
-                stream.fill_read_buffer(&tmp[..rc as usize]);
-                return Ok(rc);
-            }
+            StreamPolicyAction::Buffer => return Ok(rc),
             StreamPolicyAction::Yield => {
                 if rc == 0 {
                     stream.set_eof();
@@ -5290,13 +5267,7 @@ unsafe fn refill_stream(
                 stream.set_error();
                 return Ok(-1);
             }
-            StreamPolicyAction::Flush => {
-                if rc > 0 {
-                    stream.fill_read_buffer(&tmp[..rc as usize]);
-                    return Ok(rc);
-                }
-                return Ok(0);
-            }
+            StreamPolicyAction::Flush => return Ok(rc.max(0)),
         }
     }
 }
@@ -6937,7 +6908,15 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
         }
         // Direct fd read (avoids recursive memcpy interposition through buffered internals).
         let fd = s.fd();
-        let to_read = total - read_total;
+        // For a buffer of at least 128 bytes, GNU reads whole buffer-sized
+        // blocks directly and obtains the trailing partial block by refill.
+        // This leaves its unread suffix available to later FILE operations.
+        let remaining = total - read_total;
+        let to_read = if cap >= 128 {
+            remaining - remaining % cap
+        } else {
+            remaining
+        };
         let rc = unsafe {
             stream_read_fd(
                 io_caller,

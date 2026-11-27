@@ -430,6 +430,19 @@ impl StreamBuffer {
             .try_reserve(self.capacity.saturating_sub(self.data.len()))
     }
 
+    /// Read directly into the configured buffer. A short read publishes only
+    /// its returned prefix. EOF, failure and unwinding leave the cursors intact.
+    pub(super) fn refill_with(&mut self, read: impl FnOnce(&mut [u8]) -> isize) -> isize {
+        self.ensure_storage();
+        let count = read(&mut self.data[..self.capacity]);
+        if count > 0 {
+            self.read_pos = 0;
+            self.read_filled = (count as usize).min(self.capacity);
+            return self.read_filled as isize;
+        }
+        count
+    }
+
     /// Fill the read buffer with data from an external source.
     /// Resets position to 0. Returns the number of bytes accepted.
     pub fn fill(&mut self, data: &[u8]) -> usize {
