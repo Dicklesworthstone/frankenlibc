@@ -10,13 +10,38 @@
 //! the produced bytes. fl-allocated buffers are freed with fl's allocator and
 //! glibc's with the system allocator.
 
+#[cfg(target_env = "gnu")]
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 use frankenlibc_abi::malloc_abi as flm;
 use frankenlibc_abi::stdio_abi as fl;
 use std::ffi::{CString, c_char, c_void};
 
-unsafe extern "C" {
-    fn sscanf(s: *const c_char, f: *const c_char, ...) -> i32;
-    fn free(p: *mut c_void);
+struct Host {
+    scan: unsafe extern "C" fn(*const c_char, *const c_char, ...) -> i32,
+    free: unsafe extern "C" fn(*mut c_void),
+}
+
+fn host() -> &'static Host {
+    static HOST: std::sync::OnceLock<Host> = std::sync::OnceLock::new();
+    HOST.get_or_init(|| {
+        #[cfg(target_env = "gnu")]
+        unsafe {
+            Host {
+                scan: dlsym_oracle::host_fn(c"sscanf", fl::sscanf as *const ()),
+                free: dlsym_oracle::host_fn(c"free", flm::free as *const ()),
+            }
+        }
+        #[cfg(not(target_env = "gnu"))]
+        {
+            unsafe extern "C" {
+                fn sscanf(s: *const c_char, f: *const c_char, ...) -> i32;
+                fn free(p: *mut c_void);
+            }
+            Host { scan: sscanf, free }
+        }
+    })
 }
 
 /// Marks an out-pointer the call must leave alone, so that "stored NULL" and
@@ -39,7 +64,7 @@ fn alloc_str(eng: u8, inp: &str, fmt: &str) -> (i32, String, String) {
         2 => unsafe {
             frankenlibc_abi::isoc_abi::__isoc23_sscanf(ci.as_ptr(), cf.as_ptr(), &mut p1, &mut p2)
         },
-        _ => unsafe { sscanf(ci.as_ptr(), cf.as_ptr(), &mut p1, &mut p2) },
+        _ => unsafe { (host().scan)(ci.as_ptr(), cf.as_ptr(), &mut p1, &mut p2) },
     };
     let s = |p: *mut c_char| {
         if p == UNTOUCHED {
@@ -58,7 +83,7 @@ fn alloc_str(eng: u8, inp: &str, fmt: &str) -> (i32, String, String) {
             if eng != 1 {
                 unsafe { flm::free(p.cast()) };
             } else {
-                unsafe { free(p.cast()) };
+                unsafe { (host().free)(p.cast()) };
             }
         }
     }
@@ -74,7 +99,7 @@ fn char_bytes(eng: u8, inp: &str, fmt: &str, read: usize, alloc: bool) -> (i32, 
         let r = if eng == 0 {
             unsafe { fl::sscanf(ci.as_ptr(), cf.as_ptr(), &mut p) }
         } else {
-            unsafe { sscanf(ci.as_ptr(), cf.as_ptr(), &mut p) }
+            unsafe { (host().scan)(ci.as_ptr(), cf.as_ptr(), &mut p) }
         };
         let bytes = if p.is_null() {
             vec![]
@@ -85,7 +110,7 @@ fn char_bytes(eng: u8, inp: &str, fmt: &str, read: usize, alloc: bool) -> (i32, 
             if eng == 0 {
                 unsafe { flm::free(p.cast()) };
             } else {
-                unsafe { free(p.cast()) };
+                unsafe { (host().free)(p.cast()) };
             }
         }
         (r, bytes)
@@ -94,7 +119,7 @@ fn char_bytes(eng: u8, inp: &str, fmt: &str, read: usize, alloc: bool) -> (i32, 
         let r = if eng == 0 {
             unsafe { fl::sscanf(ci.as_ptr(), cf.as_ptr(), buf.as_mut_ptr()) }
         } else {
-            unsafe { sscanf(ci.as_ptr(), cf.as_ptr(), buf.as_mut_ptr()) }
+            unsafe { (host().scan)(ci.as_ptr(), cf.as_ptr(), buf.as_mut_ptr()) }
         };
         (r, buf[..read].to_vec())
     }

@@ -28,6 +28,8 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_scanf_malloc.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_isoc_sscanf_alias.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_shadow_lines.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_wide_stdio_write.rs'
@@ -87,6 +89,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
+      - name: Compare exact-width destinations and legacy allocation conversions
+        env:
+          CACHE: ${{ matrix.cache }}
+        run: |
+          features=()
+          if [[ "$CACHE" == owned ]]; then
+            features+=(--features owned-tls-cache)
+          fi
+          for mode in strict hardened; do
+            export FRANKENLIBC_MODE="$mode"
+            cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_isoc_sscanf_alias --test conformance_diff_swscanf bit_width \
+              -- --test-threads=1
+            cargo test -p frankenlibc-abi "${features[@]}" \
+              --test conformance_diff_scanf_malloc legacy_ -- --test-threads=1
+          done
       - name: Admit fwrite source bounds before cached or delegated writes
         env:
           CACHE: ${{ matrix.cache }}
