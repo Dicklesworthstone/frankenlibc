@@ -10,6 +10,10 @@
 //! (incl. tm_wday/tm_yday) against glibc, pinned to UTC0 so fl's UTC-only mktime
 //! and glibc's TZ-independent timegm coincide.
 
+#[cfg(all(target_env = "gnu", target_pointer_width = "64"))]
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 use std::ffi::c_int;
 use std::sync::Mutex;
 
@@ -133,4 +137,87 @@ fn diff_timegm_out_of_range_normalization() {
         divs.len(),
         divs.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
     );
+}
+
+#[cfg(all(target_env = "gnu", target_pointer_width = "64"))]
+#[test]
+fn calendar_carries_respect_tm_year_limits() {
+    use std::ffi::CStr;
+
+    type Convert = unsafe extern "C" fn(*mut libc::tm) -> i64;
+    let _g = TZ_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var("TZ", "UTC0");
+        tzset();
+    }
+    for (name, candidate) in [(c"timegm", fl::timegm as Convert), (c"mktime", fl::mktime as Convert)] {
+        let reference: Convert = unsafe { dlsym_oracle::host_fn(name, candidate as *const ()) };
+        // A C caller may initialize only the calendar inputs and (for
+        // mktime) the DST hint. Read output fields only after success.
+        let mut input = std::mem::MaybeUninit::<libc::tm>::uninit();
+        let ptr = input.as_mut_ptr();
+        unsafe {
+            (&raw mut (*ptr).tm_year).write(124);
+            (&raw mut (*ptr).tm_mon).write(1);
+            (&raw mut (*ptr).tm_mday).write(29);
+            (&raw mut (*ptr).tm_hour).write(0);
+            (&raw mut (*ptr).tm_min).write(0);
+            (&raw mut (*ptr).tm_sec).write(0);
+            if name == c"mktime" {
+                (&raw mut (*ptr).tm_isdst).write(-1);
+            }
+            assert_eq!(candidate(ptr), 1_709_164_800);
+            assert_eq!(((*ptr).tm_wday, (*ptr).tm_yday), (4, 59));
+        }
+        for (year, month, day, hour, overflow) in [
+            (i32::MAX, 11, 31, 23, false),
+            (i32::MAX, 11, 31, 24, true),
+            (i32::MAX, 12, 1, 0, true),
+            (i32::MIN, 0, 1, 0, false),
+            (i32::MIN, 0, 1, -1, true),
+            (i32::MIN, -1, 31, 0, true),
+            (i32::MAX, 10, 31, 0, false),
+            (69, 11, 31, 23, false),
+        ] {
+            let mut ours = base_tm();
+            ours.tm_year = year;
+            ours.tm_mon = month;
+            ours.tm_mday = day;
+            ours.tm_hour = hour;
+            ours.tm_min = 59;
+            ours.tm_sec = 59;
+            ours.tm_wday = -77;
+            let mut host = ours;
+            unsafe { *libc::__errno_location() = 0 };
+            let expected = unsafe { reference(&mut host) };
+            let expected_errno = unsafe { *libc::__errno_location() };
+            unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+            let actual = unsafe { candidate(&mut ours) };
+            let actual_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+            assert_eq!(actual, expected, "{name:?} {year}/{month}/{day} {hour}h");
+            if overflow {
+                assert_eq!((expected, expected_errno), (-1, libc::EOVERFLOW));
+                assert_eq!(actual_errno, libc::EOVERFLOW);
+                assert_eq!(ours.tm_wday, -77);
+                assert_eq!((ours.tm_year, ours.tm_mon, ours.tm_mday), (year, month, day));
+            } else {
+                assert_eq!(
+                    (ours.tm_year, ours.tm_mon, ours.tm_mday, ours.tm_wday, ours.tm_yday),
+                    (host.tm_year, host.tm_mon, host.tm_mday, host.tm_wday, host.tm_yday),
+                );
+                assert!(!ours.tm_zone.is_null() && !host.tm_zone.is_null());
+                assert_eq!(
+                    unsafe { CStr::from_ptr(ours.tm_zone) },
+                    unsafe { CStr::from_ptr(host.tm_zone) },
+                );
+                if expected == -1 {
+                    assert_ne!(actual_errno, libc::EOVERFLOW);
+                }
+            }
+        }
+    }
+    unsafe {
+        std::env::remove_var("TZ");
+        tzset();
+    }
 }

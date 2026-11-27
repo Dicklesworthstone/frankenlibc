@@ -21,6 +21,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_fnmatch_collation.rs'
       - 'crates/frankenlibc-core/src/string/glob.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_glob_locale.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_timegm_normalize.rs'
       - 'crates/frankenlibc-core/src/stdio/scanf.rs'
       - 'crates/frankenlibc-core/src/stdio/file.rs'
       - 'tests/integration/fixture_locale_objects.c'
@@ -147,10 +148,12 @@ jobs:
           env -u LD_PRELOAD -u LD_AUDIT "$probe" multibyte-sjis "$candidate" > artifacts/locale-results/multibyte-provider-negative.log 2>&1 || status=$?
           if [[ "$status" -ne 86 ]] || ! grep -Fxq 'locale-codec:provider-mismatch:newlocale' artifacts/locale-results/multibyte-provider-negative.log; then failed=1; fi
           exit "$failed"
-      - name: Compare pathname matching and collation with glibc
+      - name: Compare pathname matching, collation, and calendar normalization with glibc
         run: |
           for mode in strict hardened; do
-            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test conformance_diff_glob_locale --test conformance_diff_fnmatch_collation
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test conformance_diff_glob_locale --test conformance_diff_fnmatch_collation \
+              --test conformance_diff_timegm_normalize
           done
       - name: Check named single-byte conversion and locale selection
         run: |

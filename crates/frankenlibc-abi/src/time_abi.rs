@@ -1083,7 +1083,13 @@ fn local_broken_down(
     epoch: i64,
     recheck: bool,
 ) -> Option<(time_core::BrokenDownTime, i64, *const std::ffi::c_char)> {
-    let state = current_tz(recheck);
+    local_broken_down_in(epoch, current_tz(recheck))
+}
+
+fn local_broken_down_in(
+    epoch: i64,
+    state: &'static TzState,
+) -> Option<(time_core::BrokenDownTime, i64, *const std::ffi::c_char)> {
     publish_tz_names_at(state, epoch);
     let ty = state.zone.lookup(epoch);
     let mut bd = time_core::epoch_to_broken_down_checked(epoch.checked_add(i64::from(ty.utoff))?)?;
@@ -1105,9 +1111,10 @@ unsafe fn write_local_tm(
     }
 }
 
-/// Read a `BrokenDownTime` from a `libc::tm`.
+/// Read only the six calendar inputs. Callers of timegm and mktime may
+/// leave their output fields uninitialized.
 #[inline]
-unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
+unsafe fn read_calendar_fields(tm: *const libc::tm) -> time_core::BrokenDownTime {
     unsafe {
         time_core::BrokenDownTime {
             tm_sec: (*tm).tm_sec,
@@ -1116,16 +1123,22 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
             tm_mday: (*tm).tm_mday,
             tm_mon: (*tm).tm_mon,
             tm_year: (*tm).tm_year,
+            ..Default::default()
+        }
+    }
+}
+
+/// Read a broken-down time for formatting. Only a zone-name directive
+/// needs to follow tm_zone, which is handled separately.
+#[inline]
+unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
+    unsafe {
+        time_core::BrokenDownTime {
             tm_wday: (*tm).tm_wday,
             tm_yday: (*tm).tm_yday,
             tm_isdst: (*tm).tm_isdst,
             tm_gmtoff: (*tm).tm_gmtoff,
-            // tm_zone is NOT dereferenced here: read_tm feeds mktime/timegm/
-            // asctime too, and a caller may pass an uninitialised tm_zone to
-            // those. Only `strftime` (whose contract reads tm_zone for %Z)
-            // populates this, via read_tm_zone.
-            zone: [0; 16],
-            epoch_s: None,
+            ..read_calendar_fields(tm)
         }
     }
 }
@@ -1351,16 +1364,17 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
 unsafe fn local_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
     let isdst = unsafe { (*tm).tm_isdst };
     // Normalize the wall-clock fields as if they were UTC ("local seconds").
-    let local = unsafe { utc_normalize_to_epoch(tm) };
+    let fields = unsafe { read_calendar_fields(tm) };
+    let local = time_core::broken_down_to_epoch(&fields);
     let state = current_tz(true);
     // glibc's mktime starts from the offset its previous call used
     // (process-wide, initially 0); mirror it so repeated-hour results agree.
     static LAST_MKTIME_OFFSET: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
     let hint = LAST_MKTIME_OFFSET.load(Ordering::Relaxed);
     let (epoch, used) = state.zone.local_to_utc_with_hint(local, isdst, hint);
-    LAST_MKTIME_OFFSET.store(used, Ordering::Relaxed);
-    match local_broken_down(epoch, false) {
+    match local_broken_down_in(epoch, state) {
         Some(out) => {
+            LAST_MKTIME_OFFSET.store(used, Ordering::Relaxed);
             unsafe { write_local_tm(tm, &out) };
             epoch
         }
@@ -1384,13 +1398,6 @@ pub unsafe extern "C" fn timegm(tm: *mut libc::tm) -> i64 {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    // Direct UTC conversion — NOT a delegation to `mktime`, whose decide()/observe()
-    // membrane tax made timegm ~1.65x slower than glibc's bare timegm (43ns vs 26ns,
-    // time_survey) even though the arithmetic is identical (fl is UTC-only, so
-    // timegm == mktime's math). Mirrors gmtime_r: strict-mode (DEFAULT deployed) skips
-    // the tracked-object check that glibc never performs; hardened keeps it. Same
-    // normalization as mktime (re-derive the broken-down time, fill tm_wday/tm_yday,
-    // write back), so the output tm and return value are byte-identical.
     if !runtime_policy::strict_passthrough_active()
         && !tracked_required_object_fits(tm.cast_const())
     {
@@ -1400,22 +1407,13 @@ pub unsafe extern "C" fn timegm(tm: *mut libc::tm) -> i64 {
     unsafe { utc_normalize_to_epoch(tm) }
 }
 
-/// Shared UTC broken-down-time → epoch conversion with in-place normalization, used by both
-/// `timegm` and (since fl is UTC-only, so `mktime == timegm` mathematically) `mktime`.
-///
-/// Fast path: when the date/time is ALREADY in its normalized range, no field carries, so
-/// `epoch_to_broken_down(broken_down_to_epoch(bd))` is an identity on the calendar fields —
-/// the tm is already the normalized output and only tm_wday/tm_yday need filling. Derive
-/// those directly from the day count and SKIP the full reverse civil conversion
-/// (`epoch_to_broken_down`), which is a whole second gmtime and dominated the runtime
-/// (timegm 43ns → 15ns, time_survey). Guarding on an in-range MONTH (not re-deriving it)
-/// means no year adjustment and no i32/i64 overflow for any valid `tm_year`; leap seconds
-/// (tm_sec==60) and any out-of-range field take the slow path. Byte-identical output.
+/// Normalize a UTC calendar in place. Already-valid input needs only its
+/// weekday and day-of-year computed, and avoids a second civil conversion.
 ///
 /// # Safety
 /// `tm` must be a valid, writable `libc::tm`.
 unsafe fn utc_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
-    let bd = unsafe { read_tm(tm) };
+    let bd = unsafe { read_calendar_fields(tm) };
     let year = bd.tm_year as i64 + 1900;
     let mon = bd.tm_mon as i64;
 
@@ -1442,14 +1440,23 @@ unsafe fn utc_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
             zone: [0; 16],
             epoch_s: None,
         };
-        unsafe { write_tm(tm, &out) };
+        unsafe {
+            write_tm(tm, &out);
+            (*tm).tm_zone = c"GMT".as_ptr();
+        }
         return epoch;
     }
 
     // Slow path: an out-of-range field needs true normalization via the round trip.
     let epoch = time_core::broken_down_to_epoch(&bd);
-    let normalized = time_core::epoch_to_broken_down(epoch);
-    unsafe { write_tm(tm, &normalized) };
+    let Some(normalized) = time_core::epoch_to_broken_down_checked(epoch) else {
+        unsafe { set_abi_errno(errno::EOVERFLOW) };
+        return -1;
+    };
+    unsafe {
+        write_tm(tm, &normalized);
+        (*tm).tm_zone = c"GMT".as_ptr();
+    }
     epoch
 }
 
