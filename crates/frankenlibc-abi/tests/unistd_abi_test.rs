@@ -15747,48 +15747,193 @@ fn nss_dns_getnet_family_returns_notfound_and_sets_h_errnop() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn internal_netgrent_iteration_returns_failure_then_success_end() {
+fn nss_host_netgroup_helpers_reject_null_arguments_before_accessing_opaque_state() {
     use frankenlibc_abi::unistd_abi::{
         __internal_endnetgrent, __internal_getnetgrent_r, __internal_setnetgrent,
     };
-    let group = CString::new("admins").unwrap();
-    let mut result = [0u8; 64];
+    // This marker is deliberately not a guessed GNU cursor layout. Every
+    // call below has a missing required argument and must reject it before
+    // touching either opaque state or any of the caller's data outputs.
+    let mut marker = 0x5ausize;
+    let state = (&raw mut marker).cast::<c_void>();
     assert_eq!(
-        unsafe { __internal_setnetgrent(group.as_ptr(), result.as_mut_ptr() as *mut c_void) },
+        unsafe { __internal_setnetgrent(std::ptr::null(), state) },
         0
     );
-    let mut errnop: c_int = 0;
-    let mut buf = [0u8; 32];
-    let mut h: *mut c_char = std::ptr::null_mut();
-    let mut u: *mut c_char = std::ptr::null_mut();
-    let mut d: *mut c_char = std::ptr::null_mut();
     assert_eq!(
-        unsafe {
+        unsafe { __internal_setnetgrent(c"admins".as_ptr(), std::ptr::null_mut()) },
+        0
+    );
+    for missing in 0..6 {
+        let mut host = std::ptr::dangling_mut::<c_char>();
+        let mut user = host;
+        let mut domain = host;
+        let mut buffer = [0x5au8; 32];
+        let mut error = 731;
+        let rc = unsafe {
             __internal_getnetgrent_r(
-                &mut h,
-                &mut u,
-                &mut d,
-                result.as_mut_ptr() as *mut c_void,
-                buf.as_mut_ptr() as *mut c_char,
-                buf.len(),
-                &mut errnop,
+                if missing == 0 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut host
+                },
+                if missing == 1 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut user
+                },
+                if missing == 2 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut domain
+                },
+                if missing == 3 {
+                    std::ptr::null_mut()
+                } else {
+                    state
+                },
+                if missing == 4 {
+                    std::ptr::null_mut()
+                } else {
+                    buffer.as_mut_ptr().cast()
+                },
+                buffer.len(),
+                if missing == 5 {
+                    std::ptr::null_mut()
+                } else {
+                    &mut error
+                },
             )
-        },
-        0
-    );
-    assert_eq!(errnop, libc::ENOENT);
+        };
+        assert_eq!(rc, 0, "NULL argument {missing}");
+        assert_eq!(error, if missing == 5 { 731 } else { libc::EINVAL });
+        assert_eq!(
+            (host, user, domain),
+            (
+                std::ptr::dangling_mut(),
+                std::ptr::dangling_mut(),
+                std::ptr::dangling_mut()
+            )
+        );
+        assert_eq!(buffer, [0x5a; 32]);
+        assert_eq!(marker, 0x5a);
+    }
+    let end: unsafe extern "C" fn(*mut c_void) = __internal_endnetgrent;
+    unsafe { end(std::ptr::null_mut()) };
     assert_eq!(
-        unsafe { __internal_endnetgrent(result.as_mut_ptr() as *mut c_void) },
-        1
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EINVAL
     );
 }
 
 #[test]
-fn nss_database_get_and_disable_nscd_safe() {
-    use frankenlibc_abi::unistd_abi::{__nss_database_get, __nss_disable_nscd};
-    let mut result: *mut c_void = std::ptr::null_mut();
-    assert_eq!(unsafe { __nss_database_get(0, &mut result) }, 0);
-    unsafe { __nss_disable_nscd(std::ptr::null_mut()) };
+fn nss_host_database_and_callback_reject_missing_storage() {
+    use frankenlibc_abi::glibc_internal_abi::__nss_lookup_function;
+    use frankenlibc_abi::unistd_abi::__nss_database_get;
+    assert!(!unsafe { __nss_database_get(0, std::ptr::null_mut()) });
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    assert!(!unsafe { __nss_database_get(-1, &mut result) });
+    assert_eq!(result, std::ptr::dangling_mut());
+    assert!(
+        unsafe { __nss_lookup_function(std::ptr::null_mut(), c"getpwnam_r".as_ptr()) }.is_null()
+    );
+    assert!(unsafe { __nss_lookup_function(result, std::ptr::null()) }.is_null());
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EINVAL
+    );
+}
+
+#[cfg(not(feature = "standalone"))]
+#[test]
+fn nss_host_database_and_callback_preserve_gnu_owned_action_lists() {
+    use frankenlibc_abi::glibc_internal_abi::__nss_lookup_function;
+    use frankenlibc_abi::unistd_abi::__nss_database_get;
+    type DatabaseGet = unsafe extern "C" fn(c_int, *mut *mut c_void) -> bool;
+    type Lookup = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    let host_database: DatabaseGet =
+        unsafe { dlsym_oracle::host_fn(c"__nss_database_get", __nss_database_get as *const ()) };
+    let host_lookup: Lookup = unsafe {
+        dlsym_oracle::host_fn(c"__nss_lookup_function", __nss_lookup_function as *const ())
+    };
+    let mut expected = std::ptr::null_mut();
+    let mut actual = std::ptr::null_mut();
+    // Zero names the first GNU database. The test neither inspects the list
+    // nor assumes that its configuration is nonempty on this machine.
+    let host_status = unsafe { host_database(0, &mut expected) };
+    assert_eq!(unsafe { __nss_database_get(0, &mut actual) }, host_status);
+    assert!(
+        host_status,
+        "the host oracle must obtain its first database"
+    );
+    assert_eq!(actual, expected, "opaque state must retain its GNU owner");
+    if !actual.is_null() {
+        // GNU's private resolver accepts its known NSS operation names;
+        // an arbitrary unknown name violates that callback's contract.
+        for name in [c"getaliasbyname_r", c"getaliasent_r"] {
+            assert_eq!(
+                unsafe { __nss_lookup_function(actual, name.as_ptr()) },
+                unsafe { host_lookup(expected, name.as_ptr()) },
+                "{name:?}"
+            );
+        }
+    }
+}
+
+#[cfg(feature = "standalone")]
+#[test]
+fn nss_host_helpers_reject_absent_owner_without_interpreting_opaque_storage() {
+    use frankenlibc_abi::glibc_internal_abi::__nss_lookup_function;
+    use frankenlibc_abi::unistd_abi::{
+        __internal_endnetgrent, __internal_getnetgrent_r, __internal_setnetgrent,
+        __nss_database_get, __nss_files_fopen,
+    };
+    // No host owns a cursor here. The bridge must fail before reading any
+    // opaque bytes, so the marker intentionally describes no GNU layout.
+    let mut marker = 0x5ausize;
+    let state = (&raw mut marker).cast::<c_void>();
+    let mut actions = state;
+    assert!(!unsafe { __nss_database_get(0, &mut actions) });
+    assert_eq!(actions, state);
+    assert!(unsafe { __nss_lookup_function(state, c"getpwnam_r".as_ptr()) }.is_null());
+    assert!(unsafe { __nss_files_fopen(c"/etc/passwd".as_ptr()) }.is_null());
+    assert_eq!(
+        unsafe { __internal_setnetgrent(c"admins".as_ptr(), state) },
+        0
+    );
+    let mut host = std::ptr::null_mut();
+    let mut user = std::ptr::null_mut();
+    let mut domain = std::ptr::null_mut();
+    let mut buffer = [0x5au8; 32];
+    let mut error = 731;
+    assert_eq!(
+        unsafe {
+            __internal_getnetgrent_r(
+                &mut host,
+                &mut user,
+                &mut domain,
+                state,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut error,
+            )
+        },
+        0
+    );
+    assert_eq!(error, libc::ENOSYS);
+    unsafe { __internal_endnetgrent(state) };
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::ENOSYS
+    );
+    assert_eq!(marker, 0x5a);
+    assert_eq!(buffer, [0x5a; 32]);
+    assert!(host.is_null() && user.is_null() && domain.is_null());
+}
+
+#[test]
+fn nss_disable_nscd_safe() {
+    unsafe { frankenlibc_abi::unistd_abi::__nss_disable_nscd(std::ptr::null_mut()) };
 }
 
 #[test]
@@ -15825,15 +15970,44 @@ fn nss_lookup_returns_minus_one() {
 fn nss_files_data_helpers_round_trip() {
     use frankenlibc_abi::unistd_abi::{
         __nss_files_data_endent, __nss_files_data_open, __nss_files_data_put,
-        __nss_files_data_setent, __nss_files_fopen,
+        __nss_files_data_setent,
     };
     let mut kind: c_int = 0;
     assert!(unsafe { __nss_files_data_open(&mut kind as *mut c_int as *mut c_void) }.is_null());
     assert_eq!(unsafe { __nss_files_data_setent(0, 0) }, -1);
     assert_eq!(unsafe { __nss_files_data_endent(0) }, 1);
     unsafe { __nss_files_data_put(0) };
-    let path = CString::new("/etc/passwd").unwrap();
-    assert!(unsafe { __nss_files_fopen(path.as_ptr()) }.is_null());
+}
+
+#[cfg(not(feature = "standalone"))]
+#[test]
+fn nss_host_files_fopen_returns_a_usable_gnu_owned_stream() {
+    use frankenlibc_abi::unistd_abi::__nss_files_fopen;
+    type Fread = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+    type Fclose = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type Fileno = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let fread: Fread =
+        unsafe { dlsym_oracle::host_fn(c"fread", frankenlibc_abi::stdio_abi::fread as *const ()) };
+    let fclose: Fclose = unsafe {
+        dlsym_oracle::host_fn(c"fclose", frankenlibc_abi::stdio_abi::fclose as *const ())
+    };
+    let fileno: Fileno = unsafe {
+        dlsym_oracle::host_fn(c"fileno", frankenlibc_abi::stdio_abi::fileno as *const ())
+    };
+    let executable = std::env::current_exe().unwrap();
+    let path = CString::new(executable.as_os_str().as_bytes()).unwrap();
+    let stream = unsafe { __nss_files_fopen(path.as_ptr()) };
+    assert!(!stream.is_null(), "NSS must open a real backing file");
+    let fd = unsafe { fileno(stream) };
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    let mut magic = [0u8; 4];
+    let count = unsafe { fread(magic.as_mut_ptr().cast(), 1, magic.len(), stream) };
+    let close_status = unsafe { fclose(stream) };
+    assert!(fd >= 0);
+    assert_ne!(flags & libc::FD_CLOEXEC, 0);
+    assert_eq!(count, 4);
+    assert_eq!(magic, *b"\x7fELF");
+    assert_eq!(close_status, 0);
 }
 
 #[test]

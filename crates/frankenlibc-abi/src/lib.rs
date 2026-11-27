@@ -513,6 +513,8 @@ pub mod named_semaphore;
 #[cfg(not(test))]
 pub(crate) mod nss_module;
 #[cfg(not(test))]
+pub(crate) mod nss_host_compat;
+#[cfg(not(test))]
 pub(crate) mod aliases_abi;
 #[cfg(not(test))]
 pub mod semaphore_wait;

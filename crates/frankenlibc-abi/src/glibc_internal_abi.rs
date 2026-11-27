@@ -1844,8 +1844,9 @@ pub unsafe extern "C" fn res_send(
 // __nss_* public symbols (7)
 // ==========================================================================
 // Runtime source selection feeds the native files/DNS and loaded NSS module
-// dispatchers. The legacy private service_user pointer interfaces below remain
-// unavailable; they do not share the Rust-owned policy representation.
+// dispatchers. __nss_lookup_function preserves GNU-owned action lists for
+// interposed service modules. Other legacy private service_user operations
+// below remain unavailable; they do not share the Rust-owned policy model.
 // NSS_STATUS_TRYAGAIN = -2, NSS_STATUS_UNAVAIL = -1, NSS_STATUS_NOTFOUND = 0
 // __nss_configure_lookup: process-local source selection for live dispatchers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1944,16 +1945,15 @@ pub unsafe extern "C" fn __nss_passwd_lookup(
     -1
 }
 
-// __nss_lookup_function: resolve a per-service function pointer in
-// the NSS module loader. We have no NSS module loading (all our
-// passwd/group/hosts lookups go through dedicated abi modules), so
-// any caller asking for a function pointer gets NULL.
+/// Resolve a function in a host-owned NSS action-list entry. This is the
+/// counterpart to __nss_database_get for loaded GNU service modules.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __nss_lookup_function(
-    _ni: *mut c_void,
-    _fct_name: *const c_char,
+    ni: *mut c_void,
+    fct_name: *const c_char,
 ) -> *mut c_void {
-    std::ptr::null_mut()
+    // SAFETY: the bridge leaves the host's opaque service layout untouched.
+    unsafe { crate::nss_host_compat::lookup_function(ni, fct_name) }
 }
 
 // __nss_hosts_lookup2: newer "v2" hosts lookup variant taking an

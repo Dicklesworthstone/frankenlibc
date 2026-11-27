@@ -6,7 +6,9 @@
 #endif
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <grp.h>
+#include <stddef.h>
 #include <pwd.h>
 #include <shadow.h>
 #include <stdint.h>
@@ -30,6 +32,27 @@ static void *symbol(void *handle, const char *path, const char *name) {
     exit(91);
   }
   return address;
+}
+
+/* These GLIBC_PRIVATE imports are part of the real installed compat module's
+ * dependency chain. A component exporting only _nss_compat_* can accidentally
+ * pass while every private callback still comes from GNU libc. Require the
+ * candidate definitions, then check global ownership in a preload subject.
+ * The runner separately records the dynamic loader's actual module bindings. */
+static const char *private_imports[] = {
+  "__nss_files_fopen", "__nss_database_get", "__nss_lookup_function",
+  "__internal_setnetgrent", "__internal_getnetgrent_r", "__internal_endnetgrent"
+};
+
+static void check_private_provider(void *provider, const char *path) {
+  for (size_t i = 0; i < sizeof private_imports / sizeof *private_imports; ++i) {
+    (void)symbol(provider, path, private_imports[i]);
+    if (getenv("FLTEST_COMPAT_REQUIRE_INTERPOSITION") &&
+        !same_object(path, dlsym(RTLD_DEFAULT, private_imports[i]))) {
+      fprintf(stderr, "private import was not interposed: %s\n", private_imports[i]);
+      exit(91);
+    }
+  }
 }
 
 static const char *string(const char *text) { return text ? text : "(null)"; }
@@ -89,8 +112,8 @@ static void load_public(void *provider, const char *path) {
 }
 
 static void lookups(void) {
-  const char *names[] = {"root", "local", "fltest1", "fltest2", "+", "-fltest2", "absent"};
-  const char *groups[] = {"root", "local", "fltestgrp", "fltestgrp2", "fltestmany", "+", "absent"};
+  const char *names[] = {"root", "local", "fltest1", "fltest2", "+", "-fltest2", "absent", "after"};
+  const char *groups[] = {"root", "local", "fltestgrp", "fltestgrp2", "fltestmany", "+", "absent", "after"};
   for (size_t i = 0; i < sizeof names / sizeof *names; ++i) {
     *api.error() = 731;
     struct passwd *pw = api.pwname(names[i]);
@@ -102,7 +125,7 @@ static void lookups(void) {
     struct group *gr = api.grname(groups[i]);
     printf("gr %s errno=%d ", groups[i], *api.error()); group_value(gr);
   }
-  const unsigned ids[] = {0, 4201, 4202, 4301, 4302, 4303, 9001, 9999};
+  const unsigned ids[] = {0, 4201, 4202, 4301, 4302, 4303, 9001, 9002, 9999};
   for (size_t i = 0; i < sizeof ids / sizeof *ids; ++i) {
     *api.error() = 731;
     struct passwd *pw = api.pwuid(ids[i]);
@@ -246,6 +269,124 @@ static void module_calls(void *provider, const char *path, int unavailable) {
   putchar('\n'); free(gids);
 }
 
+/* <nss.h> forward-declares GNU's private cursor. This independent declaration
+ * is the same caller-owned module ABI already exercised by
+ * fixture_nss_module_lib.c; no opaque list or cursor contents are interpreted.
+ * Keeping two real objects alive catches wrappers that wrongly substitute the
+ * public process-global netgroup iterator for these private operations. */
+struct compat_netgroup_cursor {
+  int type;
+  union {
+    struct { const char *host, *user, *domain; } triple;
+    const char *group;
+  } val;
+  char *data;
+  size_t data_size;
+  union { char *cursor; unsigned long position; };
+  int first;
+  void *known_groups, *needed_groups, *nip;
+};
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(struct compat_netgroup_cursor) == 88, "GNU netgroup cursor size");
+_Static_assert(offsetof(struct compat_netgroup_cursor, data) == 32, "GNU netgroup data offset");
+_Static_assert(offsetof(struct compat_netgroup_cursor, nip) == 80, "GNU netgroup service offset");
+#endif
+
+static void private_calls(void *provider, const char *path, void *gnu, const char *gnu_path) {
+  FILE *(*files_open)(const char *);
+  int (*netgroup_set)(const char *, struct compat_netgroup_cursor *);
+  int (*netgroup_get)(char **, char **, char **, struct compat_netgroup_cursor *,
+                      char *, size_t, int *);
+  void (*netgroup_end)(struct compat_netgroup_cursor *);
+  int *(*host_error)(void);
+  int (*host_close)(FILE *), (*host_fileno)(FILE *);
+  char *(*host_gets)(char *, int, FILE *);
+  int (*host_getpos)(FILE *, fpos_t *), (*host_setpos)(FILE *, const fpos_t *);
+#define PRIVATE_LOAD(field, name) *(void **)(&field) = symbol(provider, path, name)
+#define HOST_LOAD(field, name) *(void **)(&field) = symbol(gnu, gnu_path, name)
+  PRIVATE_LOAD(files_open, "__nss_files_fopen");
+  PRIVATE_LOAD(netgroup_set, "__internal_setnetgrent");
+  PRIVATE_LOAD(netgroup_get, "__internal_getnetgrent_r");
+  PRIVATE_LOAD(netgroup_end, "__internal_endnetgrent");
+  HOST_LOAD(host_error, "__errno_location");
+  HOST_LOAD(host_close, "fclose"); HOST_LOAD(host_fileno, "fileno");
+  HOST_LOAD(host_gets, "fgets_unlocked");
+  HOST_LOAD(host_getpos, "fgetpos"); HOST_LOAD(host_setpos, "fsetpos");
+#undef PRIVATE_LOAD
+#undef HOST_LOAD
+
+  /* The private opener must return a GNU-owned FILE. Consume it through
+   * explicitly pinned GNU functions, as the real module does with its opaque
+   * provider state; a native FILE masquerading as a host FILE is not accepted. */
+  *host_error() = 731;
+  FILE *file = files_open("/etc/passwd");
+  printf("private fopen success=%d errno=%d\n", file != NULL, *host_error());
+  if (!file) exit(96);
+  int fd = host_fileno(file);
+  int descriptor_flags = fcntl(fd, F_GETFD);
+  int status_flags = fcntl(fd, F_GETFL);
+  printf("private fopen cloexec=%d access=%d nonblock=%d\n",
+         !!(descriptor_flags & FD_CLOEXEC), status_flags & O_ACCMODE,
+         !!(status_flags & O_NONBLOCK));
+  char line[512], repeated[512];
+  if (!host_gets(line, sizeof line, file)) exit(96);
+  printf("private fopen first=%s", line);
+  fpos_t position;
+  if (host_getpos(file, &position) || !host_gets(line, sizeof line, file) ||
+      host_setpos(file, &position) || !host_gets(repeated, sizeof repeated, file) ||
+      strcmp(line, repeated)) exit(96);
+  printf("private fopen repeated=%s", repeated);
+  printf("private fclose rc=%d\n", host_close(file));
+  *host_error() = 731;
+  file = files_open("/etc/no-such-compat-file");
+  printf("private fopen missing=%d errno=%d\n", file == NULL, *host_error());
+  if (file) { host_close(file); exit(96); }
+
+  struct compat_netgroup_cursor first = {0}, second = {0};
+  *host_error() = 731;
+  int rc = netgroup_set("allow-parent", &first);
+  printf("private netgroup set first=%d errno=%d\n", rc, *host_error());
+  if (!rc) exit(96);
+  *host_error() = 731;
+  rc = netgroup_set("block", &second);
+  printf("private netgroup set second=%d errno=%d\n", rc, *host_error());
+  if (!rc) exit(96);
+  char buffer[4098];
+  char *host, *user, *domain;
+  int error;
+#define PRIVATE_NEXT(label, cursor, capacity) do { \
+    memset(buffer, 0x5a, sizeof buffer); \
+    host = user = domain = NULL; error = 619; *host_error() = 731; \
+    rc = netgroup_get(&host, &user, &domain, cursor, buffer + 1, capacity, &error); \
+    if (buffer[0] != 0x5a || buffer[(capacity) + 1] != 0x5a) exit(92); \
+    printf("private netgroup " label " rc=%d errno=%d error=%d", rc, *host_error(), error); \
+    if (rc) printf(" (%s,%s,%s)", string(host), string(user), string(domain)); \
+    putchar('\n'); \
+  } while (0)
+  PRIVATE_NEXT("small", &first, 1);
+  PRIVATE_NEXT("retry", &first, 4096);
+  PRIVATE_NEXT("independent", &second, 4096);
+  for (unsigned count = 0; count < 8; ++count) {
+    PRIVATE_NEXT("nested", &first, 4096);
+    if (!rc) break;
+    if (count == 7) exit(93);
+  }
+  netgroup_end(&first);
+  netgroup_end(&second);
+  memset(&first, 0, sizeof first);
+  *host_error() = 731;
+  rc = netgroup_set("allow-parent", &first);
+  printf("private netgroup reset=%d errno=%d\n", rc, *host_error());
+  PRIVATE_NEXT("reset-first", &first, 4096);
+  netgroup_end(&first);
+  memset(&first, 0, sizeof first);
+  *host_error() = 731;
+  rc = netgroup_set("missing-compat-netgroup", &first);
+  printf("private netgroup missing=%d errno=%d\n", rc, *host_error());
+  netgroup_end(&first);
+#undef PRIVATE_NEXT
+}
+
 int main(int argc, char **argv) {
   if (argc != 3) return 90;
   int host = !strcmp(argv[1], "host");
@@ -256,6 +397,7 @@ int main(int argc, char **argv) {
   void *provider = host ? gnu : dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
   if (!provider || (!host && same_object(argv[1], dlsym(gnu, "getpwnam")))) return 91;
   const char *path = host ? gnu_info.dli_fname : argv[1];
+  if (!host) check_private_provider(provider, path);
   if (host && module) {
     provider = dlopen("libnss_compat.so.2", RTLD_NOW | RTLD_LOCAL);
     Dl_info compat_info;
@@ -264,6 +406,7 @@ int main(int argc, char **argv) {
   }
   setvbuf(stdout, NULL, _IOLBF, 0);
   if (module) module_calls(provider, path, !strcmp(argv[2], "unavailable"));
+  else if (!strcmp(argv[2], "private")) private_calls(provider, path, gnu, gnu_info.dli_fname);
   else {
     load_public(provider, path);
     if (!strcmp(argv[2], "lookup")) lookups();

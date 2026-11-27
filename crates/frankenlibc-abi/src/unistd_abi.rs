@@ -14577,50 +14577,50 @@ pub unsafe extern "C" fn _nss_dns_getnetbyaddr_r(
 }
 
 // ---------------------------------------------------------------------------
-// __internal_*netgrent + __nss_* GLIBC_PRIVATE helpers (17 stubs)
+// __internal_*netgrent + __nss_* GLIBC_PRIVATE helpers
 // ---------------------------------------------------------------------------
 
-/// `__internal_setnetgrent(*group, *result) -> int` — would set up
-/// netgroup iteration. Stub returns 0 (failure).
+/// Initialize the host NSS module's independently owned netgroup cursor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __internal_setnetgrent(
-    _group: *const c_char,
-    _result: *mut c_void,
+    group: *const c_char,
+    result: *mut c_void,
 ) -> c_int {
-    0
+    // SAFETY: the private bridge preserves the caller's opaque GNU state.
+    unsafe { crate::nss_host_compat::setnetgrent(group, result) }
 }
 
-/// `__internal_getnetgrent_r(**host, **user, **dom, *result, *buf,
-/// buflen, *errnop) -> int` — would advance the netgroup iterator.
-/// Stub returns 0 (no more entries).
+/// Advance the host cursor without sharing the public netgroup iterator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn __internal_getnetgrent_r(
-    _host: *mut *mut c_char,
-    _user: *mut *mut c_char,
-    _domain: *mut *mut c_char,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    host: *mut *mut c_char,
+    user: *mut *mut c_char,
+    domain: *mut *mut c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    0
+    // SAFETY: the private bridge validates required pointers, then preserves
+    // the host's caller-buffer and state ownership contract unchanged.
+    unsafe {
+        crate::nss_host_compat::getnetgrent_r(host, user, domain, result, buffer, buflen, errnop)
+    }
 }
 
-/// `__internal_endnetgrent(*result) -> int` — close the iterator.
-/// Stub returns 1 (success).
+/// Release a host NSS netgroup cursor. GNU's private declaration returns void.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __internal_endnetgrent(_result: *mut c_void) -> c_int {
-    1
+pub unsafe extern "C" fn __internal_endnetgrent(result: *mut c_void) {
+    // SAFETY: only the host interprets and releases its opaque cursor state.
+    unsafe { crate::nss_host_compat::endnetgrent(result) };
 }
 
-/// `__nss_database_get(db_id, *result) -> int` — query the
-/// configured NSS sources for a database. Stub returns 0 (no
-/// configuration available; caller falls through to defaults).
+/// Obtain the host's opaque NSS action list. The GNU ABI returns C bool.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __nss_database_get(_db: c_int, _result: *mut *mut c_void) -> c_int {
-    0
+pub unsafe extern "C" fn __nss_database_get(db: c_int, result: *mut *mut c_void) -> bool {
+    // SAFETY: the caller's database id and output slot retain the host ABI.
+    unsafe { crate::nss_host_compat::database_get(db, result) }
 }
 
 /// `__nss_disable_nscd(callback)` — would disable nscd integration.
@@ -14696,12 +14696,11 @@ pub unsafe extern "C" fn __nss_files_data_endent(_kind: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __nss_files_data_put(_kind: c_int) {}
 
-/// `__nss_files_fopen(path) -> FILE*` — open `path` with the
-/// expected flags for an NSS files-module backing file. Stub
-/// returns NULL.
+/// Open a host-owned NSS file with the GNU provider's stream semantics.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __nss_files_fopen(_path: *const c_char) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __nss_files_fopen(path: *const c_char) -> *mut c_void {
+    // SAFETY: the returned FILE stays owned by the host NSS module.
+    unsafe { crate::nss_host_compat::files_fopen(path) }
 }
 
 /// `__nss_group_lookup2(*ni, name, *result, *errnop) -> int` —
