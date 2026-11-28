@@ -819,36 +819,10 @@ pub(crate) unsafe fn files_initgroups_dyn(
     groupsp: *mut *mut libc::gid_t,
     limit: libc::c_long,
 ) -> Result<bool, c_int> {
-    if start.is_null()
-        || size.is_null()
-        || groupsp.is_null()
-        || !tracked_object_fits(start)
-        || !tracked_object_fits(size)
-        || !tracked_object_fits(groupsp)
-    {
-        return Err(libc::EINVAL);
-    }
+    // Validate before inspecting the user or opening its account database.
+    let mut output = unsafe { InitgroupsArray::new(start, size, groupsp, limit) }?;
     // SAFETY: the caller supplies a C string; tracked allocations are bounded.
     let user = unsafe { bounded_cstr_bytes(user) }.ok_or(libc::EINVAL)?;
-    // SAFETY: the scalar slots were checked above and are caller-owned.
-    let (mut count, mut capacity, mut groups) = unsafe { (*start, *size, *groupsp) };
-    if count < 0 || capacity < 0 || count > capacity {
-        return Err(libc::EINVAL);
-    }
-    let allocation_bytes = usize::try_from(capacity)
-        .ok()
-        .and_then(|count| count.checked_mul(std::mem::size_of::<libc::gid_t>()))
-        .filter(|&bytes| bytes <= isize::MAX as usize)
-        .ok_or(libc::EINVAL)?;
-    if (capacity != 0 && groups.is_null())
-        || (groups as usize) & (std::mem::align_of::<libc::gid_t>() - 1) != 0
-        || (!groups.is_null()
-            && known_remaining(groups as usize)
-                .is_some_and(|remaining| remaining < allocation_bytes))
-    {
-        return Err(libc::EINVAL);
-    }
-
     with_grp_storage(|storage| {
         storage.refresh_cache();
         if let Some(error) = storage.backend_io_error() {
@@ -863,77 +837,166 @@ pub(crate) unsafe fn files_initgroups_dyn(
             {
                 continue;
             }
-            if limit > 0 && count >= limit {
+            if !unsafe { output.append(group.gr_gid) }? {
                 break;
-            }
-            if count == capacity {
-                let ceiling = if limit > 0 { limit } else { libc::c_long::MAX };
-                let next = capacity.saturating_mul(2).max(1).min(ceiling);
-                let bytes = usize::try_from(next)
-                    .ok()
-                    .and_then(|count| count.checked_mul(std::mem::size_of::<libc::gid_t>()))
-                    .filter(|&bytes| bytes <= isize::MAX as usize);
-                let Some(bytes) = bytes.filter(|_| next > capacity) else {
-                    return Err(libc::ENOMEM);
-                };
-                let resized = if groups.is_null() || known_remaining(groups as usize).is_some() {
-                    // SAFETY: the public allocator handles both native and
-                    // fallback-tracked arrays, preserving their live prefix.
-                    unsafe { crate::malloc_abi::realloc(groups.cast(), bytes) }
-                } else {
-                    // An untracked caller allocation may belong to host libc.
-                    // Hardened public realloc intentionally does not copy
-                    // unknown pointers, so normalize ownership before a host
-                    // resize. The preparation helper also handles native
-                    // allocations hidden by bootstrap/reentry lookup limits.
-                    let old_bytes = (capacity as usize)
-                        .checked_mul(std::mem::size_of::<libc::gid_t>())
-                        .ok_or(libc::ENOMEM)?;
-                    // SAFETY: capacity describes the caller's live allocation.
-                    let Some(prepared) = (unsafe {
-                        crate::malloc_abi::prepare_host_realloc_buffer(groups.cast(), old_bytes)
-                    }) else {
-                        return Err(libc::ENOMEM);
-                    };
-                    groups = prepared.cast();
-                    // Preparation can move and retire a native allocation.
-                    // Publish its still-live replacement before host realloc,
-                    // including when the subsequent resize fails.
-                    unsafe { *groupsp = groups };
-                    // SAFETY: preparation established host-compatible ownership.
-                    let resized =
-                        unsafe { crate::malloc_abi::host_passthrough_realloc(prepared, bytes) };
-                    let (live, live_bytes) = if resized.is_null() {
-                        (prepared, old_bytes)
-                    } else {
-                        (resized, bytes)
-                    };
-                    crate::malloc_abi::finish_host_realloc_buffer(live, live_bytes);
-                    resized
-                };
-                let resized = resized.cast::<libc::gid_t>();
-                if resized.is_null() {
-                    return Err(libc::ENOMEM);
-                }
-                groups = resized;
-                capacity = next;
-                // SAFETY: these are the caller's validated writable slots.
-                unsafe {
-                    *groupsp = groups;
-                    *size = capacity;
-                }
-            }
-            // SAFETY: count is nonnegative and strictly below capacity.
-            // The existing prefix remains intact even if a later resize fails.
-            unsafe {
-                *groups.add(count as usize) = group.gr_gid;
-                count += 1;
-                *start = count;
             }
             appended = true;
         }
         Ok(appended)
     })
+}
+
+/// Append a provider's selected GIDs without changing its duplicate policy.
+/// Both files and compat providers use the same checked allocation ownership
+/// and partial-result publication as the public NSS growable-array contract.
+///
+/// # Safety
+/// The slots and allocation obey [`files_initgroups_dyn`]'s array contract.
+/// `gids` does not alias that allocation or any of the scalar output slots.
+pub(crate) unsafe fn append_initgroups_dyn(
+    gids: &[libc::gid_t],
+    start: *mut libc::c_long,
+    size: *mut libc::c_long,
+    groupsp: *mut *mut libc::gid_t,
+    limit: libc::c_long,
+) -> Result<bool, c_int> {
+    // SAFETY: the provider retains the caller's array contract.
+    let mut output = unsafe { InitgroupsArray::new(start, size, groupsp, limit) }?;
+    let mut appended = false;
+    for &gid in gids {
+        if !unsafe { output.append(gid) }? {
+            break;
+        }
+        appended = true;
+    }
+    Ok(appended)
+}
+
+/// A borrowed, validated NSS output array. It never owns or frees the array;
+/// every successful resize/append is immediately visible in the caller slots.
+struct InitgroupsArray {
+    start: *mut libc::c_long,
+    size: *mut libc::c_long,
+    groupsp: *mut *mut libc::gid_t,
+    count: libc::c_long,
+    capacity: libc::c_long,
+    groups: *mut libc::gid_t,
+    limit: libc::c_long,
+}
+
+impl InitgroupsArray {
+    unsafe fn new(
+        start: *mut libc::c_long,
+        size: *mut libc::c_long,
+        groupsp: *mut *mut libc::gid_t,
+        limit: libc::c_long,
+    ) -> Result<Self, c_int> {
+        if start.is_null()
+            || size.is_null()
+            || groupsp.is_null()
+            || !tracked_object_fits(start)
+            || !tracked_object_fits(size)
+            || !tracked_object_fits(groupsp)
+        {
+            return Err(libc::EINVAL);
+        }
+        // SAFETY: these complete, aligned slots are writable under the ABI.
+        let (count, capacity, groups) = unsafe { (*start, *size, *groupsp) };
+        if count < 0 || capacity < 0 || count > capacity {
+            return Err(libc::EINVAL);
+        }
+        let bytes = usize::try_from(capacity)
+            .ok()
+            .and_then(|count| count.checked_mul(std::mem::size_of::<libc::gid_t>()))
+            .filter(|&bytes| bytes <= isize::MAX as usize)
+            .ok_or(libc::EINVAL)?;
+        if (capacity != 0 && groups.is_null())
+            || (groups as usize) & (std::mem::align_of::<libc::gid_t>() - 1) != 0
+            || (!groups.is_null()
+                && known_remaining(groups as usize).is_some_and(|remaining| remaining < bytes))
+        {
+            return Err(libc::EINVAL);
+        }
+        Ok(Self {
+            start,
+            size,
+            groupsp,
+            count,
+            capacity,
+            groups,
+            limit,
+        })
+    }
+
+    /// Return false only when the caller's positive limit is already reached.
+    unsafe fn append(&mut self, gid: libc::gid_t) -> Result<bool, c_int> {
+        if self.limit > 0 && self.count >= self.limit {
+            return Ok(false);
+        }
+        if self.count == self.capacity {
+            let ceiling = if self.limit > 0 {
+                self.limit
+            } else {
+                libc::c_long::MAX
+            };
+            let next = self.capacity.saturating_mul(2).max(1).min(ceiling);
+            let bytes = usize::try_from(next)
+                .ok()
+                .and_then(|count| count.checked_mul(std::mem::size_of::<libc::gid_t>()))
+                .filter(|&bytes| bytes <= isize::MAX as usize);
+            let Some(bytes) = bytes.filter(|_| next > self.capacity) else {
+                return Err(libc::ENOMEM);
+            };
+            let resized = if self.groups.is_null()
+                || known_remaining(self.groups as usize).is_some()
+            {
+                // SAFETY: public realloc preserves native/tracked ownership.
+                unsafe { crate::malloc_abi::realloc(self.groups.cast(), bytes) }
+            } else {
+                // Normalize untracked or bootstrap-hidden allocations before
+                // asking the host allocator to resize them. Preparation may
+                // move the allocation, even when the subsequent resize fails.
+                let old_bytes = (self.capacity as usize)
+                    .checked_mul(std::mem::size_of::<libc::gid_t>())
+                    .ok_or(libc::ENOMEM)?;
+                let Some(prepared) = (unsafe {
+                    crate::malloc_abi::prepare_host_realloc_buffer(self.groups.cast(), old_bytes)
+                }) else {
+                    return Err(libc::ENOMEM);
+                };
+                self.groups = prepared.cast();
+                unsafe { *self.groupsp = self.groups };
+                // SAFETY: preparation established host-compatible ownership.
+                let resized =
+                    unsafe { crate::malloc_abi::host_passthrough_realloc(prepared, bytes) };
+                let (live, live_bytes) = if resized.is_null() {
+                    (prepared, old_bytes)
+                } else {
+                    (resized, bytes)
+                };
+                crate::malloc_abi::finish_host_realloc_buffer(live, live_bytes);
+                resized
+            };
+            let resized = resized.cast::<libc::gid_t>();
+            if resized.is_null() {
+                return Err(libc::ENOMEM);
+            }
+            self.groups = resized;
+            self.capacity = next;
+            // SAFETY: keep the caller's live allocation and capacity together.
+            unsafe {
+                *self.groupsp = self.groups;
+                *self.size = self.capacity;
+            }
+        }
+        // SAFETY: count is below capacity and every earlier prefix stays live.
+        unsafe {
+            *self.groups.add(self.count as usize) = gid;
+            self.count += 1;
+            *self.start = self.count;
+        }
+        Ok(true)
+    }
 }
 
 /// `user`'s group list as `getgrouplist`/`initgroups` compute it: `base`
@@ -1366,7 +1429,11 @@ unsafe fn getgrent_r_impl(
         // been validated. Direct files providers take the branch below.
         return unsafe {
             nss_module::account_getent_r(
-                EntDb::Group, grp, buf, effective_buffer_len(buf, buflen), result,
+                EntDb::Group,
+                grp,
+                buf,
+                effective_buffer_len(buf, buflen),
+                result,
             )
         };
     }

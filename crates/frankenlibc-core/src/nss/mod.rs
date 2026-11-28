@@ -174,6 +174,9 @@ pub enum Database {
     Rpc,
     Netgroup,
     Aliases,
+    PasswdCompat,
+    GroupCompat,
+    ShadowCompat,
 }
 
 impl Database {
@@ -191,12 +194,18 @@ impl Database {
             Self::Rpc => b"rpc",
             Self::Netgroup => b"netgroup",
             Self::Aliases => b"aliases",
+            Self::PasswdCompat => b"passwd_compat",
+            Self::GroupCompat => b"group_compat",
+            Self::ShadowCompat => b"shadow_compat",
         }
     }
 
     fn default_services(self) -> Vec<Service> {
         match self {
             Self::Publickey => vec![Service::new(b"nis"), Service::new(b"nisplus")],
+            Self::PasswdCompat | Self::GroupCompat | Self::ShadowCompat => {
+                vec![Service::new(b"nis")]
+            }
             _ => vec![Service::new(b"files")],
         }
     }
@@ -205,8 +214,9 @@ impl Database {
 /// The source list of one database, resolved from an nsswitch.conf image.
 ///
 /// `None` content (no readable file) and a file without a line for the
-/// database both mean its built-in default: `nis nisplus` for publickey and
-/// `files` for the account databases. A malformed line is skipped as if absent,
+/// database both mean its built-in default: `nis nisplus` for publickey,
+/// `nis` for the compat backing databases, and `files` for ordinary accounts.
+/// A malformed line is skipped as if absent,
 /// so an earlier well-formed line can still apply.
 pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
     let Some(config) = config else {
@@ -227,7 +237,10 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
         | Database::Ethers
         | Database::Rpc
         | Database::Netgroup
-        | Database::Aliases => None,
+        | Database::Aliases
+        | Database::PasswdCompat
+        | Database::GroupCompat
+        | Database::ShadowCompat => None,
     };
     if let Some(fallback) = fallback
         && let Some(services) = parse_database(config, fallback.key())
@@ -519,6 +532,9 @@ mod tests {
                 "rpc" => Database::Rpc,
                 "netgroup" => Database::Netgroup,
                 "aliases" => Database::Aliases,
+                "passwd_compat" => Database::PasswdCompat,
+                "group_compat" => Database::GroupCompat,
+                "shadow_compat" => Database::ShadowCompat,
                 _ => Database::Initgroups,
             },
         )
@@ -589,6 +605,37 @@ mod tests {
         assert_eq!(sources[0].action(Status::NotFound), Action::Return);
         assert_eq!(sources[0].action(Status::TryAgain), Action::Continue);
         assert_eq!(sources[0].action(Status::Success), Action::Return);
+    }
+
+    #[test]
+    fn compat_backends_have_independent_nis_defaults_and_configured_actions() {
+        let unrelated = b"passwd: files\ngroup: remote\nshadow: compat\npasswd_compat: other\n";
+        for (key, database) in [
+            ("passwd_compat", Database::PasswdCompat),
+            ("group_compat", Database::GroupCompat),
+            ("shadow_compat", Database::ShadowCompat),
+        ] {
+            assert_eq!(names(&services_for(None, database)), [b"nis"]);
+            assert!(line(key, "").is_empty());
+            let sources = line(key, "remote [UNAVAIL=return TRYAGAIN=continue] files");
+            assert_eq!(names(&sources), [b"remote".as_slice(), b"files"]);
+            assert_eq!(sources[0].action(Status::Unavailable), Action::Return);
+            assert_eq!(sources[0].action(Status::TryAgain), Action::Continue);
+            assert_eq!(sources[0].action(Status::Success), Action::Return);
+        }
+        assert_eq!(
+            names(&services_for(Some(unrelated), Database::PasswdCompat)),
+            [b"other"]
+        );
+        assert_eq!(
+            names(&services_for(Some(unrelated), Database::GroupCompat)),
+            [b"nis"]
+        );
+        assert_eq!(
+            names(&services_for(Some(unrelated), Database::ShadowCompat)),
+            [b"nis"],
+            "shadow_compat does not inherit passwd_compat"
+        );
     }
 
     #[test]

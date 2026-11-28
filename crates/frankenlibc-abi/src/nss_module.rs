@@ -113,7 +113,7 @@ struct Fingerprint {
     ino: u64,
 }
 
-const DATABASE_COUNT: usize = 12;
+const DATABASE_COUNT: usize = 15;
 
 struct ConfigCache {
     path: Vec<u8>,
@@ -179,6 +179,9 @@ pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), Confi
         b"rpc" => Database::Rpc,
         b"netgroup" => Database::Netgroup,
         b"aliases" => Database::Aliases,
+        b"passwd_compat" => Database::PasswdCompat,
+        b"group_compat" => Database::GroupCompat,
+        b"shadow_compat" => Database::ShadowCompat,
         _ => return Err(ConfigureError::UnknownDatabase),
     };
     let services = frankenlibc_core::nss::parse_sources(line)
@@ -241,6 +244,9 @@ fn database_slot(database: Database) -> usize {
         Database::Networks => 9,
         Database::Ethers => 10,
         Database::Aliases => 11,
+        Database::PasswdCompat => 12,
+        Database::GroupCompat => 13,
+        Database::ShadowCompat => 14,
     }
 }
 
@@ -437,7 +443,12 @@ fn valid_service_name(service: &[u8]) -> bool {
 ///
 /// The table lock is never held across `dlopen`/`dlsym`: a module's
 /// constructor may itself use the name service.
-fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
+pub(crate) fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
+    // The compatibility provider owns its local files and remote policy.
+    // Bind hidden bodies, never preemptible exported function-item addresses.
+    if service == b"compat" {
+        return crate::nss_compat::function(function);
+    }
     if !valid_service_name(service) {
         return None;
     }
@@ -491,9 +502,8 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     (addr != 0).then_some(addr)
 }
 
-/// Resolve a compatibility-provider entry point in its own module scope.
-/// Interpose uses the installed GNU provider; standalone uses only the owned
-/// loader and reports unavailable when it cannot load that provider.
+/// Resolve an owned compatibility-provider entry point. The exported NSS
+/// veneers and configured service dispatcher share these hidden bodies.
 pub(crate) fn compat_function(function: &'static str) -> Option<usize> {
     module_function(b"compat", function)
 }
@@ -501,6 +511,9 @@ pub(crate) fn compat_function(function: &'static str) -> Option<usize> {
 /// Whether the module for `service` has already been loaded (successfully).
 /// Used by `end*ent`, which must not load a module just to close it.
 fn module_loaded(service: &[u8]) -> bool {
+    if service == b"compat" {
+        return true;
+    }
     MODULES
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -2123,7 +2136,7 @@ pub(crate) fn gethostbyaddr(service: &[u8], address: std::net::IpAddr) -> HostAn
 
 /// # Safety
 /// `pw` was filled by a module call that reported SUCCESS.
-unsafe fn passwd_from_c(pw: &libc::passwd) -> frankenlibc_core::pwd::Passwd {
+pub(crate) unsafe fn passwd_from_c(pw: &libc::passwd) -> frankenlibc_core::pwd::Passwd {
     // SAFETY: SUCCESS means every string field is NULL or a valid C string.
     unsafe {
         frankenlibc_core::pwd::Passwd {
@@ -2168,7 +2181,7 @@ pub(crate) unsafe fn group_from_c(gr: &libc::group) -> frankenlibc_core::grp::Gr
 
 /// # Safety
 /// `sp` was filled by a module call that reported SUCCESS.
-unsafe fn shadow_from_c(sp: &libc::spwd) -> frankenlibc_core::pwd::shadow::ShadowEntry {
+pub(crate) unsafe fn shadow_from_c(sp: &libc::spwd) -> frankenlibc_core::pwd::shadow::ShadowEntry {
     frankenlibc_core::pwd::shadow::ShadowEntry {
         // SAFETY: SUCCESS means the string fields are NULL or valid C strings.
         name: unsafe { owned(sp.sp_namp) },
@@ -2966,14 +2979,35 @@ fn initgroups_dyn(
     current: &[u32],
     limit: c_long,
 ) -> (Status, Vec<u32>) {
+    let mut error = 0;
+    initgroups_dyn_with_error(addr, user, base, current, limit, &mut error)
+}
+
+/// Invoke a backend in its own allocation namespace while preserving the
+/// provider's errno output. Compat needs that output even when its local
+/// prefix makes the complete operation successful.
+pub(crate) fn initgroups_dyn_with_error(
+    addr: usize,
+    user: &[u8],
+    base: u32,
+    current: &[u32],
+    limit: c_long,
+    error: &mut c_int,
+) -> (Status, Vec<u32>) {
     let Some((malloc, free)) = global_allocator() else {
         return (Status::Unavailable, Vec::new());
     };
     let capacity = current.len().max(1) + 32;
+    let capacity = if limit > 0 {
+        capacity.min(limit as usize).max(current.len()).max(1)
+    } else {
+        capacity
+    };
     // SAFETY: plain allocation of `capacity` gids from the global allocator,
     // which the module's realloc also uses.
     let array = unsafe { malloc(capacity * std::mem::size_of::<u32>()) }.cast::<u32>();
     if array.is_null() {
+        *error = libc::ENOMEM;
         return (Status::TryAgain, Vec::new());
     }
     // SAFETY: `array` holds `capacity` >= current.len() gids.
@@ -2981,7 +3015,6 @@ fn initgroups_dyn(
     let mut start: c_long = current.len() as c_long;
     let mut size: c_long = capacity as c_long;
     let mut groups = array;
-    let mut err: c_int = 0;
     let mut user_c = user.to_vec();
     user_c.push(0);
     // SAFETY: the entry point has the documented initgroups_dyn signature;
@@ -2995,7 +3028,7 @@ fn initgroups_dyn(
             &mut size,
             &mut groups,
             limit,
-            &mut err,
+            error,
         )
     });
     let mut segment = Vec::new();

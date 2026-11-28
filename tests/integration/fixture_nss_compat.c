@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static int same_object(const char *path, void *symbol) {
   Dl_info info;
@@ -269,6 +270,232 @@ static void module_calls(void *provider, const char *path, int unavailable) {
   putchar('\n'); free(gids);
 }
 
+/* Native compat must preserve a record across repeated ERANGE responses, and
+ * keyed calls must not disturb a live enumeration. The caller deliberately
+ * supplies misaligned storage with canaries on both sides. GNU is executed in
+ * a separate process with identical files and the same account backend. */
+static void module_state(void *provider, const char *path) {
+  char buffer[4098];
+  const char *users[] = {"root", "local", "fltest1", "fltest2", "absent", "after"};
+  const char *groups[] = {"root", "local", "fltestgrp", "fltestgrp2", "absent", "after"};
+#define STATE_DB(tag, type, display, names) do { \
+    int (*begin)(int); int (*end)(void); \
+    int (*next)(struct type *, char *, size_t, int *); \
+    int (*lookup)(const char *, struct type *, char *, size_t, int *); \
+    *(void **)(&begin) = symbol(provider, path, "_nss_compat_set" #tag "ent"); \
+    *(void **)(&end) = symbol(provider, path, "_nss_compat_end" #tag "ent"); \
+    *(void **)(&next) = symbol(provider, path, "_nss_compat_get" #tag "ent_r"); \
+    *(void **)(&lookup) = symbol(provider, path, "_nss_compat_get" #tag "nam_r"); \
+    struct type entry; int error, rc; \
+    for (size_t i = 0; i < sizeof(names) / sizeof *(names); ++i) { \
+      memset(buffer, 0x5a, sizeof buffer); error = 619; \
+      rc = lookup((names)[i], &entry, buffer + 1, 4096, &error); \
+      if (buffer[0] != 0x5a || buffer[4097] != 0x5a) exit(92); \
+      printf("state " #tag " name=%s rc=%d error=%d ", (names)[i], rc, error); \
+      display(rc == 1 ? &entry : NULL); \
+    } \
+    printf("state " #tag " set=%d\n", begin(0)); \
+    for (unsigned index = 0;; ++index) { \
+      if (index == 32) exit(93); \
+      for (unsigned attempt = 0; attempt < 2; ++attempt) { \
+        memset(buffer, 0x5a, sizeof buffer); error = 619; \
+        rc = next(&entry, buffer + 1, 1, &error); \
+        if (buffer[0] != 0x5a || buffer[2] != 0x5a) exit(92); \
+        printf("state " #tag " small=%u rc=%d error=%d\n", attempt, rc, error); \
+        if (rc == 1) exit(92); \
+      } \
+      memset(buffer, 0x5a, sizeof buffer); error = 619; \
+      rc = next(&entry, buffer + 1, 4096, &error); \
+      if (buffer[0] != 0x5a || buffer[4097] != 0x5a) exit(92); \
+      printf("state " #tag " next=%d error=%d ", rc, error); \
+      display(rc == 1 ? &entry : NULL); \
+      if (rc != 1) break; \
+      if (index == 0) { \
+        error = 619; rc = lookup((names)[3], &entry, buffer + 1, 4096, &error); \
+        printf("state " #tag " interleaved=%d error=%d ", rc, error); \
+        display(rc == 1 ? &entry : NULL); \
+      } \
+    } \
+    rc = end(); \
+    printf("state " #tag " end=%d reset=%d\n", rc, begin(0)); \
+    error = 619; rc = next(&entry, buffer + 1, 4096, &error); \
+    printf("state " #tag " restarted=%d error=%d ", rc, error); \
+    display(rc == 1 ? &entry : NULL); \
+    (void)end(); \
+  } while (0)
+  STATE_DB(pw, passwd, passwd_value, users);
+  STATE_DB(gr, group, group_value, groups);
+  STATE_DB(sp, spwd, shadow_value, users);
+#undef STATE_DB
+
+  /* Numeric compat lookups do not share the by-name directive algorithm.
+   * Exercise unrelated later locals, selected-name mismatches, and exclusions
+   * through the actual provider entry points even in a component proof. */
+  int (*byuid)(uid_t, struct passwd *, char *, size_t, int *);
+  int (*bygid)(gid_t, struct group *, char *, size_t, int *);
+  *(void **)(&byuid) = symbol(provider, path, "_nss_compat_getpwuid_r");
+  *(void **)(&bygid) = symbol(provider, path, "_nss_compat_getgrgid_r");
+  const unsigned ids[] = {0, 4201, 4202, 4301, 4302, 4303, 9001, 9002, 9999};
+  for (size_t index = 0; index < sizeof ids / sizeof *ids; ++index) {
+    struct passwd pw; struct group gr;
+    memset(buffer, 0x5a, sizeof buffer);
+    int error = 619;
+    int rc = byuid(ids[index], &pw, buffer + 1, 4096, &error);
+    if (buffer[0] != 0x5a || buffer[4097] != 0x5a) exit(92);
+    printf("state uid=%u rc=%d error=%d ", ids[index], rc, error);
+    passwd_value(rc == 1 ? &pw : NULL);
+    memset(buffer, 0x5a, sizeof buffer); error = 619;
+    rc = bygid(ids[index], &gr, buffer + 1, 4096, &error);
+    if (buffer[0] != 0x5a || buffer[4097] != 0x5a) exit(92);
+    printf("state gid=%u rc=%d error=%d ", ids[index], rc, error);
+    group_value(rc == 1 ? &gr : NULL);
+  }
+
+  int (*initgroups)(const char *, gid_t, long *, long *, gid_t **, long, int *);
+  *(void **)(&initgroups) = symbol(provider, path, "_nss_compat_initgroups_dyn");
+  const char *members[] = {"fltest1", "fltest2", "local", "absent"};
+  const long limits[] = {1, 3, 16};
+  for (size_t user = 0; user < sizeof members / sizeof *members; ++user) {
+    for (size_t limit = 0; limit < sizeof limits / sizeof *limits; ++limit) {
+      long count = 1, size = 1;
+      gid_t *values = malloc(sizeof *values);
+      if (!values) exit(95);
+      values[0] = 4301;
+      int error = 619;
+      int rc = initgroups(members[user], 4301, &count, &size, &values, limits[limit], &error);
+      if (count < 1 || count > size || count > limits[limit] || values[0] != 4301) exit(92);
+      printf("state groups user=%s limit=%ld rc=%d error=%d count=%ld:",
+             members[user], limits[limit], rc, error, count);
+      for (long index = 0; index < count; ++index) printf(" %u", (unsigned)values[index]);
+      putchar('\n'); free(values);
+    }
+  }
+}
+
+static void require_native_compat(void) {
+  if (!getenv("FLTEST_COMPAT_REQUIRE_NATIVE")) return;
+  FILE *maps = fopen("/proc/self/maps", "r");
+  if (!maps) exit(98);
+  char line[4096];
+  while (fgets(line, sizeof line, maps)) {
+    if (strstr(line, "libnss_compat.so")) {
+      fputs("native compat loaded the GNU compat provider\n", stderr);
+      fclose(maps); exit(98);
+    }
+  }
+  if (ferror(maps) || fclose(maps)) exit(98);
+}
+
+/* The backend can require 4096 bytes of scratch even when its result is much
+ * smaller. A compat provider must pass the real remaining caller capacity,
+ * including bytes reserved for overrides; privately growing then squeezing
+ * the result into a shorter caller buffer violates this NSS contract. */
+static void module_budget(void *provider, const char *path, int retry) {
+  char buffer[8194];
+  const size_t capacities[] = {4095, 4096, 4104, 4105, 4124, 4125, 8192};
+#define BUDGET_DB(tag, type, key, display) do { \
+    int (*begin)(int); int (*end)(void); \
+    int (*next)(struct type *, char *, size_t, int *); \
+    int (*lookup)(const char *, struct type *, char *, size_t, int *); \
+    *(void **)(&begin) = symbol(provider, path, "_nss_compat_set" #tag "ent"); \
+    *(void **)(&end) = symbol(provider, path, "_nss_compat_end" #tag "ent"); \
+    *(void **)(&next) = symbol(provider, path, "_nss_compat_get" #tag "ent_r"); \
+    *(void **)(&lookup) = symbol(provider, path, "_nss_compat_get" #tag "nam_r"); \
+    struct type entry; int rc, error; \
+    if (!retry) { \
+      for (size_t index = 0; index < sizeof capacities / sizeof *capacities; ++index) { \
+      size_t capacity = capacities[index]; memset(buffer, 0x5a, sizeof buffer); error = 619; \
+      rc = lookup(key, &entry, buffer + 1, capacity, &error); \
+      if (buffer[0] != 0x5a || buffer[capacity + 1] != 0x5a) exit(92); \
+      printf("budget " #tag " name capacity=%zu rc=%d error=%d ", capacity, rc, error); \
+        display(rc == 1 ? &entry : NULL); \
+      } \
+      break; \
+    } \
+    if (begin(0) != 1) exit(96); \
+    for (unsigned local = 0; local < 2; ++local) { \
+      error = 619; rc = next(&entry, buffer + 1, 8192, &error); \
+      printf("budget " #tag " local=%u rc=%d error=%d ", local, rc, error); \
+      display(rc == 1 ? &entry : NULL); \
+      if (rc != 1) exit(96); \
+    } \
+    for (size_t index = 0; index < sizeof capacities / sizeof *capacities; ++index) { \
+      size_t capacity = capacities[index]; memset(buffer, 0x5a, sizeof buffer); error = 619; \
+      rc = next(&entry, buffer + 1, capacity, &error); \
+      if (buffer[0] != 0x5a || buffer[capacity + 1] != 0x5a) exit(92); \
+      printf("budget " #tag " next capacity=%zu rc=%d error=%d ", capacity, rc, error); \
+      display(rc == 1 ? &entry : NULL); \
+      if (rc == 1) break; \
+      if (rc != -2 || error != ERANGE) exit(96); \
+    } \
+    error = 619; rc = next(&entry, buffer + 1, 8192, &error); \
+    printf("budget " #tag " following=%d error=%d ", rc, error); \
+    display(rc == 1 ? &entry : NULL); \
+    (void)end(); \
+  } while (0)
+  BUDGET_DB(pw, passwd, "fltest1", passwd_value);
+  BUDGET_DB(gr, group, "fltestgrp", group_value);
+  BUDGET_DB(sp, spwd, "fltest1", shadow_value);
+#undef BUDGET_DB
+  if (!retry) {
+    /* GNU's passwd UID provider preserves preflight ERANGE but turns an
+     * actual remote callback's non-success into NOTFOUND, retaining errnop.
+     * The missing-provider case is independently covered by module-state. */
+    int (*byuid)(uid_t, struct passwd *, char *, size_t, int *);
+    *(void **)(&byuid) = symbol(provider, path, "_nss_compat_getpwuid_r");
+    const size_t uid_capacities[] = {32, 64, 4095, 4096, 8192};
+    for (size_t index = 0; index < sizeof uid_capacities / sizeof *uid_capacities; ++index) {
+      size_t capacity = uid_capacities[index];
+      struct passwd entry; int error = 619;
+      memset(buffer, 0x5a, sizeof buffer);
+      int rc = byuid(4201, &entry, buffer + 1, capacity, &error);
+      if (buffer[0] != 0x5a || buffer[capacity + 1] != 0x5a) exit(92);
+      printf("budget uid capacity=%zu rc=%d error=%d ", capacity, rc, error);
+      passwd_value(rc == 1 ? &entry : NULL);
+    }
+  }
+}
+
+/* Attribution control for GNU compat's selected-account loss on ERANGE. The
+ * same backend is called directly: a short lookup must not modify the result,
+ * and a short enumeration must not consume its first remote record. */
+static void backend_retry_control(void) {
+  void *backend = dlopen("libnss_fltest.so.2", RTLD_NOW | RTLD_LOCAL);
+  if (!backend) exit(91);
+  char buffer[8192];
+#define BACKEND_DB(tag, type, member, first, second, display) do { \
+    int (*begin)(int); int (*end)(void); \
+    int (*next)(struct type *, char *, size_t, int *); \
+    int (*lookup)(const char *, struct type *, char *, size_t, int *); \
+    *(void **)(&begin) = dlsym(backend, "_nss_fltest_set" #tag "ent"); \
+    *(void **)(&end) = dlsym(backend, "_nss_fltest_end" #tag "ent"); \
+    *(void **)(&next) = dlsym(backend, "_nss_fltest_get" #tag "ent_r"); \
+    *(void **)(&lookup) = dlsym(backend, "_nss_fltest_get" #tag "nam_r"); \
+    if (!begin || !end || !next || !lookup || begin(0) != 1) exit(91); \
+    struct type entry, unchanged; memset(&unchanged, 0x5a, sizeof unchanged); \
+    for (unsigned attempt = 0; attempt < 2; ++attempt) { \
+      memcpy(&entry, &unchanged, sizeof entry); int error = 619; \
+      int rc = lookup(first, &entry, buffer, 4095, &error); \
+      if (rc != -2 || error != ERANGE || memcmp(&entry, &unchanged, sizeof entry)) exit(96); \
+      printf("backend " #tag " keyed-short=%u rc=%d error=%d unchanged=1\n", attempt, rc, error); \
+      error = 619; rc = next(&entry, buffer, 4095, &error); \
+      if (rc != -2 || error != ERANGE || memcmp(&entry, &unchanged, sizeof entry)) exit(96); \
+      printf("backend " #tag " enum-short=%u rc=%d error=%d unchanged=1\n", attempt, rc, error); \
+    } \
+    const char *expected[] = {first, second}; \
+    for (unsigned index = 0; index < 2; ++index) { \
+      int error = 619; int rc = next(&entry, buffer, sizeof buffer, &error); \
+      if (rc != 1 || strcmp(entry.member, expected[index])) exit(96); \
+      printf("backend " #tag " retained=%u ", index); display(&entry); \
+    } \
+    (void)end(); \
+  } while (0)
+  BACKEND_DB(pw, passwd, pw_name, "fltest1", "fltest2", passwd_value);
+  BACKEND_DB(gr, group, gr_name, "fltestgrp", "fltestgrp2", group_value);
+  BACKEND_DB(sp, spwd, sp_namp, "fltest1", "fltest2", shadow_value);
+#undef BACKEND_DB
+}
+
 /* <nss.h> forward-declares GNU's private cursor. This independent declaration
  * is the same caller-owned module ABI already exercised by
  * fixture_nss_module_lib.c; no opaque list or cursor contents are interpreted.
@@ -393,19 +620,27 @@ int main(int argc, char **argv) {
   void *gnu = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
   Dl_info gnu_info;
   if (!gnu || !dladdr(dlsym(gnu, "getpwnam"), &gnu_info)) return 91;
-  int module = !strcmp(argv[2], "module") || !strcmp(argv[2], "unavailable");
+  int host_module = !strcmp(argv[2], "host-module");
+  int state = !strcmp(argv[2], "module-state");
+  int retry_budget = !strcmp(argv[2], "module-retry-budget");
+  int budget = !strcmp(argv[2], "module-budget") || retry_budget;
+  int module = !strcmp(argv[2], "module") || !strcmp(argv[2], "unavailable") ||
+               host_module || state || budget;
   void *provider = host ? gnu : dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
   if (!provider || (!host && same_object(argv[1], dlsym(gnu, "getpwnam")))) return 91;
   const char *path = host ? gnu_info.dli_fname : argv[1];
   if (!host) check_private_provider(provider, path);
-  if (host && module) {
+  if ((host && module) || host_module) {
     provider = dlopen("libnss_compat.so.2", RTLD_NOW | RTLD_LOCAL);
     Dl_info compat_info;
     if (!provider || !dladdr(dlsym(provider, "_nss_compat_getpwnam_r"), &compat_info)) return 91;
     path = compat_info.dli_fname;
   }
   setvbuf(stdout, NULL, _IOLBF, 0);
-  if (module) module_calls(provider, path, !strcmp(argv[2], "unavailable"));
+  if (!strcmp(argv[2], "backend-retry")) backend_retry_control();
+  else if (budget) module_budget(provider, path, retry_budget);
+  else if (state) module_state(provider, path);
+  else if (module) module_calls(provider, path, !strcmp(argv[2], "unavailable"));
   else if (!strcmp(argv[2], "private")) private_calls(provider, path, gnu, gnu_info.dli_fname);
   else {
     load_public(provider, path);
@@ -415,5 +650,6 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[2], "provider")) puts(path);
     else return 90;
   }
+  require_native_compat();
   return 0;
 }

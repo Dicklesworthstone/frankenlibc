@@ -1146,7 +1146,7 @@ fn read_shadow_file() -> std::io::Result<Vec<u8>> {
 
 /// Parsed shadow entry stored in thread-local static storage.
 #[repr(C)]
-struct SpwdEntry {
+pub(crate) struct SpwdEntry {
     sp_namp: *mut c_char, // login name
     sp_pwdp: *mut c_char, // encrypted password
     sp_lstchg: i64,       // last password change (days since epoch)
@@ -1261,7 +1261,7 @@ fn fill_shadow_parsed(
 ///
 /// # Safety
 /// `sp` must be writable `SpwdEntry` storage and `buf` writable for `buflen` bytes.
-unsafe fn fill_shadow_parsed_caller(
+pub(crate) unsafe fn fill_shadow_parsed_caller(
     parsed: &frankenlibc_core::pwd::shadow::ShadowEntry,
     sp: *mut SpwdEntry,
     buf: *mut c_char,

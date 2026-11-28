@@ -22,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/nss_compat.rs'
       - 'crates/frankenlibc-abi/src/aliases_abi.rs'
       - 'crates/frankenlibc-abi/src/ethers_files.rs'
       - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
@@ -43,6 +44,7 @@ on:
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/grp_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
+      - 'crates/frankenlibc-abi/tests/nss_compat_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs'
       - 'crates/frankenlibc-abi/tests/locale_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_gettext_catalogs.rs'
@@ -111,6 +113,15 @@ jobs:
             --config 'profile.release.package.frankenlibc-membrane.codegen-units=256' \
             2>&1 | tee artifacts/nss-aliases-compat/release-build.log
           test -s target/release/libfrankenlibc_abi.so
+      - name: Execute native compat public account regressions
+        run: |
+          set -euo pipefail
+          cargo test --locked --release -p frankenlibc-abi --test nss_compat_test \
+            --config 'profile.release.package.frankenlibc-membrane.codegen-units=256' \
+            -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/nss-aliases-compat/native-compat-public.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' \
+            artifacts/nss-aliases-compat/native-compat-public.log
       - name: Install isolated filesystem fixture support
         run: |
           sudo apt-get update -qq
@@ -127,6 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo -n python3 scripts/check_nss_compat.py \
+            --native-compat \
             --candidate "$PWD/target/release/libfrankenlibc_abi.so" \
             --output "$PWD/artifacts/nss-aliases-compat/compat" \
             2>&1 | tee artifacts/nss-aliases-compat/compat.log
@@ -180,7 +192,7 @@ jobs:
           cargo test -p frankenlibc-core --lib nss:: \
             -- --test-threads=1 --nocapture \
             2>&1 | tee artifacts/native-files-parsers/nss-policy.log
-          grep -Eq '^test result: ok\. 27 passed; 0 failed; 0 ignored;' \
+          grep -Eq '^test result: ok\. 43 passed; 0 failed; 0 ignored;' \
             artifacts/native-files-parsers/nss-policy.log
           cargo test -p frankenlibc-abi --test conformance_diff_nss_files_parsers \
             -- --test-threads=1 --nocapture \

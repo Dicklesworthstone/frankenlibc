@@ -16969,11 +16969,11 @@ fn nss_compat_lifecycle_matches_installed_provider() {
         _nss_compat_endgrent, _nss_compat_endpwent, _nss_compat_endspent, _nss_compat_setgrent,
         _nss_compat_setpwent, _nss_compat_setspent,
     };
-    // The provider may be absent or unable to open a database (notably shadow).
-    // Compare its actual status instead of asserting unconditional success.
+    // An installed GNU provider remains an independent lifecycle oracle.
+    // Native compat must also read its account files when that DSO is absent.
     let provider = unsafe { libc::dlopen(c"libnss_compat.so.2".as_ptr(), libc::RTLD_NOW) };
     macro_rules! check {
-        ($set:ident, $end:ident) => {{
+        ($set:ident, $end:ident, $path_env:literal, $default_path:literal) => {{
             let set_name = CString::new(stringify!($set)).unwrap();
             let end_name = CString::new(stringify!($end)).unwrap();
             let set_address = if provider.is_null() {
@@ -16988,7 +16988,14 @@ fn nss_compat_lifecycle_matches_installed_provider() {
             };
             for stayopen in [0, 1] {
                 let expected = if set_address.is_null() {
-                    -1 // NSS_STATUS_UNAVAIL
+                    let path = std::env::var_os($path_env)
+                        .filter(|path| !path.is_empty())
+                        .unwrap_or_else(|| $default_path.into());
+                    if std::fs::read(path).is_ok() {
+                        1 // Native files opened successfully.
+                    } else {
+                        -1 // NSS_STATUS_UNAVAIL: the backing file is unreadable.
+                    }
                 } else {
                     let callback: unsafe extern "C" fn(c_int) -> c_int =
                         unsafe { std::mem::transmute(set_address) };
@@ -16997,7 +17004,7 @@ fn nss_compat_lifecycle_matches_installed_provider() {
                 assert_eq!(unsafe { $set(stayopen) }, expected, stringify!($set));
             }
             let expected = if end_address.is_null() {
-                -1
+                1 // Native cursor cleanup does not require a GNU module.
             } else {
                 let callback: unsafe extern "C" fn() -> c_int =
                     unsafe { std::mem::transmute(end_address) };
@@ -17006,9 +17013,24 @@ fn nss_compat_lifecycle_matches_installed_provider() {
             assert_eq!(unsafe { $end() }, expected, stringify!($end));
         }};
     }
-    check!(_nss_compat_setgrent, _nss_compat_endgrent);
-    check!(_nss_compat_setpwent, _nss_compat_endpwent);
-    check!(_nss_compat_setspent, _nss_compat_endspent);
+    check!(
+        _nss_compat_setgrent,
+        _nss_compat_endgrent,
+        "FRANKENLIBC_GROUP_PATH",
+        "/etc/group"
+    );
+    check!(
+        _nss_compat_setpwent,
+        _nss_compat_endpwent,
+        "FRANKENLIBC_PASSWD_PATH",
+        "/etc/passwd"
+    );
+    check!(
+        _nss_compat_setspent,
+        _nss_compat_endspent,
+        "FRANKENLIBC_SHADOW_PATH",
+        "/etc/shadow"
+    );
     if !provider.is_null() {
         unsafe { libc::dlclose(provider) };
     }

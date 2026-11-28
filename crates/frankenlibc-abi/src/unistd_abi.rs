@@ -36071,13 +36071,13 @@ pub extern "C" fn _time_to_time64(t: libc::time_t) -> i64 {
 //
 // libnss_compat.so.2 layers `+`/`-`/`+@netgroup` extensions on top of the
 // local account files. Its passwd_compat/group_compat/shadow_compat backend
-// policy and cursor state belong to the selected provider. In L1 this is the
-// installed GNU module, not a native implementation. Returning empty success
-// here used to silently hide real local and remote identities.
+// policy and cursor state belong to the owned native provider. The hidden
+// implementations also serve nsswitch's compat source, so neither route
+// depends on loading a second implementation from libnss_compat.so.2.
 
-fn nss_compat_provider(function: &'static str, veneer: usize) -> Option<usize> {
+fn nss_compat_provider(function: &'static str) -> Option<usize> {
     let saved_errno = current_abi_errno();
-    let address = crate::nss_module::compat_function(function).filter(|&address| address != veneer);
+    let address = crate::nss_module::compat_function(function);
     // Provider discovery is internal bookkeeping. Preserve the incoming
     // error state before the callback runs, as the public NSS dispatcher does.
     // SAFETY: the current thread owns its errno storage.
@@ -36097,7 +36097,7 @@ macro_rules! nss_compat_forward {
                 unsafe { nss_set_errnop($errnop, libc::EINVAL) };
                 return NSS_STATUS_UNAVAIL;
             }
-            let Some(address) = nss_compat_provider($operation, $name as *const () as usize) else {
+            let Some(address) = nss_compat_provider($operation) else {
                 // An absent provider is UNAVAIL, not a searched-but-missing
                 // account. The caller's nsswitch status action must decide.
                 // SAFETY: the NSS ABI supplies a writable errnop when nonnull.
@@ -36106,8 +36106,8 @@ macro_rules! nss_compat_forward {
             };
             type Callback = unsafe extern "C" fn($($ty),*) -> c_int;
             // SAFETY: this operation name has the GNU NSS callback signature
-            // written in this invocation. Lookup is scoped to libnss_compat,
-            // and the equality guard rejects a dependency resolving to us.
+            // written in this invocation. The internal table returns only
+            // hidden provider bodies, independent of ELF symbol preemption.
             let callback: Callback = unsafe { core::mem::transmute(address) };
             // SAFETY: caller-owned buffers and cursor arguments retain their
             // documented NSS lifetime for the entire delegated operation.
