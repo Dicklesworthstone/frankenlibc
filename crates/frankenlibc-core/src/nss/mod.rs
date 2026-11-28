@@ -33,6 +33,8 @@
 //!   removed by moving the segment's last gid into its slot and re-checking
 //!   that slot.
 
+pub mod compat;
+
 /// A service's answer, as an NSS module reports it (`enum nss_status`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
